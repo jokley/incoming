@@ -1,88 +1,162 @@
-"""
-Excel Import (FINAL)
-- Auto-detect file type
-- UPSERT athletes
-- Bulk insert
-- Cached lookups
-"""
+import json
+import re
+import uuid
+import unicodedata
+from copy import deepcopy
+from datetime import datetime, date, timedelta
 
 import pandas as pd
-from datetime import datetime
-import unicodedata
 
-from models import db, Athlete, RoomAssignment, Hotel, RoomType, HotelRoomInventory, ImportRun
+from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
+from models import Athlete, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
 
 
-# -------------------------
-# Helpers
-# -------------------------
+PREVIEW_STORE = {}
+PREVIEW_TTL_SECONDS = 60 * 60
 
-def normalize_string(s):
-    if not s:
+ENTRY_REQUIRED_COLUMNS = {
+    'Function',
+    'Lastname',
+    'Firstname',
+    'Nationcode',
+}
+
+ROOM_REQUIRED_COLUMNS = {
+    'Lastname',
+    'Firstname',
+    'Nationcode',
+    'Arrival_date',
+    'Departure_date',
+    'Room_type',
+}
+
+ROOM_TYPE_FLAGS = ('Single', 'Double_shared', 'Double_single', 'Appartment')
+DAY_COLUMN_PATTERN = re.compile(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{2}\.\d{2}\.\d{4}')
+DATETIME_FORMATS = (
+    '%Y-%m-%d %H:%M:%S',
+    '%Y-%m-%d %H:%M',
+    '%d.%m.%Y %H:%M:%S',
+    '%d.%m.%Y %H:%M',
+)
+
+
+def normalize_string(value):
+    if value is None or pd.isna(value):
         return ''
-    s = str(s).strip().lower()
     return ''.join(
-        c for c in unicodedata.normalize('NFKD', s)
-        if not unicodedata.combining(c)
+        char for char in unicodedata.normalize('NFKD', str(value).strip().lower())
+        if not unicodedata.combining(char)
     )
 
 
+def normalize_whitespace(value):
+    if value is None or pd.isna(value):
+        return ''
+    return ' '.join(str(value).replace('\u00a0', ' ').replace('\n', ' ').replace('\r', ' ').split())
+
+
+def has_value(value):
+    if value is None or pd.isna(value):
+        return False
+    if isinstance(value, str):
+        return normalize_whitespace(value) != ''
+    return True
+
+
+def parse_boolean(value):
+    if pd.isna(value) or value is None:
+        return False
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(int(value))
+    return normalize_string(value) in {'yes', 'ja', 'true', '1', 'x'}
+
+
+def parse_date(value):
+    if value is None or pd.isna(value) or value == '':
+        return None
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return pd.to_datetime(value, unit='D', origin='1899-12-30').date()
+        except (ValueError, OverflowError, TypeError):
+            pass
+    raw = str(value).strip()
+    if raw.isdigit():
+        try:
+            return pd.to_datetime(int(raw), unit='D', origin='1899-12-30').date()
+        except (ValueError, OverflowError, TypeError):
+            pass
+    for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y'):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+def parse_datetime(value):
+    if value is None or pd.isna(value) or value == '':
+        return None
+    if isinstance(value, datetime):
+        return value
+    for fmt in DATETIME_FORMATS:
+        try:
+            return datetime.strptime(str(value).strip(), fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def build_name_key(lastname, firstname, nationcode=''):
+    return '|'.join([
+        normalize_string(lastname),
+        normalize_string(firstname),
+        normalize_string(nationcode),
+    ])
+
+
+def _col_key(name):
+    normalized = normalize_string(normalize_whitespace(name))
+    return ''.join(char for char in normalized if char.isalnum())
+
+
 def normalize_columns(df):
-    # If Excel has metadata rows above the real header, pandas may produce only
-    # "Unnamed: X" columns. In that case, promote the first row to header if it
-    # looks like a header row.
-    if len(df.columns) > 0:
-        unnamed_cols = [str(c).startswith('Unnamed:') for c in df.columns]
-        if all(unnamed_cols):
-            candidate = [normalize_whitespace(v) for v in df.iloc[0].tolist()]
-            candidate_keys = {normalize_string(v) for v in candidate if v}
-            header_markers = {
-                'hotel', 'zimmertyp', 'von', 'bis', 'zimmer', 'ort', 'region', 'hp', 'sr',
-                'maxpersonen', 'zimmer', 'zimmertypid', 'hotelid', 'venueid', 'venue'
-            }
-            if candidate_keys.intersection(header_markers):
-                df = df.copy()
-                df.columns = candidate
-                df = df.iloc[1:].reset_index(drop=True)
-
-    def _col_key(name: str) -> str:
-        if name is None:
-            return ''
-        s = str(name)
-        s = s.replace('\u00a0', ' ')  # NBSP
-        s = s.replace('\n', ' ').replace('\r', ' ')
-        s = s.strip().strip('"').strip("'")
-        # normalize unicode + strip diacritics, then keep only alnum
-        s = normalize_string(s)
-        return ''.join(ch for ch in s if ch.isalnum())
-
     aliases = {
-        # German hotel/inventory + room-type sheets
-        'hotel': 'Hotel',
-        'zimmertyp': 'ZimmerTyp',
-        'von': 'Von',
-        'bis': 'Bis',
-        'zimmer': 'Zimmer',
-        'ort': 'Ort',
-        'region': 'Region',
-        'hp': 'HP',
-        'sr': 'SR',
-        'maxpersonen': 'MaxPersonen',
-        'maxperson': 'MaxPersonen',
-        'maxpersons': 'MaxPersonen',
-
-        # Core roomlist fields
+        'competitoridstaffid': 'Competitorid/Staff ID',
+        'accredid': 'Accredid',
+        'fiscode': 'Fiscode',
+        'lastname': 'Lastname',
+        'firstname': 'Firstname',
+        'nationcode': 'Nationcode',
+        'industryname': 'Industryname',
+        'function': 'Function',
+        'forgender': 'For_gender',
+        'gender': 'Gender',
+        'phone': 'Phone',
+        'email': 'Email',
+        'present': 'Present',
+        'wcsbxw6061': 'WC_SBX_W_6061',
+        'wcsbxm6060': 'WC_SBX_M_6060',
+        'arrivaldate': 'Arrival_date',
+        'arrivaltime': 'Arrival_time',
+        'arrivalby': 'Arrival_by',
+        'arrivalairport': 'Arrival_airport',
+        'arrivalairportname': 'Arrival_airport_name',
+        'arrivalflightno': 'Arrival_flightno',
+        'arrivalneedtransportation': 'Arrival_need_transportation',
+        'departuredate': 'Departure_date',
+        'departuretime': 'Departure_time',
+        'departureby': 'Departure_by',
+        'departureairport': 'Departure_airport',
+        'departureairportname': 'Departure_airport_name',
+        'departureflightno': 'Departure_flightno',
+        'departureneedtransportation': 'Departure_need_transportation',
         'roomtype': 'Room_type',
-        'roomtypeezdz': 'Room_type',
-        'roomtyp': 'Room_type',
-        'singleroom': 'Single',
-        'single': 'Single',
-        'doubleshared': 'Double_shared',
-        'double_shared': 'Double_shared',
-        'doublesingle': 'Double_single',
-        'appartment': 'Appartment',
-        'apartment': 'Appartment',
-        # Shared-with columns (Excel sometimes line-breaks headers)
         'sharedwithname': 'Shared with Name',
         'sharedwithnationcode': 'Shared with Nationcode',
         'sharedwithindustryname': 'Shared with Industryname',
@@ -94,630 +168,779 @@ def normalize_columns(df):
         'sharedwithfirstmeal': 'Shared_with_First_meal',
         'sharedwithlastmeal': 'Shared_with_Last_meal',
         'sharedwithspecialmeal': 'Shared_with_Special_meal',
+        'latecheckout': 'Late_checkout',
+        'firstmeal': 'First_meal',
+        'lastmeal': 'Last_meal',
+        'specialmeal': 'Special_meal',
+        'additionalitems': 'Additional_items',
+        'entrydate': 'Entry_date',
+        'lastupdate': 'Lastupdate',
+        'entriessentdate': 'Entries_Sent_date',
+        'tvpicturestatus': 'tv_picture_status',
+        'tvpicturedate': 'tv_picture_date',
+        'stance': 'Stance',
+        'single': 'Single',
+        'doubleshared': 'Double_shared',
+        'doublesingle': 'Double_single',
+        'appartment': 'Appartment',
     }
 
-    normalized = []
-    for col in df.columns:
-        col_str = str(col).replace('\u00a0', ' ')
-        col_str = col_str.replace('\n', ' ').replace('\r', ' ')
-        col_str = col_str.strip().strip('"').strip("'")
-        col_str = ' '.join(col_str.split())  # collapse whitespace
-        normalized.append(aliases.get(_col_key(col_str), col_str))
-
-    df.columns = normalized
+    normalized_columns = []
+    for column in df.columns:
+        clean = normalize_whitespace(column)
+        normalized_columns.append(aliases.get(_col_key(clean), clean))
+    df = df.copy()
+    df.columns = normalized_columns
     return df
 
 
-def build_name_key(lastname, firstname, nation):
-    return f"{normalize_string(lastname)}|{normalize_string(firstname)}|{normalize_string(nation)}"
+def load_first_sheet(path):
+    workbook = pd.read_excel(path, sheet_name=None)
+    if not workbook:
+        raise ValueError('Excel file is empty')
+    _, df = next(iter(workbook.items()))
+    return normalize_columns(df)
 
 
-def parse_date(date_str):
-    if pd.isna(date_str) or not date_str:
-        return None
-
-    if isinstance(date_str, datetime):
-        return date_str.date()
-
-    for fmt in ('%d.%m.%Y', '%Y-%m-%d'):
-        try:
-            return datetime.strptime(str(date_str), fmt).date()
-        except:
-            continue
-    return None
-
-
-def parse_boolean(value):
-    if pd.isna(value):
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value == 1
-    if isinstance(value, str):
-        return value.lower().strip() in ['yes', 'ja', 'true', '1', 'x']
-    return False
-
-
-def normalize_whitespace(value):
-    if value is None or pd.isna(value):
-        return ''
-    s = str(value).replace('\u00a0', ' ').strip()
-    return ' '.join(s.split())
-
-
-# -------------------------
-# Detection
-# -------------------------
-
-def detect_file_type(df):
-    columns = set(df.columns)
-
-    if {'Competitorid/Staff ID', 'Accredid', 'Fiscode'}.intersection(columns):
-        return 'athletes'
-
-    # Room types sheet: Zimmer + MaxPersonen (no ZimmerTypID needed)
-    if {'Zimmer', 'MaxPersonen'}.issubset(columns):
-        return 'room_types'
-
-    # Hotels master list (no inventories)
-    if {'Hotel', 'Ort'}.issubset(columns) and ('ZimmerTyp' not in columns):
-        return 'hotels_master'
-
-    # Hotel inventories / kontingente sheet
-    if {'Hotel', 'ZimmerTyp', 'Von', 'Bis', 'Zimmer'}.issubset(columns):
-        return 'hotel_inventories'
-
-    if {'Room_type', 'Shared with Name', 'Single', 'Double_shared'}.intersection(columns):
+def detect_fis_file_type(path):
+    filename = normalize_string(path.split('\\')[-1].split('/')[-1])
+    if 'roomlistdetailed' in filename or 'roomlist' in filename:
         return 'roomlist'
+    if 'entrieslist' in filename and 'room' not in filename:
+        return 'entries'
 
+    df = load_first_sheet(path)
+    columns = set(df.columns)
+    if {'Competitorid/Staff ID', 'Accredid', 'Fiscode'}.intersection(columns):
+        return 'entries'
+    if {'Shared with Name', 'Room_type', 'Arrival_date', 'Departure_date'}.intersection(columns):
+        return 'roomlist'
     return 'unknown'
 
 
-# -------------------------
-# Athlete UPSERT
-# -------------------------
+def detect_day_columns(df):
+    result = []
+    for column in df.columns:
+        collapsed = normalize_whitespace(column)
+        match = DAY_COLUMN_PATTERN.match(collapsed)
+        if not match:
+            continue
+        day_value = parse_date(match.group(0).split(' ')[1])
+        if day_value:
+            result.append({'column': column, 'date': day_value})
+    return result
 
-def build_existing_athlete_map():
+
+def validate_required_columns(df, required_columns):
+    present = set(df.columns)
+    return sorted(required_columns - present)
+
+
+def _build_existing_athlete_maps():
     athletes = Athlete.query.all()
-
     maps = {
-        'competitor': {},
-        'accred': {},
-        'name': {}
+        'by_competitor_id': {},
+        'by_name_key': {},
     }
-
-    for a in athletes:
-        if a.competitor_id:
-            maps['competitor'][str(a.competitor_id)] = a
-
-        if a.accred_id:
-            maps['accred'][str(a.accred_id)] = a
-
-        key = build_name_key(a.lastname, a.firstname, a.nation_code)
-        maps['name'][key] = a
-
-    print(f"Loaded {len(athletes)} athletes into cache")
+    for athlete in athletes:
+        if athlete.competitor_id:
+            maps['by_competitor_id'][str(athlete.competitor_id)] = athlete
+        maps['by_name_key'][build_name_key(athlete.lastname, athlete.firstname, athlete.nation_code)] = athlete
     return maps
 
 
-def find_existing_athlete(row, maps):
-    competitor_id = row.get('Competitorid/Staff ID')
-    if pd.notna(competitor_id):
-        a = maps['competitor'].get(str(competitor_id))
-        if a:
-            return a
-
-    accred_id = row.get('Accredid')
-    if pd.notna(accred_id):
-        a = maps['accred'].get(str(accred_id))
-        if a:
-            return a
-
-    key = build_name_key(
-        row.get('Lastname'),
-        row.get('Firstname'),
-        row.get('Nationcode')
-    )
-
-    return maps['name'].get(key)
+def _find_existing_athlete(person_record, athlete_maps):
+    competitor_id = person_record.get('competitorId')
+    if competitor_id:
+        existing = athlete_maps['by_competitor_id'].get(str(competitor_id))
+        return existing
+    return athlete_maps['by_name_key'].get(build_name_key(
+        person_record.get('lastname'),
+        person_record.get('firstname'),
+        person_record.get('nationCode'),
+    ))
 
 
-def import_athletes_upsert(df, app):
-    with app.app_context():
-        now = datetime.utcnow()
-        run = ImportRun(import_type='athletes', started_at=now)
-        db.session.add(run)
-        db.session.flush()
+def _coalesce_room_type(row):
+    if normalize_whitespace(row.get('Room_type')):
+        return normalize_whitespace(row.get('Room_type'))
+    for column, label in (
+        ('Single', 'Single'),
+        ('Double_shared', 'Double shared'),
+        ('Double_single', 'Double single'),
+        ('Appartment', 'Appartment'),
+    ):
+        if parse_boolean(row.get(column)):
+            return label
+    return ''
 
-        maps = build_existing_athlete_map()
 
-        to_insert = []
-        updated = 0
+def _split_partner_name(raw_name):
+    cleaned = normalize_whitespace(raw_name)
+    if not cleaned:
+        return None, None
+    if ',' in cleaned:
+        parts = [part.strip() for part in cleaned.split(',', 1)]
+        if len(parts) == 2:
+            return parts[0], parts[1]
+    pieces = cleaned.split()
+    if len(pieces) >= 2:
+        return pieces[0], ' '.join(pieces[1:])
+    return cleaned, ''
 
-        for index, row in df.iterrows():
-            try:
-                existing = find_existing_athlete(row, maps)
 
-                if existing:
-                    # UPDATE (only key fields shown, extend as needed)
-                    existing.function = row.get('Function')
-                    existing.phone = row.get('Phone')
-                    existing.email = row.get('Email')
-                    existing.arrival_date = parse_date(row.get('Arrival_date'))
-                    existing.departure_date = parse_date(row.get('Departure_date'))
-                    existing.athletes_last_seen_at = now
+def _daterange_nights(check_in_date, check_out_date):
+    if not check_in_date or not check_out_date or check_out_date <= check_in_date:
+        return []
+    nights = []
+    current = check_in_date
+    while current < check_out_date:
+        nights.append(current)
+        current += timedelta(days=1)
+    return nights
 
-                    updated += 1
 
-                else:
-                    athlete = Athlete(
-                        function=row.get('Function'),
-                        competitor_id=row.get('Competitorid/Staff ID'),
-                        accred_id=row.get('Accredid'),
-                        fis_code=row.get('Fiscode'),
-                        lastname=row.get('Lastname'),
-                        firstname=row.get('Firstname'),
-                        nation_code=row.get('Nationcode'),
-                        gender=row.get('Gender'),
-                        arrival_date=parse_date(row.get('Arrival_date')),
-                        departure_date=parse_date(row.get('Departure_date')),
-                        athletes_last_seen_at=now,
-                    )
-                    to_insert.append(athlete)
+def _count_existing_official_usage():
+    grouped = {}
+    single_grouped = {}
+    bookings = RoomBooking.query.all()
+    for booking in bookings:
+        occupants = booking.occupants or []
+        for occupant in occupants:
+            athlete = occupant.athlete
+            if not athlete or normalize_string(athlete.function) == 'athlete':
+                continue
+            gender = (athlete.gender or athlete.for_gender or '').strip().upper()
+            key = (athlete.nation_code or '', athlete.discipline or '', gender)
+            grouped[key] = grouped.get(key, 0) + 1
+            if booking.room_type and booking.room_type.max_persons == 1:
+                single_grouped[key] = single_grouped.get(key, 0) + 1
+    return grouped, single_grouped
 
-            except Exception as e:
-                print(f"[Athlete ERROR] Row {index}: {e}")
 
-        if to_insert:
-            db.session.bulk_save_objects(to_insert)
+def parse_entries_list(df, athlete_maps):
+    errors = []
+    warnings = []
+    people = []
+    seen_keys = {}
 
-        db.session.commit()
+    missing_columns = validate_required_columns(df, ENTRY_REQUIRED_COLUMNS)
+    if missing_columns:
+        errors.append({
+            'code': 'ENTRY_MISSING_COLUMNS',
+            'message': 'ENTRIES-LIST is missing required columns',
+            'details': {'columns': missing_columns},
+        })
+        return {'people': [], 'errors': errors, 'warnings': warnings}
 
-        print(f"✓ Athletes inserted: {len(to_insert)}")
-        print(f"✓ Athletes updated: {updated}")
+    for index, row in df.iterrows():
+        row_number = index + 2
+        lastname = normalize_whitespace(row.get('Lastname'))
+        firstname = normalize_whitespace(row.get('Firstname'))
+        nation_code = normalize_whitespace(row.get('Nationcode')).upper()
 
-        run.finished_at = datetime.utcnow()
-        db.session.commit()
+        if not lastname and not firstname and not nation_code:
+            continue
 
-        missing_from_latest = Athlete.query.filter(
-            Athlete.athletes_last_seen_at.isnot(None),
-            Athlete.athletes_last_seen_at < now
-        ).count()
+        competitor_id = normalize_whitespace(row.get('Competitorid/Staff ID')) or None
+        unique_key = competitor_id or build_name_key(lastname, firstname, nation_code)
+        if unique_key in seen_keys:
+            errors.append({
+                'code': 'ENTRY_DUPLICATE_PERSON',
+                'message': f'Duplicate person found in ENTRIES-LIST at row {row_number}',
+                'details': {'row': row_number, 'previousRow': seen_keys[unique_key]},
+            })
+            continue
+        seen_keys[unique_key] = row_number
 
-        return {
-            'inserted': len(to_insert),
-            'updated': updated,
-            'missingFromLatestImport': missing_from_latest,
-            'run': run.to_dict(),
+        arrival_date = parse_date(row.get('Arrival_date'))
+        departure_date = parse_date(row.get('Departure_date'))
+        if has_value(row.get('Arrival_date')) and not arrival_date:
+            errors.append({
+                'code': 'ENTRY_INVALID_ARRIVAL_DATE',
+                'message': f'Invalid arrival date at row {row_number}',
+                'details': {'row': row_number, 'value': str(row.get('Arrival_date'))},
+            })
+        if has_value(row.get('Departure_date')) and not departure_date:
+            errors.append({
+                'code': 'ENTRY_INVALID_DEPARTURE_DATE',
+                'message': f'Invalid departure date at row {row_number}',
+                'details': {'row': row_number, 'value': str(row.get('Departure_date'))},
+            })
+        if arrival_date and departure_date and departure_date < arrival_date:
+            errors.append({
+                'code': 'ENTRY_INVALID_STAY_RANGE',
+                'message': f'Arrival date is after departure date at row {row_number}',
+                'details': {'row': row_number},
+            })
+
+        person = {
+            'rowNumber': row_number,
+            'function': normalize_whitespace(row.get('Function')) or None,
+            'competitorId': competitor_id,
+            'accredId': normalize_whitespace(row.get('Accredid')) or None,
+            'fisCode': normalize_whitespace(row.get('Fiscode')) or None,
+            'lastname': lastname,
+            'firstname': firstname,
+            'nationCode': nation_code,
+            'industryName': normalize_whitespace(row.get('Industryname')) or None,
+            'forGender': normalize_whitespace(row.get('For_gender')) or None,
+            'gender': normalize_whitespace(row.get('Gender')) or None,
+            'phone': normalize_whitespace(row.get('Phone')) or None,
+            'email': normalize_whitespace(row.get('Email')) or None,
+            'present': parse_boolean(row.get('Present')),
+            'wcSbxW': parse_boolean(row.get('WC_SBX_W_6061')),
+            'wcSbxM': parse_boolean(row.get('WC_SBX_M_6060')),
+            'arrivalDate': arrival_date,
+            'arrivalTime': normalize_whitespace(row.get('Arrival_time')) or None,
+            'arrivalBy': normalize_whitespace(row.get('Arrival_by')) or None,
+            'arrivalAirport': normalize_whitespace(row.get('Arrival_airport')) or None,
+            'arrivalAirportName': normalize_whitespace(row.get('Arrival_airport_name')) or None,
+            'arrivalFlightno': normalize_whitespace(row.get('Arrival_flightno')) or None,
+            'arrivalNeedTransportation': parse_boolean(row.get('Arrival_need_transportation')),
+            'departureDate': departure_date,
+            'departureTime': normalize_whitespace(row.get('Departure_time')) or None,
+            'departureBy': normalize_whitespace(row.get('Departure_by')) or None,
+            'departureAirport': normalize_whitespace(row.get('Departure_airport')) or None,
+            'departureAirportName': normalize_whitespace(row.get('Departure_airport_name')) or None,
+            'departureFlightno': normalize_whitespace(row.get('Departure_flightno')) or None,
+            'departureNeedTransportation': parse_boolean(row.get('Departure_need_transportation')),
+            'roomType': normalize_whitespace(row.get('Room_type')) or None,
+            'sharedWithName': normalize_whitespace(row.get('Shared with Name') or row.get('Shared_with_name')) or None,
+            'lateCheckout': parse_boolean(row.get('Late_checkout')),
+            'firstMeal': normalize_whitespace(row.get('First_meal')) or None,
+            'lastMeal': normalize_whitespace(row.get('Last_meal')) or None,
+            'specialMeal': normalize_whitespace(row.get('Special_meal')) or None,
+            'additionalItems': normalize_whitespace(row.get('Additional_items')) or None,
+            'entryDate': parse_datetime(row.get('Entry_date')),
+            'lastUpdate': parse_datetime(row.get('Lastupdate')),
+            'entriesSentDate': parse_datetime(row.get('Entries_Sent_date')),
+            'tvPictureStatus': normalize_whitespace(row.get('tv_picture_status')) or None,
+            'tvPictureDate': parse_date(row.get('tv_picture_date')),
+            'stance': normalize_whitespace(row.get('Stance')) or None,
         }
+        existing = _find_existing_athlete(person, athlete_maps)
+        person['existingAthleteId'] = existing.id if existing else None
+        person['operation'] = 'update' if existing else 'create'
+        person['matchKey'] = unique_key
+        people.append(person)
+
+    return {'people': people, 'errors': errors, 'warnings': warnings}
 
 
-# -------------------------
-# Roomlist Import
-# -------------------------
+def _index_people(people):
+    by_name = {}
+    by_name_no_nation = {}
+    by_competitor_id = {}
+    for person in people:
+        key = build_name_key(person['lastname'], person['firstname'], person['nationCode'])
+        by_name[key] = person
+        by_name_no_nation[build_name_key(person['lastname'], person['firstname'], '')] = person
+        if person.get('competitorId'):
+            by_competitor_id[str(person['competitorId'])] = person
+    return {'by_name': by_name, 'by_name_no_nation': by_name_no_nation, 'by_competitor_id': by_competitor_id}
 
-def resolve_room_type(row):
-    if parse_boolean(row.get('Single')):
-        return 'EZ / DU'
-    if parse_boolean(row.get('Double_shared')):
-        return 'DZ / DU'
-    if parse_boolean(row.get('Appartment')):
-        return 'APP: 2 DZ + DU'
-    return None
 
+def parse_room_list(df, imported_people):
+    errors = []
+    warnings = []
+    missing_columns = validate_required_columns(df, ROOM_REQUIRED_COLUMNS)
+    if missing_columns:
+        errors.append({
+            'code': 'ROOM_MISSING_COLUMNS',
+            'message': 'ENTRIES-ROOM-LIST-DETAILED is missing required columns',
+            'details': {'columns': missing_columns},
+        })
+        return {'rooms': [], 'errors': errors, 'warnings': warnings, 'dayColumns': []}
 
-def build_athlete_cache():
-    athletes = Athlete.query.all()
+    indexed_people = _index_people(imported_people)
+    day_columns = detect_day_columns(df)
+    rooms = []
+    seen_room_keys = set()
+    consumed_people = set()
 
-    cache = {
-        'competitor_id': {},
-        'accred_id': {},
-        'name_key': {}
+    for index, row in df.iterrows():
+        row_number = index + 2
+        lastname = normalize_whitespace(row.get('Lastname'))
+        firstname = normalize_whitespace(row.get('Firstname'))
+        nation_code = normalize_whitespace(row.get('Nationcode')).upper()
+        if not lastname and not firstname and not nation_code:
+            continue
+
+        person1 = indexed_people['by_name'].get(build_name_key(lastname, firstname, nation_code))
+        if not person1:
+            person1 = indexed_people['by_name_no_nation'].get(build_name_key(lastname, firstname, ''))
+        if not person1:
+            errors.append({
+                'code': 'ROOM_PERSON_NOT_FOUND',
+                'message': f'Room row {row_number} could not match person1',
+                'details': {'row': row_number, 'lastname': lastname, 'firstname': firstname, 'nationCode': nation_code},
+            })
+            continue
+
+        arrival_date = parse_date(row.get('Arrival_date'))
+        departure_date = parse_date(row.get('Departure_date'))
+        if has_value(row.get('Arrival_date')) and not arrival_date:
+            errors.append({
+                'code': 'ROOM_INVALID_ARRIVAL_DATE',
+                'message': f'Invalid room arrival date at row {row_number}',
+                'details': {'row': row_number, 'value': str(row.get('Arrival_date'))},
+            })
+        if has_value(row.get('Departure_date')) and not departure_date:
+            errors.append({
+                'code': 'ROOM_INVALID_DEPARTURE_DATE',
+                'message': f'Invalid room departure date at row {row_number}',
+                'details': {'row': row_number, 'value': str(row.get('Departure_date'))},
+            })
+        if arrival_date and departure_date and departure_date < arrival_date:
+            errors.append({
+                'code': 'ROOM_INVALID_STAY_RANGE',
+                'message': f'Room row {row_number} has arrival after departure',
+                'details': {'row': row_number},
+            })
+
+        room_type = _coalesce_room_type(row)
+        shared_with_raw_name = normalize_whitespace(row.get('Shared with Name'))
+        shared_with_nation_code = normalize_whitespace(row.get('Shared with Nationcode')).upper() or nation_code
+        partner_lastname, partner_firstname = _split_partner_name(shared_with_raw_name)
+        person2 = None
+        if shared_with_raw_name:
+            person2 = indexed_people['by_name'].get(build_name_key(partner_lastname, partner_firstname, shared_with_nation_code))
+            if not person2 and shared_with_nation_code != nation_code:
+                person2 = indexed_people['by_name'].get(build_name_key(partner_lastname, partner_firstname, nation_code))
+            if not person2:
+                person2 = indexed_people['by_name_no_nation'].get(build_name_key(partner_lastname, partner_firstname, ''))
+            if not person2:
+                errors.append({
+                    'code': 'ROOM_PARTNER_NOT_FOUND',
+                    'message': f'Room row {row_number} could not match shared partner',
+                    'details': {'row': row_number, 'sharedWithName': shared_with_raw_name, 'sharedWithNationcode': shared_with_nation_code},
+                })
+
+        day_snapshot = {}
+        for day_column in day_columns:
+            raw_value = row.get(day_column['column'])
+            if raw_value is None or pd.isna(raw_value) or raw_value == '':
+                continue
+            try:
+                day_snapshot[day_column['date'].isoformat()] = int(raw_value)
+            except (TypeError, ValueError):
+                warnings.append({
+                    'code': 'ROOM_DAY_VALUE_NOT_NUMERIC',
+                    'message': f'Could not parse day occupancy value at row {row_number}',
+                    'details': {'row': row_number, 'column': day_column['column'], 'value': str(raw_value)},
+                })
+
+        active_nights = _daterange_nights(arrival_date, departure_date)
+        if active_nights and day_columns:
+            overlap = [night for night in active_nights if night.isoformat() in day_snapshot or any(dc['date'] == night for dc in day_columns)]
+            if not overlap:
+                warnings.append({
+                    'code': 'ROOM_NO_DAY_OVERLAP',
+                    'message': f'Room row {row_number} has no overlap with available day columns',
+                    'details': {'row': row_number},
+                })
+
+        person1_key = person1['matchKey']
+        person2_key = person2['matchKey'] if person2 else None
+        if person2_key:
+            room_identity = '|'.join(sorted([person1_key, person2_key]) + [room_type, (arrival_date.isoformat() if arrival_date else ''), (departure_date.isoformat() if departure_date else '')])
+            if room_identity in seen_room_keys:
+                consumed_people.add(person1_key)
+                continue
+        else:
+            room_identity = '|'.join([person1_key, room_type, (arrival_date.isoformat() if arrival_date else ''), (departure_date.isoformat() if departure_date else '')])
+
+        if room_identity in seen_room_keys:
+            continue
+        seen_room_keys.add(room_identity)
+
+        if person1_key in consumed_people and not person2_key:
+            warnings.append({
+                'code': 'ROOM_DUPLICATE_SINGLE',
+                'message': f'Person appears in multiple single-room rows at row {row_number}',
+                'details': {'row': row_number, 'person': f'{firstname} {lastname}'},
+            })
+        consumed_people.add(person1_key)
+        if person2_key:
+            consumed_people.add(person2_key)
+
+        rooms.append({
+            'rowNumber': row_number,
+            'sourceRowKey': room_identity,
+            'roomType': room_type,
+            'person1Key': person1_key,
+            'person2Key': person2_key,
+            'person1Name': f"{person1['firstname']} {person1['lastname']}".strip(),
+            'person2Name': f"{person2['firstname']} {person2['lastname']}".strip() if person2 else None,
+            'sharedWithRawName': shared_with_raw_name or None,
+            'sharedWithNationCode': shared_with_nation_code or None,
+            'checkInDate': arrival_date,
+            'checkOutDate': departure_date,
+            'daySnapshot': day_snapshot,
+            'lateCheckout': parse_boolean(row.get('Late_checkout')),
+            'firstMeal': normalize_whitespace(row.get('First_meal')) or None,
+            'lastMeal': normalize_whitespace(row.get('Last_meal')) or None,
+            'specialMeal': normalize_whitespace(row.get('Special_meal')) or None,
+            'person1Match': person1,
+            'person2Match': person2,
+        })
+
+    return {
+        'rooms': rooms,
+        'errors': errors,
+        'warnings': warnings,
+        'dayColumns': [item['date'].isoformat() for item in day_columns],
     }
 
-    for a in athletes:
-        if a.competitor_id:
-            cache['competitor_id'][str(a.competitor_id)] = a
 
-        if a.accred_id:
-            cache['accred_id'][str(a.accred_id)] = a
+def build_quota_warnings(people, rooms):
+    athlete_counts = {}
+    official_counts = {}
+    single_official_counts = {}
 
-        key = build_name_key(a.lastname, a.firstname, a.nation_code)
-        cache['name_key'][key] = a
+    room_by_person = {}
+    for room in rooms:
+        room_by_person[room['person1Key']] = room
+        if room.get('person2Key'):
+            room_by_person[room['person2Key']] = room
 
-    return cache
+    for person in people:
+        discipline = person.get('industryName') or ''
+        gender = (person.get('gender') or person.get('forGender') or '').upper()
+        key = (person.get('nationCode') or '', discipline, gender)
+        if normalize_string(person.get('function')) == 'athlete':
+            athlete_counts[key] = athlete_counts.get(key, 0) + 1
+        else:
+            official_counts[key] = official_counts.get(key, 0) + 1
+            room = room_by_person.get(person['matchKey'])
+            if room and normalize_string(room.get('roomType')) == 'single':
+                single_official_counts[key] = single_official_counts.get(key, 0) + 1
+
+    live_usage, live_single_usage = _count_existing_official_usage()
+    warnings = []
+    all_keys = set(athlete_counts) | set(official_counts)
+    for key in sorted(all_keys):
+        nation_code, discipline, gender = key
+        athletes_entered = athlete_counts.get(key, 0)
+        if not is_supported_discipline(discipline) and discipline:
+            continue
+        official_quota = compute_official_quota(athletes_entered)
+        imported_officials = official_counts.get(key, 0)
+        imported_single_rooms = single_official_counts.get(key, 0)
+        if imported_officials > official_quota:
+            warnings.append({
+                'code': 'QUOTA_OFFICIALS_EXCEEDED',
+                'message': f'Imported officials exceed quota for {nation_code} {discipline} {gender}'.strip(),
+                'details': {
+                    'nationCode': nation_code,
+                    'discipline': discipline,
+                    'gender': gender,
+                    'athletesEntered': athletes_entered,
+                    'officialQuota': official_quota,
+                    'importedOfficials': imported_officials,
+                    'existingAssignedOfficials': live_usage.get(key, 0),
+                },
+            })
+        single_room_entitlement = compute_single_room_entitlement(imported_officials)
+        if imported_single_rooms > single_room_entitlement:
+            warnings.append({
+                'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
+                'message': f'Imported official single rooms exceed entitlement for {nation_code} {discipline} {gender}'.strip(),
+                'details': {
+                    'nationCode': nation_code,
+                    'discipline': discipline,
+                    'gender': gender,
+                    'importedOfficials': imported_officials,
+                    'singleRoomsAllowed': single_room_entitlement,
+                    'importedSingleRooms': imported_single_rooms,
+                    'existingSingleRoomsUsed': live_single_usage.get(key, 0),
+                },
+            })
+    return warnings
 
 
-def find_athlete_cached(row, cache):
-    competitor_id = row.get('Competitorid/Staff ID')
-    if pd.notna(competitor_id):
-        a = cache['competitor_id'].get(str(competitor_id))
-        if a:
-            return a
-
-    accred_id = row.get('Accredid')
-    if pd.notna(accred_id):
-        a = cache['accred_id'].get(str(accred_id))
-        if a:
-            return a
-
-    key = build_name_key(
-        row.get('Lastname'),
-        row.get('Firstname'),
-        row.get('Nationcode')
-    )
-
-    return cache['name_key'].get(key)
+def _serialize_person_preview(person):
+    result = deepcopy(person)
+    for key in ('arrivalDate', 'departureDate', 'tvPictureDate'):
+        if result.get(key):
+            result[key] = result[key].isoformat()
+    for key in ('entryDate', 'lastUpdate', 'entriesSentDate'):
+        if result.get(key):
+            result[key] = result[key].isoformat()
+    return result
 
 
-def import_roomlist(df, app):
-    with app.app_context():
-        now = datetime.utcnow()
-        run = ImportRun(import_type='roomlist', started_at=now)
-        db.session.add(run)
-        db.session.flush()
+def _serialize_room_preview(room):
+    return {
+        'rowNumber': room['rowNumber'],
+        'sourceRowKey': room['sourceRowKey'],
+        'roomType': room['roomType'],
+        'person1Key': room['person1Key'],
+        'person2Key': room['person2Key'],
+        'person1Name': room['person1Name'],
+        'person2Name': room['person2Name'],
+        'sharedWithRawName': room['sharedWithRawName'],
+        'sharedWithNationCode': room['sharedWithNationCode'],
+        'checkInDate': room['checkInDate'].isoformat() if room['checkInDate'] else None,
+        'checkOutDate': room['checkOutDate'].isoformat() if room['checkOutDate'] else None,
+        'daySnapshot': room['daySnapshot'],
+        'lateCheckout': room['lateCheckout'],
+        'firstMeal': room['firstMeal'],
+        'lastMeal': room['lastMeal'],
+        'specialMeal': room['specialMeal'],
+    }
 
-        cache = build_athlete_cache()
-        matched = 0
-        changed = 0
 
-        for index, row in df.iterrows():
-            try:
-                athlete = find_athlete_cached(row, cache)
-                if not athlete:
-                    print(f"[MISS] {row.get('Firstname')} {row.get('Lastname')}")
-                    continue
+def cleanup_preview_store():
+    now = datetime.utcnow()
+    expired = [
+        token for token, value in PREVIEW_STORE.items()
+        if (now - value['createdAt']).total_seconds() > PREVIEW_TTL_SECONDS
+    ]
+    for token in expired:
+        PREVIEW_STORE.pop(token, None)
 
-                next_arrival = parse_date(row.get('Arrival_date'))
-                next_departure = parse_date(row.get('Departure_date'))
-                next_room_type = row.get('Room_type') or resolve_room_type(row)
-                next_partner = (
-                    row.get('Shared with Name')
-                    or row.get('Shared_with_name')
-                    or row.get('Room_partner')
-                    or row.get('Room partner')
-                )
 
-                before = (
-                    athlete.arrival_date,
-                    athlete.departure_date,
-                    athlete.room_type,
-                    athlete.shared_with_name,
-                )
+def create_fis_import_preview(entries_path, roomlist_path):
+    cleanup_preview_store()
+    entries_df = load_first_sheet(entries_path)
+    room_df = load_first_sheet(roomlist_path)
+    athlete_maps = _build_existing_athlete_maps()
 
-                if next_arrival is not None:
-                    athlete.arrival_date = next_arrival
-                if next_departure is not None:
-                    athlete.departure_date = next_departure
-                if next_room_type:
-                    athlete.room_type = next_room_type
-                if next_partner:
-                    athlete.shared_with_name = str(next_partner).strip()
+    people_result = parse_entries_list(entries_df, athlete_maps)
+    room_result = parse_room_list(room_df, people_result['people'])
+    quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'])
 
-                athlete.roomlist_last_seen_at = now
+    blocking_errors = people_result['errors'] + room_result['errors']
+    preview = {
+        'createdAt': datetime.utcnow(),
+        'people': people_result['people'],
+        'rooms': room_result['rooms'],
+        'entriesColumns': list(entries_df.columns),
+        'roomColumns': list(room_df.columns),
+        'dayColumns': room_result['dayColumns'],
+        'errors': blocking_errors,
+        'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
+    }
 
-                after = (
-                    athlete.arrival_date,
-                    athlete.departure_date,
-                    athlete.room_type,
-                    athlete.shared_with_name,
-                )
+    preview_token = uuid.uuid4().hex
+    PREVIEW_STORE[preview_token] = preview
 
-                if before != after:
-                    athlete.roomlist_changed_at = now
-                    changes = []
-                    if before[0] != after[0]:
-                        changes.append("arrivalDate")
-                    if before[1] != after[1]:
-                        changes.append("departureDate")
-                    if before[2] != after[2]:
-                        changes.append("roomType")
-                    if before[3] != after[3]:
-                        changes.append("roomPartner")
-                    athlete.roomlist_change_summary = "changed: " + ", ".join(changes)
-                    changed += 1
+    return {
+        'previewToken': preview_token,
+        'isValid': len(blocking_errors) == 0,
+        'summary': {
+            'people': {
+                'total': len(people_result['people']),
+                'wouldCreate': sum(1 for person in people_result['people'] if person['operation'] == 'create'),
+                'wouldUpdate': sum(1 for person in people_result['people'] if person['operation'] == 'update'),
+            },
+            'rooms': {
+                'total': len(room_result['rooms']),
+                'wouldReplaceFisRooms': FisRoomAssignment.query.count(),
+                'singles': sum(1 for room in room_result['rooms'] if not room.get('person2Key')),
+                'shared': sum(1 for room in room_result['rooms'] if room.get('person2Key')),
+            },
+            'validation': {
+                'errorCount': len(blocking_errors),
+                'warningCount': len(preview['warnings']),
+            },
+        },
+        'entriesColumns': preview['entriesColumns'],
+        'roomColumns': preview['roomColumns'],
+        'dayColumns': preview['dayColumns'],
+        'people': [_serialize_person_preview(person) for person in people_result['people']],
+        'rooms': [_serialize_room_preview(room) for room in room_result['rooms']],
+        'errors': blocking_errors,
+        'warnings': preview['warnings'],
+    }
 
-                matched += 1
 
-            except Exception as e:
-                print(f"[Room ERROR] Row {index}: {e}")
+def _apply_person_record(athlete, person, now):
+    athlete.function = person.get('function')
+    athlete.competitor_id = person.get('competitorId')
+    athlete.accred_id = person.get('accredId')
+    athlete.fis_code = person.get('fisCode')
+    athlete.lastname = person.get('lastname')
+    athlete.firstname = person.get('firstname')
+    athlete.nation_code = person.get('nationCode')
+    athlete.discipline = person.get('industryName') or athlete.discipline
+    athlete.gender = person.get('gender')
+    athlete.for_gender = person.get('forGender')
+    athlete.phone = person.get('phone')
+    athlete.email = person.get('email')
+    athlete.present = person.get('present', False)
+    athlete.wc_sbx_w = person.get('wcSbxW', False)
+    athlete.wc_sbx_m = person.get('wcSbxM', False)
+    athlete.arrival_date = person.get('arrivalDate')
+    athlete.arrival_time = person.get('arrivalTime')
+    athlete.arrival_by = person.get('arrivalBy')
+    athlete.arrival_airport = person.get('arrivalAirport')
+    athlete.arrival_airport_name = person.get('arrivalAirportName')
+    athlete.arrival_flight_no = person.get('arrivalFlightno')
+    athlete.arrival_need_transportation = person.get('arrivalNeedTransportation', False)
+    athlete.departure_date = person.get('departureDate')
+    athlete.departure_time = person.get('departureTime')
+    athlete.departure_by = person.get('departureBy')
+    athlete.departure_airport = person.get('departureAirport')
+    athlete.departure_airport_name = person.get('departureAirportName')
+    athlete.departure_flight_no = person.get('departureFlightno')
+    athlete.departure_need_transportation = person.get('departureNeedTransportation', False)
+    athlete.room_type = person.get('roomType')
+    athlete.shared_with_name = person.get('sharedWithName')
+    athlete.late_checkout = person.get('lateCheckout', False)
+    athlete.first_meal = person.get('firstMeal')
+    athlete.last_meal = person.get('lastMeal')
+    athlete.special_meal = person.get('specialMeal')
+    athlete.additional_items = person.get('additionalItems')
+    athlete.entry_date = person.get('entryDate')
+    athlete.last_update = person.get('lastUpdate')
+    athlete.entries_sent_date = person.get('entriesSentDate')
+    athlete.tv_picture_status = person.get('tvPictureStatus')
+    athlete.tv_picture_date = person.get('tvPictureDate')
+    athlete.stance = person.get('stance')
+    athlete.athletes_last_seen_at = now
+    athlete.roomlist_last_seen_at = now
 
-        db.session.commit()
 
-        run.finished_at = datetime.utcnow()
-        db.session.commit()
+def _snapshot_roomlist_fields(athlete):
+    return {
+        'arrivalDate': athlete.arrival_date.isoformat() if athlete.arrival_date else None,
+        'departureDate': athlete.departure_date.isoformat() if athlete.departure_date else None,
+        'roomType': athlete.room_type or None,
+        'sharedWithName': athlete.shared_with_name or None,
+        'firstMeal': athlete.first_meal or None,
+        'lastMeal': athlete.last_meal or None,
+        'specialMeal': athlete.special_meal or None,
+    }
 
-        missing_from_latest = Athlete.query.filter(
-            Athlete.roomlist_last_seen_at.isnot(None),
-            Athlete.roomlist_last_seen_at < now
-        ).count()
 
-        return {
-            'matched': matched,
-            'changed': changed,
-            'missingFromLatestImport': missing_from_latest,
-            'run': run.to_dict(),
+def _replace_fis_assignments_for_import_scope(persisted_people):
+    imported_athlete_ids = {athlete.id for athlete in persisted_people.values() if athlete and athlete.id}
+    imported_disciplines = {
+        (athlete.discipline or '').strip()
+        for athlete in persisted_people.values()
+        if athlete and (athlete.discipline or '').strip()
+    }
+
+    replaced = 0
+    for assignment in FisRoomAssignment.query.all():
+        assignment_people = [assignment.person1]
+        if assignment.person2:
+            assignment_people.append(assignment.person2)
+
+        assignment_athlete_ids = {
+            athlete.id
+            for athlete in assignment_people
+            if athlete and athlete.id
+        }
+        assignment_disciplines = {
+            (athlete.discipline or '').strip()
+            for athlete in assignment_people
+            if athlete and (athlete.discipline or '').strip()
         }
 
+        if (
+            assignment_athlete_ids & imported_athlete_ids
+            or (imported_disciplines and assignment_disciplines & imported_disciplines)
+        ):
+            db.session.delete(assignment)
+            replaced += 1
 
-# -------------------------
-# Room Types + Hotels (German Excel)
-# -------------------------
+    db.session.flush()
+    return replaced
 
-def import_room_types_excel(df, app):
-    with app.app_context():
-        now = datetime.utcnow()
-        run = ImportRun(import_type='room_types', started_at=now)
-        db.session.add(run)
+
+def confirm_fis_import(preview_token):
+    cleanup_preview_store()
+    preview = PREVIEW_STORE.get(preview_token)
+    if not preview:
+        raise ValueError('Preview token not found or expired')
+    if preview['errors']:
+        raise ValueError('Preview contains blocking validation errors')
+
+    now = datetime.utcnow()
+    run = ImportRun(import_type='fis_confirm', started_at=now)
+    db.session.add(run)
+    db.session.flush()
+
+    athlete_maps = _build_existing_athlete_maps()
+    persisted_people = {}
+    created = 0
+    updated = 0
+
+    for person in preview['people']:
+        athlete = _find_existing_athlete(person, athlete_maps)
+        existing_before = _snapshot_roomlist_fields(athlete) if athlete else None
+        if athlete is None:
+            athlete = Athlete(
+                lastname=person['lastname'],
+                firstname=person['firstname'],
+                nation_code=person['nationCode'],
+            )
+            db.session.add(athlete)
+            db.session.flush()
+            created += 1
+        else:
+            updated += 1
+
+        _apply_person_record(athlete, person, now)
+        if existing_before is None:
+            athlete.roomlist_changed_at = None
+            athlete.roomlist_change_summary = None
+            athlete.roomlist_change_acknowledged_at = None
+            athlete.roomlist_change_acknowledged_summary = None
+        else:
+            existing_after = _snapshot_roomlist_fields(athlete)
+            changed_keys = [key for key, value in existing_after.items() if existing_before.get(key) != value]
+            if changed_keys:
+                athlete.roomlist_changed_at = now
+                athlete.roomlist_change_summary = 'changed: ' + ', '.join(changed_keys)
+                athlete.roomlist_change_acknowledged_at = None
+                athlete.roomlist_change_acknowledged_summary = None
         db.session.flush()
+        persisted_people[person['matchKey']] = athlete
+        athlete_maps = _build_existing_athlete_maps()
 
-        # Overwrite room types only. Hotel inventories are handled by the hotels importer.
-        RoomType.query.delete()
-        db.session.commit()
+    replaced_assignments = _replace_fis_assignments_for_import_scope(persisted_people)
 
-        inserted = 0
-        skipped = 0
-        seen = set()
+    for room in preview['rooms']:
+        person1 = persisted_people.get(room['person1Key'])
+        person2 = persisted_people.get(room['person2Key']) if room.get('person2Key') else None
+        assignment = FisRoomAssignment(
+            import_run_id=run.id,
+            source_row_key=room['sourceRowKey'],
+            room_type=room['roomType'],
+            person1_id=person1.id,
+            person2_id=person2.id if person2 else None,
+            shared_with_raw_name=room.get('sharedWithRawName'),
+            shared_with_nation_code=room.get('sharedWithNationCode'),
+            check_in_date=room.get('checkInDate'),
+            check_out_date=room.get('checkOutDate'),
+            nightly_snapshot=json.dumps(room.get('daySnapshot', {})),
+        )
+        db.session.add(assignment)
 
-        for index, row in df.iterrows():
-            try:
-                name = normalize_whitespace(row.get('Zimmer'))
-                max_persons = row.get('MaxPersonen')
+    run.finished_at = datetime.utcnow()
+    db.session.commit()
+    PREVIEW_STORE.pop(preview_token, None)
 
-                if not name:
-                    skipped += 1
-                    continue
+    return {
+        'success': True,
+        'summary': {
+            'peopleCreated': created,
+            'peopleUpdated': updated,
+            'fisRoomsImported': len(preview['rooms']),
+            'fisRoomsReplaced': replaced_assignments,
+        },
+        'run': run.to_dict(),
+    }
 
-                if name in seen:
-                    continue
-                seen.add(name)
-
-                if pd.isna(max_persons):
-                    skipped += 1
-                    continue
-
-                rt = RoomType(name=name, max_persons=int(max_persons))
-                db.session.add(rt)
-                inserted += 1
-
-            except Exception as e:
-                print(f"[RoomTypes ERROR] Row {index}: {e}")
-                skipped += 1
-
-        db.session.commit()
-        run.finished_at = datetime.utcnow()
-        db.session.commit()
-
-        return {
-            'inserted': inserted,
-            'skipped': skipped,
-            'run': run.to_dict(),
-        }
-
-
-def import_hotels_excel(df, app):
-    with app.app_context():
-        now = datetime.utcnow()
-        run = ImportRun(import_type='hotels', started_at=now)
-        db.session.add(run)
-        db.session.flush()
-
-        # Strict validation: all referenced ZimmerTyp must exist as RoomType.name
-        referenced_types = set()
-        for _, row in df.iterrows():
-            rt_name = normalize_whitespace(row.get('ZimmerTyp'))
-            if not rt_name:
-                continue
-            referenced_types.add(rt_name)
-
-        existing_types = {normalize_whitespace(rt.name) for rt in RoomType.query.all()}
-        missing_types = sorted([t for t in referenced_types if t not in existing_types])
-        if missing_types:
-            raise ValueError(f"Missing RoomTypes: {missing_types}")
-
-        # Overwrite hotels + inventories (keep room types as imported from its sheet)
-        HotelRoomInventory.query.delete()
-        Hotel.query.delete()
-        db.session.commit()
-
-        inserted_hotels = 0
-        inserted_inventories = 0
-        skipped = 0
-        missing_room_types = 0
-
-        hotel_cache = {}  # (name, location, region) -> Hotel
-        room_type_cache = {normalize_whitespace(rt.name): rt for rt in RoomType.query.all()}
-
-        for index, row in df.iterrows():
-            try:
-                hotel_name = normalize_whitespace(row.get('Hotel'))
-                room_type_name = normalize_whitespace(row.get('ZimmerTyp'))
-                available_from = parse_date(row.get('Von'))
-                available_until = parse_date(row.get('Bis'))
-                room_count = row.get('Zimmer')
-
-                location = row.get('Ort')
-                region = row.get('Region')
-                has_hp = parse_boolean(row.get('HP'))
-                has_sr = parse_boolean(row.get('SR'))
-
-                if not hotel_name or not room_type_name or pd.isna(room_count):
-                    skipped += 1
-                    continue
-
-                location = None if pd.isna(location) else normalize_whitespace(location)
-                region = None if pd.isna(region) else normalize_whitespace(region)
-
-                if not available_from or not available_until:
-                    skipped += 1
-                    continue
-
-                rt = room_type_cache.get(room_type_name)
-                if not rt:
-                    # Should not happen due to strict validation, but keep as a safeguard.
-                    missing_room_types += 1
-                    skipped += 1
-                    continue
-
-                hotel_key = (hotel_name, location or '', region or '')
-                hotel = hotel_cache.get(hotel_key)
-                if not hotel:
-                    hotel = Hotel(name=hotel_name, location=location, region=region)
-                    db.session.add(hotel)
-                    db.session.flush()
-                    hotel_cache[hotel_key] = hotel
-                    inserted_hotels += 1
-
-                inv = HotelRoomInventory(
-                    hotel_id=hotel.id,
-                    room_type_id=rt.id,
-                    available_from=available_from,
-                    available_until=available_until,
-                    room_count=int(room_count),
-                    has_half_board=has_hp,
-                    has_sr=has_sr,
-                )
-                db.session.add(inv)
-                inserted_inventories += 1
-
-            except Exception as e:
-                print(f"[Hotels ERROR] Row {index}: {e}")
-                skipped += 1
-
-        db.session.commit()
-        run.finished_at = datetime.utcnow()
-        db.session.commit()
-
-        return {
-            'hotelsInserted': inserted_hotels,
-            'inventoriesInserted': inserted_inventories,
-            'missingRoomTypes': missing_room_types,
-            'skipped': skipped,
-            'run': run.to_dict(),
-        }
-
-
-def import_hotels_master_excel(df, app):
-    with app.app_context():
-        now = datetime.utcnow()
-        run = ImportRun(import_type='hotels_master', started_at=now)
-        db.session.add(run)
-        db.session.flush()
-
-        # Overwrite just hotels (no inventories in this sheet type)
-        Hotel.query.delete()
-        db.session.commit()
-
-        inserted = 0
-        skipped = 0
-
-        for index, row in df.iterrows():
-            try:
-                name = normalize_whitespace(row.get('Hotel'))
-                if not name:
-                    skipped += 1
-                    continue
-
-                location = None if pd.isna(row.get('Ort')) else normalize_whitespace(row.get('Ort'))
-                region = None if pd.isna(row.get('Region')) else normalize_whitespace(row.get('Region'))
-
-                db.session.add(Hotel(name=name, location=location or None, region=region or None))
-                inserted += 1
-            except Exception as e:
-                print(f"[HotelsMaster ERROR] Row {index}: {e}")
-                skipped += 1
-
-        db.session.commit()
-        run.finished_at = datetime.utcnow()
-        db.session.commit()
-
-        return {'inserted': inserted, 'skipped': skipped, 'run': run.to_dict()}
-
-
-# -------------------------
-# Main Import
-# -------------------------
 
 def import_excel_file(file_path, app):
-    print("Starting Excel import...")
-
-    sheets = pd.read_excel(file_path, sheet_name=None)
-    if not isinstance(sheets, dict):
-        sheets = {'Sheet1': sheets}
-
-    # Pass 1: classify sheets
-    classified = []
-    for sheet_name, df in sheets.items():
-        if df is None or getattr(df, 'empty', True):
-            continue
-        df = normalize_columns(df)
-        file_type = detect_file_type(df)
-        classified.append((sheet_name, file_type, df))
-        print(f"[{sheet_name}] Columns: {list(df.columns)}")
-        print(f"[{sheet_name}] Detected: {file_type}")
-
-    if not classified:
-        raise ValueError("Unknown or empty Excel format")
-
-    # Pass 2: import in dependency order
-    results = {}
-    summary = {
-        'imported': {
-            'room_types': 0,
-            'hotels_master': 0,
-            'hotel_inventories': 0,
-            'athletes': 0,
-            'roomlist': 0
-        },
-        'skippedSheets': 0,
-    }
-
-    ordered_types = ['room_types', 'hotels_master', 'hotel_inventories', 'athletes', 'roomlist']
-    for wanted in ordered_types:
-        for sheet_name, file_type, df in classified:
-            if file_type != wanted:
-                continue
-
-            if wanted == 'athletes':
-                results[sheet_name] = {'type': 'athletes', 'result': import_athletes_upsert(df, app)}
-                summary['imported']['athletes'] += 1
-            elif wanted == 'roomlist':
-                results[sheet_name] = {'type': 'roomlist', 'result': import_roomlist(df, app)}
-                summary['imported']['roomlist'] += 1
-            elif wanted == 'room_types':
-                results[sheet_name] = {'type': 'room_types', 'result': import_room_types_excel(df, app)}
-                summary['imported']['room_types'] += 1
-            elif wanted == 'hotels_master':
-                results[sheet_name] = {'type': 'hotels_master', 'result': import_hotels_master_excel(df, app)}
-                summary['imported']['hotels_master'] += 1
-            elif wanted == 'hotel_inventories':
-                results[sheet_name] = {'type': 'hotel_inventories', 'result': import_hotels_excel(df, app)}
-                summary['imported']['hotel_inventories'] += 1
-
-    # Record unknown sheets (we keep them in results so the user can see what was ignored)
-    for sheet_name, file_type, df in classified:
-        if sheet_name in results:
-            continue
-        results[sheet_name] = {'type': 'unknown', 'result': {'skipped': True, 'columns': list(df.columns)}}
-        summary['skippedSheets'] += 1
-
-    if not results:
-        raise ValueError("Unknown or empty Excel format")
-
-    return {'summary': summary, 'sheets': results}
-
-
-# -------------------------
-# CLI
-# -------------------------
-
-if __name__ == '__main__':
-    from app import app
-    import sys
-
-    if len(sys.argv) < 2:
-        print("Usage: python excel_import.py <file>")
-        sys.exit(1)
-
-    import_excel_file(sys.argv[1], app)
+    with app.app_context():
+        result = create_fis_import_preview(file_path, file_path)
+        if not result['isValid']:
+            return result
+        return confirm_fis_import(result['previewToken'])

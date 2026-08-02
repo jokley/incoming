@@ -52,9 +52,22 @@ export interface Athlete {
   forGender?: string;
   phone?: string;
   email?: string;
+  present?: boolean;
 
   arrivalDate?: string | null; // ISO date
+  arrivalTime?: string | null;
+  arrivalBy?: string | null;
+  arrivalAirport?: string | null;
+  arrivalAirportName?: string | null;
+  arrivalFlightno?: string | null;
+  arrivalNeedTransportation?: boolean;
   departureDate?: string | null; // ISO date
+  departureTime?: string | null;
+  departureBy?: string | null;
+  departureAirport?: string | null;
+  departureAirportName?: string | null;
+  departureFlightno?: string | null;
+  departureNeedTransportation?: boolean;
 
   roomType?: string | null;
   sharedWithName?: string | null;
@@ -62,14 +75,35 @@ export interface Athlete {
   firstMeal?: string | null;
   lastMeal?: string | null;
   specialMeal?: string | null;
+  additionalItems?: string | null;
+  tvPictureStatus?: string | null;
+  tvPictureDate?: string | null;
+  entryDate?: string | null;
+  lastUpdate?: string | null;
+  entriesSentDate?: string | null;
+  stance?: string | null;
 
   athletesLastSeenAt?: string | null; // ISO datetime
   roomlistLastSeenAt?: string | null; // ISO datetime
   roomlistChangedAt?: string | null; // ISO datetime
   roomlistChangeSummary?: string | null;
+  roomlistChangeAcknowledgedAt?: string | null;
+  roomlistChangeAcknowledgedSummary?: string | null;
 
   missingFromLatestAthletesImport?: boolean;
   missingFromLatestRoomlistImport?: boolean;
+  hasPendingRoomlistReview?: boolean;
+  changeTouchesAssignment?: boolean;
+  assignment?: {
+    hasAssignment: boolean;
+    hotelName?: string | null;
+    hotelId?: string | null;
+    roomNumber?: string | null;
+    roomTypeName?: string | null;
+    checkInDate?: string | null;
+    checkOutDate?: string | null;
+    bookingId?: string | null;
+  };
 }
 
 export interface RoomAssignment {
@@ -98,6 +132,106 @@ export interface RoomBooking {
   checkInDate?: string | null;
   checkOutDate?: string | null;
   occupants: RoomBookingOccupant[];
+}
+
+export interface RoomBookingUnitOccupant {
+  athleteId: string;
+  name: string;
+  firstname: string;
+  lastname: string;
+  nationCode: string;
+  discipline?: string | null;
+  gender?: string | null;
+  function?: string | null;
+  specialMeal?: string | null;
+  roomType?: string | null;
+  statusBadges: string[];
+  hasPendingReview: boolean;
+  changeTouchesAssignment: boolean;
+}
+
+export interface RoomBookingUnitWarning {
+  code: string;
+  level: 'warning' | 'error';
+  message: string;
+}
+
+export interface RoomBookingUnit {
+  unitId: string;
+  sourceRowKey: string;
+  nationCode: string;
+  occupants: RoomBookingUnitOccupant[];
+  roomType: string;
+  roomTypeLabel: string;
+  occupantCount: number;
+  checkInDate?: string | null;
+  checkOutDate?: string | null;
+  specialMealFlags: string[];
+  statusBadges: string[];
+  assignmentWarnings: RoomBookingUnitWarning[];
+  assignedBookingId?: string | null;
+  assignedHotelId?: string | null;
+  assignedRoomTypeId?: string | null;
+  assignedRoomNumber?: string | null;
+}
+
+export interface AssignmentValidationResult {
+  slotId: string;
+  status: 'valid' | 'warning' | 'blocked';
+  messages: string[];
+}
+
+export interface AssignmentGridBooking {
+  bookingId: string;
+  roomNumber?: string | null;
+  hotelId: string;
+  roomTypeId: string;
+  checkInDate?: string | null;
+  checkOutDate?: string | null;
+  occupants: Array<{
+    athleteId: string;
+    name: string;
+    nationCode: string;
+  }>;
+}
+
+export interface AssignmentSlot {
+  slotId: string;
+  hotelId: string;
+  hotelName: string;
+  roomTypeId: string;
+  roomTypeName: string;
+  capacity: number;
+  slotIndex: number;
+  roomNumber?: string | null;
+  inventoryRoomCount: number;
+  dateCoverage: {
+    availableFrom?: string | null;
+    availableUntil?: string | null;
+    coversRequestedRange: boolean;
+  };
+  bookings: AssignmentGridBooking[];
+}
+
+export interface AssignmentGridHotel {
+  hotelId: string;
+  hotelName: string;
+  location?: string | null;
+  region?: string | null;
+  slots: AssignmentSlot[];
+}
+
+export interface AssignmentPlanningView {
+  timeline: {
+    startDate?: string | null;
+    endDate?: string | null;
+  };
+  units: {
+    unassigned: RoomBookingUnit[];
+    assigned: RoomBookingUnit[];
+  };
+  hotels: AssignmentGridHotel[];
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
 }
 
 export interface RoomAvailability {
@@ -142,4 +276,80 @@ export interface HotelReservationRow {
   checkInDate?: string | null;
   checkOutDate?: string | null;
   specialNotes?: string | null;
+}
+
+export interface FisImportIssue {
+  code: string;
+  message: string;
+  details?: Record<string, unknown>;
+}
+
+export interface FisImportPreviewPerson {
+  rowNumber: number;
+  function?: string | null;
+  competitorId?: string | null;
+  lastname: string;
+  firstname: string;
+  nationCode: string;
+  gender?: string | null;
+  forGender?: string | null;
+  operation: 'create' | 'update';
+  roomType?: string | null;
+  sharedWithName?: string | null;
+}
+
+export interface FisImportPreviewRoom {
+  rowNumber: number;
+  sourceRowKey: string;
+  roomType: string;
+  person1Name: string;
+  person2Name?: string | null;
+  sharedWithRawName?: string | null;
+  checkInDate?: string | null;
+  checkOutDate?: string | null;
+  daySnapshot: Record<string, number>;
+}
+
+export interface FisImportPreview {
+  previewToken: string;
+  isValid: boolean;
+  summary: {
+    people: {
+      total: number;
+      wouldCreate: number;
+      wouldUpdate: number;
+    };
+    rooms: {
+      total: number;
+      wouldReplaceFisRooms: number;
+      singles: number;
+      shared: number;
+    };
+    validation: {
+      errorCount: number;
+      warningCount: number;
+    };
+  };
+  entriesColumns: string[];
+  roomColumns: string[];
+  dayColumns: string[];
+  people: FisImportPreviewPerson[];
+  rooms: FisImportPreviewRoom[];
+  errors: FisImportIssue[];
+  warnings: FisImportIssue[];
+}
+
+export interface FisImportConfirmResult {
+  success: boolean;
+  summary: {
+    peopleCreated: number;
+    peopleUpdated: number;
+    fisRoomsImported: number;
+  };
+  run: {
+    id: string;
+    importType: string;
+    startedAt: string | null;
+    finishedAt: string | null;
+  };
 }

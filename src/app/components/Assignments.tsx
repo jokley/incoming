@@ -1,1616 +1,1890 @@
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router";
+﻿import { useEffect, useMemo, useState } from 'react';
 import {
-  Check,
-  ChevronsUpDown,
-  Info,
-  Loader2,
-  Plus,
-  Save,
-  Trash2,
+  AlertCircle,
   AlertTriangle,
+  ArrowRight,
+  Bell,
+  Bed,
+  Building2,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  Clock,
+  Eye,
+  Link2,
+  RefreshCw,
+  Search,
+  Trash2,
   Users,
-} from "lucide-react";
+  X,
+} from 'lucide-react';
 
-import { api } from "../services/api";
-import type { Athlete, Hotel, RoomBooking, RoomBookingOccupant, RoomType } from "../types";
-import type { OfficialQuotaUsage } from "../services/fisRules";
-import { getComplianceStatus } from "../services/fisRules";
+import { api } from '../services/api';
+import type { OfficialQuotaUsage } from '../services/fisRules';
+import type {
+  AssignmentGridBooking,
+  AssignmentGridHotel,
+  AssignmentPlanningView,
+  AssignmentSlot,
+  AssignmentValidationResult,
+  Athlete,
+  RoomBookingUnit,
+} from '../types';
 
-import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { cn } from "./ui/utils";
-import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "./ui/command";
-import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+type AppView = 'dispatch' | 'athletes' | 'quotas';
+type QueueStatus = 'pending' | 'done' | 'all';
+type SelectedState =
+  | { type: 'unit'; id: string }
+  | { type: 'booking'; id: string }
+  | null;
 
-type BookingType = "single" | "double";
-type ViewMode = "rooms" | "athletes";
-type MatchStatus = "matched" | "unmatched" | "ambiguous";
-
-type NormalizeResult = {
-  bookings: RoomBooking[];
-  legacyConverted: number;
-  skipped: number;
+type DragState = {
+  unitId: string;
 };
 
-function normalizeBookings(data: unknown): NormalizeResult {
-  if (!Array.isArray(data)) return { bookings: [], legacyConverted: 0, skipped: 0 };
-
-  const bookings: RoomBooking[] = [];
-  let legacyConverted = 0;
-  let skipped = 0;
-
-  for (const item of data) {
-    if (!item || typeof item !== "object") {
-      skipped += 1;
-      continue;
-    }
-
-    const obj = item as Record<string, unknown>;
-
-    // Preferred model: RoomBooking
-    if (Array.isArray(obj.occupants)) {
-      bookings.push(item as RoomBooking);
-      continue;
-    }
-
-    // Legacy model: RoomAssignment
-    if (obj.athlete && typeof obj.athlete === "object") {
-      const assignment = item as any;
-      const bookingId = String(assignment.id ?? `legacy-${bookings.length + 1}`);
-
-      const occupants: RoomBookingOccupant[] = [];
-      if (assignment.athlete?.id) {
-        occupants.push({
-          id: `${bookingId}-1`,
-          roomBookingId: bookingId,
-          athlete: assignment.athlete,
-          role: null,
-        });
-      }
-      if (assignment.sharedWith?.id) {
-        occupants.push({
-          id: `${bookingId}-2`,
-          roomBookingId: bookingId,
-          athlete: assignment.sharedWith,
-          role: null,
-        });
-      }
-
-      if (occupants.length === 0 || !assignment.hotel?.id || !assignment.roomType?.id) {
-        skipped += 1;
-        continue;
-      }
-
-      bookings.push({
-        id: bookingId,
-        hotel: assignment.hotel,
-        roomType: assignment.roomType,
-        roomNumber: assignment.roomNumber ?? null,
-        checkInDate: assignment.checkInDate ?? null,
-        checkOutDate: assignment.checkOutDate ?? null,
-        occupants,
-      });
-      legacyConverted += 1;
-      continue;
-    }
-
-    skipped += 1;
-  }
-
-  return { bookings, legacyConverted, skipped };
-}
-
-function formatAthleteName(a: Athlete) {
-  return `${a.firstname} ${a.lastname}`.trim();
-}
-
-function normalizeName(value: string) {
-  return value
-    .toLowerCase()
-    .replace(/[.,]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function normalizeGender(a: Athlete): "M" | "F" | null {
-  const raw = (a.gender || a.forGender || "").toString().trim().toLowerCase();
-  if (!raw) return null;
-  if (raw.startsWith("m")) return "M";
-  if (raw.startsWith("f")) return "F";
-  if (raw === "w") return "F";
-  if (raw === "h") return "M";
-  return null;
-}
-
-function parseIsoDate(value?: string | null): Date | null {
-  if (!value) return null;
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? null : d;
-}
-
-function toIsoDate(value: Date): string {
-  return value.toISOString().slice(0, 10);
-}
-
-function datesOverlap(startA: string | null | undefined, endA: string | null | undefined, startB: string | null | undefined, endB: string | null | undefined) {
-  if (!startA || !endA || !startB || !endB) return false;
-  return startA <= endB && startB <= endA;
-}
-
-function ComboBox({
-  label,
-  placeholder,
-  value,
-  onChange,
-  options,
-  disabled,
-  emptyText = "Keine Treffer",
-}: {
-  label: string;
-  placeholder: string;
-  value: string;
-  onChange: (value: string) => void;
-  options: { value: string; label: string; disabled?: boolean }[];
-  disabled?: boolean;
-  emptyText?: string;
-}) {
-  const [open, setOpen] = useState(false);
-  const selected = options.find(o => o.value === value);
-
-  return (
-    <div>
-      <label className="mb-2 block text-sm font-medium text-gray-700">{label}</label>
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <Button
-            type="button"
-            variant="outline"
-            role="combobox"
-            aria-expanded={open}
-            disabled={disabled}
-            className={cn("w-full justify-between", !selected && "text-muted-foreground")}
-          >
-            <span className="truncate">{selected?.label ?? placeholder}</span>
-            <ChevronsUpDown className="h-4 w-4 opacity-60" />
-          </Button>
-        </PopoverTrigger>
-        <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
-          <Command>
-            <CommandInput placeholder="Suchen..." />
-            <CommandList>
-              <CommandEmpty>{emptyText}</CommandEmpty>
-              <CommandGroup>
-                {options.map((opt) => (
-                  <CommandItem
-                    key={opt.value}
-                    value={opt.label}
-                    disabled={opt.disabled}
-                    onSelect={() => {
-                      onChange(opt.value);
-                      setOpen(false);
-                    }}
-                  >
-                    <Check className={cn("h-4 w-4", opt.value === value ? "opacity-100" : "opacity-0")} />
-                    <span className="truncate">{opt.label}</span>
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            </CommandList>
-          </Command>
-        </PopoverContent>
-      </Popover>
-    </div>
-  );
-}
+const REGION_COLORS: Record<string, string> = {
+  Bludenz: '#4F8EF7',
+  Montafon: '#34D399',
+  Feldkirch: '#8B5CF6',
+};
 
 export function Assignments() {
+  const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [hotels, setHotels] = useState<Hotel[]>([]);
-  const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
-  const [bookings, setBookings] = useState<RoomBooking[]>([]);
-  const [viewMode, setViewMode] = useState<ViewMode>("rooms");
-  const [bookingType, setBookingType] = useState<BookingType>("single");
-  const [onlyUnassigned, setOnlyUnassigned] = useState(true);
-  const [occupant1Id, setOccupant1Id] = useState<string>("");
-  const [occupant2Id, setOccupant2Id] = useState<string>("");
-  const [selectedHotel, setSelectedHotel] = useState<string>("");
-  const [selectedRoomType, setSelectedRoomType] = useState<string>("");
-  const [roomNumber, setRoomNumber] = useState<string>("");
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [warnings, setWarnings] = useState<string[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const [athleteSearch, setAthleteSearch] = useState("");
-  const [athleteNation, setAthleteNation] = useState<string>("");
-  const [athleteGender, setAthleteGender] = useState<string>("");
-  const [athleteFunction, setAthleteFunction] = useState<string>("");
-  const [athleteDiscipline, setAthleteDiscipline] = useState<string>("");
-  const [athleteAssigned, setAthleteAssigned] = useState<string>(""); // "", "assigned", "unassigned"
-  const [athleteHasShare, setAthleteHasShare] = useState(false);
-  const [shareNation, setShareNation] = useState<string>("");
-  const [shareGender, setShareGender] = useState<string>("");
-  const [shareStatus, setShareStatus] = useState<MatchStatus | "">("");
-  const [shareOnlyUnassigned, setShareOnlyUnassigned] = useState(true);
+  const [view, setView] = useState<AppView>('dispatch');
+  const [selected, setSelected] = useState<SelectedState>(null);
+  const [activeHotelId, setActiveHotelId] = useState<string | null>(null);
+  const [showAlert, setShowAlert] = useState(true);
 
-  const [roomsSearch, setRoomsSearch] = useState("");
-  const [roomsHotel, setRoomsHotel] = useState<string>("");
-  const [roomsRoomType, setRoomsRoomType] = useState<string>("");
-  const [roomsNation, setRoomsNation] = useState<string>("");
-  const [roomsGender, setRoomsGender] = useState<string>("");
-  const [roomsIssuesOnly, setRoomsIssuesOnly] = useState(false);
-  const [roomsPageSize, setRoomsPageSize] = useState(100);
-  const [roomsPage, setRoomsPage] = useState(1);
+  const [queueSearch, setQueueSearch] = useState('');
+  const [hotelSearch, setHotelSearch] = useState('');
+  const [filterNation, setFilterNation] = useState('');
+  const [filterDiscipline, setFilterDiscipline] = useState('');
+  const [filterGender, setFilterGender] = useState('');
+  const [filterStatus, setFilterStatus] = useState<QueueStatus>('pending');
+  const [regionFilter, setRegionFilter] = useState('');
 
-  const [quotaNation, setQuotaNation] = useState<string>("");
-  const [quotaDiscipline, setQuotaDiscipline] = useState<string>("");
-  const [quotaGender, setQuotaGender] = useState<string>("");
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const [dragOverHotelId, setDragOverHotelId] = useState<string | null>(null);
+  const [dragOverRoomTypeKey, setDragOverRoomTypeKey] = useState<string | null>(null);
 
   useEffect(() => {
-    loadData();
+    void loadInitialData();
   }, []);
 
-  const loadData = async () => {
+  useEffect(() => {
+    void loadQuotaUsage();
+  }, [filterNation, filterDiscipline, filterGender]);
+
+  const loadInitialData = async () => {
     try {
       setLoading(true);
-      const [athletesData, hotelsData, roomTypesData, bookingsData, quotaData] = await Promise.all([
+      const [planningData, athletesData] = await Promise.all([
+        api.getAssignmentPlanningView(),
         api.getAthletes(),
-        api.getHotels(),
-        api.getRoomTypes(),
-        api.getRoomAssignments(),
-        api.getOfficialQuotaUsage(),
       ]);
-
-      setAthletes(Array.isArray(athletesData) ? athletesData : []);
-      setHotels(Array.isArray(hotelsData) ? hotelsData : []);
-      setRoomTypes(Array.isArray(roomTypesData) ? roomTypesData : []);
-
-      const normalized = normalizeBookings(bookingsData as unknown);
-      setBookings(normalized.bookings);
-
-      const nextWarnings: string[] = [];
-      if (normalized.legacyConverted > 0) {
-        nextWarnings.push(`Converted ${normalized.legacyConverted} legacy booking rows.`);
-      }
-      if (normalized.skipped > 0) {
-        nextWarnings.push(`Skipped ${normalized.skipped} invalid booking rows.`);
-      }
-      setWarnings(nextWarnings);
-
-      setQuotaUsage(Array.isArray(quotaData) ? quotaData : []);
+      setPlanning(planningData);
+      setAthletes(athletesData);
       setError(null);
     } catch (err) {
-      setError(
-        "Fehler beim Laden der Daten. Prüfen Sie API-URL (VITE_API_URL) oder ob das Backend erreichbar ist.",
-      );
       console.error(err);
+      setError('Fehler beim Laden der Dispositionsansicht');
     } finally {
       setLoading(false);
     }
   };
 
-  const assignedAthleteIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const booking of bookings) {
-      for (const occ of booking.occupants || []) {
-        if (occ?.athlete?.id) ids.add(occ.athlete.id);
+  const refreshPlanningData = async ({ silent = true }: { silent?: boolean } = {}) => {
+    try {
+      if (!silent) {
+        setLoading(true);
+      }
+      const planningData = await api.getAssignmentPlanningView();
+      setPlanning(planningData);
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setError('Fehler beim Aktualisieren der Dispositionsansicht');
+    } finally {
+      if (!silent) {
+        setLoading(false);
       }
     }
-    return ids;
-  }, [bookings]);
+  };
 
-  const athleteToBooking = useMemo(() => {
-    const map = new Map<string, RoomBooking>();
-    for (const booking of bookings) {
-      for (const occ of booking.occupants || []) {
-        if (occ?.athlete?.id && !map.has(occ.athlete.id)) {
-          map.set(occ.athlete.id, booking);
+  const loadQuotaUsage = async () => {
+    try {
+      const rows = await api.getOfficialQuotaUsage({
+        nationCode: filterNation || undefined,
+        discipline: filterDiscipline || undefined,
+        gender: filterGender || undefined,
+      });
+      setQuotaUsage(rows);
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const allUnits = planning?.units.unassigned ?? [];
+  const assignedUnits = planning?.units.assigned ?? [];
+  const allUnitsCombined = [...allUnits, ...assignedUnits];
+  const allHotels = planning?.hotels ?? [];
+  const validationByUnit = planning?.validationByUnit ?? {};
+
+  const unitById = useMemo(() => {
+    const map = new Map<string, RoomBookingUnit>();
+    for (const unit of allUnitsCombined) map.set(unit.unitId, unit);
+    return map;
+  }, [allUnitsCombined]);
+
+  const slotById = useMemo(() => {
+    const map = new Map<string, AssignmentSlot>();
+    for (const hotel of allHotels) {
+      for (const slot of hotel.slots) map.set(slot.slotId, slot);
+    }
+    return map;
+  }, [allHotels]);
+
+  const bookingContextById = useMemo(() => {
+    const map = new Map<string, { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel }>();
+    for (const hotel of allHotels) {
+      for (const slot of hotel.slots) {
+        for (const booking of slot.bookings) {
+          map.set(booking.bookingId, { booking, slot, hotel });
         }
       }
     }
     return map;
-  }, [bookings]);
+  }, [allHotels]);
 
-  const unassignedAthletes = useMemo(
-    () => athletes.filter(a => !assignedAthleteIds.has(a.id)),
-    [athletes, assignedAthleteIds],
+  const nationOptions = useMemo(
+    () => Array.from(new Set(allUnitsCombined.map((unit) => unit.nationCode).filter(Boolean))).sort(),
+    [allUnitsCombined]
   );
-  const eligibleAthletes = onlyUnassigned ? unassignedAthletes : athletes;
-
-  const occupant1 = athletes.find(a => a.id === occupant1Id);
-  const occupant2 = athletes.find(a => a.id === occupant2Id);
-  const selectedHotelData = hotels.find(h => h.id === selectedHotel);
-  const selectedRoomTypeData = roomTypes.find(rt => rt.id === selectedRoomType);
-
-  const bookingRange = useMemo(() => {
-    const a1Start = parseIsoDate(occupant1?.arrivalDate || null);
-    const a1End = parseIsoDate(occupant1?.departureDate || null);
-    const a2Start = parseIsoDate(occupant2?.arrivalDate || null);
-    const a2End = parseIsoDate(occupant2?.departureDate || null);
-
-    if (!a1Start || !a1End) {
-      return { start: null as string | null, end: null as string | null };
-    }
-
-    if (bookingType !== "double") {
-      return { start: toIsoDate(a1Start), end: toIsoDate(a1End) };
-    }
-
-    if (!a2Start || !a2End) {
-      return { start: null as string | null, end: null as string | null };
-    }
-
-    const start = a1Start < a2Start ? a1Start : a2Start;
-    const end = a1End > a2End ? a1End : a2End;
-    return { start: toIsoDate(start), end: toIsoDate(end) };
-  }, [bookingType, occupant1?.arrivalDate, occupant1?.departureDate, occupant2?.arrivalDate, occupant2?.departureDate]);
-
-  const setupMissing = {
-    athletes: athletes.length === 0,
-    hotels: hotels.length === 0,
-    roomTypes: roomTypes.length === 0,
-  };
-  const setupIncomplete = setupMissing.athletes || setupMissing.hotels || setupMissing.roomTypes;
-
-  const compatibility = useMemo(() => {
-    const participants = [occupant1, bookingType === "double" ? occupant2 : undefined].filter(Boolean) as Athlete[];
-    if (participants.length < 2) return { ok: true, issues: [] as string[] };
-
-    const issues: string[] = [];
-    if (participants[0].nationCode !== participants[1].nationCode) issues.push("Nation mismatch");
-
-    const g1 = normalizeGender(participants[0]);
-    const g2 = normalizeGender(participants[1]);
-    if (!g1 || !g2) issues.push("Gender unknown");
-    else if (g1 !== g2) issues.push("Gender mismatch");
-
-    return { ok: issues.length === 0, issues };
-  }, [bookingType, occupant1, occupant2]);
-
-  const canSubmit = useMemo(() => {
-    if (setupIncomplete) return false;
-    if (!selectedHotel || !selectedRoomType) return false;
-    if (!occupant1) return false;
-    if (bookingType === "double" && !occupant2) return false;
-    if (occupant1Id && occupant1Id === occupant2Id) return false;
-    if (bookingType === "double" && !compatibility.ok) return false;
-    if (!bookingRange.start || !bookingRange.end) return false;
-
-    const participantIds = [occupant1.id, ...(bookingType === "double" && occupant2 ? [occupant2.id] : [])];
-    if (participantIds.some(id => assignedAthleteIds.has(id))) return false;
-
-    return true;
-  }, [
-    assignedAthleteIds,
-    bookingType,
-    bookingRange.end,
-    bookingRange.start,
-    compatibility.ok,
-    occupant1,
-    occupant1Id,
-    occupant2,
-    occupant2Id,
-    selectedHotel,
-    selectedRoomType,
-    setupIncomplete,
-  ]);
-
-  const handleBookingSubmit = async () => {
-    if (!canSubmit || !occupant1) {
-      setError("Bitte alle Pflichtfelder ausfüllen. (Hinweis: Athleten dürfen nur 1 Buchung haben.)");
-      return;
-    }
-
-    try {
-      setSubmitting(true);
-      setError(null);
-
-      const athleteIds = [
-        occupant1.id,
-        ...(bookingType === "double" && occupant2?.id ? [occupant2.id] : []),
-      ];
-
-      await api.createRoomAssignment({
-        athleteIds,
-        hotelId: selectedHotel,
-        roomTypeId: selectedRoomType,
-        roomNumber: roomNumber.trim() ? roomNumber.trim() : undefined,
-        checkInDate: bookingRange.start || undefined,
-        checkOutDate: bookingRange.end || undefined,
-      });
-
-      const freshBookings = await api.getRoomAssignments();
-      const normalized = normalizeBookings(freshBookings as unknown);
-      setBookings(normalized.bookings);
-
-      setBookingType("single");
-      setOccupant1Id("");
-      setOccupant2Id("");
-      setSelectedHotel("");
-      setSelectedRoomType("");
-      setRoomNumber("");
-    } catch (err) {
-      setError("Fehler beim Buchen");
-      console.error(err);
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const handleRemoveBooking = async (bookingId: string) => {
-    if (!confirm("Buchung wirklich entfernen?")) return;
-    try {
-      await api.deleteRoomAssignment(bookingId);
-      setBookings(prev => prev.filter(b => b.id !== bookingId));
-    } catch (err) {
-      setError("Fehler beim Entfernen der Buchung");
-      console.error(err);
-    }
-  };
-
-  const bookingRows = useMemo(() => {
-    const athleteToCount = new Map<string, number>();
-    for (const booking of bookings) {
-      for (const occ of booking.occupants || []) {
-        const id = occ?.athlete?.id;
-        if (!id) continue;
-        athleteToCount.set(id, (athleteToCount.get(id) || 0) + 1);
-      }
-    }
-
-    const rows = bookings.map((b) => {
-      const occs = b.occupants || [];
-      const nations = Array.from(new Set(occs.map(o => o.athlete?.nationCode).filter(Boolean))) as string[];
-      const genders = Array.from(new Set(occs.map(o => normalizeGender(o.athlete)).filter(Boolean))) as string[];
-      const functions = Array.from(new Set(occs.map(o => (o.athlete?.function || "").toString()).filter(Boolean))) as string[];
-      const names = occs.map(o => `${formatAthleteName(o.athlete)} (${o.athlete.nationCode})`);
-
-      const mixedNation = nations.length > 1;
-      const mixedGender = genders.length > 1;
-      const missingGender = occs.some(o => !normalizeGender(o.athlete));
-      const duplicate = occs.some(o => athleteToCount.get(o.athlete.id)! > 1);
-
-      return {
-        booking: b,
-        hotelName: b.hotel?.name || "",
-        hotelId: b.hotel?.id || "",
-        roomTypeName: b.roomType?.name || "",
-        roomTypeId: b.roomType?.id || "",
-        roomNumber: b.roomNumber || "",
-        nations,
-        genders,
-        functions,
-        names,
-        issues: {
-          mixedNation,
-          mixedGender,
-          missingGender,
-          duplicate,
-        },
-      };
-    });
-
-    return rows;
-  }, [bookings]);
-
-  const filteredBookingRows = useMemo(() => {
-    const q = roomsSearch.trim().toLowerCase();
-    return bookingRows
-      .filter(r => !roomsHotel || r.hotelId === roomsHotel)
-      .filter(r => !roomsRoomType || r.roomTypeId === roomsRoomType)
-      .filter(r => !roomsNation || r.nations.includes(roomsNation))
-      .filter(r => !roomsGender || r.genders.includes(roomsGender))
-      .filter(r => {
-        if (!q) return true;
-        const hay = `${r.hotelName} ${r.roomNumber} ${r.roomTypeName} ${r.names.join(" ")}`.toLowerCase();
-        return hay.includes(q);
-      })
-      .filter(r => {
-        if (!roomsIssuesOnly) return true;
-        return Object.values(r.issues).some(Boolean);
-      });
-  }, [bookingRows, roomsGender, roomsHotel, roomsIssuesOnly, roomsNation, roomsRoomType, roomsSearch]);
-
-  const pagedBookingRows = useMemo(() => {
-    const totalPages = Math.max(1, Math.ceil(filteredBookingRows.length / roomsPageSize));
-    const page = Math.min(Math.max(1, roomsPage), totalPages);
-    const start = (page - 1) * roomsPageSize;
-    const slice = filteredBookingRows.slice(start, start + roomsPageSize);
-    return { page, totalPages, slice };
-  }, [filteredBookingRows, roomsPage, roomsPageSize]);
-
-  const filteredAthletes = useMemo(() => {
-    const q = athleteSearch.trim().toLowerCase();
-    return athletes
-      .filter(a => !athleteNation || a.nationCode === athleteNation)
-      .filter(a => !athleteDiscipline || (a.discipline || "") === athleteDiscipline)
-      .filter(a => !athleteFunction || (a.function || "") === athleteFunction)
-      .filter(a => !athleteGender || (normalizeGender(a) || "") === athleteGender)
-      .filter(a => {
-        if (!athleteAssigned) return true;
-        const isAssigned = assignedAthleteIds.has(a.id);
-        return athleteAssigned === "assigned" ? isAssigned : !isAssigned;
-      })
-      .filter(a => !athleteHasShare || ((a.sharedWithName || "").trim() !== ""))
-      .filter(a => {
-        if (!q) return true;
-        return `${a.firstname} ${a.lastname} ${a.nationCode}`.toLowerCase().includes(q);
-      });
-  }, [
-    athleteAssigned,
-    athleteDiscipline,
-    athleteFunction,
-    athleteGender,
-    athleteHasShare,
-    athleteNation,
-    athleteSearch,
-    athletes,
-    assignedAthleteIds,
-  ]);
-
-  const athleteOptions = useMemo(() => {
-    return eligibleAthletes.map(a => ({
-      value: a.id,
-      label: `${formatAthleteName(a)} (${a.nationCode})`,
-    }));
-  }, [eligibleAthletes]);
-
-  const occupant2Options = useMemo(() => {
-    return eligibleAthletes
-      .filter(a => a.id !== occupant1Id)
-      .map(a => ({
-        value: a.id,
-        label: `${formatAthleteName(a)} (${a.nationCode})`,
-      }));
-  }, [eligibleAthletes, occupant1Id]);
-
-  const hotelOptions = useMemo(
-    () => hotels.map(h => ({ value: h.id, label: h.location ? `${h.name} (${h.location})` : h.name })),
-    [hotels],
-  );
-  const roomTypeOptions = useMemo(
-    () => roomTypes.map(rt => ({ value: rt.id, label: `${rt.name} (${rt.maxPersons}p)` })),
-    [roomTypes],
-  );
-
-  const eligibleInventoryByRoomType = useMemo(() => {
-    if (!selectedHotelData || !bookingRange.start || !bookingRange.end) return new Map<string, number>();
-    const inventories = selectedHotelData.roomInventories || [];
-    const map = new Map<string, number>();
-    for (const inv of inventories) {
-      if (!inv?.roomType?.id) continue;
-      if (inv.availableFrom <= bookingRange.start && inv.availableUntil >= bookingRange.end) {
-        map.set(inv.roomType.id, (map.get(inv.roomType.id) || 0) + (inv.roomCount || 0));
-      }
-    }
-    return map;
-  }, [bookingRange.end, bookingRange.start, selectedHotelData]);
-
-  const roomTypeOptionsForHotel = useMemo(() => {
-    if (!selectedHotelData) return roomTypeOptions;
-    if (!bookingRange.start || !bookingRange.end) return [];
-    return roomTypeOptions.filter(rt => eligibleInventoryByRoomType.has(rt.value));
-  }, [bookingRange.end, bookingRange.start, eligibleInventoryByRoomType, roomTypeOptions, selectedHotelData]);
-
-  useEffect(() => {
-    if (!selectedHotelData) return;
-    if (!bookingRange.start || !bookingRange.end) return;
-    if (!selectedRoomType) return;
-    if (!eligibleInventoryByRoomType.has(selectedRoomType)) {
-      setSelectedRoomType("");
-    }
-  }, [bookingRange.end, bookingRange.start, eligibleInventoryByRoomType, selectedHotelData, selectedRoomType]);
-
-  const usedRoomsByRoomType = useMemo(() => {
-    if (!selectedHotelData || !bookingRange.start || !bookingRange.end) return new Map<string, number>();
-    const map = new Map<string, number>();
-    for (const b of bookings) {
-      if (b.hotel?.id !== selectedHotelData.id) continue;
-      const rtId = b.roomType?.id;
-      if (!rtId) continue;
-
-      const overlaps = b.checkInDate && b.checkOutDate
-        ? datesOverlap(b.checkInDate, b.checkOutDate, bookingRange.start, bookingRange.end)
-        : true; // unknown dates -> count as used (safe)
-
-      if (!overlaps) continue;
-      map.set(rtId, (map.get(rtId) || 0) + 1);
-    }
-    return map;
-  }, [bookingRange.end, bookingRange.start, bookings, selectedHotelData]);
-
-  const kontingentRows = useMemo(() => {
-    if (!selectedHotelData || !bookingRange.start || !bookingRange.end) return [];
-    const rows = [];
-    for (const [roomTypeId, inventoryRooms] of eligibleInventoryByRoomType.entries()) {
-      const rt = roomTypes.find(r => r.id === roomTypeId);
-      const used = usedRoomsByRoomType.get(roomTypeId) || 0;
-      rows.push({
-        roomTypeId,
-        roomTypeName: rt?.name || roomTypeId,
-        inventoryRooms,
-        usedRooms: used,
-        remainingRooms: Math.max(0, inventoryRooms - used),
-      });
-    }
-    rows.sort((a, b) => a.roomTypeName.localeCompare(b.roomTypeName));
-    return rows;
-  }, [bookingRange.end, bookingRange.start, eligibleInventoryByRoomType, roomTypes, selectedHotelData, usedRoomsByRoomType]);
-
-  const remainingForSelectedRoomType = useMemo(() => {
-    const row = kontingentRows.find(r => r.roomTypeId === selectedRoomType);
-    return row ? row.remainingRooms : null;
-  }, [kontingentRows, selectedRoomType]);
-
-  const nationOptions = useMemo(() => {
-    const set = new Set<string>();
-    athletes.forEach(a => a.nationCode && set.add(a.nationCode));
-    return Array.from(set).sort();
-  }, [athletes]);
 
   const disciplineOptions = useMemo(() => {
-    const set = new Set<string>();
-    athletes.forEach(a => a.discipline && set.add(a.discipline));
-    return Array.from(set).sort();
-  }, [athletes]);
+    const values = new Set<string>();
+    for (const unit of allUnitsCombined) {
+      for (const occupant of unit.occupants) {
+        if (occupant.discipline) values.add(occupant.discipline);
+      }
+    }
+    return Array.from(values).sort();
+  }, [allUnitsCombined]);
 
-  const functionOptions = useMemo(() => {
-    const set = new Set<string>();
-    athletes.forEach(a => a.function && set.add(a.function));
-    return Array.from(set).sort();
-  }, [athletes]);
+  const genderOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const unit of allUnitsCombined) {
+      for (const occupant of unit.occupants) {
+        const gender = normalizeGender(occupant.gender);
+        if (gender) values.add(gender);
+      }
+    }
+    return Array.from(values).sort();
+  }, [allUnitsCombined]);
+
+  const queueUnits = useMemo(() => {
+    const source =
+      filterStatus === 'pending' ? allUnits :
+      filterStatus === 'done' ? assignedUnits :
+      allUnitsCombined;
+
+    const query = queueSearch.trim().toLowerCase();
+    return source.filter((unit) => {
+      const matchesNation = !filterNation || unit.nationCode === filterNation;
+      const matchesDiscipline = !filterDiscipline || unit.occupants.some((occ) => occ.discipline === filterDiscipline);
+      const matchesGender = !filterGender || unit.occupants.some((occ) => normalizeGender(occ.gender) === filterGender);
+      const haystack = `${unit.nationCode} ${unit.roomTypeLabel} ${unit.occupants.map((o) => `${o.firstname} ${o.lastname}`).join(' ')}`.toLowerCase();
+      const matchesSearch = !query || haystack.includes(query);
+      return matchesNation && matchesDiscipline && matchesGender && matchesSearch;
+    });
+  }, [allUnits, allUnitsCombined, assignedUnits, filterDiscipline, filterGender, filterNation, filterStatus, queueSearch]);
+
+  const filteredHotels = useMemo(() => {
+    const query = hotelSearch.trim().toLowerCase();
+    return allHotels.filter((hotel) => {
+      const matchesRegion = !regionFilter || hotel.region === regionFilter;
+      const haystack = `${hotel.hotelName} ${hotel.location || ''}`.toLowerCase();
+      const matchesSearch = !query || haystack.includes(query);
+      return matchesRegion && matchesSearch;
+    });
+  }, [allHotels, hotelSearch, regionFilter]);
+
+  const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
+
+  const queueProgress = useMemo(() => {
+    const total = allUnitsCombined.length;
+    const done = assignedUnits.length;
+    return {
+      done,
+      total,
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+    };
+  }, [allUnitsCombined.length, assignedUnits.length]);
+
+  const quotaViolations = useMemo(
+    () => quotaUsage.filter((row) => row.assignedOfficials > row.officialQuota || row.singleRoomsUsed > row.singleRoomsAllowed),
+    [quotaUsage]
+  );
 
   const shareRequests = useMemo(() => {
-    const athleteIndex = athletes.map(a => ({
-      athlete: a,
-      first: normalizeName(a.firstname),
-      last: normalizeName(a.lastname),
-      full: normalizeName(`${a.firstname} ${a.lastname}`),
-    }));
+    return queueUnits
+      .filter((unit) => unit.occupants.length >= 2)
+      .slice(0, 8)
+      .map((unit) => ({
+        unit,
+        compatible: sameGender(unit) && sameNation(unit),
+        mixed: !sameGender(unit) || !sameNation(unit),
+      }));
+  }, [queueUnits]);
 
-    const results = athletes
-      .filter(a => (a.sharedWithName || "").trim() !== "")
-      .map((a) => {
-        const requestedRaw = a.sharedWithName!.toString();
-        const requested = normalizeName(requestedRaw);
+  const shareRequestUnitIds = useMemo(
+    () => new Set(shareRequests.map(({ unit }) => unit.unitId)),
+    [shareRequests]
+  );
 
-        const matches = athleteIndex
-          .filter(c => c.athlete.id !== a.id)
-          .filter(c => requested.includes(c.first) && requested.includes(c.last))
-          .map(c => c.athlete);
+  const regularQueueUnits = useMemo(
+    () => queueUnits.filter((unit) => !shareRequestUnitIds.has(unit.unitId)),
+    [queueUnits, shareRequestUnitIds]
+  );
 
-        let status: MatchStatus = "unmatched";
-        let matched: Athlete | null = null;
-        if (matches.length === 1) {
-          status = "matched";
-          matched = matches[0];
-        } else if (matches.length > 1) {
-          status = "ambiguous";
-        }
+  const selectedUnit = selected?.type === 'unit' ? unitById.get(selected.id) ?? null : null;
+  const selectedBookingContext = selected?.type === 'booking' ? bookingContextById.get(selected.id) ?? null : null;
+  const selectedAssignedUnit = selectedBookingContext ? findAssignedUnitForBooking(selectedBookingContext.booking.bookingId, assignedUnits) : null;
 
-        const unassigned = !assignedAthleteIds.has(a.id);
-        const matchedUnassigned = matched ? !assignedAthleteIds.has(matched.id) : false;
+  const handleAssignToHotel = async (unitId: string, hotelId: string) => {
+    const validSlot = findFirstValidSlot(validationByUnit[unitId] || [], allHotels, hotelId);
+    if (!validSlot) {
+      setError('Für dieses Hotel gibt es keinen gültigen Slot für die ausgewählte Einheit.');
+      return;
+    }
+    await assignUnitToSlot(unitId, validSlot);
+  };
 
-        const nationOk = matched ? a.nationCode === matched.nationCode : true;
-        const g1 = normalizeGender(a);
-        const g2 = matched ? normalizeGender(matched) : null;
-        const genderOk = matched ? (!!g1 && !!g2 && g1 === g2) : true;
+  const handleAssignToRoomType = async (unitId: string, hotelId: string, roomTypeId: string) => {
+    const slot = findFirstValidSlotForRoomType(validationByUnit[unitId] || [], allHotels, hotelId, roomTypeId);
+    if (!slot) {
+      setError('Für diesen Zimmertyp gibt es keinen gültigen freien Slot.');
+      return;
+    }
+    await assignUnitToSlot(unitId, slot);
+  };
 
-        const start1 = a.arrivalDate || null;
-        const end1 = a.departureDate || null;
-        const start2 = matched?.arrivalDate || null;
-        const end2 = matched?.departureDate || null;
-        const datesKnown = !!start1 && !!end1 && !!start2 && !!end2;
-        const datesOverlapOk = datesKnown ? datesOverlap(start1, end1, start2, end2) : false;
-
-        return {
-          athlete: a,
-          requestedRaw,
-          status,
-          matched,
-          unassigned,
-          matchedUnassigned,
-          nationOk,
-          genderOk,
-          datesKnown,
-          datesOverlapOk,
-        };
+  const assignUnitToSlot = async (unitId: string, slot: AssignmentSlot) => {
+    const unit = unitById.get(unitId);
+    if (!unit) return;
+    try {
+      setSaving(true);
+      setError(null);
+      await api.assignRoomBookingUnit({
+        unitId,
+        hotelId: slot.hotelId,
+        roomTypeId: slot.roomTypeId,
+        roomNumber: slot.roomNumber || undefined,
+        checkInDate: unit.checkInDate || undefined,
+        checkOutDate: unit.checkOutDate || undefined,
+        assignedBookingId: unit.assignedBookingId || undefined,
       });
+      setDragging(null);
+      setDragOverHotelId(null);
+      setDragOverRoomTypeKey(null);
+      await Promise.all([
+        refreshPlanningData(),
+        loadQuotaUsage(),
+      ]);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Zuweisung fehlgeschlagen'));
+    } finally {
+      setSaving(false);
+    }
+  };
 
-    return results
-      .filter(r => !shareNation || r.athlete.nationCode === shareNation)
-      .filter(r => !shareGender || (normalizeGender(r.athlete) || "") === shareGender)
-      .filter(r => !shareStatus || r.status === shareStatus)
-      .filter(r => !shareOnlyUnassigned || r.unassigned);
-  }, [assignedAthleteIds, athletes, shareGender, shareNation, shareOnlyUnassigned, shareStatus]);
+  const handleUnassignBooking = async (bookingId: string) => {
+    try {
+      setSaving(true);
+      setError(null);
+      await api.unassignRoomBookingUnit(bookingId);
+      setSelected(null);
+      await Promise.all([
+        refreshPlanningData(),
+        loadQuotaUsage(),
+      ]);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Ausbuchen fehlgeschlagen'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    await Promise.all([
+      refreshPlanningData({ silent: false }),
+      loadQuotaUsage(),
+    ]);
+  };
 
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
-        <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Hotelzuweisungen</h2>
-          <p className="mt-1 text-sm text-gray-600">
-            Buchen Sie Zimmer (Single/Doppel) und verwalten Sie die aktuelle Belegung.
-          </p>
-        </div>
-        <Button type="button" variant="outline" onClick={loadData}>
-          Refresh
-        </Button>
-      </div>
+    <div className="flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
+      <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[#49617d] bg-[#20324a] text-slate-100 shadow-[0_18px_60px_rgba(10,20,35,0.24)]">
+        <TopBar
+          view={view}
+          onViewChange={setView}
+          progress={queueProgress}
+          violations={quotaViolations.length}
+          saving={saving}
+          onRefresh={handleRefresh}
+        />
 
-      {error && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-red-800">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-4 w-4" />
-            <div className="min-w-0">
-              <div className="font-medium">Fehler</div>
-              <div className="text-sm">{error}</div>
-            </div>
-          </div>
-        </div>
-      )}
+        {showAlert && quotaViolations.length > 0 && (
+          <AlertBanner row={quotaViolations[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
+        )}
 
-      {warnings.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
-          <div className="flex items-start gap-2">
-            <Info className="mt-0.5 h-4 w-4" />
-            <div className="min-w-0">
-              <div className="font-medium">Hinweis</div>
-              <ul className="mt-1 list-disc pl-5 text-sm">
-                {warnings.map(w => (
-                  <li key={w}>{w}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
+        <div className="grid min-h-0 flex-1 grid-cols-[336px_minmax(0,1fr)_332px] border-t border-[#49617d]">
+          <aside className="min-h-0 border-r border-[#49617d] bg-[#263a54]">
+            <QueueSidebar
+              units={queueUnits}
+              regularUnits={regularQueueUnits}
+              progress={queueProgress}
+              shareRequests={shareRequests}
+              filterNation={filterNation}
+              onFilterNation={setFilterNation}
+              filterDiscipline={filterDiscipline}
+              onFilterDiscipline={setFilterDiscipline}
+              filterGender={filterGender}
+              onFilterGender={setFilterGender}
+              filterStatus={filterStatus}
+              onFilterStatus={setFilterStatus}
+              search={queueSearch}
+              onSearch={setQueueSearch}
+              nationOptions={nationOptions}
+              disciplineOptions={disciplineOptions}
+              genderOptions={genderOptions}
+              draggingUnitId={dragging?.unitId || null}
+              onDragStart={(unitId) => {
+                setDragging({ unitId });
+                setSelected({ type: 'unit', id: unitId });
+              }}
+              onDragEnd={() => {
+                setDragging(null);
+                setDragOverHotelId(null);
+                setDragOverRoomTypeKey(null);
+              }}
+              onSelectUnit={(unitId) => setSelected({ type: 'unit', id: unitId })}
+              onQuickAssignPair={(unitId) => {
+                const targetHotel = activeHotel ?? filteredHotels[0];
+                if (targetHotel) void handleAssignToHotel(unitId, targetHotel.hotelId);
+              }}
+              selectedUnitId={selected?.type === 'unit' ? selected.id : null}
+            />
+          </aside>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-        <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">Share requests</h3>
-              <p className="mt-1 text-sm text-gray-600">
-                Wer möchte mit wem? Matching basiert auf `sharedWithName`.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-4">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Nation</label>
-              <select value={shareNation} onChange={(e) => setShareNation(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-sm">
-                <option value="">All</option>
-                {nationOptions.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Gender</label>
-              <select value={shareGender} onChange={(e) => setShareGender(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-sm">
-                <option value="">All</option>
-                <option value="M">M</option>
-                <option value="F">F</option>
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Match</label>
-              <select value={shareStatus} onChange={(e) => setShareStatus(e.target.value as any)} className="w-full rounded-md border px-2 py-1.5 text-sm">
-                <option value="">All</option>
-                <option value="matched">Matched</option>
-                <option value="unmatched">Unmatched</option>
-                <option value="ambiguous">Ambiguous</option>
-              </select>
-            </div>
-            <div className="flex items-end gap-2">
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input type="checkbox" checked={shareOnlyUnassigned} onChange={(e) => setShareOnlyUnassigned(e.target.checked)} />
-                Only unassigned
-              </label>
-            </div>
-          </div>
-
-          <div className="mt-4 overflow-hidden rounded-lg border">
-            <table className="w-full">
-              <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
-                <tr>
-                  <th className="px-3 py-2">Athlete</th>
-                  <th className="px-3 py-2">Requested</th>
-                  <th className="px-3 py-2">Matched</th>
-                  <th className="px-3 py-2">Status</th>
-                  <th className="px-3 py-2"></th>
-                </tr>
-              </thead>
-              <tbody className="divide-y bg-white text-sm">
-                {shareRequests.slice(0, 200).map((r) => {
-                  const canPrefill =
-                    r.status === "matched" &&
-                    !!r.matched &&
-                    r.unassigned &&
-                    r.matchedUnassigned &&
-                    r.nationOk &&
-                    r.genderOk &&
-                    r.datesKnown &&
-                    r.datesOverlapOk;
-
-                  return (
-                    <tr key={r.athlete.id}>
-                      <td className="px-3 py-2 font-medium text-gray-900">
-                        {formatAthleteName(r.athlete)} ({r.athlete.nationCode})
-                      </td>
-                      <td className="px-3 py-2 text-gray-700">{r.requestedRaw}</td>
-                      <td className="px-3 py-2 text-gray-700">
-                        {r.matched ? `${formatAthleteName(r.matched)} (${r.matched.nationCode})` : "—"}
-                      </td>
-                      <td className="px-3 py-2">
-                        <span className={cn(
-                          "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
-                          r.status === "matched" ? "border-green-200 bg-green-50 text-green-800"
-                            : r.status === "ambiguous" ? "border-amber-200 bg-amber-50 text-amber-800"
-                              : "border-gray-200 bg-gray-50 text-gray-700"
-                        )}>
-                          {r.status}
-                        </span>
-                        {r.status === "matched" && (!r.nationOk || !r.genderOk) && (
-                          <span className="ml-2 inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-800">
-                            rule mismatch
-                          </span>
-                        )}
-                        {r.status === "matched" && (!r.datesKnown || !r.datesOverlapOk) && (
-                          <span className="ml-2 inline-flex items-center rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800">
-                            date mismatch
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="outline"
-                          disabled={!canPrefill}
-                          onClick={() => {
-                            if (!r.matched) return;
-                            setBookingType("double");
-                            setOnlyUnassigned(true);
-                            setOccupant1Id(r.athlete.id);
-                            setOccupant2Id(r.matched.id);
-                          }}
-                        >
-                          Load pair
-                        </Button>
-                      </td>
-                    </tr>
-                  );
-                })}
-                {shareRequests.length === 0 && (
-                  <tr>
-                    <td colSpan={5} className="px-3 py-6 text-center text-sm text-gray-500">
-                      No share requests found.
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-
-          {shareRequests.length > 200 && (
-            <div className="mt-2 text-xs text-gray-500">
-              Showing first 200 results. Use filters to narrow down.
-            </div>
-          )}
-        </div>
-
-        <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">FIS quota (live)</h3>
-              <p className="mt-1 text-sm text-gray-600">
-                Officials = athletes entered + 2; single rooms entitlement depends on officials count.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Nation</label>
-              <select value={quotaNation} onChange={(e) => setQuotaNation(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-sm">
-                <option value="">All</option>
-                {nationOptions.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Discipline</label>
-              <select value={quotaDiscipline} onChange={(e) => setQuotaDiscipline(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-sm">
-                <option value="">All</option>
-                {disciplineOptions.map(d => <option key={d} value={d}>{d}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-gray-600">Gender</label>
-              <select value={quotaGender} onChange={(e) => setQuotaGender(e.target.value)} className="w-full rounded-md border px-2 py-1.5 text-sm">
-                <option value="">All</option>
-                <option value="M">M</option>
-                <option value="F">F</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="mt-4 overflow-hidden rounded-lg border">
-            <table className="w-full">
-              <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
-                <tr>
-                  <th className="px-3 py-2">Nation</th>
-                  <th className="px-3 py-2">Disc</th>
-                  <th className="px-3 py-2">G</th>
-                  <th className="px-3 py-2 text-right">Ath</th>
-                  <th className="px-3 py-2 text-right">Officials</th>
-                  <th className="px-3 py-2 text-right">Assigned</th>
-                  <th className="px-3 py-2 text-right">Singles</th>
-                  <th className="px-3 py-2">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y bg-white text-sm">
-                {quotaUsage
-                  .filter(r => !quotaNation || r.nationCode === quotaNation)
-                  .filter(r => !quotaDiscipline || (r.discipline || "") === quotaDiscipline)
-                  .filter(r => !quotaGender || r.gender === quotaGender)
-                  .slice(0, 200)
-                  .map((r) => {
-                    const status = getComplianceStatus(r.assignedOfficials, r.officialQuota);
-                    return (
-                      <tr key={`${r.nationCode}-${r.discipline}-${r.gender}`}>
-                        <td className="px-3 py-2 font-medium text-gray-900">{r.nationCode}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.discipline || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.gender}</td>
-                        <td className="px-3 py-2 text-right">{r.athletesEntered}</td>
-                        <td className="px-3 py-2 text-right">{r.officialQuota}</td>
-                        <td className="px-3 py-2 text-right">{r.assignedOfficials}</td>
-                        <td className="px-3 py-2 text-right">
-                          {r.singleRoomsUsed} / {r.singleRoomsAllowed}
-                        </td>
-                        <td className="px-3 py-2">
-                          <span className={cn(
-                            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs",
-                            status === "ok" ? "border-green-200 bg-green-50 text-green-800"
-                              : status === "over" ? "border-red-200 bg-red-50 text-red-800"
-                                : "border-amber-200 bg-amber-50 text-amber-800"
-                          )}>
-                            {status}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                {quotaUsage.length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="px-3 py-6 text-center text-sm text-gray-500">
-                      No quota data (missing discipline/gender data on athletes or endpoint not available).
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
-      {setupIncomplete ? (
-        <div className="rounded-lg border bg-white p-6 shadow-sm">
-          <h3 className="text-lg font-semibold text-gray-900">Setup required</h3>
-          <p className="mt-1 text-sm text-gray-600">
-            Assignments brauchen Athleten, Hotels und Zimmertypen. Importieren Sie Daten oder erstellen Sie sie manuell.
-          </p>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-3">
-            <div className="rounded-lg border bg-gray-50 p-4">
-              <div className="font-medium text-gray-900">Athletes</div>
-              <div className="mt-1 text-sm text-gray-600">{setupMissing.athletes ? "Missing" : "OK"}</div>
-              {setupMissing.athletes && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button asChild size="sm">
-                    <Link to="/import">
-                      <Plus className="h-4 w-4" />
-                      Import
-                    </Link>
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-lg border bg-gray-50 p-4">
-              <div className="font-medium text-gray-900">Hotels</div>
-              <div className="mt-1 text-sm text-gray-600">{setupMissing.hotels ? "Missing" : "OK"}</div>
-              {setupMissing.hotels && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button asChild size="sm">
-                    <Link to="/import">
-                      <Plus className="h-4 w-4" />
-                      Import
-                    </Link>
-                  </Button>
-                  <Button asChild size="sm" variant="outline">
-                    <Link to="/hotels">Add manually</Link>
-                  </Button>
-                </div>
-              )}
-            </div>
-
-            <div className="rounded-lg border bg-gray-50 p-4">
-              <div className="font-medium text-gray-900">Room types</div>
-              <div className="mt-1 text-sm text-gray-600">{setupMissing.roomTypes ? "Missing" : "OK"}</div>
-              {setupMissing.roomTypes && (
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button asChild size="sm">
-                    <Link to="/import">
-                      <Plus className="h-4 w-4" />
-                      Import
-                    </Link>
-                  </Button>
-                  <Button asChild size="sm" variant="outline">
-                    <Link to="/room-types">Add manually</Link>
-                  </Button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      ) : (
-        <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900">Neue Buchung</h3>
-              <p className="mt-1 text-sm text-gray-600">
-                One-booking rule: Athleten können nur 1 Buchung gleichzeitig haben.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-end">
-            <div className="lg:col-span-2">
-              <label className="mb-2 block text-sm font-medium text-gray-700">Booking type *</label>
-              <select
-                value={bookingType}
-                onChange={(e) => {
-                  setBookingType(e.target.value as BookingType);
-                  setOccupant2Id("");
-                }}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2"
-              >
-                <option value="single">Single</option>
-                <option value="double">Double</option>
-              </select>
-            </div>
-
-            <div className="lg:col-span-2">
-              <label className="mb-2 block text-sm font-medium text-gray-700">Athletes list</label>
-              <label className="flex items-center gap-2 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={onlyUnassigned}
-                  onChange={(e) => setOnlyUnassigned(e.target.checked)}
+          <main className="min-h-0 overflow-hidden bg-[#2b405d]">
+            {view === 'dispatch' && (
+              filteredHotels.length > 0 ? (
+                <DispatchWorkspace
+                  hotels={filteredHotels}
+                  activeHotel={activeHotel}
+                  allHotels={allHotels}
+                  validationByUnit={validationByUnit}
+                  draggingUnitId={dragging?.unitId || null}
+                  dragOverHotelId={dragOverHotelId}
+                  dragOverRoomTypeKey={dragOverRoomTypeKey}
+                  onSelectHotel={setActiveHotelId}
+                  onDragOverHotel={(hotelId) => setDragOverHotelId(hotelId)}
+                  onDragLeaveHotel={() => setDragOverHotelId(null)}
+                  onDropHotel={(hotelId) => dragging && void handleAssignToHotel(dragging.unitId, hotelId)}
+                  onDragOverRoomType={(roomTypeKey) => setDragOverRoomTypeKey(roomTypeKey)}
+                  onDragLeaveRoomType={() => setDragOverRoomTypeKey(null)}
+                  onDropRoomType={(hotelId, roomTypeId) => dragging && void handleAssignToRoomType(dragging.unitId, hotelId, roomTypeId)}
+                  hotelSearch={hotelSearch}
+                  onHotelSearch={setHotelSearch}
+                  regionFilter={regionFilter}
+                  onRegionFilter={setRegionFilter}
+                  onClearActiveHotel={() => setActiveHotelId(null)}
+                  selectedBookingId={selected?.type === 'booking' ? selected.id : null}
+                  onSelectBooking={(bookingId) => setSelected({ type: 'booking', id: bookingId })}
                 />
-                Only unassigned
-              </label>
-            </div>
+              ) : (
+                <EmptyCenter text="Keine Hotels für die aktuelle Auswahl gefunden." />
+              )
+            )}
 
-            <div className="lg:col-span-3">
-              <ComboBox
-                label="Occupant slot 1 *"
-                placeholder="-- Athlet wählen --"
-                value={occupant1Id}
-                onChange={(v) => {
-                  setOccupant1Id(v);
-                  if (occupant2Id === v) setOccupant2Id("");
+            {view === 'athletes' && (
+              <AthletesPanel
+                athletes={athletes}
+                selectedAthleteId={selected?.type === 'unit' ? unitById.get(selected.id)?.occupants[0]?.athleteId ?? null : null}
+                onSelectAthlete={(athleteId) => {
+                  const matchingUnit = allUnitsCombined.find((unit) => unit.occupants.some((occ) => occ.athleteId === athleteId));
+                  if (matchingUnit) setSelected({ type: 'unit', id: matchingUnit.unitId });
                 }}
-                options={athleteOptions}
-                emptyText={onlyUnassigned ? "Keine unassigned Athleten" : "Keine Athleten"}
               />
-            </div>
+            )}
 
-            <div className="lg:col-span-3">
-              <ComboBox
-                label={`Occupant slot 2 ${bookingType === "double" ? "*" : "(optional)"}`}
-                placeholder="-- Athlet wählen --"
-                value={occupant2Id}
-                onChange={setOccupant2Id}
-                options={occupant2Options}
-                disabled={bookingType !== "double"}
-                emptyText={onlyUnassigned ? "Keine passenden unassigned Athleten" : "Keine passenden Athleten"}
-              />
-            </div>
+            {view === 'quotas' && (
+              <QuotasPanel rows={quotaUsage} />
+            )}
+          </main>
 
-            <div className="lg:col-span-2">
-              <ComboBox
-                label="Hotel *"
-                placeholder="-- Hotel wählen --"
-                value={selectedHotel}
-                onChange={(v) => {
-                  setSelectedHotel(v);
-                  setSelectedRoomType("");
-                }}
-                options={hotelOptions}
-              />
-            </div>
+          <aside className="min-h-0 border-l border-[#49617d] bg-[#314763]">
+            <DetailPanel
+              selectedUnit={selectedUnit}
+              selectedBookingContext={selectedBookingContext}
+              selectedAssignedUnit={selectedAssignedUnit}
+              onUnassignBooking={handleUnassignBooking}
+            />
+          </aside>
+        </div>
 
-            <div className="lg:col-span-2">
-              <ComboBox
-                label="Room type *"
-                placeholder="-- Typ wählen --"
-                value={selectedRoomType}
-                onChange={setSelectedRoomType}
-                options={roomTypeOptionsForHotel}
-                disabled={!selectedHotel || !bookingRange.start || !bookingRange.end}
-              />
-              {selectedHotel && bookingRange.start && bookingRange.end && roomTypeOptionsForHotel.length === 0 && (
-                <p className="mt-1 text-xs text-red-700">
-                  No kontingent for this hotel in this date range.
-                </p>
-              )}
-            </div>
+        {error && (
+          <div className="border-t border-red-800/40 bg-red-950/40 px-4 py-3 text-sm text-red-100">
+            {error}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 
-            <div className="lg:col-span-4">
-              <label className="mb-2 block text-sm font-medium text-gray-700">Room number (optional)</label>
-              <Input
-                value={roomNumber}
-                onChange={(e) => setRoomNumber(e.target.value)}
-                placeholder="e.g. 203"
-              />
-            </div>
-
-            <div className="lg:col-span-8">
-              <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
-                <div className="grid gap-2 md:grid-cols-2">
-                  <div>
-                    <span className="font-medium">Hotel:</span> {selectedHotelData?.name ?? "-"}
-                  </div>
-                  <div>
-                    <span className="font-medium">Room type:</span> {selectedRoomTypeData?.name ?? "-"}
-                  </div>
-                  <div>
-                    <span className="font-medium">Dates:</span> {bookingRange.start || "-"} → {bookingRange.end || "-"}
-                  </div>
-                  <div>
-                    <span className="font-medium">Occupants:</span>{" "}
-                    {[occupant1, bookingType === "double" ? occupant2 : undefined]
-                      .filter(Boolean)
-                      .map(a => formatAthleteName(a as Athlete))
-                      .join(" + ") || "-"}
-                  </div>
-                </div>
-                {occupant1Id && assignedAthleteIds.has(occupant1Id) && (
-                  <div className="mt-2 text-red-700">
-                    <span className="font-medium">Blocked:</span> Occupant 1 is already assigned.
-                  </div>
-                )}
-                {occupant2Id && assignedAthleteIds.has(occupant2Id) && (
-                  <div className="mt-1 text-red-700">
-                    <span className="font-medium">Blocked:</span> Occupant 2 is already assigned.
-                  </div>
-                )}
-                {!compatibility.ok && (
-                  <div className="mt-2 text-red-700">
-                    <span className="font-medium">Blocked (rule):</span> {compatibility.issues.join(", ")}
-                  </div>
-                )}
-                {remainingForSelectedRoomType !== null && (
-                  <div className={cn("mt-2", remainingForSelectedRoomType <= 0 ? "text-red-700" : "text-blue-900")}>
-                    <span className="font-medium">Kontingent remaining:</span>{" "}
-                    {remainingForSelectedRoomType}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="lg:col-span-12">
-              {selectedHotelData && bookingRange.start && bookingRange.end && (
-                <div className="rounded-lg border border-gray-200 bg-gray-50 p-4">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="text-sm font-semibold text-gray-900">
-                      Kontingent: {selectedHotelData.name} ({bookingRange.start} → {bookingRange.end})
-                    </div>
-                    <div className="text-xs text-gray-600">
-                      Inventory rows covering this date range • Used counts overlapping bookings
-                    </div>
-                  </div>
-                  <div className="mt-3 overflow-hidden rounded-md border bg-white">
-                    <table className="w-full text-sm">
-                      <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
-                        <tr>
-                          <th className="px-3 py-2">Room type</th>
-                          <th className="px-3 py-2 text-right">Inventory</th>
-                          <th className="px-3 py-2 text-right">Used</th>
-                          <th className="px-3 py-2 text-right">Remaining</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {kontingentRows.map(r => (
-                          <tr key={r.roomTypeId}>
-                            <td className="px-3 py-2">{r.roomTypeName}</td>
-                            <td className="px-3 py-2 text-right">{r.inventoryRooms}</td>
-                            <td className="px-3 py-2 text-right">{r.usedRooms}</td>
-                            <td className={cn("px-3 py-2 text-right font-medium", r.remainingRooms <= 0 ? "text-red-700" : "text-gray-900")}>
-                              {r.remainingRooms}
-                            </td>
-                          </tr>
-                        ))}
-                        {kontingentRows.length === 0 && (
-                          <tr>
-                            <td colSpan={4} className="px-3 py-6 text-center text-sm text-gray-500">
-                              No kontingent rows cover this date range.
-                            </td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="lg:col-span-12">
-              <Button
-                type="button"
-                onClick={handleBookingSubmit}
-                disabled={!canSubmit || submitting || (remainingForSelectedRoomType !== null && remainingForSelectedRoomType <= 0)}
-                className="w-full md:w-auto"
-              >
-                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                {bookingType === "double" ? "Book both now" : "Book now"}
-              </Button>
-            </div>
+function TopBar({
+  view,
+  onViewChange,
+  progress,
+  violations,
+  saving,
+  onRefresh,
+}: {
+  view: AppView;
+  onViewChange: (view: AppView) => void;
+  progress: { done: number; total: number; percent: number };
+  violations: number;
+  saving: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="flex h-14 items-center justify-between border-b border-[#334766] bg-[#122033] px-4">
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20 text-xs font-bold text-blue-300">
+            FIS
+          </div>
+          <div>
+            <div className="text-sm font-bold text-white">NWSC 2027</div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Zimmer-Disposition</div>
           </div>
         </div>
-      )}
+        <div className="flex items-center gap-2">
+          {[
+            { id: 'dispatch', label: 'Disposition' },
+            { id: 'athletes', label: 'Athleten' },
+            { id: 'quotas', label: 'Quoten' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onViewChange(item.id as AppView)}
+              className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-all ${
+                view === item.id
+                  ? 'border-blue-500/50 bg-blue-500/15 text-blue-200'
+                  : 'border-transparent text-slate-500 hover:bg-[#152034] hover:text-slate-300'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
 
-      <div className="rounded-lg bg-white p-6 shadow-sm ring-1 ring-gray-200">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+      <div className="flex items-center gap-4 text-xs">
+        <div className="flex items-center gap-2">
+          <div className="w-20">
+            <CapacityBar pct={progress.percent} trackClassName="bg-[#314766]" />
+          </div>
+          <span className="font-mono text-slate-400">
+            <strong className="text-slate-200">{progress.done}</strong> / {progress.total}
+          </span>
+        </div>
+
+        {violations > 0 && (
+          <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-amber-300">
+            {violations} Quote
+          </div>
+        )}
+
+        <button
+          onClick={onRefresh}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[#152034] hover:text-slate-200"
+        >
+          <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
+        </button>
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[#152034] hover:text-slate-200">
+          <Bell className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AlertBanner({
+  row,
+  onClose,
+  onGoQuotas,
+}: {
+  row: OfficialQuotaUsage;
+  onClose: () => void;
+  onGoQuotas: () => void;
+}) {
+  const officialText = row.assignedOfficials > row.officialQuota
+    ? `${row.nationCode} überschreitet die Offiziellen-Quote (${row.assignedOfficials}/${row.officialQuota})`
+    : '';
+  const singleText = row.singleRoomsUsed > row.singleRoomsAllowed
+    ? `Einzelzimmer-Quote (${row.singleRoomsUsed}/${row.singleRoomsAllowed})`
+    : '';
+  const message = [officialText, singleText].filter(Boolean).join(' und ');
+
+  return (
+    <div className="flex items-center gap-3 border-b border-amber-700/40 bg-[#3a2614] px-4 py-2.5 text-sm text-amber-200">
+      <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+      <div className="min-w-0 flex-1 truncate">
+        {message || 'Quoten-Warnung'}
+      </div>
+      <button onClick={onGoQuotas} className="font-semibold text-amber-200 hover:text-white">
+        Zu den Quoten →
+      </button>
+      <button onClick={onClose} className="text-amber-400 hover:text-white">
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function QueueSidebar({
+  units,
+  regularUnits,
+  progress,
+  shareRequests,
+  filterNation,
+  onFilterNation,
+  filterDiscipline,
+  onFilterDiscipline,
+  filterGender,
+  onFilterGender,
+  filterStatus,
+  onFilterStatus,
+  search,
+  onSearch,
+  nationOptions,
+  disciplineOptions,
+  genderOptions,
+  draggingUnitId,
+  onDragStart,
+  onDragEnd,
+  onSelectUnit,
+  onQuickAssignPair,
+  selectedUnitId,
+}: {
+  units: RoomBookingUnit[];
+  regularUnits: RoomBookingUnit[];
+  progress: { done: number; total: number; percent: number };
+  shareRequests: Array<{ unit: RoomBookingUnit; compatible: boolean; mixed: boolean }>;
+  filterNation: string;
+  onFilterNation: (value: string) => void;
+  filterDiscipline: string;
+  onFilterDiscipline: (value: string) => void;
+  filterGender: string;
+  onFilterGender: (value: string) => void;
+  filterStatus: QueueStatus;
+  onFilterStatus: (value: QueueStatus) => void;
+  search: string;
+  onSearch: (value: string) => void;
+  nationOptions: string[];
+  disciplineOptions: string[];
+  genderOptions: string[];
+  draggingUnitId: string | null;
+  onDragStart: (unitId: string) => void;
+  onDragEnd: () => void;
+  onSelectUnit: (unitId: string) => void;
+  onQuickAssignPair: (unitId: string) => void;
+  selectedUnitId: string | null;
+}) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-[#49617d] px-4 py-3">
+        <div className="mb-2 flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-gray-900">Current bookings ({bookings.length})</h3>
-            {bookings.length === 0 && !setupIncomplete && (
-              <p className="mt-1 text-sm text-gray-600">Noch keine Buchungen. Erstellen Sie die erste oben.</p>
+            <div className="text-sm font-bold uppercase tracking-wide text-slate-100">Dispo-Warteschlange</div>
+            <div className="text-xs text-slate-400">{units.length} passende Einheiten</div>
+          </div>
+          <div className="rounded-xl border border-amber-700/40 bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-300">
+            {units.length}
+          </div>
+        </div>
+
+        <SearchInput value={search} onChange={onSearch} placeholder="Athleten suchen..." />
+
+        <div className="mt-4 space-y-2">
+          <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" />
+          <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
+        </div>
+
+        <div className="mt-4 flex gap-2">
+          {[
+            { id: 'pending', label: 'Offen' },
+            { id: 'done', label: 'Erledigt' },
+            { id: 'all', label: 'Alle' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onFilterStatus(item.id as QueueStatus)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                filterStatus === item.id
+                  ? 'bg-blue-600 text-white'
+                  : 'bg-[#20324a] text-slate-300 hover:bg-[#2a3d58] hover:text-white'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {shareRequests.length > 0 && (
+          <div className="border-b border-[#49617d] px-3 py-2">
+            <div className="mb-2 flex items-center justify-between px-1">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+                <Link2 className="h-3.5 w-3.5 text-violet-400" />
+                Zimmerpartner
+              </div>
+              <span className="rounded-md bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-300">
+                {shareRequests.length}
+              </span>
+            </div>
+            <div className="space-y-2">
+              {shareRequests.map(({ unit, mixed }) => (
+                <div
+                  key={unit.unitId}
+                  onClick={() => onSelectUnit(unit.unitId)}
+                  className="w-full cursor-pointer rounded-2xl border border-violet-700/40 bg-[#22324a] px-3 py-3 text-left transition-all hover:border-violet-400/60 hover:bg-[#2a3d58]"
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-sm font-semibold text-white">
+                        {unit.occupants.map((occ) => occ.lastname).join(' ↔ ')}
+                      </div>
+                      <div className="mt-1 text-[10px] font-mono text-slate-400">
+                        {unit.occupants.map((occ) => `${occ.nationCode} ${normalizeGender(occ.gender) || '—'}`).join(' · ')}
+                      </div>
+                    </div>
+                    <div className={`text-xs font-semibold ${mixed ? 'text-amber-300' : 'text-emerald-300'}`}>
+                      {mixed ? 'Warnung' : 'ok'}
+                    </div>
+                  </div>
+                  {mixed && (
+                    <div className="mt-2 text-[11px] text-amber-200">
+                      Gemischtes Paar erkannt — Zuweisung ist erlaubt, bitte kurz prüfen.
+                    </div>
+                  )}
+                  {unit.occupants.length >= 2 && (
+                    <button
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onQuickAssignPair(unit.unitId);
+                      }}
+                      className="mt-3 w-full rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-400"
+                    >
+                      Paar zuweisen → {unit.roomTypeLabel}
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <div className="px-3 py-3">
+          <div className="space-y-2">
+            {regularUnits.map((unit) => (
+              <QueueUnitCard
+                key={unit.unitId}
+                unit={unit}
+                selected={selectedUnitId === unit.unitId}
+                dragging={draggingUnitId === unit.unitId}
+                onSelect={() => onSelectUnit(unit.unitId)}
+                onDragStart={() => onDragStart(unit.unitId)}
+                onDragEnd={onDragEnd}
+              />
+            ))}
+            {!regularUnits.length && !shareRequests.length && (
+              <div className="rounded-2xl border border-dashed border-[#5a7391] bg-[#2a3d58] px-4 py-10 text-center text-sm text-slate-300">
+                Keine Einheiten mit den aktuellen Filtern.
+              </div>
             )}
           </div>
+        </div>
+      </div>
 
-          <ToggleGroup
-            type="single"
-            value={viewMode}
-            onValueChange={(v) => v && setViewMode(v as ViewMode)}
-            variant="outline"
-            size="sm"
-          >
-            <ToggleGroupItem value="rooms">
-              <Users className="h-4 w-4" />
-              Rooms
-            </ToggleGroupItem>
-            <ToggleGroupItem value="athletes">
-              <Users className="h-4 w-4" />
-              Athletes
-            </ToggleGroupItem>
-          </ToggleGroup>
+      <div className="border-t border-[#49617d] px-4 py-3">
+        <div className="mb-2 flex items-center justify-between text-xs">
+          <span className="text-slate-400">Gesamtfortschritt</span>
+          <span className="font-mono text-slate-300">{progress.done}/{progress.total}</span>
+        </div>
+        <CapacityBar pct={progress.percent} />
+        <div className="mt-2 flex items-center justify-between text-[11px]">
+          <span className="text-blue-300">{progress.percent}%</span>
+          <span className="text-slate-400">{Math.max(progress.total - progress.done, 0)} offen</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+function QueueUnitCard({
+  unit,
+  selected,
+  dragging,
+  onSelect,
+  onDragStart,
+  onDragEnd,
+}: {
+  unit: RoomBookingUnit;
+  selected: boolean;
+  dragging: boolean;
+  onSelect: () => void;
+  onDragStart: () => void;
+  onDragEnd: () => void;
+}) {
+  const hasPairWarning = !sameGender(unit) || !sameNation(unit);
+  return (
+    <button
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onClick={onSelect}
+      className={`w-full rounded-2xl border px-3 py-3 text-left transition-all ${
+        selected
+          ? 'border-blue-400/60 bg-[#244064]'
+          : 'border-[#39506f] bg-[#1b2c43] hover:border-[#4b6587] hover:bg-[#213652]'
+      } ${dragging ? 'opacity-60' : ''}`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-sm font-bold text-white">
+            {unit.occupants.map((occ) => occ.lastname).join(' ↔ ')}
+          </div>
+          <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
+            {unit.occupants.map((occ) => (
+              <span key={occ.athleteId}>{occ.nationCode}</span>
+            ))}
+            <span>·</span>
+            <span>{unit.occupants.map((occ) => normalizeGender(occ.gender) || '—').join('/')}</span>
+          </div>
+        </div>
+        <div className={`text-xs font-semibold ${hasPairWarning ? 'text-amber-300' : 'text-emerald-300'}`}>
+          {hasPairWarning ? 'Warnung' : 'ok'}
+        </div>
+      </div>
+
+      <div className="mt-3 flex items-center justify-between text-xs">
+        <div className="text-slate-400">
+          {unit.roomTypeLabel} · {formatShortDate(unit.checkInDate)} → {formatShortDate(unit.checkOutDate)}
+        </div>
+        <div className="text-slate-500">
+          {unit.assignedBookingId ? 'zugewiesen' : 'offen'}
+        </div>
+      </div>
+    </button>
+  );
+}
+
+function DispatchWorkspace({
+  hotels,
+  activeHotel,
+  allHotels,
+  validationByUnit,
+  draggingUnitId,
+  dragOverHotelId,
+  dragOverRoomTypeKey,
+  onSelectHotel,
+  onDragOverHotel,
+  onDragLeaveHotel,
+  onDropHotel,
+  onDragOverRoomType,
+  onDragLeaveRoomType,
+  onDropRoomType,
+  hotelSearch,
+  onHotelSearch,
+  regionFilter,
+  onRegionFilter,
+  onClearActiveHotel,
+  selectedBookingId,
+  onSelectBooking,
+}: {
+  hotels: AssignmentGridHotel[];
+  activeHotel: AssignmentGridHotel | null;
+  allHotels: AssignmentGridHotel[];
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
+  draggingUnitId: string | null;
+  dragOverHotelId: string | null;
+  dragOverRoomTypeKey: string | null;
+  onSelectHotel: (hotelId: string) => void;
+  onDragOverHotel: (hotelId: string) => void;
+  onDragLeaveHotel: () => void;
+  onDropHotel: (hotelId: string) => void;
+  onDragOverRoomType: (roomTypeKey: string) => void;
+  onDragLeaveRoomType: () => void;
+  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  hotelSearch: string;
+  onHotelSearch: (value: string) => void;
+  regionFilter: string;
+  onRegionFilter: (value: string) => void;
+  onClearActiveHotel: () => void;
+  selectedBookingId: string | null;
+  onSelectBooking: (bookingId: string) => void;
+}) {
+  return (
+    <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)]">
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)]">
+        <HotelGridOrDetail
+          hotels={hotels}
+          activeHotel={activeHotel}
+          allHotels={allHotels}
+          validationByUnit={validationByUnit}
+          draggingUnitId={draggingUnitId}
+          dragOverHotelId={dragOverHotelId}
+          dragOverRoomTypeKey={dragOverRoomTypeKey}
+          onSelectHotel={onSelectHotel}
+          onDragOverHotel={onDragOverHotel}
+          onDragLeaveHotel={onDragLeaveHotel}
+          onDropHotel={onDropHotel}
+          onDragOverRoomType={onDragOverRoomType}
+          onDragLeaveRoomType={onDragLeaveRoomType}
+          onDropRoomType={onDropRoomType}
+          hotelSearch={hotelSearch}
+          onHotelSearch={onHotelSearch}
+          regionFilter={regionFilter}
+          onRegionFilter={onRegionFilter}
+          onClearActiveHotel={onClearActiveHotel}
+          selectedBookingId={selectedBookingId}
+          onSelectBooking={onSelectBooking}
+        />
+      </div>
+    </div>
+  );
+}
+
+function HotelGridOrDetail({
+  hotels,
+  activeHotel,
+  validationByUnit,
+  draggingUnitId,
+  dragOverHotelId,
+  dragOverRoomTypeKey,
+  onSelectHotel,
+  onDragOverHotel,
+  onDragLeaveHotel,
+  onDropHotel,
+  onDragOverRoomType,
+  onDragLeaveRoomType,
+  onDropRoomType,
+  hotelSearch,
+  onHotelSearch,
+  regionFilter,
+  onRegionFilter,
+  onClearActiveHotel,
+  selectedBookingId,
+  onSelectBooking,
+}: {
+  hotels: AssignmentGridHotel[];
+  activeHotel: AssignmentGridHotel | null;
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
+  draggingUnitId: string | null;
+  dragOverHotelId: string | null;
+  dragOverRoomTypeKey: string | null;
+  onSelectHotel: (hotelId: string) => void;
+  onDragOverHotel: (hotelId: string) => void;
+  onDragLeaveHotel: () => void;
+  onDropHotel: (hotelId: string) => void;
+  onDragOverRoomType: (roomTypeKey: string) => void;
+  onDragLeaveRoomType: () => void;
+  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  hotelSearch: string;
+  onHotelSearch: (value: string) => void;
+  regionFilter: string;
+  onRegionFilter: (value: string) => void;
+  onClearActiveHotel: () => void;
+  selectedBookingId: string | null;
+  onSelectBooking: (bookingId: string) => void;
+}) {
+  return (
+    <div className={`grid h-full min-h-0 ${activeHotel ? 'grid-rows-[310px_minmax(0,1fr)]' : 'grid-rows-[minmax(0,1fr)]'}`}>
+      <div className={activeHotel ? 'border-b border-[#49617d]' : ''}>
+        <HotelGridView
+          hotels={hotels}
+          hotelSearch={hotelSearch}
+          onHotelSearch={onHotelSearch}
+          regionFilter={regionFilter}
+          onRegionFilter={onRegionFilter}
+          activeHotelId={activeHotel?.hotelId ?? null}
+          draggingUnitId={draggingUnitId}
+          dragOverHotelId={dragOverHotelId}
+          validationByUnit={validationByUnit}
+          onSelectHotel={onSelectHotel}
+          onDragOverHotel={onDragOverHotel}
+          onDragLeaveHotel={onDragLeaveHotel}
+          onDropHotel={onDropHotel}
+        />
+      </div>
+      {activeHotel && (
+        <div className="min-h-0">
+          <HotelDetailView
+            hotel={activeHotel}
+            draggingUnitId={draggingUnitId}
+            dragOverRoomTypeKey={dragOverRoomTypeKey}
+            onDragOverRoomType={onDragOverRoomType}
+            onDragLeaveRoomType={onDragLeaveRoomType}
+            onDropRoomType={onDropRoomType}
+            onBack={onClearActiveHotel}
+            selectedBookingId={selectedBookingId}
+            onSelectBooking={onSelectBooking}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HotelGridView({
+  hotels,
+  hotelSearch,
+  onHotelSearch,
+  regionFilter,
+  onRegionFilter,
+  activeHotelId,
+  draggingUnitId,
+  dragOverHotelId,
+  validationByUnit,
+  onSelectHotel,
+  onDragOverHotel,
+  onDragLeaveHotel,
+  onDropHotel,
+}: {
+  hotels: AssignmentGridHotel[];
+  hotelSearch: string;
+  onHotelSearch: (value: string) => void;
+  regionFilter: string;
+  onRegionFilter: (value: string) => void;
+  activeHotelId: string | null;
+  draggingUnitId: string | null;
+  dragOverHotelId: string | null;
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
+  onSelectHotel: (hotelId: string) => void;
+  onDragOverHotel: (hotelId: string) => void;
+  onDragLeaveHotel: () => void;
+  onDropHotel: (hotelId: string) => void;
+}) {
+  const usedBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slot.bookings.reduce((bSum, booking) => bSum + booking.occupants.length, 0), 0), 0);
+  const totalBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slot.capacity, 0), 0);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[#49617d] px-4 py-3">
+        <SearchInput value={hotelSearch} onChange={onHotelSearch} placeholder="Hotels oder Orte suchen..." dark />
+        <div className="flex items-center gap-1">
+          {['', 'Bludenz', 'Feldkirch', 'Montafon'].map((region) => (
+            <button
+              key={region || 'all'}
+              onClick={() => onRegionFilter(region)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                regionFilter === region
+                  ? region
+                    ? 'border border-blue-700/40 bg-blue-500/15 text-blue-300'
+                  : 'bg-[#314763] text-slate-100'
+                  : 'text-slate-400 hover:bg-[#344b68] hover:text-white'
+              }`}
+            >
+              {region || 'Alle Regionen'}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-3 text-xs">
+          <span className="font-mono text-slate-300">
+            <strong className="text-white">{usedBeds}</strong> / {totalBeds} Betten
+          </span>
+          <div className="w-24">
+            <CapacityBar pct={totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0} />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4">
+        <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+          {hotels.map((hotel) => (
+            <HotelCard
+              key={hotel.hotelId}
+              hotel={hotel}
+              active={activeHotelId === hotel.hotelId}
+              dragOver={dragOverHotelId === hotel.hotelId}
+              dragging={!!draggingUnitId}
+              canDrop={draggingUnitId ? hotelHasValidDrop(validationByUnit[draggingUnitId] || [], hotel.hotelId) : false}
+              onSelect={() => onSelectHotel(hotel.hotelId)}
+              onDragOver={() => onDragOverHotel(hotel.hotelId)}
+              onDragLeave={onDragLeaveHotel}
+              onDrop={() => onDropHotel(hotel.hotelId)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HotelCard({
+  hotel,
+  active,
+  dragOver,
+  dragging,
+  canDrop,
+  onSelect,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+}: {
+  hotel: AssignmentGridHotel;
+  active: boolean;
+  dragOver: boolean;
+  dragging: boolean;
+  canDrop: boolean;
+  onSelect: () => void;
+  onDragOver: () => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
+}) {
+  const totals = summarizeHotel(hotel);
+  const regionColor = REGION_COLORS[hotel.region || ''] || '#4F8EF7';
+
+  return (
+    <div
+      onClick={onSelect}
+      onDrop={(event) => {
+        event.preventDefault();
+        onDrop();
+      }}
+      onDragOver={(event) => {
+        event.preventDefault();
+        onDragOver();
+      }}
+      onDragLeave={onDragLeave}
+      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border transition-all ${
+        dragOver
+          ? canDrop
+            ? 'scale-[1.02] border-blue-400/60 bg-blue-500/15'
+            : 'border-red-400/50 bg-red-500/10'
+          : active
+            ? 'border-blue-400/60 bg-[#395274]'
+            : 'border-[#506987] bg-[#314763] hover:border-[#6580a1] hover:bg-[#395274]'
+      }`}
+    >
+      <div className="h-[3px] w-full" style={{ backgroundColor: regionColor }} />
+      <div className="flex flex-1 flex-col gap-3 p-4">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold text-white">{hotel.hotelName}</div>
+            <div className="mt-1 flex items-center gap-1.5 text-xs">
+              <span className="text-slate-400">{hotel.location || '—'}</span>
+              <span className="text-slate-600">·</span>
+              <span className="font-semibold" style={{ color: regionColor }}>{hotel.region}</span>
+            </div>
+          </div>
+          <div className="rounded-md bg-[#4a6382] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+            {totals.days}d
+          </div>
         </div>
 
-        {viewMode === "rooms" ? (
-          <div className="mt-5 space-y-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-              <div className="md:col-span-2">
-                <Input
-                  value={roomsSearch}
-                  onChange={(e) => {
-                    setRoomsSearch(e.target.value);
-                    setRoomsPage(1);
-                  }}
-                  placeholder="Search hotel/room/athlete"
-                />
-              </div>
-              <div>
-                <select value={roomsHotel} onChange={(e) => { setRoomsHotel(e.target.value); setRoomsPage(1); }} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All hotels</option>
-                  {hotelOptions.map(h => <option key={h.value} value={h.value}>{h.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <select value={roomsRoomType} onChange={(e) => { setRoomsRoomType(e.target.value); setRoomsPage(1); }} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All room types</option>
-                  {roomTypeOptions.map(rt => <option key={rt.value} value={rt.value}>{rt.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <select value={roomsNation} onChange={(e) => { setRoomsNation(e.target.value); setRoomsPage(1); }} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All nations</option>
-                  {nationOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
-              </div>
-              <div>
-                <select value={roomsGender} onChange={(e) => { setRoomsGender(e.target.value); setRoomsPage(1); }} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All genders</option>
-                  <option value="M">M</option>
-                  <option value="F">F</option>
-                </select>
-              </div>
-            </div>
+          <div className="rounded-xl bg-[#2a3d58] p-3">
+          <div className="mb-2 flex items-center justify-between text-xs">
+            <span className="font-medium text-slate-300">{totals.usedBeds} / {totals.totalBeds} Betten</span>
+            <span className={`font-mono text-sm font-bold ${totals.percent >= 75 ? 'text-amber-300' : totals.percent > 0 ? 'text-blue-200' : 'text-slate-500'}`}>
+              {totals.percent}%
+            </span>
+          </div>
+          <CapacityBar pct={totals.percent} />
+        </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <label className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={roomsIssuesOnly}
-                  onChange={(e) => { setRoomsIssuesOnly(e.target.checked); setRoomsPage(1); }}
-                />
-                Show only issues
-              </label>
-              <div className="flex items-center gap-2 text-sm text-gray-700">
-                <span className="text-gray-500">Rows:</span>
-                <select value={roomsPageSize} onChange={(e) => { setRoomsPageSize(parseInt(e.target.value, 10)); setRoomsPage(1); }} className="rounded-md border px-2 py-1.5 text-sm">
-                  <option value={50}>50</option>
-                  <option value={100}>100</option>
-                  <option value={200}>200</option>
-                </select>
-                <span className="text-gray-500">
-                  {filteredBookingRows.length} total
-                </span>
+        <div className="space-y-2">
+          {totals.roomTypes.map((row) => (
+            <div key={row.roomTypeId}>
+              <div className="mb-1 flex items-center justify-between text-[10px]">
+                <span className="font-mono text-slate-300">{row.roomTypeName}</span>
+                <span className="font-mono text-slate-400">{row.usedBeds}/{row.totalBeds}</span>
               </div>
+              <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1.5" />
             </div>
+          ))}
+        </div>
+      </div>
 
-            <div className="overflow-hidden rounded-lg border">
-              <div className="max-h-[620px] overflow-auto">
-                <table className="w-full">
-                  <thead className="sticky top-0 z-10 bg-gray-50 text-left text-xs font-semibold text-gray-600">
-                    <tr>
-                      <th className="px-3 py-2">Hotel</th>
-                      <th className="px-3 py-2">Room</th>
-                      <th className="px-3 py-2">Type</th>
-                      <th className="px-3 py-2">Occupants</th>
-                      <th className="px-3 py-2">Check-in</th>
-                      <th className="px-3 py-2">Check-out</th>
-                      <th className="px-3 py-2">Nation</th>
-                      <th className="px-3 py-2">Gender</th>
-                      <th className="px-3 py-2">Function</th>
-                      <th className="px-3 py-2">Issues</th>
-                      <th className="px-3 py-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y bg-white text-sm">
-                    {pagedBookingRows.slice.map((r) => (
-                      <tr key={r.booking.id}>
-                        <td className="px-3 py-2 font-medium text-gray-900">{r.hotelName}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.roomNumber || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.roomTypeName}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1.5">
-                            {r.booking.occupants.map(o => (
-                              <span key={o.id} className="rounded-full border bg-gray-50 px-2 py-0.5 text-xs text-gray-800">
-                                {formatAthleteName(o.athlete)}
-                              </span>
-                            ))}
+      <div className="flex items-center justify-between border-t border-[#49617d]/60 px-4 pb-3 pt-1">
+        <span className="text-[10px] font-mono text-slate-400">{totals.totalRooms} Zimmer · {totals.days}d</span>
+        <div className={`flex items-center gap-1 text-[11px] font-bold ${dragOver && canDrop ? 'text-blue-200' : active ? 'text-blue-200' : 'text-slate-400 group-hover:text-blue-200'}`}>
+          {dragging && dragOver ? (canDrop ? 'Loslassen zum Zuweisen' : 'Blockiert') : 'Öffnen →'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HotelDetailView({
+  hotel,
+  draggingUnitId,
+  dragOverRoomTypeKey,
+  onDragOverRoomType,
+  onDragLeaveRoomType,
+  onDropRoomType,
+  onBack,
+  selectedBookingId,
+  onSelectBooking,
+}: {
+  hotel: AssignmentGridHotel;
+  draggingUnitId: string | null;
+  dragOverRoomTypeKey: string | null;
+  onDragOverRoomType: (roomTypeKey: string) => void;
+  onDragLeaveRoomType: () => void;
+  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onBack: () => void;
+  selectedBookingId: string | null;
+  onSelectBooking: (bookingId: string) => void;
+}) {
+  const grouped = useMemo(() => {
+    const map = new Map<string, AssignmentSlot[]>();
+    for (const slot of hotel.slots) {
+      const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(slot);
+    }
+    return Array.from(map.entries()).map(([key, slots]) => ({
+      roomTypeId: key.split('|')[0],
+      roomTypeName: key.split('|')[1],
+      slots,
+    }));
+  }, [hotel.slots]);
+
+  const [openRoomTypes, setOpenRoomTypes] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    setOpenRoomTypes((current) => {
+      const next = { ...current };
+      for (const group of grouped) {
+        if (!(group.roomTypeId in next)) next[group.roomTypeId] = true;
+      }
+      return next;
+    });
+  }, [grouped]);
+
+  const totals = summarizeHotel(hotel);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-[#49617d] bg-[#314763] px-4 pb-3 pt-4">
+        <div className="flex items-center gap-3">
+            <button
+              onClick={onBack}
+              className="rounded-lg border border-[#5d7695] bg-[#3b5576] px-3 py-1.5 text-xs text-slate-100 transition-colors hover:bg-[#496688]"
+            >
+              <ChevronLeft className="mr-1 inline h-3.5 w-3.5" />
+            Alle Hotels
+          </button>
+          <div className="flex-1">
+            <h2 className="truncate text-lg font-bold text-slate-100">{hotel.hotelName}</h2>
+            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+              <span>{hotel.location || '—'}</span>
+              <span>·</span>
+              <span style={{ color: REGION_COLORS[hotel.region || ''] || '#4F8EF7' }}>{hotel.region}</span>
+              <span>·</span>
+              <span className="font-mono">{totals.days} nights</span>
+            </div>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="font-mono text-xl font-bold text-slate-100">
+                {totals.usedBeds}
+                <span className="text-sm text-slate-500">/{totals.totalBeds}</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-wide text-slate-400">belegte Betten</div>
+            </div>
+            <div className="w-24">
+              <CapacityBar pct={totals.percent} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto bg-[#2b405d] p-4">
+        <div className="space-y-3">
+          {grouped.map((group) => {
+            const summary = summarizeRoomType(group.slots);
+            const roomTypeKey = `${hotel.hotelId}_${group.roomTypeId}`;
+            const isOpen = openRoomTypes[group.roomTypeId] ?? true;
+            const canDrop = !!draggingUnitId && hasSlotForRoomType(group.slots);
+
+            return (
+              <div key={group.roomTypeId} className="overflow-hidden rounded-2xl border border-[#506987]">
+                <button
+                  onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
+                  className="flex w-full items-center gap-3 bg-[#395274] px-4 py-3 text-left hover:bg-[#45607f]"
+                >
+                  <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold text-white">{group.roomTypeName}</span>
+                      <span className="rounded-md bg-[#4a6382] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+                        {summary.capacityPerRoom}p max
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs font-mono text-slate-400">
+                      {summary.usedRooms}/{summary.totalRooms} Zimmer · {summary.usedBeds}/{summary.totalBeds} Betten
+                    </div>
+                  </div>
+                  <div className="w-32">
+                    <CapacityBar pct={summary.percent} />
+                  </div>
+                </button>
+
+                {isOpen && (
+                  <div className="space-y-2 bg-[#314763] p-3">
+                    {flattenBookingsFromSlots(group.slots).map((entry, index) => (
+                      <button
+                        key={entry.booking.bookingId}
+                        onClick={() => onSelectBooking(entry.booking.bookingId)}
+                        className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-all ${
+                          selectedBookingId === entry.booking.bookingId
+                            ? 'border-blue-400/60 bg-[#45607f]'
+                            : 'border-[#506987] bg-[#395274] hover:border-[#6580a1]'
+                        }`}
+                      >
+                        <div className="flex min-w-0 items-center gap-3">
+                          <span className="w-5 flex-shrink-0 text-[10px] font-mono text-slate-600">#{index + 1}</span>
+                          <div className="min-w-0">
+                            <div className="truncate text-xs font-semibold text-slate-200">
+                              {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
+                            </div>
+                            <div className="mt-1 text-[10px] font-mono text-slate-500">
+                              {entry.booking.checkInDate || '—'} → {entry.booking.checkOutDate || '—'}
+                            </div>
                           </div>
-                        </td>
-                        <td className="px-3 py-2 text-gray-700">{r.booking.checkInDate || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.booking.checkOutDate || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.nations.join(", ") || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.genders.join(", ") || "—"}</td>
-                        <td className="px-3 py-2 text-gray-700">{r.functions.join(", ") || "—"}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {r.issues.mixedNation && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-800">mixed nation</span>}
-                            {r.issues.mixedGender && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-800">mixed gender</span>}
-                            {r.issues.missingGender && <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-xs text-amber-800">missing gender</span>}
-                            {r.issues.duplicate && <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs text-red-800">duplicate</span>}
-                            {!Object.values(r.issues).some(Boolean) && <span className="text-xs text-gray-400">—</span>}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-right">
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            onClick={() => handleRemoveBooking(r.booking.id)}
-                            className="text-red-600 hover:text-red-700"
-                            aria-label="Delete booking"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </td>
-                      </tr>
+                        </div>
+                        <div className="text-[10px] font-mono text-slate-500">
+                          {entry.slot.roomNumber || `Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
+                        </div>
+                      </button>
                     ))}
-                    {pagedBookingRows.slice.length === 0 && (
-                      <tr>
-                        <td colSpan={11} className="px-3 py-8 text-center text-sm text-gray-500">
-                          No bookings found.
-                        </td>
-                      </tr>
+
+                    {summary.remainingRooms > 0 ? (
+                      <div
+                        onDrop={(event) => {
+                          event.preventDefault();
+                          onDropRoomType(hotel.hotelId, group.roomTypeId);
+                        }}
+                        onDragOver={(event) => {
+                          event.preventDefault();
+                          onDragOverRoomType(roomTypeKey);
+                        }}
+                        onDragLeave={onDragLeaveRoomType}
+                        className={`rounded-xl border border-dashed px-4 py-3 text-sm transition-all ${
+                          dragOverRoomTypeKey === roomTypeKey
+                            ? canDrop
+                              ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                              : 'border-red-500/60 bg-red-500/10 text-red-200'
+                            : 'border-[#5a7391] bg-[#395274] text-slate-200'
+                        }`}
+                      >
+                        {dragOverRoomTypeKey === roomTypeKey
+                          ? 'Loslassen, um neue Zuweisung anzulegen'
+                          : `${summary.remainingRooms} freie Zimmer — hier zum Zuweisen ablegen`}
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 rounded-xl border border-red-900/30 bg-red-950/20 px-4 py-2 text-xs text-red-500">
+                        <AlertCircle className="h-3.5 w-3.5" />
+                        Voll belegt
+                      </div>
                     )}
-                  </tbody>
-                </table>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AthletesPanel({
+  athletes,
+  selectedAthleteId,
+  onSelectAthlete,
+}: {
+  athletes: Athlete[];
+  selectedAthleteId: string | null;
+  onSelectAthlete: (athleteId: string) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return athletes.filter((athlete) => {
+      const haystack = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.discipline || ''}`.toLowerCase();
+      return !query || haystack.includes(query);
+    });
+  }, [athletes, search]);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-[#2D4260] bg-[#1C2B42] px-4 py-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Athleten suchen..." dark />
+      </div>
+      <div className="flex-1 overflow-auto">
+        <table className="min-w-full text-sm">
+          <thead className="sticky top-0 bg-[#0C1624]">
+            <tr>
+              {['Name', 'Nation', 'Disz.', 'Gender', 'Anr.', 'Abr.', 'Status'].map((heading) => (
+                <th key={heading} className="px-3 py-2.5 text-left text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                  {heading}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[#1A2035]">
+            {filtered.map((athlete) => (
+              <tr
+                key={athlete.id}
+                onClick={() => onSelectAthlete(athlete.id)}
+                className={`cursor-pointer transition-colors ${selectedAthleteId === athlete.id ? 'bg-[#1E3358]' : 'hover:bg-[#1C2B42]'}`}
+              >
+                <td className="px-3 py-2.5 text-xs font-semibold text-slate-200">{athlete.firstname} {athlete.lastname}</td>
+                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.nationCode}</td>
+                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.discipline || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-slate-400">{normalizeGender(athlete.gender) || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.arrivalDate || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.departureDate || '—'}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  {athlete.assignment?.hasAssignment ? (
+                    <span className="rounded-lg border border-emerald-800/50 bg-emerald-950/50 px-2 py-0.5 font-semibold text-emerald-400">Erledigt</span>
+                  ) : (
+                    <span className="rounded-lg border border-amber-800/40 bg-amber-950/40 px-2 py-0.5 font-semibold text-amber-400">Offen</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function QuotasPanel({ rows }: { rows: OfficialQuotaUsage[] }) {
+  return (
+    <div className="h-full overflow-auto p-4">
+      <div className="space-y-3">
+        {rows.map((row) => {
+          const offOver = row.assignedOfficials > row.officialQuota;
+          const singleOver = row.singleRoomsUsed > row.singleRoomsAllowed;
+          const total = row.athletesEntered || 0;
+          const donePct = total > 0 ? Math.round((Math.min(row.assignedOfficials, total) / total) * 100) : 0;
+
+          return (
+            <div key={`${row.nationCode}-${row.discipline}-${row.gender}`} className="rounded-2xl border border-[#2D4260] bg-[#1C2B42] p-4">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-bold text-slate-100">{row.nationCode}</div>
+                  <div className="mt-0.5 text-[10px] font-mono text-slate-500">
+                    {row.discipline || '—'} · {row.gender}
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  {offOver && <StatusTag tone="red" label="Officials over" />}
+                  {singleOver && <StatusTag tone="red" label="Singles over" />}
+                  {!offOver && !singleOver && <StatusTag tone="green" label="OK" />}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-5">
+                <QuotaMetric label="Athletes" current={row.athletesEntered} max={row.athletesEntered} />
+                <QuotaMetric label="Officials" current={row.assignedOfficials} max={row.officialQuota} tone={offOver ? 'red' : 'blue'} />
+                <QuotaMetric label="Singles" current={row.singleRoomsUsed} max={row.singleRoomsAllowed} tone={singleOver ? 'red' : 'blue'} />
+              </div>
+
+              <div className="mt-4">
+                <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
+                  <span>Dispatch progress</span>
+                  <span className="font-mono">{donePct}%</span>
+                </div>
+                <CapacityBar pct={donePct} />
               </div>
             </div>
+          );
+        })}
 
-            <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-gray-700">
-              <div>
-                Page {pagedBookingRows.page} / {pagedBookingRows.totalPages}
+        {!rows.length && (
+          <div className="py-16 text-center text-sm text-slate-500">Keine Quotenzeilen verfügbar</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DetailPanel({
+  selectedUnit,
+  selectedBookingContext,
+  selectedAssignedUnit,
+  onUnassignBooking,
+}: {
+  selectedUnit: RoomBookingUnit | null;
+  selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
+  selectedAssignedUnit: RoomBookingUnit | null;
+  onUnassignBooking: (bookingId: string) => void;
+}) {
+  if (!selectedUnit && !selectedBookingContext) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#2D4260] bg-[#243550] text-slate-500">
+          <Eye className="h-5 w-5" />
+        </div>
+        <div className="text-lg font-semibold text-slate-300">Nichts ausgewählt</div>
+        <div className="mt-2 text-sm text-slate-500">Wähle eine Buchung oder eine Einheit aus</div>
+        <div className="mt-6 rounded-2xl border border-dashed border-[#2D4260] px-6 py-4 text-sm text-slate-500">
+          Ziehe eine Einheit aus der Warteschlange auf freie Zimmerbereiche
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedBookingContext) {
+    const { booking, hotel, slot } = selectedBookingContext;
+    return (
+      <div className="flex h-full flex-col overflow-y-auto">
+        <div className="flex items-start justify-between border-b border-[#334766] px-4 py-4">
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Zimmerdetail</div>
+            <div className="mt-2 text-sm font-bold text-slate-100">{hotel.hotelName}</div>
+            <div className="mt-1 text-[10px] font-mono text-slate-400">
+              {slot.roomTypeName} · {booking.checkInDate || '—'} → {booking.checkOutDate || '—'}
+            </div>
+          </div>
+        </div>
+        <div className="border-b border-[#334766] px-4 py-4">
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Bewohner</div>
+          <div className="space-y-2">
+            {booking.occupants.map((occupant) => (
+              <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
+                <div className="text-sm font-semibold text-slate-100">{occupant.name}</div>
+                <div className="mt-1 text-[10px] font-mono text-slate-400">{occupant.nationCode}</div>
               </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="outline" size="sm" disabled={pagedBookingRows.page <= 1} onClick={() => setRoomsPage(p => Math.max(1, p - 1))}>
-                  Prev
-                </Button>
-                <Button type="button" variant="outline" size="sm" disabled={pagedBookingRows.page >= pagedBookingRows.totalPages} onClick={() => setRoomsPage(p => Math.min(pagedBookingRows.totalPages, p + 1))}>
-                  Next
-                </Button>
+            ))}
+          </div>
+        </div>
+        <div className="px-4 py-4">
+          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Zuweisung</div>
+          <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+              <div>
+                <div className="text-xs font-bold text-emerald-300">{hotel.hotelName}</div>
+                <div className="mt-0.5 text-[10px] font-mono text-emerald-500">
+                  {slot.roomTypeName} · {slot.roomNumber || `Slot ${String(slot.slotIndex).padStart(2, '0')}`}
+                </div>
               </div>
             </div>
           </div>
-        ) : (
-          <div className="mt-5 space-y-4">
-            <div className="grid grid-cols-1 gap-3 md:grid-cols-6">
-              <div className="md:col-span-2">
-                <Input
-                  value={athleteSearch}
-                  onChange={(e) => setAthleteSearch(e.target.value)}
-                  placeholder="Search athlete (name / nation)"
-                />
+          <div className="mt-3 rounded-xl border border-[#39506f] bg-[#243650] p-3 text-xs text-slate-300">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Hotel</div>
+                <div className="mt-1 font-semibold text-slate-100">{hotel.hotelName}</div>
               </div>
               <div>
-                <select value={athleteNation} onChange={(e) => setAthleteNation(e.target.value)} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All nations</option>
-                  {nationOptions.map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Ort</div>
+                <div className="mt-1 font-semibold text-slate-100">{hotel.location || '—'}</div>
               </div>
               <div>
-                <select value={athleteGender} onChange={(e) => setAthleteGender(e.target.value)} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All genders</option>
-                  <option value="M">M</option>
-                  <option value="F">F</option>
-                </select>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Anreise</div>
+                <div className="mt-1 font-mono text-slate-200">{booking.checkInDate || '—'}</div>
               </div>
               <div>
-                <select value={athleteDiscipline} onChange={(e) => setAthleteDiscipline(e.target.value)} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">All disciplines</option>
-                  {disciplineOptions.map(d => <option key={d} value={d}>{d}</option>)}
-                </select>
-              </div>
-              <div>
-                <select value={athleteAssigned} onChange={(e) => setAthleteAssigned(e.target.value)} className="w-full rounded-md border px-2 py-2 text-sm">
-                  <option value="">Assigned + unassigned</option>
-                  <option value="assigned">Assigned only</option>
-                  <option value="unassigned">Unassigned only</option>
-                </select>
+                <div className="text-[10px] uppercase tracking-wide text-slate-500">Abreise</div>
+                <div className="mt-1 font-mono text-slate-200">{booking.checkOutDate || '—'}</div>
               </div>
             </div>
+          </div>
+          <button
+            onClick={() => onUnassignBooking(booking.bookingId)}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Zuweisung entfernen
+          </button>
+        </div>
+      </div>
+    );
+  }
 
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div className="text-sm text-gray-600">
-                {assignedAthleteIds.size} assigned • {athletes.length - assignedAthleteIds.size} unassigned
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <select value={athleteFunction} onChange={(e) => setAthleteFunction(e.target.value)} className="rounded-md border px-2 py-2 text-sm">
-                  <option value="">All functions</option>
-                  {functionOptions.map(f => <option key={f} value={f}>{f}</option>)}
-                </select>
-                <label className="flex items-center gap-2 text-sm text-gray-700">
-                  <input type="checkbox" checked={athleteHasShare} onChange={(e) => setAthleteHasShare(e.target.checked)} />
-                  Has share request
-                </label>
-              </div>
-            </div>
+  if (!selectedUnit) return null;
 
-            <div className="overflow-hidden rounded-lg border">
-              <table className="w-full">
-                <thead className="bg-gray-50 text-left text-xs font-semibold text-gray-600">
-                  <tr>
-                    <th className="px-4 py-2">Athlete</th>
-                    <th className="px-4 py-2">Nation</th>
-                    <th className="px-4 py-2">Gender</th>
-                    <th className="px-4 py-2">Function</th>
-                    <th className="px-4 py-2">Arr</th>
-                    <th className="px-4 py-2">Dep</th>
-                    <th className="px-4 py-2">Status</th>
-                    <th className="px-4 py-2">Booking</th>
-                    <th className="px-4 py-2"></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y bg-white text-sm">
-                  {filteredAthletes.map(a => {
-                    const booking = athleteToBooking.get(a.id);
-                    const g = normalizeGender(a) || "—";
-                    return (
-                      <tr key={a.id}>
-                        <td className="px-4 py-2 font-medium text-gray-900">{formatAthleteName(a)}</td>
-                        <td className="px-4 py-2 text-gray-700">{a.nationCode}</td>
-                        <td className="px-4 py-2 text-gray-700">{g}</td>
-                        <td className="px-4 py-2 text-gray-700">{a.function || "—"}</td>
-                        <td className="px-4 py-2 text-gray-700">{a.arrivalDate || "—"}</td>
-                        <td className="px-4 py-2 text-gray-700">{a.departureDate || "—"}</td>
-                        <td className="px-4 py-2">
-                          {booking ? (
-                            <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-xs text-blue-800">
-                              Assigned
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5 text-xs text-gray-700">
-                              Unassigned
-                            </span>
-                          )}
-                      </td>
-                      <td className="px-4 py-2 text-gray-700">
-                        {booking ? (
-                          <span className="text-xs">
-                              {booking.hotel?.name} • {booking.roomType?.name}{" "}
-                              {booking.roomNumber ? `• Room ${booking.roomNumber}` : ""}
-                              {booking.checkInDate && booking.checkOutDate ? ` • ${booking.checkInDate}→${booking.checkOutDate}` : ""}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-gray-400">—</span>
-                        )}
-                      </td>
-                        <td className="px-4 py-2 text-right">
-                          {!booking ? (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setViewMode("rooms");
-                                setBookingType("single");
-                                setOnlyUnassigned(true);
-                                setOccupant1Id(a.id);
-                                setOccupant2Id("");
-                              }}
-                            >
-                              Start booking
-                            </Button>
-                          ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => {
-                                setViewMode("rooms");
-                                setRoomsHotel(booking.hotel?.id || "");
-                                setRoomsRoomType(booking.roomType?.id || "");
-                                setRoomsSearch(formatAthleteName(a));
-                                setRoomsPage(1);
-                              }}
-                            >
-                              Jump to room
-                            </Button>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                  {filteredAthletes.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="px-4 py-8 text-center text-sm text-gray-500">
-                        No athletes found.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      <div className="border-b border-[#334766] px-4 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-blue-200">
+            {selectedUnit.nationCode}
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Einheitsdetail</div>
+            <div className="mt-2 text-sm font-bold text-slate-100">
+              {selectedUnit.occupants.map((occ) => `${occ.firstname} ${occ.lastname}`).join(' / ')}
             </div>
+            <div className="mt-1 text-[10px] font-mono text-slate-400">
+              {selectedUnit.roomTypeLabel} · {selectedUnit.checkInDate || '—'} → {selectedUnit.checkOutDate || '—'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-[#334766] px-4 py-4">
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Bewohner</div>
+        <div className="space-y-2">
+          {selectedUnit.occupants.map((occupant) => (
+            <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
+              <div className="text-sm font-semibold text-slate-100">{occupant.firstname} {occupant.lastname}</div>
+              <div className="mt-1 text-[10px] font-mono text-slate-400">
+                {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {selectedUnit.occupants.length >= 2 && (
+          <div className="mt-3 flex items-center gap-2 rounded-xl border border-violet-700/40 bg-violet-950/25 px-3 py-2 text-xs text-violet-200">
+            <Link2 className="h-3.5 w-3.5" />
+            Gewünschtes Zimmerpartner-Paar erkannt
           </div>
         )}
       </div>
 
-      {/* Keep quota data loaded (future UX), but avoid unused-state lint issues */}
-      {quotaUsage.length > 0 ? null : null}
+      <div className="px-4 py-4">
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Zuweisung</div>
+        {selectedAssignedUnit && selectedAssignedUnit.assignedBookingId ? (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-300">{selectedAssignedUnit.assignedRoomNumber || 'Aktive Zuweisung'}</div>
+                  <div className="mt-0.5 text-[10px] font-mono text-emerald-500">
+                    Bereits zugewiesen
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-[#39506f] bg-[#243650] p-3 text-xs text-slate-300">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Nation</div>
+                  <div className="mt-1 font-semibold text-slate-100">{selectedUnit.nationCode}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Typ</div>
+                  <div className="mt-1 font-semibold text-slate-100">{selectedUnit.roomTypeLabel}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Anreise</div>
+                  <div className="mt-1 font-mono text-slate-200">{selectedUnit.checkInDate || '—'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Abreise</div>
+                  <div className="mt-1 font-mono text-slate-200">{selectedUnit.checkOutDate || '—'}</div>
+                </div>
+              </div>
+            </div>
+            <button
+              onClick={() => onUnassignBooking(selectedAssignedUnit.assignedBookingId!)}
+              className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Zuweisung entfernen
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-amber-300">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Noch nicht zugewiesen — auf einen Zimmerbereich ziehen
+          </div>
+        )}
+      </div>
     </div>
   );
+}
+
+function EmptyCenter({ text }: { text: string }) {
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-slate-500">
+      {text}
+    </div>
+  );
+}
+
+function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  dark,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  dark?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={`w-full rounded-xl border pl-9 pr-3 py-2 text-sm transition-all focus:outline-none ${
+          dark
+            ? 'border-[#425a79] bg-[#213550] text-slate-100 placeholder:text-slate-500 focus:border-blue-400/50'
+            : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-blue-500'
+        }`}
+      />
+    </div>
+  );
+}
+
+function DarkSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  labelMap,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder: string;
+  labelMap?: Record<string, string>;
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full appearance-none rounded-xl border border-[#2D4260] bg-[#152034] px-3 py-2 text-sm text-slate-300 transition-all focus:border-blue-500/50 focus:outline-none"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {labelMap?.[option] || option}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+    </div>
+  );
+}
+
+function CapacityBar({
+  pct,
+  className = '',
+  trackClassName = 'bg-[#253A56]',
+}: {
+  pct: number;
+  className?: string;
+  trackClassName?: string;
+}) {
+  const color = pct >= 95 ? '#F87171' : pct >= 75 ? '#FBBF24' : pct > 0 ? '#4F8EF7' : '#2D4260';
+  return (
+    <div className={`h-2 overflow-hidden rounded-full ${trackClassName} ${className}`}>
+      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(0, Math.min(pct, 100))}%`, backgroundColor: color }} />
+    </div>
+  );
+}
+
+function StatusTag({ tone, label }: { tone: 'green' | 'red'; label: string }) {
+  return (
+    <span className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold ${
+      tone === 'green'
+        ? 'border-emerald-800/50 bg-emerald-950/50 text-emerald-400'
+        : 'border-red-800/50 bg-red-950/50 text-red-400'
+    }`}>
+      {label}
+    </span>
+  );
+}
+
+function QuotaMetric({
+  label,
+  current,
+  max,
+  tone = 'blue',
+}: {
+  label: string;
+  current: number;
+  max: number;
+  tone?: 'blue' | 'red';
+}) {
+  const pct = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
+  return (
+    <div>
+      <div className="mb-2 text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mb-2 flex items-end gap-1">
+        <span className={`font-mono text-2xl font-bold ${tone === 'red' ? 'text-red-400' : 'text-slate-200'}`}>{current}</span>
+        <span className="pb-0.5 text-xs text-slate-600">/ {max}</span>
+      </div>
+      <CapacityBar pct={pct} />
+    </div>
+  );
+}
+
+function normalizeGender(value?: string | null) {
+  if (!value) return '';
+  const normalized = value.trim().toUpperCase();
+  if (normalized.startsWith('M')) return 'M';
+  if (normalized.startsWith('F') || normalized.startsWith('W')) return 'F';
+  return normalized;
+}
+
+function sameGender(unit: RoomBookingUnit) {
+  const genders = Array.from(new Set(unit.occupants.map((occ) => normalizeGender(occ.gender)).filter(Boolean)));
+  return genders.length <= 1;
+}
+
+function sameNation(unit: RoomBookingUnit) {
+  const nations = Array.from(new Set(unit.occupants.map((occ) => occ.nationCode).filter(Boolean)));
+  return nations.length <= 1;
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return '—';
+  return value.slice(5);
+}
+
+function summarizeHotel(hotel: AssignmentGridHotel) {
+  const roomTypeMap = new Map<string, { roomTypeId: string; roomTypeName: string; usedBeds: number; totalBeds: number; capacity: number }>();
+  let usedBeds = 0;
+  let totalBeds = 0;
+
+  for (const slot of hotel.slots) {
+    const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
+    const slotUsedBeds = slot.bookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
+    usedBeds += slotUsedBeds;
+    totalBeds += slot.capacity;
+
+    if (!roomTypeMap.has(key)) {
+      roomTypeMap.set(key, {
+        roomTypeId: slot.roomTypeId,
+        roomTypeName: slot.roomTypeName,
+        usedBeds: 0,
+        totalBeds: 0,
+        capacity: slot.capacity,
+      });
+    }
+
+    const current = roomTypeMap.get(key)!;
+    current.usedBeds += slotUsedBeds;
+    current.totalBeds += slot.capacity;
+  }
+
+  const starts = hotel.slots.map((slot) => slot.dateCoverage.availableFrom).filter(Boolean) as string[];
+  const ends = hotel.slots.map((slot) => slot.dateCoverage.availableUntil).filter(Boolean) as string[];
+  const days = starts.length && ends.length
+    ? Math.max(1, differenceInDays(starts.sort()[0], ends.sort()[ends.length - 1]))
+    : 0;
+
+  return {
+    usedBeds,
+    totalBeds,
+    totalRooms: hotel.slots.length,
+    percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
+    days,
+    roomTypes: Array.from(roomTypeMap.values()),
+  };
+}
+
+function summarizeRoomType(slots: AssignmentSlot[]) {
+  const totalRooms = slots.length;
+  const totalBeds = slots.reduce((sum, slot) => sum + slot.capacity, 0);
+  const usedRooms = slots.filter((slot) => slot.bookings.length > 0).length;
+  const usedBeds = slots.reduce((sum, slot) => sum + slot.bookings.reduce((bookingSum, booking) => bookingSum + booking.occupants.length, 0), 0);
+  return {
+    totalRooms,
+    remainingRooms: Math.max(0, totalRooms - usedRooms),
+    totalBeds,
+    usedRooms,
+    usedBeds,
+    percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
+    capacityPerRoom: slots[0]?.capacity || 0,
+  };
+}
+
+function flattenBookingsFromSlots(slots: AssignmentSlot[]) {
+  return slots.flatMap((slot) => slot.bookings.map((booking) => ({ booking, slot })));
+}
+
+function hasSlotForRoomType(slots: AssignmentSlot[]) {
+  return slots.some((slot) => slot.bookings.length === 0);
+}
+
+function hotelHasValidDrop(validations: AssignmentValidationResult[], hotelId: string) {
+  return validations.some((validation) => validation.status !== 'blocked' && validation.slotId.startsWith(`${hotelId}:`));
+}
+
+function findFirstValidSlot(validations: AssignmentValidationResult[], hotels: AssignmentGridHotel[], hotelId: string) {
+  const hotel = hotels.find((item) => item.hotelId === hotelId);
+  if (!hotel) return null;
+  for (const slot of hotel.slots) {
+    const result = validations.find((entry) => entry.slotId === slot.slotId);
+    if (result && result.status !== 'blocked') return slot;
+  }
+  return null;
+}
+
+function findFirstValidSlotForRoomType(validations: AssignmentValidationResult[], hotels: AssignmentGridHotel[], hotelId: string, roomTypeId: string) {
+  const hotel = hotels.find((item) => item.hotelId === hotelId);
+  if (!hotel) return null;
+  for (const slot of hotel.slots.filter((entry) => entry.roomTypeId === roomTypeId)) {
+    const result = validations.find((entry) => entry.slotId === slot.slotId);
+    if (result && result.status !== 'blocked') return slot;
+  }
+  return null;
+}
+
+function findAssignedUnitForBooking(bookingId: string, assignedUnits: RoomBookingUnit[]) {
+  return assignedUnits.find((unit) => unit.assignedBookingId === bookingId) ?? null;
+}
+
+function differenceInDays(start: string, end: string) {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const diff = endDate.getTime() - startDate.getTime();
+  return Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24)));
+}
+
+function extractErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return fallback;
 }

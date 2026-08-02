@@ -6,9 +6,13 @@ import {
   EventRoomDemand,
   Athlete,
   RoomBooking,
+  RoomBookingUnit,
   RoomAvailability,
   HotelCapacityOverview,
-  HotelReservationRow
+  HotelReservationRow,
+  FisImportPreview,
+  FisImportConfirmResult,
+  AssignmentPlanningView
 } from '../types';
 import { OfficialQuotaUsage } from './fisRules';
 
@@ -412,6 +416,20 @@ class ApiService {
     });
   }
 
+  async acknowledgeAthleteRoomlistChange(id: string): Promise<Athlete> {
+    if (USE_MOCK_DATA) {
+      const athlete = mockAthletes.find((entry) => entry.id === id);
+      if (!athlete) throw new Error('Athlete not found');
+      athlete.hasPendingRoomlistReview = false;
+      athlete.roomlistChangeAcknowledgedAt = new Date().toISOString();
+      athlete.roomlistChangeAcknowledgedSummary = athlete.roomlistChangeSummary || null;
+      return Promise.resolve(athlete);
+    }
+    return this.request<Athlete>(`/athletes/${id}/acknowledge-roomlist-change`, {
+      method: 'POST',
+    });
+  }
+
   // ============================================================================
   // ROOM ASSIGNMENTS
   // ============================================================================
@@ -479,6 +497,71 @@ class ApiService {
     }
     return this.request<void>(`/room-assignments/${id}`, {
       method: 'DELETE',
+    });
+  }
+
+  async getAssignmentPlanningView(): Promise<AssignmentPlanningView> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve({
+        timeline: { startDate: null, endDate: null },
+        units: { unassigned: [], assigned: [] },
+        hotels: [],
+        validationByUnit: {},
+      });
+    }
+    return this.request<AssignmentPlanningView>('/assignments/planning-view');
+  }
+
+  async assignRoomBookingUnit(data: {
+    unitId: string;
+    hotelId: string;
+    roomTypeId: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    assignedBookingId?: string;
+  }): Promise<RoomBooking> {
+    return this.request<RoomBooking>(`/assignments/units/${data.unitId}/assign`, {
+      method: 'POST',
+      body: JSON.stringify({
+        hotelId: data.hotelId,
+        roomTypeId: data.roomTypeId,
+        roomNumber: data.roomNumber,
+        checkInDate: data.checkInDate,
+        checkOutDate: data.checkOutDate,
+        assignedBookingId: data.assignedBookingId,
+      }),
+    });
+  }
+
+  async moveRoomBookingUnit(data: {
+    unitId: string;
+    hotelId: string;
+    roomTypeId: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    assignedBookingId: string;
+  }): Promise<RoomBooking> {
+    return this.assignRoomBookingUnit(data);
+  }
+
+  async updateAssignedUnit(bookingId: string, data: {
+    hotelId?: string;
+    roomTypeId?: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+  }): Promise<RoomBooking> {
+    return this.request<RoomBooking>(`/assignments/bookings/${bookingId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async unassignRoomBookingUnit(bookingId: string): Promise<{ success: boolean; bookingId: string }> {
+    return this.request<{ success: boolean; bookingId: string }>(`/assignments/bookings/${bookingId}/unassign`, {
+      method: 'POST',
     });
   }
 
@@ -611,24 +694,28 @@ class ApiService {
   // IMPORT
   // ============================================================================
 
-  async importExcel(file: File): Promise<{
-    success: boolean;
-    message: string;
-    counts?: any;
-  }> {
+  async previewFisImport(files: File[]): Promise<FisImportPreview> {
     const formData = new FormData();
-    formData.append('file', file);
+    files.forEach((file) => formData.append('files', file));
 
-    const response = await fetch(`${API_BASE_URL}/import/excel`, {
+    const response = await fetch(`${API_BASE_URL}/import/fis/preview`, {
       method: 'POST',
       body: formData,
     });
 
     if (!response.ok) {
-      throw new Error(`Import failed: ${response.statusText}`);
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || `Preview failed: ${response.statusText}`);
     }
 
     return response.json();
+  }
+
+  async confirmFisImport(previewToken: string): Promise<FisImportConfirmResult> {
+    return this.request<FisImportConfirmResult>('/import/fis/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ previewToken }),
+    });
   }
 
   // FIS official quotas

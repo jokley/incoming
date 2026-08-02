@@ -1,12 +1,15 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from models import db, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun
+from models import db, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from datetime import datetime
 import os
 import csv
 import io
+import tempfile
+import json
 from sqlalchemy import text, func
+from excel_import import create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 
 app = Flask(__name__)
 CORS(app)
@@ -41,6 +44,464 @@ def _booking_error(reason_code, message, details=None):
         'message': message,
         'details': details or {}
     }), 400
+
+
+def _normalize_text(value):
+    return (value or '').strip().lower()
+
+
+def _room_type_label(name):
+    value = _normalize_text(name)
+    if 'single' in value or value.startswith('ez') or value.startswith('sr'):
+        return 'single'
+    if 'double' in value or value.startswith('dz'):
+        return 'double'
+    if 'app' in value:
+        return 'appartment'
+    return value or 'unknown'
+
+
+def _status_badges_for_athlete(athlete):
+    badges = []
+    if athlete.hasPendingRoomlistReview:
+        badges.append('change-open')
+    if athlete.changeTouchesAssignment:
+        badges.append('assigned-change')
+    if athlete.special_meal:
+        badges.append('special-meal')
+    if athlete.room_type and _room_type_label(athlete.room_type) == 'single':
+        badges.append('single-request')
+    return badges
+
+
+def _has_pending_roomlist_review(athlete):
+    return bool(
+        athlete.roomlist_changed_at and (
+            athlete.roomlist_change_acknowledged_at is None
+            or athlete.roomlist_change_acknowledged_at < athlete.roomlist_changed_at
+        )
+    )
+
+
+def _change_touches_assignment_for_athlete(athlete):
+    return bool(_has_pending_roomlist_review(athlete) and RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first())
+
+
+def _collect_booking_athlete_ids(booking):
+    return sorted({occ.athlete_id for occ in (booking.occupants or []) if occ.athlete_id})
+
+
+def _derive_assignment_warnings(athletes, room_type_name):
+    warnings = []
+    normalized_room_type = _room_type_label(room_type_name)
+    occupant_count = len(athletes)
+    if normalized_room_type == 'single' and occupant_count > 1:
+        warnings.append({'code': 'OCCUPANCY_MISMATCH', 'level': 'error', 'message': 'Mehr als 1 Person in Single-Zimmer-Einheit'})
+    if normalized_room_type == 'double' and occupant_count > 2:
+        warnings.append({'code': 'OCCUPANCY_MISMATCH', 'level': 'error', 'message': 'Mehr als 2 Personen in Double-Zimmer-Einheit'})
+
+    if len(athletes) == 2:
+        if athletes[0].nation_code != athletes[1].nation_code:
+            warnings.append({'code': 'NATION_MISMATCH', 'level': 'error', 'message': 'Zimmerpartner haben unterschiedliche Nationen'})
+        g1 = _normalize_gender(athletes[0])
+        g2 = _normalize_gender(athletes[1])
+        if not g1 or not g2:
+            warnings.append({'code': 'GENDER_UNKNOWN', 'level': 'warning', 'message': 'Geschlecht eines Zimmerpartners ist unbekannt'})
+        elif g1 != g2:
+            warnings.append({'code': 'GENDER_MISMATCH', 'level': 'error', 'message': 'Zimmerpartner haben unterschiedliches Geschlecht'})
+    return warnings
+
+
+def _calculate_unit_validation(unit, slot, existing_bookings):
+    blocking_messages = []
+    warning_messages = []
+    unit_room_type = _room_type_label(unit['roomType'])
+    slot_room_type = _room_type_label(slot['roomTypeName'])
+
+    if unit_room_type == 'single' and slot['capacity'] < 1:
+        blocking_messages.append('Slot hat keine Kapazität')
+    elif unit_room_type == 'double' and slot['capacity'] < 2:
+        blocking_messages.append('Slot passt nicht für DZ-Einheit')
+    elif unit_room_type == 'appartment' and slot['capacity'] < max(1, len(unit['occupants'])):
+        blocking_messages.append('Slot passt nicht für Apartment-Einheit')
+
+    if unit_room_type and slot_room_type and unit_room_type != slot_room_type and not (unit_room_type == 'appartment' and slot_room_type == 'appartment'):
+        blocking_messages.append(f'{unit["roomType"]} passt nicht auf {slot["roomTypeName"]}')
+
+    if not slot['dateCoverage']['coversRequestedRange']:
+        warning_messages.append('Kontingent-Zeitraum deckt den gewünschten Aufenthalt nicht vollständig ab')
+
+    for booking in existing_bookings:
+        if booking.id == unit.get('assignedBookingId'):
+            continue
+        if str(booking.hotel_id) != str(slot['hotelId']) or str(booking.room_type_id) != str(slot['roomTypeId']):
+            continue
+        if (booking.room_number or '') != (slot['roomNumber'] or ''):
+            continue
+        if _dates_overlap(
+            booking.check_in_date,
+            booking.check_out_date,
+            datetime.fromisoformat(unit['checkInDate']).date() if unit.get('checkInDate') else None,
+            datetime.fromisoformat(unit['checkOutDate']).date() if unit.get('checkOutDate') else None,
+        ):
+            blocking_messages.append(f'Zeitraum kollidiert mit bestehender Belegung {booking.check_in_date}–{booking.check_out_date}')
+            break
+
+    has_single_request = any(_room_type_label((occ.get('roomType') or unit['roomType'])) == 'single' for occ in unit['occupants'])
+    if has_single_request and slot['capacity'] == 1:
+        warning_messages.append('EZ-Wunsch prüfen / möglicher Aufpreis')
+
+    status = 'valid'
+    if blocking_messages:
+        status = 'blocked'
+    elif warning_messages:
+        status = 'warning'
+
+    return {
+        'status': status,
+        'messages': blocking_messages + warning_messages,
+    }
+
+
+def _build_virtual_slots(hotel, room_type, inventories, bookings):
+    slot_count = sum(inv.room_count for inv in inventories)
+    relevant_bookings = [
+        booking for booking in bookings
+        if booking.hotel_id == hotel.id and booking.room_type_id == room_type.id
+    ]
+    bookings_by_room_number = {}
+    unmatched_bookings = []
+    for booking in relevant_bookings:
+        key = booking.room_number or ''
+        if key.startswith('Slot '):
+            bookings_by_room_number.setdefault(key, []).append(booking)
+        else:
+            unmatched_bookings.append(booking)
+    slots = []
+    for index in range(slot_count):
+        room_number = f"Slot {index + 1:02d}"
+        slot_bookings = bookings_by_room_number.get(room_number, [])
+        if not slot_bookings and unmatched_bookings:
+            slot_bookings = [unmatched_bookings.pop(0)]
+        slot_bookings = sorted(slot_bookings, key=lambda booking: (booking.check_in_date or datetime.max.date(), booking.id))
+        slots.append({
+            'slotId': f'{hotel.id}:{room_type.id}:{index + 1}',
+            'hotelId': str(hotel.id),
+            'hotelName': hotel.name,
+            'roomTypeId': str(room_type.id),
+            'roomTypeName': room_type.name,
+            'capacity': room_type.max_persons,
+            'slotIndex': index + 1,
+            'roomNumber': room_number,
+            'inventoryRoomCount': slot_count,
+            'dateCoverage': {
+                'availableFrom': min(inv.available_from for inv in inventories).isoformat() if inventories else None,
+                'availableUntil': max(inv.available_until for inv in inventories).isoformat() if inventories else None,
+                'coversRequestedRange': True,
+            },
+            'bookings': slot_bookings,
+        })
+    return slots
+
+
+def _build_room_booking_units():
+    fis_assignments = FisRoomAssignment.query.order_by(FisRoomAssignment.check_in_date.asc().nullslast(), FisRoomAssignment.id.asc()).all()
+    bookings = RoomBooking.query.options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
+    booking_index = {}
+    for booking in bookings:
+        booking_index[tuple(_collect_booking_athlete_ids(booking))] = booking
+
+    units = []
+    for assignment in fis_assignments:
+        athletes = [assignment.person1]
+        if assignment.person2:
+            athletes.append(assignment.person2)
+        athlete_ids = sorted([athlete.id for athlete in athletes if athlete])
+        linked_booking = booking_index.get(tuple(athlete_ids))
+        occupants = []
+        for athlete in athletes:
+            if not athlete:
+                continue
+            pending_review = _has_pending_roomlist_review(athlete)
+            assigned_change = _change_touches_assignment_for_athlete(athlete)
+            occupants.append({
+                'athleteId': str(athlete.id),
+                'name': f'{athlete.firstname} {athlete.lastname}'.strip(),
+                'firstname': athlete.firstname,
+                'lastname': athlete.lastname,
+                'nationCode': athlete.nation_code,
+                'discipline': athlete.discipline,
+                'gender': _normalize_gender(athlete),
+                'function': athlete.function,
+                'specialMeal': athlete.special_meal,
+                'roomType': athlete.room_type,
+                'statusBadges': _status_badges_for_athlete(type('A', (), {
+                    'hasPendingRoomlistReview': pending_review,
+                    'changeTouchesAssignment': assigned_change,
+                    'special_meal': athlete.special_meal,
+                    'room_type': athlete.room_type,
+                })()),
+                'hasPendingReview': pending_review,
+                'changeTouchesAssignment': assigned_change,
+            })
+
+        warnings = _derive_assignment_warnings(athletes, assignment.room_type)
+        units.append({
+            'unitId': str(assignment.id),
+            'sourceRowKey': assignment.source_row_key,
+            'nationCode': athletes[0].nation_code if athletes and athletes[0] else '',
+            'occupants': occupants,
+            'roomType': assignment.room_type,
+            'roomTypeLabel': _room_type_label(assignment.room_type),
+            'occupantCount': len(occupants),
+            'checkInDate': assignment.check_in_date.isoformat() if assignment.check_in_date else None,
+            'checkOutDate': assignment.check_out_date.isoformat() if assignment.check_out_date else None,
+            'specialMealFlags': [occ['specialMeal'] for occ in occupants if occ.get('specialMeal')],
+            'statusBadges': sorted({badge for occ in occupants for badge in occ.get('statusBadges', [])}),
+            'assignmentWarnings': warnings,
+            'assignedBookingId': str(linked_booking.id) if linked_booking else None,
+            'assignedHotelId': str(linked_booking.hotel_id) if linked_booking else None,
+            'assignedRoomTypeId': str(linked_booking.room_type_id) if linked_booking else None,
+            'assignedRoomNumber': linked_booking.room_number if linked_booking else None,
+        })
+    return units, bookings
+
+
+def _build_assignment_planning_view():
+    units, bookings = _build_room_booking_units()
+    hotels = Hotel.query.options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
+
+    all_dates = []
+    for unit in units:
+        if unit.get('checkInDate'):
+            all_dates.append(datetime.fromisoformat(unit['checkInDate']).date())
+        if unit.get('checkOutDate'):
+            all_dates.append(datetime.fromisoformat(unit['checkOutDate']).date())
+    for booking in bookings:
+        if booking.check_in_date:
+            all_dates.append(booking.check_in_date)
+        if booking.check_out_date:
+            all_dates.append(booking.check_out_date)
+    timeline_start = min(all_dates).isoformat() if all_dates else None
+    timeline_end = max(all_dates).isoformat() if all_dates else None
+
+    hotel_sections = []
+    for hotel in hotels:
+        by_room_type = {}
+        for inventory in hotel.room_inventories or []:
+            by_room_type.setdefault(inventory.room_type_id, {'roomType': inventory.room_type, 'inventories': []})
+            by_room_type[inventory.room_type_id]['inventories'].append(inventory)
+
+        slots = []
+        for room_type_id, payload in by_room_type.items():
+            slots.extend(_build_virtual_slots(hotel, payload['roomType'], payload['inventories'], bookings))
+
+        hotel_sections.append({
+            'hotelId': str(hotel.id),
+            'hotelName': hotel.name,
+            'location': hotel.location,
+            'region': hotel.region,
+            'slots': [
+                {
+                    **slot,
+                    'bookings': [
+                        {
+                            'bookingId': str(booking.id),
+                            'roomNumber': booking.room_number or slot['roomNumber'],
+                            'hotelId': str(booking.hotel_id),
+                            'roomTypeId': str(booking.room_type_id),
+                            'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
+                            'checkOutDate': booking.check_out_date.isoformat() if booking.check_out_date else None,
+                            'occupants': [
+                                {
+                                    'athleteId': str(occ.athlete.id),
+                                    'name': f'{occ.athlete.firstname} {occ.athlete.lastname}'.strip(),
+                                    'nationCode': occ.athlete.nation_code,
+                                }
+                                for occ in (booking.occupants or []) if occ.athlete
+                            ],
+                        }
+                        for booking in slot['bookings']
+                    ],
+                }
+                for slot in slots
+            ],
+        })
+
+    unassigned_units = []
+    assigned_units = []
+    validation_by_unit = {}
+    for unit in units:
+        validations = []
+        for hotel_section in hotel_sections:
+            for slot in hotel_section['slots']:
+                slot_copy = dict(slot)
+                covers_requested_range = True
+                if slot['dateCoverage']['availableFrom'] and slot['dateCoverage']['availableUntil'] and unit.get('checkInDate') and unit.get('checkOutDate'):
+                    covers_requested_range = slot['dateCoverage']['availableFrom'] <= unit['checkInDate'] and slot['dateCoverage']['availableUntil'] >= unit['checkOutDate']
+                slot_copy['dateCoverage'] = dict(slot['dateCoverage'])
+                slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
+                validation = _calculate_unit_validation(unit, slot_copy, bookings)
+                validations.append({
+                    'slotId': slot['slotId'],
+                    **validation,
+                })
+        validation_by_unit[unit['unitId']] = validations
+        if unit.get('assignedBookingId'):
+            assigned_units.append(unit)
+        else:
+            unassigned_units.append(unit)
+
+    return {
+        'timeline': {
+            'startDate': timeline_start,
+            'endDate': timeline_end,
+        },
+        'units': {
+            'unassigned': unassigned_units,
+            'assigned': assigned_units,
+        },
+        'hotels': hotel_sections,
+        'validationByUnit': validation_by_unit,
+    }
+
+
+def _validate_booking_payload(data, existing_booking=None):
+    athlete_ids = data.get('athleteIds', [])
+    if not isinstance(athlete_ids, list) or len(athlete_ids) < 1 or len(athlete_ids) > 4:
+        return None, None, _booking_error('INVALID_OCCUPANTS', 'athleteIds must include between 1 and 4 athlete IDs')
+
+    hotel_id = int(data['hotelId'])
+    room_type_id = int(data['roomTypeId'])
+    room_type = RoomType.query.get_or_404(room_type_id)
+
+    unique_athlete_ids = []
+    for athlete_id in athlete_ids:
+        int_id = int(athlete_id)
+        if int_id not in unique_athlete_ids:
+            unique_athlete_ids.append(int_id)
+
+    if len(unique_athlete_ids) > room_type.max_persons:
+        return None, None, _booking_error('CAPACITY_EXCEEDED', f'Room type max occupancy is {room_type.max_persons}')
+
+    if len(unique_athlete_ids) == 2:
+        athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
+        if len(athletes) != 2:
+            return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
+        a1, a2 = athletes[0], athletes[1]
+        if a1.nation_code != a2.nation_code:
+            return None, None, _booking_error('NATION_MISMATCH', 'Room share requires same nation', {
+                'athlete1': {'id': str(a1.id), 'nationCode': a1.nation_code},
+                'athlete2': {'id': str(a2.id), 'nationCode': a2.nation_code},
+            })
+        g1 = _normalize_gender(a1)
+        g2 = _normalize_gender(a2)
+        if not g1 or not g2:
+            return None, None, _booking_error('GENDER_UNKNOWN', 'Room share requires known gender for both occupants')
+        if g1 != g2:
+            return None, None, _booking_error('GENDER_MISMATCH', 'Room share requires same gender')
+
+    check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
+    check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
+    if not check_in_date or not check_out_date:
+        return None, None, _booking_error('MISSING_DATES', 'Booking requires check-in and check-out dates')
+    if check_in_date > check_out_date:
+        return None, None, _booking_error('INVALID_DATES', 'Check-in must be before or equal to check-out')
+
+    inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
+        HotelRoomInventory.hotel_id == hotel_id,
+        HotelRoomInventory.room_type_id == room_type_id,
+        HotelRoomInventory.available_from <= check_in_date,
+        HotelRoomInventory.available_until >= check_out_date,
+    ).scalar()
+
+    if not inv_rooms or inv_rooms <= 0:
+        return None, None, _booking_error('NO_KONTINGENT', 'No kontingent available for this hotel/room type in the given date range', {
+            'hotelId': str(hotel_id),
+            'roomTypeId': str(room_type_id),
+            'checkInDate': check_in_date.isoformat(),
+            'checkOutDate': check_out_date.isoformat(),
+        })
+
+    query = RoomBooking.query.filter(
+        RoomBooking.hotel_id == hotel_id,
+        RoomBooking.room_type_id == room_type_id,
+        RoomBooking.check_in_date.isnot(None),
+        RoomBooking.check_out_date.isnot(None),
+        RoomBooking.check_in_date <= check_out_date,
+        RoomBooking.check_out_date >= check_in_date,
+    )
+    if existing_booking:
+        query = query.filter(RoomBooking.id != existing_booking.id)
+    used_rooms = query.count()
+    if used_rooms >= inv_rooms:
+        return None, None, _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
+            'hotelId': str(hotel_id),
+            'roomTypeId': str(room_type_id),
+            'checkInDate': check_in_date.isoformat(),
+            'checkOutDate': check_out_date.isoformat(),
+            'inventoryRooms': int(inv_rooms),
+            'usedRooms': int(used_rooms),
+        })
+
+    return {
+        'hotel_id': hotel_id,
+        'room_type_id': room_type_id,
+        'room_number': data.get('roomNumber'),
+        'check_in_date': check_in_date,
+        'check_out_date': check_out_date,
+        'athlete_ids': unique_athlete_ids,
+    }, room_type, None
+
+
+def _save_booking_from_payload(payload, existing_booking=None):
+    if existing_booking is None:
+        booking = RoomBooking(
+            hotel_id=payload['hotel_id'],
+            room_type_id=payload['room_type_id'],
+            room_number=payload['room_number'],
+            check_in_date=payload['check_in_date'],
+            check_out_date=payload['check_out_date'],
+        )
+        db.session.add(booking)
+        db.session.flush()
+    else:
+        booking = existing_booking
+        booking.hotel_id = payload['hotel_id']
+        booking.room_type_id = payload['room_type_id']
+        booking.room_number = payload['room_number']
+        booking.check_in_date = payload['check_in_date']
+        booking.check_out_date = payload['check_out_date']
+        RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).delete()
+
+    for athlete_id in payload['athlete_ids']:
+        db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
+    db.session.commit()
+    return booking
+
+
+def _sync_fis_assignment_with_booking(booking):
+    athlete_ids = tuple(_collect_booking_athlete_ids(booking))
+    assignments = FisRoomAssignment.query.all()
+    for assignment in assignments:
+        assignment_ids = tuple(sorted([assignment.person1_id] + ([assignment.person2_id] if assignment.person2_id else [])))
+        if assignment_ids == athlete_ids:
+            assignment.hotel_id = booking.hotel_id
+            assignment.room_number = booking.room_number
+            db.session.add(assignment)
+    db.session.commit()
+
+
+def _clear_fis_assignment_booking_link(booking):
+    athlete_ids = tuple(_collect_booking_athlete_ids(booking))
+    assignments = FisRoomAssignment.query.all()
+    for assignment in assignments:
+        assignment_ids = tuple(sorted([assignment.person1_id] + ([assignment.person2_id] if assignment.person2_id else [])))
+        if assignment_ids == athlete_ids:
+            assignment.hotel_id = None
+            assignment.room_number = None
+            db.session.add(assignment)
+    db.session.commit()
 
 
 def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
@@ -158,6 +619,15 @@ with app.app_context():
             "roomlist_last_seen_at": "DATETIME",
             "roomlist_changed_at": "DATETIME",
             "roomlist_change_summary": "VARCHAR(500)",
+            "roomlist_change_acknowledged_at": "DATETIME",
+            "roomlist_change_acknowledged_summary": "VARCHAR(500)",
+            "present": "BOOLEAN",
+            "arrival_airport_name": "VARCHAR(100)",
+            "departure_airport_name": "VARCHAR(100)",
+            "additional_items": "VARCHAR(200)",
+            "entry_date": "DATETIME",
+            "last_update": "DATETIME",
+            "entries_sent_date": "DATETIME",
         }
 
         for name, sql_type in needed.items():
@@ -218,47 +688,101 @@ with app.app_context():
 # CSV IMPORT ENDPOINTS
 # ============================================================================
 
+def _save_uploaded_excel(file_storage):
+    if not file_storage or file_storage.filename == '':
+        raise ValueError('No file selected')
+    if not file_storage.filename.endswith(('.xlsx', '.xls')):
+        raise ValueError('Only Excel files (.xlsx, .xls) are supported')
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx')
+    tmp.close()
+    file_storage.save(tmp.name)
+    return tmp.name
+
+
+@app.route('/api/import/fis/preview', methods=['POST'])
+@app.route('/api/import/fis/preview/', methods=['POST'])
+def preview_fis_import():
+    uploaded_files = []
+    if request.files.get('entriesList'):
+        uploaded_files.append(('entriesList', request.files.get('entriesList')))
+    if request.files.get('roomListDetailed'):
+        uploaded_files.append(('roomListDetailed', request.files.get('roomListDetailed')))
+    for file_storage in request.files.getlist('files'):
+        uploaded_files.append(('files', file_storage))
+
+    if not uploaded_files:
+        return jsonify({'error': 'Please upload the two required FIS Excel files'}), 400
+
+    temp_files = []
+    try:
+        detected = {'entries': None, 'roomlist': None}
+        seen_names = set()
+        for field_name, file_storage in uploaded_files:
+            if not file_storage or file_storage.filename == '':
+                continue
+            filename_key = file_storage.filename.lower()
+            if filename_key in seen_names:
+                continue
+            seen_names.add(filename_key)
+
+            tmp_path = _save_uploaded_excel(file_storage)
+            temp_files.append(tmp_path)
+            if field_name == 'entriesList':
+                detected['entries'] = tmp_path
+                continue
+            if field_name == 'roomListDetailed':
+                detected['roomlist'] = tmp_path
+                continue
+
+            file_type = detect_fis_file_type(tmp_path)
+            if file_type == 'entries' and detected['entries'] is None:
+                detected['entries'] = tmp_path
+            elif file_type == 'roomlist' and detected['roomlist'] is None:
+                detected['roomlist'] = tmp_path
+
+        if not detected['entries'] or not detected['roomlist']:
+            return jsonify({
+                'error': 'Could not identify both required files. Please upload one ENTRIES-LIST and one ENTRIES-ROOM-LIST-DETAILED file.'
+            }), 400
+
+        entries_path = detected['entries']
+        room_path = detected['roomlist']
+        result = create_fis_import_preview(entries_path, room_path)
+        return jsonify(result), 200
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 400
+    finally:
+        for path in temp_files:
+            if path and os.path.exists(path):
+                os.unlink(path)
+
+
+@app.route('/api/import/fis/confirm', methods=['POST'])
+@app.route('/api/import/fis/confirm/', methods=['POST'])
+def confirm_previewed_fis_import():
+    data = request.get_json(silent=True) or {}
+    preview_token = data.get('previewToken')
+    if not preview_token:
+        return jsonify({'error': 'previewToken is required'}), 400
+
+    try:
+        result = confirm_fis_import(preview_token)
+        return jsonify(result), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 400
+
+
 @app.route('/api/import/excel', methods=['POST'])
 @app.route('/api/import/excel/', methods=['POST'])
 @app.route('/import/excel', methods=['POST'])
 @app.route('/import/excel/', methods=['POST'])
 def import_excel():
-    """Import athletes and roomlist from Excel file"""
-    if 'file' not in request.files:
-        return jsonify({'error': 'No file provided'}), 400
-
-    file = request.files['file']
-    if file.filename == '':
-        return jsonify({'error': 'No file selected'}), 400
-
-    if not file.filename.endswith(('.xlsx', '.xls')):
-        return jsonify({'error': 'Only Excel files (.xlsx, .xls) are supported'}), 400
-
-    try:
-        # Save temporarily
-        import tempfile
-        import os
-        from excel_import import import_excel_file
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
-            file.save(tmp.name)
-            tmp_path = tmp.name
-
-        # Import
-        result = import_excel_file(tmp_path, app)
-
-        # Cleanup
-        os.unlink(tmp_path)
-
-        return jsonify({
-            'success': True,
-            'message': 'Data imported successfully',
-            'counts': result
-        }), 200
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+    return jsonify({
+        'error': 'Legacy single-file import has been replaced. Use /api/import/fis/preview and /api/import/fis/confirm with both FIS files.'
+    }), 410
 
 
 def import_data_from_csv(csv_content):
@@ -748,6 +1272,27 @@ def get_athletes():
     latest_athletes_at = latest_athletes_run.started_at if latest_athletes_run else None
     latest_roomlist_at = latest_roomlist_run.started_at if latest_roomlist_run else None
 
+    booking_rows = RoomBookingOccupant.query.join(RoomBooking).all()
+    assignment_map = {}
+    for occupant in booking_rows:
+        booking = occupant.room_booking
+        athlete = occupant.athlete
+        if not booking or not athlete:
+            continue
+        current = assignment_map.get(athlete.id)
+        summary = {
+            'hasAssignment': True,
+            'hotelName': booking.hotel.name if booking.hotel else None,
+            'hotelId': str(booking.hotel_id) if booking.hotel_id else None,
+            'roomNumber': booking.room_number,
+            'roomTypeName': booking.room_type.name if booking.room_type else None,
+            'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
+            'checkOutDate': booking.check_out_date.isoformat() if booking.check_out_date else None,
+            'bookingId': str(booking.id),
+        }
+        if current is None:
+            assignment_map[athlete.id] = summary
+
     result = []
     for a in athletes:
         data = a.to_dict()
@@ -774,6 +1319,24 @@ def get_athletes():
         else:
             data['missingFromLatestRoomlistImport'] = False
 
+        data['assignment'] = assignment_map.get(a.id, {
+            'hasAssignment': False,
+            'hotelName': None,
+            'hotelId': None,
+            'roomNumber': None,
+            'roomTypeName': None,
+            'checkInDate': None,
+            'checkOutDate': None,
+            'bookingId': None,
+        })
+        data['hasPendingRoomlistReview'] = bool(
+            a.roomlist_changed_at and (
+                a.roomlist_change_acknowledged_at is None
+                or a.roomlist_change_acknowledged_at < a.roomlist_changed_at
+            )
+        )
+        data['changeTouchesAssignment'] = bool(data['hasPendingRoomlistReview'] and data['assignment']['hasAssignment'])
+
         result.append(data)
 
     return jsonify(result)
@@ -794,6 +1357,22 @@ def create_athlete():
     db.session.add(athlete)
     db.session.commit()
     return jsonify(athlete.to_dict()), 201
+
+
+@app.route('/api/athletes/<int:athlete_id>/acknowledge-roomlist-change', methods=['POST'])
+@app.route('/api/athletes/<int:athlete_id>/acknowledge-roomlist-change/', methods=['POST'])
+def acknowledge_athlete_roomlist_change(athlete_id):
+    athlete = Athlete.query.get_or_404(athlete_id)
+    if athlete.roomlist_changed_at is None:
+        return jsonify({'error': 'No roomlist change to acknowledge'}), 400
+
+    athlete.roomlist_change_acknowledged_at = datetime.utcnow()
+    athlete.roomlist_change_acknowledged_summary = athlete.roomlist_change_summary
+    db.session.commit()
+
+    data = athlete.to_dict()
+    data['hasPendingRoomlistReview'] = False
+    return jsonify(data)
 
 
 # Room Assignments
@@ -834,6 +1413,79 @@ def get_official_quotas():
     return jsonify(rows)
 
 
+@app.route('/api/assignments/planning-view', methods=['GET'])
+@app.route('/api/assignments/planning-view/', methods=['GET'])
+def get_assignments_planning_view():
+    return jsonify(_build_assignment_planning_view())
+
+
+@app.route('/api/assignments/units/<int:unit_id>/assign', methods=['POST'])
+@app.route('/api/assignments/units/<int:unit_id>/assign/', methods=['POST'])
+def assign_room_booking_unit(unit_id):
+    assignment = FisRoomAssignment.query.get_or_404(unit_id)
+    data = request.json or {}
+    athlete_ids = [assignment.person1_id]
+    if assignment.person2_id:
+        athlete_ids.append(assignment.person2_id)
+
+    payload_data = {
+        'athleteIds': [str(athlete_id) for athlete_id in athlete_ids],
+        'hotelId': data.get('hotelId'),
+        'roomTypeId': data.get('roomTypeId'),
+        'roomNumber': data.get('roomNumber'),
+        'checkInDate': data.get('checkInDate') or (assignment.check_in_date.isoformat() if assignment.check_in_date else None),
+        'checkOutDate': data.get('checkOutDate') or (assignment.check_out_date.isoformat() if assignment.check_out_date else None),
+    }
+
+    existing_booking = None
+    if data.get('assignedBookingId'):
+        existing_booking = RoomBooking.query.get(int(data['assignedBookingId']))
+    else:
+        athlete_id_tuple = tuple(sorted(athlete_ids))
+        for booking in RoomBooking.query.all():
+            if tuple(_collect_booking_athlete_ids(booking)) == athlete_id_tuple:
+                existing_booking = booking
+                break
+
+    payload, _, error = _validate_booking_payload(payload_data, existing_booking=existing_booking)
+    if error:
+        return error
+    booking = _save_booking_from_payload(payload, existing_booking=existing_booking)
+    _sync_fis_assignment_with_booking(booking)
+    return jsonify(booking.to_dict()), 200 if existing_booking else 201
+
+
+@app.route('/api/assignments/bookings/<int:booking_id>', methods=['PUT'])
+@app.route('/api/assignments/bookings/<int:booking_id>/', methods=['PUT'])
+def update_assigned_unit(booking_id):
+    booking = RoomBooking.query.get_or_404(booking_id)
+    data = request.json or {}
+    payload_data = {
+        'athleteIds': [str(occ.athlete_id) for occ in (booking.occupants or []) if occ.athlete_id],
+        'hotelId': data.get('hotelId') or str(booking.hotel_id),
+        'roomTypeId': data.get('roomTypeId') or str(booking.room_type_id),
+        'roomNumber': data.get('roomNumber'),
+        'checkInDate': data.get('checkInDate') or (booking.check_in_date.isoformat() if booking.check_in_date else None),
+        'checkOutDate': data.get('checkOutDate') or (booking.check_out_date.isoformat() if booking.check_out_date else None),
+    }
+    payload, _, error = _validate_booking_payload(payload_data, existing_booking=booking)
+    if error:
+        return error
+    booking = _save_booking_from_payload(payload, existing_booking=booking)
+    _sync_fis_assignment_with_booking(booking)
+    return jsonify(booking.to_dict())
+
+
+@app.route('/api/assignments/bookings/<int:booking_id>/unassign', methods=['POST'])
+@app.route('/api/assignments/bookings/<int:booking_id>/unassign/', methods=['POST'])
+def unassign_room_booking_unit(booking_id):
+    booking = RoomBooking.query.get_or_404(booking_id)
+    _clear_fis_assignment_booking_link(booking)
+    db.session.delete(booking)
+    db.session.commit()
+    return jsonify({'success': True, 'bookingId': str(booking_id)})
+
+
 @app.route('/api/debug/routes', methods=['GET'])
 def get_debug_routes():
     is_production = (
@@ -857,108 +1509,10 @@ def get_debug_routes():
 @app.route('/room-assignments/', methods=['POST'])
 def create_room_assignment():
     data = request.json
-    athlete_ids = data.get('athleteIds', [])
-    if not isinstance(athlete_ids, list) or len(athlete_ids) < 1 or len(athlete_ids) > 2:
-        return jsonify({'error': 'athleteIds must include 1 or 2 athlete IDs'}), 400
-
-    room_type = RoomType.query.get_or_404(int(data['roomTypeId']))
-    if len(athlete_ids) > room_type.max_persons:
-        return jsonify({'error': f'Room type max occupancy is {room_type.max_persons}'}), 400
-
-    # Enforce same nation + same gender for double bookings
-    unique_athlete_ids = []
-    for athlete_id in athlete_ids:
-        int_id = int(athlete_id)
-        if int_id not in unique_athlete_ids:
-            unique_athlete_ids.append(int_id)
-
-    if len(unique_athlete_ids) == 2:
-        athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
-        if len(athletes) != 2:
-            return _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
-
-        a1, a2 = athletes[0], athletes[1]
-        if a1.nation_code != a2.nation_code:
-            return _booking_error('NATION_MISMATCH', 'Room share requires same nation', {
-                'athlete1': {'id': str(a1.id), 'nationCode': a1.nation_code},
-                'athlete2': {'id': str(a2.id), 'nationCode': a2.nation_code},
-            })
-
-        g1 = _normalize_gender(a1)
-        g2 = _normalize_gender(a2)
-        if not g1 or not g2:
-            return _booking_error('GENDER_UNKNOWN', 'Room share requires known gender for both occupants', {
-                'athlete1': {'id': str(a1.id), 'gender': a1.gender, 'forGender': a1.for_gender},
-                'athlete2': {'id': str(a2.id), 'gender': a2.gender, 'forGender': a2.for_gender},
-            })
-        if g1 != g2:
-            return _booking_error('GENDER_MISMATCH', 'Room share requires same gender', {
-                'athlete1': {'id': str(a1.id), 'gender': g1},
-                'athlete2': {'id': str(a2.id), 'gender': g2},
-            })
-
-    hotel_id = int(data['hotelId'])
-    room_type_id = int(data['roomTypeId'])
-    check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
-    check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
-
-    if not check_in_date or not check_out_date:
-        return _booking_error('MISSING_DATES', 'Booking requires check-in and check-out dates')
-    if check_in_date > check_out_date:
-        return _booking_error('INVALID_DATES', 'Check-in must be before or equal to check-out')
-
-    # Validate kontingent coverage and capacity for the requested date range
-    inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
-        HotelRoomInventory.hotel_id == hotel_id,
-        HotelRoomInventory.room_type_id == room_type_id,
-        HotelRoomInventory.available_from <= check_in_date,
-        HotelRoomInventory.available_until >= check_out_date,
-    ).scalar()
-
-    if not inv_rooms or inv_rooms <= 0:
-        return _booking_error('NO_KONTINGENT', 'No kontingent available for this hotel/room type in the given date range', {
-            'hotelId': str(hotel_id),
-            'roomTypeId': str(room_type_id),
-            'checkInDate': check_in_date.isoformat(),
-            'checkOutDate': check_out_date.isoformat(),
-        })
-
-    used_rooms = RoomBooking.query.filter(
-        RoomBooking.hotel_id == hotel_id,
-        RoomBooking.room_type_id == room_type_id,
-        RoomBooking.check_in_date.isnot(None),
-        RoomBooking.check_out_date.isnot(None),
-        RoomBooking.check_in_date <= check_out_date,
-        RoomBooking.check_out_date >= check_in_date,
-    ).count()
-
-    if used_rooms >= inv_rooms:
-        return _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
-            'hotelId': str(hotel_id),
-            'roomTypeId': str(room_type_id),
-            'checkInDate': check_in_date.isoformat(),
-            'checkOutDate': check_out_date.isoformat(),
-            'inventoryRooms': int(inv_rooms),
-            'usedRooms': int(used_rooms),
-        })
-
-    booking = RoomBooking(
-        hotel_id=hotel_id,
-        room_type_id=room_type_id,
-        room_number=data.get('roomNumber'),
-        check_in_date=check_in_date,
-        check_out_date=check_out_date
-    )
-    db.session.add(booking)
-    db.session.flush()
-
-    for athlete_id in unique_athlete_ids:
-        db.session.add(RoomBookingOccupant(
-            room_booking_id=booking.id,
-            athlete_id=athlete_id
-        ))
-
-    db.session.commit()
+    payload, _, error = _validate_booking_payload(data)
+    if error:
+        return error
+    booking = _save_booking_from_payload(payload)
     return jsonify(booking.to_dict()), 201
 
 
@@ -969,101 +1523,10 @@ def create_room_assignment():
 def update_room_assignment(assignment_id):
     booking = RoomBooking.query.get_or_404(assignment_id)
     data = request.json
-    athlete_ids = data.get('athleteIds', [])
-    if not isinstance(athlete_ids, list) or len(athlete_ids) < 1 or len(athlete_ids) > 2:
-        return jsonify({'error': 'athleteIds must include 1 or 2 athlete IDs'}), 400
-
-    room_type = RoomType.query.get_or_404(int(data['roomTypeId']))
-    if len(athlete_ids) > room_type.max_persons:
-        return jsonify({'error': f'Room type max occupancy is {room_type.max_persons}'}), 400
-
-    hotel_id = int(data['hotelId'])
-    room_type_id = int(data['roomTypeId'])
-    check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
-    check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
-
-    if not check_in_date or not check_out_date:
-        return _booking_error('MISSING_DATES', 'Booking requires check-in and check-out dates')
-    if check_in_date > check_out_date:
-        return _booking_error('INVALID_DATES', 'Check-in must be before or equal to check-out')
-
-    inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
-        HotelRoomInventory.hotel_id == hotel_id,
-        HotelRoomInventory.room_type_id == room_type_id,
-        HotelRoomInventory.available_from <= check_in_date,
-        HotelRoomInventory.available_until >= check_out_date,
-    ).scalar()
-
-    if not inv_rooms or inv_rooms <= 0:
-        return _booking_error('NO_KONTINGENT', 'No kontingent available for this hotel/room type in the given date range', {
-            'hotelId': str(hotel_id),
-            'roomTypeId': str(room_type_id),
-            'checkInDate': check_in_date.isoformat(),
-            'checkOutDate': check_out_date.isoformat(),
-        })
-
-    used_rooms = RoomBooking.query.filter(
-        RoomBooking.hotel_id == hotel_id,
-        RoomBooking.room_type_id == room_type_id,
-        RoomBooking.id != booking.id,
-        RoomBooking.check_in_date.isnot(None),
-        RoomBooking.check_out_date.isnot(None),
-        RoomBooking.check_in_date <= check_out_date,
-        RoomBooking.check_out_date >= check_in_date,
-    ).count()
-
-    if used_rooms >= inv_rooms:
-        return _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
-            'hotelId': str(hotel_id),
-            'roomTypeId': str(room_type_id),
-            'checkInDate': check_in_date.isoformat(),
-            'checkOutDate': check_out_date.isoformat(),
-            'inventoryRooms': int(inv_rooms),
-            'usedRooms': int(used_rooms),
-        })
-
-    booking.hotel_id = hotel_id
-    booking.room_type_id = room_type_id
-    booking.room_number = data.get('roomNumber')
-    booking.check_in_date = check_in_date
-    booking.check_out_date = check_out_date
-
-    RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).delete()
-    unique_athlete_ids = []
-    for athlete_id in athlete_ids:
-        int_id = int(athlete_id)
-        if int_id not in unique_athlete_ids:
-            unique_athlete_ids.append(int_id)
-
-    if len(unique_athlete_ids) == 2:
-        athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
-        if len(athletes) != 2:
-            return _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
-
-        a1, a2 = athletes[0], athletes[1]
-        if a1.nation_code != a2.nation_code:
-            return _booking_error('NATION_MISMATCH', 'Room share requires same nation', {
-                'athlete1': {'id': str(a1.id), 'nationCode': a1.nation_code},
-                'athlete2': {'id': str(a2.id), 'nationCode': a2.nation_code},
-            })
-
-        g1 = _normalize_gender(a1)
-        g2 = _normalize_gender(a2)
-        if not g1 or not g2:
-            return _booking_error('GENDER_UNKNOWN', 'Room share requires known gender for both occupants', {
-                'athlete1': {'id': str(a1.id), 'gender': a1.gender, 'forGender': a1.for_gender},
-                'athlete2': {'id': str(a2.id), 'gender': a2.gender, 'forGender': a2.for_gender},
-            })
-        if g1 != g2:
-            return _booking_error('GENDER_MISMATCH', 'Room share requires same gender', {
-                'athlete1': {'id': str(a1.id), 'gender': g1},
-                'athlete2': {'id': str(a2.id), 'gender': g2},
-            })
-
-    for athlete_id in unique_athlete_ids:
-        db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
-
-    db.session.commit()
+    payload, _, error = _validate_booking_payload(data, existing_booking=booking)
+    if error:
+        return error
+    booking = _save_booking_from_payload(payload, existing_booking=booking)
     return jsonify(booking.to_dict())
 
 

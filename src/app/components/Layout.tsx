@@ -1,11 +1,14 @@
-import { Outlet, NavLink } from 'react-router';
+import { Outlet, NavLink, useLocation } from 'react-router';
 import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers } from 'lucide-react';
 
 export function Layout() {
+  const location = useLocation();
+  const isAssignmentsPage = location.pathname === '/assignments';
+
   return (
     <div className="min-h-screen bg-gray-50">
       <nav className="bg-white shadow-sm border-b">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className={`${isAssignmentsPage ? 'mx-auto max-w-[1920px] px-6' : 'max-w-7xl mx-auto px-4 sm:px-6 lg:px-8'}`}>
           <div className="flex justify-between h-16">
             <div className="flex">
               <div className="flex-shrink-0 flex items-center">
@@ -122,7 +125,10 @@ export function Layout() {
           </div>
         </div>
       </nav>
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className={isAssignmentsPage
+        ? 'mx-auto w-full max-w-[1920px] px-2 py-2'
+        : 'max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8'
+      }>
         <Outlet />
       </main>
     </div>
