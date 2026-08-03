@@ -325,6 +325,7 @@ export interface FisImportPreviewRoom {
 export interface FisImportPreview {
   previewToken: string;
   isValid: boolean;
+  detectedDiscipline?: string | null;
   summary: {
     people: {
       total: number;

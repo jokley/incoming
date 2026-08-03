@@ -25,6 +25,147 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
 
+def ensure_reference_data():
+    room_types_seed = [
+        ('DZ / DU', 2),
+        ('EZ / DU', 1),
+        ('3BZ / DU', 2),
+        ('4BZ / DU', 2),
+        ('APP: 1 DZ + DU', 2),
+        ('APP: 2 DZ + DU', 2),
+        ('APP: 2 DZ + 2 DU', 4),
+        ('APP: 3 DZ + 2 DU', 4),
+    ]
+
+    hotels_seed = [
+        ('Alpenlodge', 'Brand', 'Bludenz', 'DZ / DU', '2027-03-07', '2027-03-22', 31, True, False),
+        ('Cube Alpine Stay', 'Bürs', 'Bludenz', 'DZ / DU', '2027-03-04', '2027-03-22', 17, False, False),
+        ('Cube Alpine Stay', 'Bürs', 'Bludenz', 'APP: 3 DZ + 2 DU', '2027-03-04', '2027-03-22', 4, False, False),
+        ('Cube Alpine Stay', 'Bürs', 'Bludenz', 'APP: 2 DZ + 2 DU', '2027-03-04', '2027-03-22', 6, False, False),
+        ('Hotel Daneu', 'Nüziders', 'Bludenz', 'DZ / DU', '2027-03-03', '2027-03-22', 9, True, True),
+        ('Hotel Daneu', 'Nüziders', 'Bludenz', 'EZ / DU', '2027-03-03', '2027-03-22', 5, True, True),
+        ('Hotel Garni Madrisa', 'Brand', 'Bludenz', 'DZ / DU', '2027-03-07', '2027-03-21', 9, True, True),
+        ('Hotel Garni Madrisa', 'Brand', 'Bludenz', 'EZ / DU', '2027-03-07', '2027-03-21', 2, True, True),
+        ('Hotel Lagant', 'Brand', 'Bludenz', 'DZ / DU', '2027-03-07', '2027-03-21', 30, True, True),
+        ('Hotel Lün', 'Brand', 'Bludenz', 'DZ / DU', '2027-03-07', '2027-03-22', 12, False, False),
+        ('Hotel Lün', 'Brand', 'Bludenz', 'APP: 2 DZ + 2 DU', '2027-03-07', '2027-03-22', 3, False, False),
+        ('Hotel Sarotla', 'Brand', 'Bludenz', 'DZ / DU', '2027-03-07', '2027-03-22', 40, True, True),
+        ('Hotel Sonne', 'Brand', 'Bludenz', 'DZ / DU', '2027-03-07', '2027-03-21', 11, True, False),
+        ('Hotel Sonne', 'Brand', 'Bludenz', 'EZ / DU', '2027-03-07', '2027-03-21', 3, True, False),
+        ('Naturhotel Till', 'Satteins', 'Bludenz', 'DZ / DU', '2027-03-04', '2027-03-22', 9, True, True),
+        ('Naturhotel Till', 'Satteins', 'Bludenz', 'EZ / DU', '2027-03-04', '2027-03-22', 9, True, True),
+        ('Rössle', 'Braz', 'Bludenz', 'DZ / DU', '2027-03-14', '2027-03-21', 10, True, True),
+        ('Rössle', 'Braz', 'Bludenz', 'EZ / DU', '2027-03-14', '2027-03-21', 1, True, True),
+        ('Val Blu GmbH', 'Bludenz', 'Bludenz', 'DZ / DU', '2027-03-04', '2027-03-22', 26, True, True),
+        ('Hotel Löwen', 'Feldkirch', 'Feldkirch', 'DZ / DU', '2027-03-03', '2027-03-22', 21, True, True),
+        ('BergSPA & Hotel Zamangspitze', 'St. Gallenkirch', 'Montafon', 'DZ / DU', '2027-03-04', '2027-03-22', 5, True, True),
+        ('BergSPA & Hotel Zamangspitze', 'St. Gallenkirch', 'Montafon', 'EZ / DU', '2027-03-04', '2027-03-22', 5, True, True),
+        ('Chalet Sonne', 'Vandans', 'Montafon', 'DZ / DU', '2027-03-14', '2027-03-22', 27, True, False),
+        ('Chalet Sonne', 'Vandans', 'Montafon', 'EZ / DU', '2027-03-14', '2027-03-22', 6, True, False),
+        ('Christophorus', 'Partenen', 'Montafon', 'DZ / DU', '2027-03-06', '2027-03-22', 2, False, True),
+        ('Christophorus', 'Partenen', 'Montafon', 'EZ / DU', '2027-03-06', '2027-03-22', 1, False, True),
+    ]
+
+    events_seed = [
+        ('Big Air', '2027-03-07', '2027-03-14', [('DZ / DU', 141), ('EZ / DU', 139)]),
+        ('Aerials', '2027-03-15', '2027-03-21', [('DZ / DU', 50), ('EZ / DU', 50)]),
+        ('Moguls', '2027-03-12', '2027-03-20', [('DZ / DU', 57), ('EZ / DU', 56)]),
+        ('Parallel', '2027-03-04', '2027-03-11', [('DZ / DU', 57), ('EZ / DU', 56)]),
+        ('Slopestyle', '2027-03-12', '2027-03-21', [('DZ / DU', 142), ('EZ / DU', 140)]),
+        ('Snowboard Cross', '2027-03-16', '2027-03-22', [('DZ / DU', 60), ('EZ / DU', 59)]),
+        ('Ski Cross', '2027-03-09', '2027-03-15', [('DZ / DU', 54), ('EZ / DU', 53)]),
+    ]
+
+    changed = False
+
+    room_type_map = {room_type.name: room_type for room_type in RoomType.query.all()}
+    for name, max_persons in room_types_seed:
+        if name not in room_type_map:
+            room_type = RoomType(name=name, max_persons=max_persons)
+            db.session.add(room_type)
+            db.session.flush()
+            room_type_map[name] = room_type
+            changed = True
+
+    hotel_map = {hotel.name: hotel for hotel in Hotel.query.all()}
+    inventory_keys = {
+        (inv.hotel_id, inv.room_type_id, inv.available_from, inv.available_until, inv.room_count)
+        for inv in HotelRoomInventory.query.all()
+    }
+
+    for hotel_name, location, region, room_type_name, date_from, date_to, room_count, has_hp, has_sr in hotels_seed:
+        hotel = hotel_map.get(hotel_name)
+        if hotel is None:
+            hotel = Hotel(name=hotel_name, location=location, region=region)
+            db.session.add(hotel)
+            db.session.flush()
+            hotel_map[hotel_name] = hotel
+            changed = True
+
+        room_type = room_type_map.get(room_type_name)
+        if room_type is None:
+            continue
+
+        key = (
+            hotel.id,
+            room_type.id,
+            datetime.fromisoformat(date_from).date(),
+            datetime.fromisoformat(date_to).date(),
+            room_count,
+        )
+        if key in inventory_keys:
+            continue
+
+        db.session.add(HotelRoomInventory(
+            hotel_id=hotel.id,
+            room_type_id=room_type.id,
+            available_from=key[2],
+            available_until=key[3],
+            room_count=room_count,
+            has_half_board=has_hp,
+            has_sr=has_sr,
+        ))
+        inventory_keys.add(key)
+        changed = True
+
+    event_map = {
+        (event.discipline, event.start_date, event.end_date): event
+        for event in Event.query.all()
+    }
+    existing_demands = {
+        (demand.event_id, demand.room_type_id, demand.room_count)
+        for demand in EventRoomDemand.query.all()
+    }
+
+    for discipline, start_date, end_date, demands in events_seed:
+        event_key = (discipline, datetime.fromisoformat(start_date).date(), datetime.fromisoformat(end_date).date())
+        event = event_map.get(event_key)
+        if event is None:
+            event = Event(discipline=discipline, start_date=event_key[1], end_date=event_key[2])
+            db.session.add(event)
+            db.session.flush()
+            event_map[event_key] = event
+            changed = True
+
+        for room_type_name, room_count in demands:
+            room_type = room_type_map.get(room_type_name)
+            if room_type is None:
+                continue
+            demand_key = (event.id, room_type.id, room_count)
+            if demand_key in existing_demands:
+                continue
+            db.session.add(EventRoomDemand(
+                event_id=event.id,
+                room_type_id=room_type.id,
+                room_count=room_count,
+            ))
+            existing_demands.add(demand_key)
+            changed = True
+
+    if changed:
+        db.session.commit()
+
+
 def _normalize_gender(athlete):
     raw = (athlete.gender or athlete.for_gender or '').strip().lower()
     if raw in {'m', 'male', 'man', 'men', 'herr', 'herren'}:
@@ -702,6 +843,7 @@ CRITICAL_ROUTE_ALIASES = [
 # Initialize database
 with app.app_context():
     db.create_all()
+    ensure_reference_data()
 
     # Lightweight SQLite migration for added columns (no Alembic in this repo)
     def ensure_athlete_columns():

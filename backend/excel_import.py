@@ -8,11 +8,32 @@ from datetime import datetime, date, timedelta
 import pandas as pd
 
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
-from models import Athlete, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
+from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
 
 
 PREVIEW_STORE = {}
 PREVIEW_TTL_SECONDS = 60 * 60
+
+DISCIPLINE_FILENAME_ALIASES = {
+    'bigair': 'Big Air',
+    'big_air': 'Big Air',
+    'ba': 'Big Air',
+    'moguls': 'Moguls',
+    'mogul': 'Moguls',
+    'mo': 'Moguls',
+    'slopestyle': 'Slopestyle',
+    'slope': 'Slopestyle',
+    'ss': 'Slopestyle',
+    'parallel': 'Parallel',
+    'psl': 'Parallel',
+    'pgs': 'Parallel',
+    'sbx': 'Snowboard Cross',
+    'snowboardcross': 'Snowboard Cross',
+    'skicross': 'Ski Cross',
+    'sx': 'Ski Cross',
+    'aerials': 'Aerials',
+    'ae': 'Aerials',
+}
 
 ENTRY_REQUIRED_COLUMNS = {
     'Function',
@@ -222,6 +243,89 @@ def extract_discipline_value(row):
             return value
 
     return None
+
+
+def infer_discipline_from_filename(path):
+    filename = normalize_string(path.split('\\')[-1].split('/')[-1].replace('.xlsx', '').replace('.xls', ''))
+    if not filename:
+        return None
+
+    tokens = [token for token in re.split(r'[^a-z0-9]+', filename) if token]
+    joined = ''.join(tokens)
+
+    for key, discipline in DISCIPLINE_FILENAME_ALIASES.items():
+        normalized_key = normalize_string(key).replace(' ', '')
+        if normalized_key and normalized_key in joined:
+            return discipline
+
+    for token in tokens:
+        if token in DISCIPLINE_FILENAME_ALIASES:
+            return DISCIPLINE_FILENAME_ALIASES[token]
+
+    return None
+
+
+def infer_discipline_from_events(people):
+    ranges = []
+    for person in people:
+        start = person.get('arrivalDate')
+        end = person.get('departureDate')
+        if start and end and end >= start:
+            ranges.append((start, end))
+
+    if not ranges:
+        return None
+
+    events = Event.query.all()
+    if not events:
+        return None
+
+    best_match = None
+    best_score = -1
+    for event in events:
+        score = 0
+        for start, end in ranges:
+            overlap_start = max(start, event.start_date)
+            overlap_end = min(end, event.end_date)
+            if overlap_end >= overlap_start:
+                score += (overlap_end - overlap_start).days + 1
+            else:
+                try:
+                    shifted_event_start = date(start.year, event.start_date.month, event.start_date.day)
+                    shifted_event_end = date(end.year, event.end_date.month, event.end_date.day)
+                    shifted_overlap_start = max(start, shifted_event_start)
+                    shifted_overlap_end = min(end, shifted_event_end)
+                    if shifted_overlap_end >= shifted_overlap_start:
+                        score += (shifted_overlap_end - shifted_overlap_start).days + 1
+                except ValueError:
+                    continue
+        if score > best_score:
+            best_score = score
+            best_match = event
+
+    if best_match and best_score > 0:
+        return best_match.discipline
+    return None
+
+
+def apply_import_level_discipline(people, entries_path, roomlist_path):
+    if not people:
+        return None
+    if any(person.get('industryName') for person in people):
+        return None
+
+    inferred = (
+        infer_discipline_from_filename(entries_path)
+        or infer_discipline_from_filename(roomlist_path)
+        or infer_discipline_from_events(people)
+    )
+
+    if not inferred:
+        return None
+
+    for person in people:
+        person['industryName'] = inferred
+    return inferred
 
 
 def load_first_sheet(path):
@@ -741,6 +845,16 @@ def create_fis_import_preview(entries_path, roomlist_path):
     athlete_maps = _build_existing_athlete_maps()
 
     people_result = parse_entries_list(entries_df, athlete_maps)
+    inferred_discipline = apply_import_level_discipline(people_result['people'], entries_path, roomlist_path)
+    if inferred_discipline:
+        people_result['warnings'].append({
+            'code': 'ENTRY_DISCIPLINE_INFERRED',
+            'message': f'Discipline inferred as {inferred_discipline}',
+            'details': {
+                'discipline': inferred_discipline,
+                'source': 'filename_or_event_range',
+            },
+        })
     room_result = parse_room_list(room_df, people_result['people'])
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'])
 
@@ -752,6 +866,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
         'entriesColumns': list(entries_df.columns),
         'roomColumns': list(room_df.columns),
         'dayColumns': room_result['dayColumns'],
+        'detectedDiscipline': next((person.get('industryName') for person in people_result['people'] if person.get('industryName')), None),
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
     }
@@ -782,6 +897,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
         'entriesColumns': preview['entriesColumns'],
         'roomColumns': preview['roomColumns'],
         'dayColumns': preview['dayColumns'],
+        'detectedDiscipline': preview.get('detectedDiscipline'),
         'people': [_serialize_person_preview(person) for person in people_result['people']],
         'rooms': [_serialize_room_preview(room) for room in room_result['rooms']],
         'errors': blocking_errors,

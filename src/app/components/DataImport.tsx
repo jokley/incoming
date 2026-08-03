@@ -154,6 +154,10 @@ export function DataImport() {
               <PreviewMetric label="Warnings" value={preview.summary.validation.warningCount} />
               <PreviewMetric label="Fehler" value={preview.summary.validation.errorCount} />
             </div>
+            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
+              <span className="font-medium">Erkannte Disziplin:</span>{' '}
+              {preview.detectedDiscipline || 'nicht erkannt'}
+            </div>
           </div>
 
           <IssueList title="Blockierende Fehler" issues={preview.errors} emptyText="Keine blockierenden Fehler gefunden." tone="red" />
@@ -167,10 +171,11 @@ export function DataImport() {
               rows={preview.people.slice(0, 12).map((person) => [
                 `${person.firstname} ${person.lastname}`,
                 person.nationCode,
+                person.discipline || '-',
                 person.function || '-',
                 person.operation,
               ])}
-              headers={['Name', 'Nation', 'Funktion', 'Aktion']}
+              headers={['Name', 'Nation', 'Disziplin', 'Funktion', 'Aktion']}
               footer={preview.people.length > 12 ? `+ ${preview.people.length - 12} weitere Personen` : undefined}
             />
             <PreviewTable
