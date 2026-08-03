@@ -16,7 +16,10 @@ CORS(app)
 
 # Database configuration
 basedir = os.path.abspath(os.path.dirname(__file__))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + os.path.join(basedir, 'freestyle_wm_new.db')
+data_dir = os.environ.get('APP_DATA_DIR', os.path.join(basedir, 'data'))
+os.makedirs(data_dir, exist_ok=True)
+database_path = os.environ.get('DATABASE_PATH', os.path.join(data_dir, 'freestyle_wm_new.db'))
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + database_path
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)

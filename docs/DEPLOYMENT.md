@@ -74,9 +74,11 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - backend-data:/app
+      - backend-data:/app/data
     environment:
       - FLASK_ENV=production
+      - APP_DATA_DIR=/app/data
+      - DATABASE_PATH=/app/data/freestyle_wm_new.db
     networks:
       - freestyle-network
     restart: unless-stopped

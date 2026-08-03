@@ -8,9 +8,11 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
-      - backend-data:/app
+      - backend-data:/app/data
     environment:
       - FLASK_ENV=development
+      - APP_DATA_DIR=/app/data
+      - DATABASE_PATH=/app/data/freestyle_wm_new.db
     networks:
       - freestyle-network
     restart: unless-stopped
