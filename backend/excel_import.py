@@ -134,6 +134,11 @@ def normalize_columns(df):
         'firstname': 'Firstname',
         'nationcode': 'Nationcode',
         'industryname': 'Industryname',
+        'industry': 'Industryname',
+        'discipline': 'Industryname',
+        'disciplinename': 'Industryname',
+        'eventdiscipline': 'Industryname',
+        'sportdiscipline': 'Industryname',
         'function': 'Function',
         'forgender': 'For_gender',
         'gender': 'Gender',
@@ -192,6 +197,31 @@ def normalize_columns(df):
     df = df.copy()
     df.columns = normalized_columns
     return df
+
+
+DISCIPLINE_COLUMN_KEYS = {
+    'industryname',
+    'industry',
+    'discipline',
+    'disciplinename',
+    'eventdiscipline',
+    'sportdiscipline',
+}
+
+
+def extract_discipline_value(row):
+    direct = normalize_whitespace(row.get('Industryname')) or None
+    if direct:
+        return direct
+
+    for column_name in row.index:
+        if _col_key(column_name) not in DISCIPLINE_COLUMN_KEYS:
+            continue
+        value = normalize_whitespace(row.get(column_name)) or None
+        if value:
+            return value
+
+    return None
 
 
 def load_first_sheet(path):
@@ -338,6 +368,7 @@ def parse_entries_list(df, athlete_maps):
         lastname = normalize_whitespace(row.get('Lastname'))
         firstname = normalize_whitespace(row.get('Firstname'))
         nation_code = normalize_whitespace(row.get('Nationcode')).upper()
+        discipline = extract_discipline_value(row)
 
         if not lastname and not firstname and not nation_code:
             continue
@@ -383,7 +414,7 @@ def parse_entries_list(df, athlete_maps):
             'lastname': lastname,
             'firstname': firstname,
             'nationCode': nation_code,
-            'industryName': normalize_whitespace(row.get('Industryname')) or None,
+            'industryName': discipline,
             'forGender': normalize_whitespace(row.get('For_gender')) or None,
             'gender': normalize_whitespace(row.get('Gender')) or None,
             'phone': normalize_whitespace(row.get('Phone')) or None,
@@ -662,6 +693,7 @@ def build_quota_warnings(people, rooms):
 
 def _serialize_person_preview(person):
     result = deepcopy(person)
+    result['discipline'] = result.get('industryName')
     for key in ('arrivalDate', 'departureDate', 'tvPictureDate'):
         if result.get(key):
             result[key] = result[key].isoformat()

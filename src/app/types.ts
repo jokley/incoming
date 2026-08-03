@@ -302,6 +302,7 @@ export interface FisImportPreviewPerson {
   lastname: string;
   firstname: string;
   nationCode: string;
+  discipline?: string | null;
   gender?: string | null;
   forGender?: string | null;
   operation: 'create' | 'update';
