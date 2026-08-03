@@ -12,7 +12,8 @@ import {
   HotelReservationRow,
   FisImportPreview,
   FisImportConfirmResult,
-  AssignmentPlanningView
+  AssignmentPlanningView,
+  FisMockFilePair
 } from '../types';
 import { OfficialQuotaUsage } from './fisRules';
 
@@ -727,6 +728,10 @@ class ApiService {
       method: 'POST',
       body: JSON.stringify({ previewToken }),
     });
+  }
+
+  async getFisMockFiles(): Promise<FisMockFilePair[]> {
+    return this.request<FisMockFilePair[]>('/import/fis/mock-files');
   }
 
   // FIS official quotas

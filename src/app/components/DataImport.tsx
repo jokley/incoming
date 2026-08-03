@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle, FileText, Loader2, Upload } from 'lucide-react';
+import { AlertCircle, CheckCircle, Download, FileText, Loader2, Upload } from 'lucide-react';
 
 import { api } from '../services/api';
 import { FisImportIssue, FisImportPreview } from '../types';
@@ -98,6 +98,8 @@ export function DataImport() {
         </ul>
       </div>
 
+      <MockFilesCard />
+
       <UnifiedUploadCard files={files} onChange={handleFilesSelected} />
 
       <div className="bg-white rounded-lg shadow p-6 space-y-4">
@@ -192,6 +194,26 @@ export function DataImport() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function MockFilesCard() {
+  return (
+    <div className="bg-white rounded-lg shadow p-6">
+      <div className="mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">Mock-Dateien herunterladen</h3>
+        <p className="text-sm text-gray-500">
+          Lade alle aktuellen Mock-Dateien gesammelt als ZIP herunter, passe sie in Excel an und lade sie danach wieder hoch.
+        </p>
+      </div>
+      <a
+        href="/api/import/fis/mock-files/download-all"
+        className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 hover:bg-blue-100"
+      >
+        <Download className="w-4 h-4" />
+        Alle Mock-Dateien herunterladen
+      </a>
     </div>
   );
 }

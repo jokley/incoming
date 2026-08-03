@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
 from models import db, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
@@ -8,6 +8,7 @@ import csv
 import io
 import tempfile
 import json
+import zipfile
 from sqlalchemy import text, func
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 
@@ -16,6 +17,7 @@ CORS(app)
 
 # Database configuration
 basedir = os.path.abspath(os.path.dirname(__file__))
+mock_files_dir = os.path.join(basedir, 'mock_fis_files')
 data_dir = os.environ.get('APP_DATA_DIR', os.path.join(basedir, 'data'))
 os.makedirs(data_dir, exist_ok=True)
 database_path = os.environ.get('DATABASE_PATH', os.path.join(data_dir, 'freestyle_wm_new.db'))
@@ -363,6 +365,41 @@ def _same_booking_for_all(bookings):
     if all(booking.id == first_id for booking in filtered):
         return filtered[0]
     return None
+
+
+def list_mock_fis_files():
+    if not os.path.isdir(mock_files_dir):
+        return []
+
+    pairs = {}
+    for filename in os.listdir(mock_files_dir):
+        if not filename.lower().endswith(('.xlsx', '.xls')):
+            continue
+        upper = filename.upper()
+        if upper.startswith('ENTRIES-LIST_'):
+            discipline_key = filename.split('ENTRIES-LIST_', 1)[1].rsplit('.', 1)[0]
+            entry = pairs.setdefault(discipline_key, {'disciplineKey': discipline_key})
+            entry['entriesFile'] = filename
+        elif upper.startswith('ENTRIES-ROOM-LIST-DETAILED_'):
+            discipline_key = filename.split('ENTRIES-ROOM-LIST-DETAILED_', 1)[1].rsplit('.', 1)[0]
+            entry = pairs.setdefault(discipline_key, {'disciplineKey': discipline_key})
+            entry['roomFile'] = filename
+
+    result = []
+    for discipline_key, entry in sorted(pairs.items()):
+        label = discipline_key
+        if label.startswith('2027_WM_'):
+            label = label.split('2027_WM_', 1)[1]
+        label = label.replace('_', ' ').title()
+        result.append({
+            'discipline': label,
+            'disciplineKey': discipline_key,
+            'entriesFile': entry.get('entriesFile'),
+            'roomFile': entry.get('roomFile'),
+            'entriesDownloadUrl': f"/api/import/fis/mock-files/{entry['entriesFile']}" if entry.get('entriesFile') else None,
+            'roomDownloadUrl': f"/api/import/fis/mock-files/{entry['roomFile']}" if entry.get('roomFile') else None,
+        })
+    return result
 
 
 def _room_category_label(room_type_name):
@@ -985,7 +1022,7 @@ def preview_fis_import():
                 continue
 
             try:
-                file_type = detect_fis_file_type(tmp_path)
+                file_type = detect_fis_file_type(tmp_path, display_name=file_storage.filename)
             except InvalidExcelFileError as exc:
                 return jsonify({
                     'error': str(exc),
@@ -1031,6 +1068,38 @@ def confirm_previewed_fis_import():
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/import/fis/mock-files', methods=['GET'])
+@app.route('/api/import/fis/mock-files/', methods=['GET'])
+def get_mock_fis_files():
+    return jsonify(list_mock_fis_files())
+
+
+@app.route('/api/import/fis/mock-files/<path:filename>', methods=['GET'])
+@app.route('/api/import/fis/mock-files/<path:filename>/', methods=['GET'])
+def download_mock_fis_file(filename):
+    return send_from_directory(mock_files_dir, filename, as_attachment=True)
+
+
+@app.route('/api/import/fis/mock-files/download-all', methods=['GET'])
+@app.route('/api/import/fis/mock-files/download-all/', methods=['GET'])
+def download_all_mock_fis_files():
+    memory_file = io.BytesIO()
+    with zipfile.ZipFile(memory_file, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+        if os.path.isdir(mock_files_dir):
+            for filename in sorted(os.listdir(mock_files_dir)):
+                if not filename.lower().endswith(('.xlsx', '.xls')):
+                    continue
+                archive.write(os.path.join(mock_files_dir, filename), arcname=filename)
+
+    memory_file.seek(0)
+    return send_file(
+        memory_file,
+        mimetype='application/zip',
+        as_attachment=True,
+        download_name='fis-mock-files.zip',
+    )
 
 
 @app.route('/api/import/excel', methods=['POST'])

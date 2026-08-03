@@ -334,29 +334,28 @@ def apply_import_level_discipline(people, entries_path, roomlist_path):
     return inferred
 
 
-def load_first_sheet(path):
+def load_first_sheet(path, display_name=None):
+    source_name = display_name or path.split('\\')[-1].split('/')[-1]
     try:
         workbook = pd.read_excel(path, sheet_name=None)
     except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError) as exc:
-        filename = path.split('\\')[-1].split('/')[-1]
         raise InvalidExcelFileError(
-            f'Invalid Excel file: {filename}. Please upload a valid .xlsx/.xls file exported by Excel.'
+            f'Invalid Excel file: {source_name}. Please upload a valid .xlsx/.xls file exported by Excel.'
         ) from exc
     if not workbook:
-        filename = path.split('\\')[-1].split('/')[-1]
-        raise InvalidExcelFileError(f'Excel file is empty: {filename}')
+        raise InvalidExcelFileError(f'Excel file is empty: {source_name}')
     _, df = next(iter(workbook.items()))
     return normalize_columns(df)
 
 
-def detect_fis_file_type(path):
+def detect_fis_file_type(path, display_name=None):
     filename = normalize_string(path.split('\\')[-1].split('/')[-1])
     if 'roomlistdetailed' in filename or 'roomlist' in filename:
         return 'roomlist'
     if 'entrieslist' in filename and 'room' not in filename:
         return 'entries'
 
-    df = load_first_sheet(path)
+    df = load_first_sheet(path, display_name=display_name)
     columns = set(df.columns)
     if {'Competitorid/Staff ID', 'Accredid', 'Fiscode'}.intersection(columns):
         return 'entries'

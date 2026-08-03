@@ -352,6 +352,15 @@ export interface FisImportPreview {
   warnings: FisImportIssue[];
 }
 
+export interface FisMockFilePair {
+  discipline: string;
+  disciplineKey: string;
+  entriesFile?: string | null;
+  roomFile?: string | null;
+  entriesDownloadUrl?: string | null;
+  roomDownloadUrl?: string | null;
+}
+
 export interface FisImportConfirmResult {
   success: boolean;
   summary: {
