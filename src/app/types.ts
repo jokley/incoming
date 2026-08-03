@@ -131,6 +131,7 @@ export interface RoomBooking {
   roomNumber?: string | null;
   checkInDate?: string | null;
   checkOutDate?: string | null;
+  countsAsSingle?: boolean;
   occupants: RoomBookingOccupant[];
 }
 
@@ -148,6 +149,11 @@ export interface RoomBookingUnitOccupant {
   statusBadges: string[];
   hasPendingReview: boolean;
   changeTouchesAssignment: boolean;
+  isAssigned?: boolean;
+  assignedBookingId?: string | null;
+  assignedHotelId?: string | null;
+  assignedRoomTypeId?: string | null;
+  assignedRoomNumber?: string | null;
 }
 
 export interface RoomBookingUnitWarning {
@@ -163,6 +169,7 @@ export interface RoomBookingUnit {
   occupants: RoomBookingUnitOccupant[];
   roomType: string;
   roomTypeLabel: string;
+  roomCategoryLabel?: string;
   occupantCount: number;
   checkInDate?: string | null;
   checkOutDate?: string | null;
@@ -173,6 +180,8 @@ export interface RoomBookingUnit {
   assignedHotelId?: string | null;
   assignedRoomTypeId?: string | null;
   assignedRoomNumber?: string | null;
+  hasAnyAssigned?: boolean;
+  isFullyAssigned?: boolean;
 }
 
 export interface AssignmentValidationResult {
@@ -188,6 +197,8 @@ export interface AssignmentGridBooking {
   roomTypeId: string;
   checkInDate?: string | null;
   checkOutDate?: string | null;
+  countsAsSingle?: boolean;
+  capacity?: number;
   occupants: Array<{
     athleteId: string;
     name: string;

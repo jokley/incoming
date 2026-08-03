@@ -520,6 +520,7 @@ class ApiService {
     checkInDate?: string;
     checkOutDate?: string;
     assignedBookingId?: string;
+    athleteIds?: string[];
   }): Promise<RoomBooking> {
     return this.request<RoomBooking>(`/assignments/units/${data.unitId}/assign`, {
       method: 'POST',
@@ -530,6 +531,7 @@ class ApiService {
         checkInDate: data.checkInDate,
         checkOutDate: data.checkOutDate,
         assignedBookingId: data.assignedBookingId,
+        athleteIds: data.athleteIds,
       }),
     });
   }
@@ -542,6 +544,7 @@ class ApiService {
     checkInDate?: string;
     checkOutDate?: string;
     assignedBookingId: string;
+    athleteIds?: string[];
   }): Promise<RoomBooking> {
     return this.assignRoomBookingUnit(data);
   }
@@ -552,6 +555,7 @@ class ApiService {
     roomNumber?: string;
     checkInDate?: string;
     checkOutDate?: string;
+    countsAsSingle?: boolean;
   }): Promise<RoomBooking> {
     return this.request<RoomBooking>(`/assignments/bookings/${bookingId}`, {
       method: 'PUT',
@@ -563,6 +567,13 @@ class ApiService {
     return this.request<{ success: boolean; bookingId: string }>(`/assignments/bookings/${bookingId}/unassign`, {
       method: 'POST',
     });
+  }
+
+  async unassignRoomBookingOccupant(bookingId: string, athleteId: string): Promise<{ success: boolean; bookingId: string; athleteId: string }> {
+    return this.request<{ success: boolean; bookingId: string; athleteId: string }>(
+      `/assignments/bookings/${bookingId}/occupants/${athleteId}/unassign`,
+      { method: 'POST' }
+    );
   }
 
 

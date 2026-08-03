@@ -1,4 +1,4 @@
-﻿import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle,
   AlertTriangle,
@@ -34,6 +34,7 @@ import type {
 
 type AppView = 'dispatch' | 'athletes' | 'quotas';
 type QueueStatus = 'pending' | 'done' | 'all';
+type RoomCategoryFilter = '' | 'ez' | 'dz';
 type SelectedState =
   | { type: 'unit'; id: string }
   | { type: 'booking'; id: string }
@@ -41,6 +42,8 @@ type SelectedState =
 
 type DragState = {
   unitId: string;
+  athleteIds: string[];
+  label: string;
 };
 
 const REGION_COLORS: Record<string, string> = {
@@ -68,11 +71,13 @@ export function Assignments() {
   const [filterDiscipline, setFilterDiscipline] = useState('');
   const [filterGender, setFilterGender] = useState('');
   const [filterStatus, setFilterStatus] = useState<QueueStatus>('pending');
+  const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
   const [regionFilter, setRegionFilter] = useState('');
 
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [dragOverHotelId, setDragOverHotelId] = useState<string | null>(null);
   const [dragOverRoomTypeKey, setDragOverRoomTypeKey] = useState<string | null>(null);
+  const [dragOverBookingId, setDragOverBookingId] = useState<string | null>(null);
 
   useEffect(() => {
     void loadInitialData();
@@ -200,11 +205,12 @@ export function Assignments() {
       const matchesNation = !filterNation || unit.nationCode === filterNation;
       const matchesDiscipline = !filterDiscipline || unit.occupants.some((occ) => occ.discipline === filterDiscipline);
       const matchesGender = !filterGender || unit.occupants.some((occ) => normalizeGender(occ.gender) === filterGender);
+      const matchesRoomCategory = !filterRoomCategory || getUnitRoomCategory(unit) === filterRoomCategory;
       const haystack = `${unit.nationCode} ${unit.roomTypeLabel} ${unit.occupants.map((o) => `${o.firstname} ${o.lastname}`).join(' ')}`.toLowerCase();
       const matchesSearch = !query || haystack.includes(query);
-      return matchesNation && matchesDiscipline && matchesGender && matchesSearch;
+      return matchesNation && matchesDiscipline && matchesGender && matchesRoomCategory && matchesSearch;
     });
-  }, [allUnits, allUnitsCombined, assignedUnits, filterDiscipline, filterGender, filterNation, filterStatus, queueSearch]);
+  }, [allUnits, allUnitsCombined, assignedUnits, filterDiscipline, filterGender, filterNation, filterRoomCategory, filterStatus, queueSearch]);
 
   const filteredHotels = useMemo(() => {
     const query = hotelSearch.trim().toLowerCase();
@@ -258,27 +264,30 @@ export function Assignments() {
   const selectedBookingContext = selected?.type === 'booking' ? bookingContextById.get(selected.id) ?? null : null;
   const selectedAssignedUnit = selectedBookingContext ? findAssignedUnitForBooking(selectedBookingContext.booking.bookingId, assignedUnits) : null;
 
-  const handleAssignToHotel = async (unitId: string, hotelId: string) => {
-    const validSlot = findFirstValidSlot(validationByUnit[unitId] || [], allHotels, hotelId);
+  const handleAssignToHotel = async (unitId: string, hotelId: string, athleteIds?: string[]) => {
+    const validationKey = getValidationKey(unitId, athleteIds);
+    const validSlot = findFirstValidSlot(validationByUnit[validationKey] || [], allHotels, hotelId);
     if (!validSlot) {
       setError('Für dieses Hotel gibt es keinen gültigen Slot für die ausgewählte Einheit.');
       return;
     }
-    await assignUnitToSlot(unitId, validSlot);
+    await assignUnitToSlot(unitId, validSlot, athleteIds);
   };
 
-  const handleAssignToRoomType = async (unitId: string, hotelId: string, roomTypeId: string) => {
-    const slot = findFirstValidSlotForRoomType(validationByUnit[unitId] || [], allHotels, hotelId, roomTypeId);
+  const handleAssignToRoomType = async (unitId: string, hotelId: string, roomTypeId: string, athleteIds?: string[]) => {
+    const validationKey = getValidationKey(unitId, athleteIds);
+    const slot = findFirstValidSlotForRoomType(validationByUnit[validationKey] || [], allHotels, hotelId, roomTypeId);
     if (!slot) {
       setError('Für diesen Zimmertyp gibt es keinen gültigen freien Slot.');
       return;
     }
-    await assignUnitToSlot(unitId, slot);
+    await assignUnitToSlot(unitId, slot, athleteIds);
   };
 
-  const assignUnitToSlot = async (unitId: string, slot: AssignmentSlot) => {
+  const assignUnitToSlot = async (unitId: string, slot: AssignmentSlot, athleteIds?: string[]) => {
     const unit = unitById.get(unitId);
     if (!unit) return;
+    const normalizedAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
     try {
       setSaving(true);
       setError(null);
@@ -289,11 +298,13 @@ export function Assignments() {
         roomNumber: slot.roomNumber || undefined,
         checkInDate: unit.checkInDate || undefined,
         checkOutDate: unit.checkOutDate || undefined,
-        assignedBookingId: unit.assignedBookingId || undefined,
+        assignedBookingId: normalizedAthleteIds.length === unit.occupants.length ? unit.assignedBookingId || undefined : undefined,
+        athleteIds: normalizedAthleteIds,
       });
       setDragging(null);
       setDragOverHotelId(null);
       setDragOverRoomTypeKey(null);
+      setDragOverBookingId(null);
       await Promise.all([
         refreshPlanningData(),
         loadQuotaUsage(),
@@ -317,6 +328,79 @@ export function Assignments() {
       ]);
     } catch (err) {
       setError(extractErrorMessage(err, 'Ausbuchen fehlgeschlagen'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleUnassignOccupant = async (bookingId: string, athleteId: string) => {
+    try {
+      setSaving(true);
+      setError(null);
+      await api.unassignRoomBookingOccupant(bookingId, athleteId);
+      await Promise.all([
+        refreshPlanningData(),
+        loadQuotaUsage(),
+      ]);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Teil-Ausbuchung fehlgeschlagen'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkBookingAsSingle = async (bookingId: string, countsAsSingle: boolean) => {
+    try {
+      setSaving(true);
+      setError(null);
+      await api.updateAssignedUnit(bookingId, { countsAsSingle });
+      await Promise.all([
+        refreshPlanningData(),
+        loadQuotaUsage(),
+      ]);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'EZ-Markierung fehlgeschlagen'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleAssignToExistingBooking = async (
+    unitId: string,
+    booking: AssignmentGridBooking,
+    athleteIds?: string[],
+  ) => {
+    const unit = unitById.get(unitId);
+    if (!unit) return;
+    const incomingAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
+    const combinedAthleteIds = Array.from(new Set([
+      ...booking.occupants.map((occupant) => occupant.athleteId),
+      ...incomingAthleteIds,
+    ]));
+
+    try {
+      setSaving(true);
+      setError(null);
+      await api.assignRoomBookingUnit({
+        unitId,
+        hotelId: booking.hotelId,
+        roomTypeId: booking.roomTypeId,
+        roomNumber: booking.roomNumber || undefined,
+        checkInDate: booking.checkInDate || unit.checkInDate || undefined,
+        checkOutDate: booking.checkOutDate || unit.checkOutDate || undefined,
+        assignedBookingId: booking.bookingId,
+        athleteIds: combinedAthleteIds,
+      });
+      setDragging(null);
+      setDragOverHotelId(null);
+      setDragOverRoomTypeKey(null);
+      setDragOverBookingId(null);
+      await Promise.all([
+        refreshPlanningData(),
+        loadQuotaUsage(),
+      ]);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Partner zum Doppelzimmer hinzufügen fehlgeschlagen'));
     } finally {
       setSaving(false);
     }
@@ -368,25 +452,29 @@ export function Assignments() {
               onFilterGender={setFilterGender}
               filterStatus={filterStatus}
               onFilterStatus={setFilterStatus}
+              filterRoomCategory={filterRoomCategory}
+              onFilterRoomCategory={setFilterRoomCategory}
               search={queueSearch}
               onSearch={setQueueSearch}
               nationOptions={nationOptions}
               disciplineOptions={disciplineOptions}
               genderOptions={genderOptions}
               draggingUnitId={dragging?.unitId || null}
-              onDragStart={(unitId) => {
-                setDragging({ unitId });
+              draggingAthleteIds={dragging?.athleteIds || []}
+              onDragStart={(unitId, athleteIds, label) => {
+                setDragging({ unitId, athleteIds, label });
                 setSelected({ type: 'unit', id: unitId });
               }}
               onDragEnd={() => {
                 setDragging(null);
                 setDragOverHotelId(null);
                 setDragOverRoomTypeKey(null);
+                setDragOverBookingId(null);
               }}
               onSelectUnit={(unitId) => setSelected({ type: 'unit', id: unitId })}
-              onQuickAssignPair={(unitId) => {
+              onQuickAssignPair={(unitId, athleteIds) => {
                 const targetHotel = activeHotel ?? filteredHotels[0];
-                if (targetHotel) void handleAssignToHotel(unitId, targetHotel.hotelId);
+                if (targetHotel) void handleAssignToHotel(unitId, targetHotel.hotelId, athleteIds);
               }}
               selectedUnitId={selected?.type === 'unit' ? selected.id : null}
             />
@@ -401,15 +489,20 @@ export function Assignments() {
                   allHotels={allHotels}
                   validationByUnit={validationByUnit}
                   draggingUnitId={dragging?.unitId || null}
+                  draggingValidationKey={dragging ? getValidationKey(dragging.unitId, dragging.athleteIds) : null}
                   dragOverHotelId={dragOverHotelId}
                   dragOverRoomTypeKey={dragOverRoomTypeKey}
                   onSelectHotel={setActiveHotelId}
                   onDragOverHotel={(hotelId) => setDragOverHotelId(hotelId)}
                   onDragLeaveHotel={() => setDragOverHotelId(null)}
-                  onDropHotel={(hotelId) => dragging && void handleAssignToHotel(dragging.unitId, hotelId)}
+                  onDropHotel={(hotelId) => dragging && void handleAssignToHotel(dragging.unitId, hotelId, dragging.athleteIds)}
                   onDragOverRoomType={(roomTypeKey) => setDragOverRoomTypeKey(roomTypeKey)}
                   onDragLeaveRoomType={() => setDragOverRoomTypeKey(null)}
-                  onDropRoomType={(hotelId, roomTypeId) => dragging && void handleAssignToRoomType(dragging.unitId, hotelId, roomTypeId)}
+                  onDropRoomType={(hotelId, roomTypeId) => dragging && void handleAssignToRoomType(dragging.unitId, hotelId, roomTypeId, dragging.athleteIds)}
+                  dragOverBookingId={dragOverBookingId}
+                  onDragOverBooking={(bookingId) => setDragOverBookingId(bookingId)}
+                  onDragLeaveBooking={() => setDragOverBookingId(null)}
+                  onDropBooking={(booking) => dragging && void handleAssignToExistingBooking(dragging.unitId, booking, dragging.athleteIds)}
                   hotelSearch={hotelSearch}
                   onHotelSearch={setHotelSearch}
                   regionFilter={regionFilter}
@@ -445,6 +538,8 @@ export function Assignments() {
               selectedBookingContext={selectedBookingContext}
               selectedAssignedUnit={selectedAssignedUnit}
               onUnassignBooking={handleUnassignBooking}
+              onUnassignOccupant={handleUnassignOccupant}
+              onMarkBookingAsSingle={handleMarkBookingAsSingle}
             />
           </aside>
         </div>
@@ -583,12 +678,15 @@ function QueueSidebar({
   onFilterGender,
   filterStatus,
   onFilterStatus,
+  filterRoomCategory,
+  onFilterRoomCategory,
   search,
   onSearch,
   nationOptions,
   disciplineOptions,
   genderOptions,
   draggingUnitId,
+  draggingAthleteIds,
   onDragStart,
   onDragEnd,
   onSelectUnit,
@@ -607,16 +705,19 @@ function QueueSidebar({
   onFilterGender: (value: string) => void;
   filterStatus: QueueStatus;
   onFilterStatus: (value: QueueStatus) => void;
+  filterRoomCategory: RoomCategoryFilter;
+  onFilterRoomCategory: (value: RoomCategoryFilter) => void;
   search: string;
   onSearch: (value: string) => void;
   nationOptions: string[];
   disciplineOptions: string[];
   genderOptions: string[];
   draggingUnitId: string | null;
-  onDragStart: (unitId: string) => void;
+  draggingAthleteIds: string[];
+  onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
   onDragEnd: () => void;
   onSelectUnit: (unitId: string) => void;
-  onQuickAssignPair: (unitId: string) => void;
+  onQuickAssignPair: (unitId: string, athleteIds: string[]) => void;
   selectedUnitId: string | null;
 }) {
   return (
@@ -640,7 +741,7 @@ function QueueSidebar({
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className="mt-4 flex flex-wrap gap-2">
           {[
             { id: 'pending', label: 'Offen' },
             { id: 'done', label: 'Erledigt' },
@@ -652,6 +753,22 @@ function QueueSidebar({
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                 filterStatus === item.id
                   ? 'bg-blue-600 text-white'
+                  : 'bg-[#20324a] text-slate-300 hover:bg-[#2a3d58] hover:text-white'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+          {[
+            { id: 'ez', label: 'EZ' },
+            { id: 'dz', label: 'DZ' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onFilterRoomCategory(filterRoomCategory === item.id ? '' : item.id as RoomCategoryFilter)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                filterRoomCategory === item.id
+                  ? 'bg-violet-500 text-white'
                   : 'bg-[#20324a] text-slate-300 hover:bg-[#2a3d58] hover:text-white'
               }`}
             >
@@ -674,42 +791,19 @@ function QueueSidebar({
               </span>
             </div>
             <div className="space-y-2">
-              {shareRequests.map(({ unit, mixed }) => (
-                <div
+              {shareRequests.map(({ unit }) => (
+                <QueueUnitCard
                   key={unit.unitId}
-                  onClick={() => onSelectUnit(unit.unitId)}
-                  className="w-full cursor-pointer rounded-2xl border border-violet-700/40 bg-[#22324a] px-3 py-3 text-left transition-all hover:border-violet-400/60 hover:bg-[#2a3d58]"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div>
-                      <div className="text-sm font-semibold text-white">
-                        {unit.occupants.map((occ) => occ.lastname).join(' ↔ ')}
-                      </div>
-                      <div className="mt-1 text-[10px] font-mono text-slate-400">
-                        {unit.occupants.map((occ) => `${occ.nationCode} ${normalizeGender(occ.gender) || '—'}`).join(' · ')}
-                      </div>
-                    </div>
-                    <div className={`text-xs font-semibold ${mixed ? 'text-amber-300' : 'text-emerald-300'}`}>
-                      {mixed ? 'Warnung' : 'ok'}
-                    </div>
-                  </div>
-                  {mixed && (
-                    <div className="mt-2 text-[11px] text-amber-200">
-                      Gemischtes Paar erkannt — Zuweisung ist erlaubt, bitte kurz prüfen.
-                    </div>
-                  )}
-                  {unit.occupants.length >= 2 && (
-                    <button
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onQuickAssignPair(unit.unitId);
-                      }}
-                      className="mt-3 w-full rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-400"
-                    >
-                      Paar zuweisen → {unit.roomTypeLabel}
-                    </button>
-                  )}
-                </div>
+                  unit={unit}
+                  selected={selectedUnitId === unit.unitId}
+                  dragging={draggingUnitId === unit.unitId}
+                  draggingAthleteIds={draggingAthleteIds}
+                  highlighted
+                  onSelect={() => onSelectUnit(unit.unitId)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                  onQuickAssign={onQuickAssignPair}
+                />
               ))}
             </div>
           </div>
@@ -723,9 +817,11 @@ function QueueSidebar({
                 unit={unit}
                 selected={selectedUnitId === unit.unitId}
                 dragging={draggingUnitId === unit.unitId}
+                draggingAthleteIds={draggingAthleteIds}
                 onSelect={() => onSelectUnit(unit.unitId)}
-                onDragStart={() => onDragStart(unit.unitId)}
+                onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
+                onQuickAssign={onQuickAssignPair}
               />
             ))}
             {!regularUnits.length && !shareRequests.length && (
@@ -751,72 +847,179 @@ function QueueSidebar({
     </div>
   );
 }
+
 function QueueUnitCard({
   unit,
   selected,
   dragging,
+  draggingAthleteIds,
+  highlighted = false,
   onSelect,
   onDragStart,
   onDragEnd,
+  onQuickAssign,
 }: {
   unit: RoomBookingUnit;
   selected: boolean;
   dragging: boolean;
+  draggingAthleteIds: string[];
+  highlighted?: boolean;
   onSelect: () => void;
-  onDragStart: () => void;
+  onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
   onDragEnd: () => void;
+  onQuickAssign: (unitId: string, athleteIds: string[]) => void;
 }) {
+  const primaryOccupant = unit.occupants[0];
+  const partnerOccupant = unit.occupants[1] ?? null;
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
+  const roomCategory = getUnitRoomCategory(unit).toUpperCase();
+  const cardBase = highlighted
+    ? 'border-violet-700/40 bg-[#22324a] hover:border-violet-400/60 hover:bg-[#2a3d58]'
+    : selected
+      ? 'border-blue-400/60 bg-[#244064]'
+      : 'border-[#39506f] bg-[#1b2c43] hover:border-[#4b6587] hover:bg-[#213652]';
+
   return (
-    <button
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
+    <div
       onClick={onSelect}
-      className={`w-full rounded-2xl border px-3 py-3 text-left transition-all ${
-        selected
-          ? 'border-blue-400/60 bg-[#244064]'
-          : 'border-[#39506f] bg-[#1b2c43] hover:border-[#4b6587] hover:bg-[#213652]'
-      } ${dragging ? 'opacity-60' : ''}`}
+      className={`w-full cursor-pointer rounded-2xl border px-3 py-3 text-left transition-all ${cardBase} ${dragging ? 'opacity-70' : ''}`}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-bold text-white">
-            {unit.occupants.map((occ) => occ.lastname).join(' ↔ ')}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-bold text-white">
+            {primaryOccupant ? `${primaryOccupant.firstname} ${primaryOccupant.lastname}` : '—'}
           </div>
-          <div className="mt-1 flex items-center gap-1.5 text-[10px] font-mono text-slate-500">
-            {unit.occupants.map((occ) => (
-              <span key={occ.athleteId}>{occ.nationCode}</span>
-            ))}
+          <div className="mt-1 text-[11px] text-slate-300">
+            Zimmerpartner: {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Zimmerpartner offen'}
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
+            <span>{unit.nationCode || '—'}</span>
             <span>·</span>
-            <span>{unit.occupants.map((occ) => normalizeGender(occ.gender) || '—').join('/')}</span>
+            <span>{roomCategory}</span>
+            <span>·</span>
+            <span>{formatShortDate(unit.checkInDate)} → {formatShortDate(unit.checkOutDate)}</span>
           </div>
         </div>
-        <div className={`text-xs font-semibold ${hasPairWarning ? 'text-amber-300' : 'text-emerald-300'}`}>
-          {hasPairWarning ? 'Warnung' : 'ok'}
+        <div className="flex flex-col items-end gap-1">
+          <span className={`text-xs font-semibold ${hasPairWarning ? 'text-amber-300' : 'text-emerald-300'}`}>
+            {hasPairWarning ? 'Warnung' : 'ok'}
+          </span>
+          <span className="text-[10px] text-slate-400">
+            {unit.isFullyAssigned ? 'erledigt' : unit.hasAnyAssigned ? 'teilweise' : 'offen'}
+          </span>
         </div>
       </div>
 
-      <div className="mt-3 flex items-center justify-between text-xs">
-        <div className="text-slate-400">
-          {unit.roomTypeLabel} · {formatShortDate(unit.checkInDate)} → {formatShortDate(unit.checkOutDate)}
+      {hasPairWarning && (
+        <div className="mt-2 rounded-xl border border-amber-700/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+          Gemischtes Paar erkannt — Zuweisung ist erlaubt, bitte kurz prüfen.
         </div>
-        <div className="text-slate-500">
-          {unit.assignedBookingId ? 'zugewiesen' : 'offen'}
-        </div>
+      )}
+
+      <div className="mt-3 grid gap-2">
+        <QueueOccupantActionRow
+          title="Athlet"
+          occupant={primaryOccupant}
+          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === primaryOccupant?.athleteId}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onQuickAssign={onQuickAssign}
+          unitId={unit.unitId}
+        />
+        <QueueOccupantActionRow
+          title="Zimmerpartner"
+          occupant={partnerOccupant}
+          emptyLabel="Zimmerpartner offen"
+          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === partnerOccupant?.athleteId}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onQuickAssign={onQuickAssign}
+          unitId={unit.unitId}
+        />
+        {unit.occupants.length >= 2 && (
+          <button
+            draggable
+            onDragStart={() => onDragStart(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId), 'Beide zusammen')}
+            onDragEnd={onDragEnd}
+            onClick={(event) => {
+              event.stopPropagation();
+              onQuickAssign(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId));
+            }}
+            className="rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-400"
+          >
+            Beide zusammen zuweisen
+          </button>
+        )}
       </div>
-    </button>
+    </div>
   );
 }
 
+function QueueOccupantActionRow({
+  title,
+  occupant,
+  emptyLabel = '—',
+  isDragging,
+  onDragStart,
+  onDragEnd,
+  onQuickAssign,
+  unitId,
+}: {
+  title: string;
+  occupant?: RoomBookingUnit['occupants'][number] | null;
+  emptyLabel?: string;
+  isDragging: boolean;
+  onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
+  onDragEnd: () => void;
+  onQuickAssign: (unitId: string, athleteIds: string[]) => void;
+  unitId: string;
+}) {
+  if (!occupant) {
+    return (
+      <div className="rounded-xl border border-dashed border-[#556d8b] px-3 py-2 text-[11px] text-slate-400">
+        {title}: {emptyLabel}
+      </div>
+    );
+  }
+
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${occupant.isAssigned ? 'border-emerald-700/40 bg-emerald-500/10' : 'border-[#4f6786] bg-[#243651]'} ${isDragging ? 'opacity-70' : ''}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-400">{title}</div>
+          <div className="text-sm font-semibold text-white">{occupant.firstname} {occupant.lastname}</div>
+        </div>
+        <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-slate-300'}`}>
+          {occupant.isAssigned ? 'zugewiesen' : 'offen'}
+        </span>
+      </div>
+      <div className="mt-2 flex gap-2">
+        <button
+          draggable
+          onDragStart={() => onDragStart(unitId, [occupant.athleteId], occupant.firstname)}
+          onDragEnd={onDragEnd}
+          onClick={(event) => {
+            event.stopPropagation();
+            onQuickAssign(unitId, [occupant.athleteId]);
+          }}
+          className="flex-1 rounded-lg border border-[#5e7aa0] bg-[#314763] px-2.5 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-[#395274]"
+        >
+          Einzeln zuweisen
+        </button>
+      </div>
+    </div>
+  );
+}
 function DispatchWorkspace({
   hotels,
   activeHotel,
   allHotels,
   validationByUnit,
   draggingUnitId,
+  draggingValidationKey,
   dragOverHotelId,
   dragOverRoomTypeKey,
+  dragOverBookingId,
   onSelectHotel,
   onDragOverHotel,
   onDragLeaveHotel,
@@ -824,6 +1027,9 @@ function DispatchWorkspace({
   onDragOverRoomType,
   onDragLeaveRoomType,
   onDropRoomType,
+  onDragOverBooking,
+  onDragLeaveBooking,
+  onDropBooking,
   hotelSearch,
   onHotelSearch,
   regionFilter,
@@ -837,8 +1043,10 @@ function DispatchWorkspace({
   allHotels: AssignmentGridHotel[];
   validationByUnit: Record<string, AssignmentValidationResult[]>;
   draggingUnitId: string | null;
+  draggingValidationKey: string | null;
   dragOverHotelId: string | null;
   dragOverRoomTypeKey: string | null;
+  dragOverBookingId: string | null;
   onSelectHotel: (hotelId: string) => void;
   onDragOverHotel: (hotelId: string) => void;
   onDragLeaveHotel: () => void;
@@ -846,6 +1054,9 @@ function DispatchWorkspace({
   onDragOverRoomType: (roomTypeKey: string) => void;
   onDragLeaveRoomType: () => void;
   onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onDragOverBooking: (bookingId: string) => void;
+  onDragLeaveBooking: () => void;
+  onDropBooking: (booking: AssignmentGridBooking) => void;
   hotelSearch: string;
   onHotelSearch: (value: string) => void;
   regionFilter: string;
@@ -863,8 +1074,10 @@ function DispatchWorkspace({
           allHotels={allHotels}
           validationByUnit={validationByUnit}
           draggingUnitId={draggingUnitId}
+          draggingValidationKey={draggingValidationKey}
           dragOverHotelId={dragOverHotelId}
           dragOverRoomTypeKey={dragOverRoomTypeKey}
+          dragOverBookingId={dragOverBookingId}
           onSelectHotel={onSelectHotel}
           onDragOverHotel={onDragOverHotel}
           onDragLeaveHotel={onDragLeaveHotel}
@@ -872,6 +1085,9 @@ function DispatchWorkspace({
           onDragOverRoomType={onDragOverRoomType}
           onDragLeaveRoomType={onDragLeaveRoomType}
           onDropRoomType={onDropRoomType}
+          onDragOverBooking={onDragOverBooking}
+          onDragLeaveBooking={onDragLeaveBooking}
+          onDropBooking={onDropBooking}
           hotelSearch={hotelSearch}
           onHotelSearch={onHotelSearch}
           regionFilter={regionFilter}
@@ -890,8 +1106,10 @@ function HotelGridOrDetail({
   activeHotel,
   validationByUnit,
   draggingUnitId,
+  draggingValidationKey,
   dragOverHotelId,
   dragOverRoomTypeKey,
+  dragOverBookingId,
   onSelectHotel,
   onDragOverHotel,
   onDragLeaveHotel,
@@ -899,6 +1117,9 @@ function HotelGridOrDetail({
   onDragOverRoomType,
   onDragLeaveRoomType,
   onDropRoomType,
+  onDragOverBooking,
+  onDragLeaveBooking,
+  onDropBooking,
   hotelSearch,
   onHotelSearch,
   regionFilter,
@@ -911,8 +1132,10 @@ function HotelGridOrDetail({
   activeHotel: AssignmentGridHotel | null;
   validationByUnit: Record<string, AssignmentValidationResult[]>;
   draggingUnitId: string | null;
+  draggingValidationKey: string | null;
   dragOverHotelId: string | null;
   dragOverRoomTypeKey: string | null;
+  dragOverBookingId: string | null;
   onSelectHotel: (hotelId: string) => void;
   onDragOverHotel: (hotelId: string) => void;
   onDragLeaveHotel: () => void;
@@ -920,6 +1143,9 @@ function HotelGridOrDetail({
   onDragOverRoomType: (roomTypeKey: string) => void;
   onDragLeaveRoomType: () => void;
   onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onDragOverBooking: (bookingId: string) => void;
+  onDragLeaveBooking: () => void;
+  onDropBooking: (booking: AssignmentGridBooking) => void;
   hotelSearch: string;
   onHotelSearch: (value: string) => void;
   regionFilter: string;
@@ -939,6 +1165,7 @@ function HotelGridOrDetail({
           onRegionFilter={onRegionFilter}
           activeHotelId={activeHotel?.hotelId ?? null}
           draggingUnitId={draggingUnitId}
+          draggingValidationKey={draggingValidationKey}
           dragOverHotelId={dragOverHotelId}
           validationByUnit={validationByUnit}
           onSelectHotel={onSelectHotel}
@@ -953,9 +1180,13 @@ function HotelGridOrDetail({
             hotel={activeHotel}
             draggingUnitId={draggingUnitId}
             dragOverRoomTypeKey={dragOverRoomTypeKey}
+            dragOverBookingId={dragOverBookingId}
             onDragOverRoomType={onDragOverRoomType}
             onDragLeaveRoomType={onDragLeaveRoomType}
             onDropRoomType={onDropRoomType}
+            onDragOverBooking={onDragOverBooking}
+            onDragLeaveBooking={onDragLeaveBooking}
+            onDropBooking={onDropBooking}
             onBack={onClearActiveHotel}
             selectedBookingId={selectedBookingId}
             onSelectBooking={onSelectBooking}
@@ -974,6 +1205,7 @@ function HotelGridView({
   onRegionFilter,
   activeHotelId,
   draggingUnitId,
+  draggingValidationKey,
   dragOverHotelId,
   validationByUnit,
   onSelectHotel,
@@ -988,6 +1220,7 @@ function HotelGridView({
   onRegionFilter: (value: string) => void;
   activeHotelId: string | null;
   draggingUnitId: string | null;
+  draggingValidationKey: string | null;
   dragOverHotelId: string | null;
   validationByUnit: Record<string, AssignmentValidationResult[]>;
   onSelectHotel: (hotelId: string) => void;
@@ -1038,7 +1271,7 @@ function HotelGridView({
               active={activeHotelId === hotel.hotelId}
               dragOver={dragOverHotelId === hotel.hotelId}
               dragging={!!draggingUnitId}
-              canDrop={draggingUnitId ? hotelHasValidDrop(validationByUnit[draggingUnitId] || [], hotel.hotelId) : false}
+              canDrop={draggingValidationKey ? hotelHasValidDrop(validationByUnit[draggingValidationKey] || [], hotel.hotelId) : false}
               onSelect={() => onSelectHotel(hotel.hotelId)}
               onDragOver={() => onDragOverHotel(hotel.hotelId)}
               onDragLeave={onDragLeaveHotel}
@@ -1150,9 +1383,13 @@ function HotelDetailView({
   hotel,
   draggingUnitId,
   dragOverRoomTypeKey,
+  dragOverBookingId,
   onDragOverRoomType,
   onDragLeaveRoomType,
   onDropRoomType,
+  onDragOverBooking,
+  onDragLeaveBooking,
+  onDropBooking,
   onBack,
   selectedBookingId,
   onSelectBooking,
@@ -1160,9 +1397,13 @@ function HotelDetailView({
   hotel: AssignmentGridHotel;
   draggingUnitId: string | null;
   dragOverRoomTypeKey: string | null;
+  dragOverBookingId: string | null;
   onDragOverRoomType: (roomTypeKey: string) => void;
   onDragLeaveRoomType: () => void;
   onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onDragOverBooking: (bookingId: string) => void;
+  onDragLeaveBooking: () => void;
+  onDropBooking: (booking: AssignmentGridBooking) => void;
   onBack: () => void;
   selectedBookingId: string | null;
   onSelectBooking: (bookingId: string) => void;
@@ -1265,13 +1506,35 @@ function HotelDetailView({
                 {isOpen && (
                   <div className="space-y-2 bg-[#314763] p-3">
                     {flattenBookingsFromSlots(group.slots).map((entry, index) => (
+                      (() => {
+                        const canAddPartner =
+                          !!draggingUnitId &&
+                          (entry.booking.capacity || 0) > entry.booking.occupants.length &&
+                          entry.booking.occupants.length >= 1;
+                        const isBookingDropTarget = dragOverBookingId === entry.booking.bookingId;
+                        return (
                       <button
                         key={entry.booking.bookingId}
                         onClick={() => onSelectBooking(entry.booking.bookingId)}
+                        onDrop={(event) => {
+                          if (!canAddPartner) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onDropBooking(entry.booking);
+                        }}
+                        onDragOver={(event) => {
+                          if (!canAddPartner) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onDragOverBooking(entry.booking.bookingId);
+                        }}
+                        onDragLeave={onDragLeaveBooking}
                         className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-all ${
                           selectedBookingId === entry.booking.bookingId
                             ? 'border-blue-400/60 bg-[#45607f]'
-                            : 'border-[#506987] bg-[#395274] hover:border-[#6580a1]'
+                            : isBookingDropTarget && canAddPartner
+                              ? 'border-violet-400/70 bg-violet-500/15'
+                              : 'border-[#506987] bg-[#395274] hover:border-[#6580a1]'
                         }`}
                       >
                         <div className="flex min-w-0 items-center gap-3">
@@ -1283,12 +1546,24 @@ function HotelDetailView({
                             <div className="mt-1 text-[10px] font-mono text-slate-500">
                               {entry.booking.checkInDate || '—'} → {entry.booking.checkOutDate || '—'}
                             </div>
+                            <div className="mt-1 flex items-center gap-2 text-[10px]">
+                              <span className={`rounded-md px-1.5 py-0.5 font-semibold ${entry.booking.countsAsSingle ? 'bg-amber-500/15 text-amber-200' : 'bg-slate-500/10 text-slate-300'}`}>
+                                {entry.booking.countsAsSingle ? 'EZ' : entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'DZ offen' : 'DZ'}
+                              </span>
+                              {canAddPartner && (
+                                <span className={`${isBookingDropTarget ? 'text-violet-200' : 'text-violet-300'}`}>
+                                  Partner hinzufügen
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                         <div className="text-[10px] font-mono text-slate-500">
                           {entry.slot.roomNumber || `Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                         </div>
                       </button>
+                        );
+                      })()
                     ))}
 
                     {summary.remainingRooms > 0 ? (
@@ -1450,11 +1725,15 @@ function DetailPanel({
   selectedBookingContext,
   selectedAssignedUnit,
   onUnassignBooking,
+  onUnassignOccupant,
+  onMarkBookingAsSingle,
 }: {
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
   selectedAssignedUnit: RoomBookingUnit | null;
   onUnassignBooking: (bookingId: string) => void;
+  onUnassignOccupant: (bookingId: string, athleteId: string) => void;
+  onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
 }) {
   if (!selectedUnit && !selectedBookingContext) {
     return (
@@ -1489,8 +1768,20 @@ function DetailPanel({
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (
               <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
-                <div className="text-sm font-semibold text-slate-100">{occupant.name}</div>
-                <div className="mt-1 text-[10px] font-mono text-slate-400">{occupant.nationCode}</div>
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <div className="text-sm font-semibold text-slate-100">{occupant.name}</div>
+                    <div className="mt-1 text-[10px] font-mono text-slate-400">{occupant.nationCode}</div>
+                  </div>
+                  {booking.occupants.length > 1 && (
+                    <button
+                      onClick={() => onUnassignOccupant(booking.bookingId, occupant.athleteId)}
+                      className="rounded-lg border border-amber-700/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+                    >
+                      Nur diese Person
+                    </button>
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -1528,6 +1819,19 @@ function DetailPanel({
               </div>
             </div>
           </div>
+          {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
+            <button
+              onClick={() => onMarkBookingAsSingle(booking.bookingId, !booking.countsAsSingle)}
+              className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
+                booking.countsAsSingle
+                  ? 'border-amber-700/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
+                  : 'border-[#5e7aa0] bg-[#314763] text-slate-100 hover:bg-[#395274]'
+              }`}
+            >
+              <Bed className="h-3.5 w-3.5" />
+              {booking.countsAsSingle ? 'EZ-Markierung entfernen' : 'Als EZ werten'}
+            </button>
+          )}
           <button
             onClick={() => onUnassignBooking(booking.bookingId)}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
@@ -1566,9 +1870,16 @@ function DetailPanel({
         <div className="space-y-2">
           {selectedUnit.occupants.map((occupant) => (
             <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
-              <div className="text-sm font-semibold text-slate-100">{occupant.firstname} {occupant.lastname}</div>
-              <div className="mt-1 text-[10px] font-mono text-slate-400">
-                {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <div className="text-sm font-semibold text-slate-100">{occupant.firstname} {occupant.lastname}</div>
+                  <div className="mt-1 text-[10px] font-mono text-slate-400">
+                    {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
+                  </div>
+                </div>
+                <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
+                  {occupant.isAssigned ? 'zugewiesen' : 'offen'}
+                </span>
               </div>
             </div>
           ))}
@@ -1584,15 +1895,15 @@ function DetailPanel({
 
       <div className="px-4 py-4">
         <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Zuweisung</div>
-        {selectedAssignedUnit && selectedAssignedUnit.assignedBookingId ? (
+        {selectedAssignedUnit && selectedAssignedUnit.hasAnyAssigned ? (
           <div className="space-y-3">
             <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
               <div className="flex items-center gap-2.5">
                 <CheckCircle2 className="h-5 w-5 text-emerald-400" />
                 <div>
-                  <div className="text-xs font-bold text-emerald-300">{selectedAssignedUnit.assignedRoomNumber || 'Aktive Zuweisung'}</div>
+                  <div className="text-xs font-bold text-emerald-300">{selectedAssignedUnit.isFullyAssigned ? (selectedAssignedUnit.assignedRoomNumber || 'Aktive Zuweisung') : 'Teilweise zugewiesen'}</div>
                   <div className="mt-0.5 text-[10px] font-mono text-emerald-500">
-                    Bereits zugewiesen
+                    {selectedAssignedUnit.isFullyAssigned ? 'Bereits zugewiesen' : 'Mindestens eine Person ist bereits eingeplant'}
                   </div>
                 </div>
               </div>
@@ -1617,13 +1928,15 @@ function DetailPanel({
                 </div>
               </div>
             </div>
-            <button
-              onClick={() => onUnassignBooking(selectedAssignedUnit.assignedBookingId!)}
-              className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-              Zuweisung entfernen
-            </button>
+            {selectedAssignedUnit.assignedBookingId && (
+              <button
+                onClick={() => onUnassignBooking(selectedAssignedUnit.assignedBookingId!)}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Zuweisung entfernen
+              </button>
+            )}
           </div>
         ) : (
           <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-amber-300">
@@ -1635,7 +1948,6 @@ function DetailPanel({
     </div>
   );
 }
-
 function EmptyCenter({ text }: { text: string }) {
   return (
     <div className="flex h-full items-center justify-center text-sm text-slate-500">
@@ -1773,6 +2085,20 @@ function sameGender(unit: RoomBookingUnit) {
 function sameNation(unit: RoomBookingUnit) {
   const nations = Array.from(new Set(unit.occupants.map((occ) => occ.nationCode).filter(Boolean)));
   return nations.length <= 1;
+}
+
+function getValidationKey(unitId: string, athleteIds?: string[]) {
+  if (!athleteIds || athleteIds.length !== 1) return unitId;
+  return `${unitId}:athlete:${athleteIds[0]}`;
+}
+
+function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
+  if (unit.roomCategoryLabel === 'ez' || unit.roomCategoryLabel === 'dz') {
+    return unit.roomCategoryLabel;
+  }
+  if (unit.roomTypeLabel === 'single') return 'ez';
+  if (unit.roomTypeLabel === 'double') return 'dz';
+  return '';
 }
 
 function formatShortDate(value?: string | null) {

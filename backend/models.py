@@ -342,6 +342,7 @@ class RoomBooking(db.Model):
     room_number = db.Column(db.String(20))
     check_in_date = db.Column(db.Date)
     check_out_date = db.Column(db.Date)
+    counts_as_single = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     hotel = db.relationship('Hotel', backref='room_bookings')
@@ -356,6 +357,7 @@ class RoomBooking(db.Model):
             'roomNumber': self.room_number,
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
+            'countsAsSingle': bool(self.counts_as_single),
             'occupants': [occupant.to_dict() for occupant in self.occupants]
         }
 
