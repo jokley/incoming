@@ -9,7 +9,7 @@ import io
 import tempfile
 import json
 from sqlalchemy import text, func
-from excel_import import create_fis_import_preview, confirm_fis_import, detect_fis_file_type
+from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 
 app = Flask(__name__)
 CORS(app)
@@ -984,7 +984,16 @@ def preview_fis_import():
                 detected['roomlist'] = tmp_path
                 continue
 
-            file_type = detect_fis_file_type(tmp_path)
+            try:
+                file_type = detect_fis_file_type(tmp_path)
+            except InvalidExcelFileError as exc:
+                return jsonify({
+                    'error': str(exc),
+                    'details': {
+                        'filename': file_storage.filename,
+                        'field': field_name,
+                    },
+                }), 400
             if file_type == 'entries' and detected['entries'] is None:
                 detected['entries'] = tmp_path
             elif file_type == 'roomlist' and detected['roomlist'] is None:

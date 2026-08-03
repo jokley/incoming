@@ -2,10 +2,12 @@ import json
 import re
 import uuid
 import unicodedata
+import zipfile
 from copy import deepcopy
 from datetime import datetime, date, timedelta
 
 import pandas as pd
+from openpyxl.utils.exceptions import InvalidFileException
 
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
@@ -13,6 +15,10 @@ from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomBooking, Ro
 
 PREVIEW_STORE = {}
 PREVIEW_TTL_SECONDS = 60 * 60
+
+
+class InvalidExcelFileError(ValueError):
+    pass
 
 DISCIPLINE_FILENAME_ALIASES = {
     'bigair': 'Big Air',
@@ -329,9 +335,16 @@ def apply_import_level_discipline(people, entries_path, roomlist_path):
 
 
 def load_first_sheet(path):
-    workbook = pd.read_excel(path, sheet_name=None)
+    try:
+        workbook = pd.read_excel(path, sheet_name=None)
+    except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError) as exc:
+        filename = path.split('\\')[-1].split('/')[-1]
+        raise InvalidExcelFileError(
+            f'Invalid Excel file: {filename}. Please upload a valid .xlsx/.xls file exported by Excel.'
+        ) from exc
     if not workbook:
-        raise ValueError('Excel file is empty')
+        filename = path.split('\\')[-1].split('/')[-1]
+        raise InvalidExcelFileError(f'Excel file is empty: {filename}')
     _, df = next(iter(workbook.items()))
     return normalize_columns(df)
 
