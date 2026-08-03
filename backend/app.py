@@ -9,8 +9,10 @@ import io
 import tempfile
 import json
 import zipfile
+from pathlib import Path
 from sqlalchemy import text, func
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
+from generate_test_files import generate_mock_files
 
 app = Flask(__name__)
 CORS(app)
@@ -1086,12 +1088,16 @@ def download_mock_fis_file(filename):
 @app.route('/api/import/fis/mock-files/download-all/', methods=['GET'])
 def download_all_mock_fis_files():
     memory_file = io.BytesIO()
-    with zipfile.ZipFile(memory_file, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
-        if os.path.isdir(mock_files_dir):
-            for filename in sorted(os.listdir(mock_files_dir)):
-                if not filename.lower().endswith(('.xlsx', '.xls')):
-                    continue
-                archive.write(os.path.join(mock_files_dir, filename), arcname=filename)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        generated = generate_mock_files(Path(tmp_dir))
+        with zipfile.ZipFile(memory_file, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for entry in generated:
+                entries_path = entry.get('entries_path')
+                room_path = entry.get('room_path')
+                if entries_path and os.path.exists(entries_path):
+                    archive.write(entries_path, arcname=os.path.basename(entries_path))
+                if room_path and os.path.exists(room_path):
+                    archive.write(room_path, arcname=os.path.basename(room_path))
 
     memory_file.seek(0)
     return send_file(
