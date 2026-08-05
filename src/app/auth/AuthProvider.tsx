@@ -1,11 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../services/api';
 import type { AuthenticatedUser } from '../types';
+import { buildPermissions, type Permissions } from './permissions';
 
 interface AuthContextValue {
   user: AuthenticatedUser | null;
   loading: boolean;
   hasPermission: (permission: string) => boolean;
+  permissions: Permissions;
   refresh: () => Promise<void>;
 }
 
@@ -33,12 +35,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('auth:unauthenticated', unauthenticated);
   }, [refresh]);
 
+  const permissions = useMemo(() => buildPermissions(user), [user]);
+
   const value = useMemo<AuthContextValue>(() => ({
     user,
     loading,
+    permissions,
     hasPermission: (permission) => Boolean(user?.permissions.includes('*') || user?.permissions.includes(permission)),
     refresh,
-  }), [user, loading, refresh]);
+  }), [user, loading, permissions, refresh]);
 
   if (loading) {
     return <div className="flex min-h-screen items-center justify-center text-gray-600">Anmeldung wird geprüft …</div>;
@@ -60,3 +65,7 @@ export function useAuth() {
   return context;
 }
 
+
+export function usePermissions() {
+  return useAuth().permissions;
+}

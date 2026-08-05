@@ -1,4 +1,6 @@
+import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
 import { useState, useEffect } from 'react';
+import { usePermissions } from '../auth/AuthProvider';
 import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
@@ -10,6 +12,7 @@ interface RoomType {
 }
 
 export function RoomTypesManagement() {
+  const permissions = usePermissions();
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,6 +40,7 @@ export function RoomTypesManagement() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
+    if (!permissions.canEdit) return;
     e.preventDefault();
 
     try {
@@ -68,6 +72,7 @@ export function RoomTypesManagement() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!permissions.canDelete) return;
     if (!confirm('Zimmertyp wirklich löschen?')) return;
 
     try {
@@ -102,8 +107,8 @@ export function RoomTypesManagement() {
         <h2 className="text-2xl font-bold text-gray-900">Zimmertypen</h2>
         {!isAdding && (
           <button
-            onClick={() => setIsAdding(true)}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            onClick={() => permissions.canCreate && setIsAdding(true)}
+            disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="w-5 h-5 mr-2" />
             Zimmertyp hinzufügen
@@ -192,13 +197,13 @@ export function RoomTypesManagement() {
                 <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
                   <div className="flex gap-2 justify-end">
                     <button
-                      onClick={() => handleEdit(rt)}
+                      onClick={() => permissions.canEdit && handleEdit(rt)}
                       className="text-blue-600 hover:text-blue-800"
                     >
                       <Pencil className="w-4 h-4" />
                     </button>
                     <button
-                      onClick={() => handleDelete(rt.id)}
+                      onClick={() => permissions.canDelete && handleDelete(rt.id)}
                       className="text-red-600 hover:text-red-800"
                     >
                       <Trash2 className="w-4 h-4" />

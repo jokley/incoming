@@ -1,3 +1,4 @@
+import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
 import { ReactNode, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle2, Filter, Loader2, Plus, Search } from 'lucide-react';
 
@@ -5,6 +6,7 @@ import { api } from '../services/api';
 import { Athlete } from '../types';
 
 export function Athletes() {
+  const permissions = usePermissions();
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [disciplineFilter, setDisciplineFilter] = useState('');
@@ -78,6 +80,7 @@ export function Athletes() {
   });
 
   const handleAddAthlete = async () => {
+    if (!permissions.canCreate) return;
     if (!newAthlete.lastname || !newAthlete.firstname || !newAthlete.nationCode) {
       setError('Vorname, Nachname und Nation sind Pflichtfelder.');
       return;
@@ -100,6 +103,7 @@ export function Athletes() {
   };
 
   const handleAcknowledgeChange = async (athlete: Athlete) => {
+    if (!permissions.canEdit) return;
     try {
       setSavingAcknowledgeId(athlete.id);
       const updated = await api.acknowledgeAthleteRoomlistChange(athlete.id);
@@ -146,8 +150,8 @@ export function Athletes() {
           </p>
         </div>
         <button
-          onClick={() => setIsAdding(true)}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          onClick={() => permissions.canCreate && setIsAdding(true)}
+          disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus className="w-5 h-5 mr-2" />
           Athlet hinzufügen
@@ -264,7 +268,7 @@ export function Athletes() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={handleAddAthlete}
+              onClick={permissions.canCreate ? handleAddAthlete : undefined}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               Speichern

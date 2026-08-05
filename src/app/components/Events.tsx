@@ -1,4 +1,6 @@
+import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
 import { useState, useEffect } from 'react';
+import { usePermissions } from '../auth/AuthProvider';
 import { Plus, Pencil, Trash2, Loader2, Calendar, X, TrendingUp } from 'lucide-react';
 import { api } from '../services/api';
 import { Event, EventRoomDemand, RoomType } from '../types';
@@ -43,6 +45,7 @@ export function EventsManagement() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
+    if (!permissions.canEdit) return;
     e.preventDefault();
 
     try {
@@ -72,6 +75,7 @@ export function EventsManagement() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!permissions.canDelete) return;
     if (!confirm('Event wirklich löschen? Alle Room Demands werden ebenfalls gelöscht.')) return;
 
     try {
@@ -86,6 +90,7 @@ export function EventsManagement() {
   };
 
   const handleAddDemand = async (e: React.FormEvent) => {
+    if (!permissions.canCreate) return;
     e.preventDefault();
     if (!selectedEvent) return;
 
@@ -108,6 +113,7 @@ export function EventsManagement() {
   };
 
   const handleDeleteDemand = async (eventId: string, demandId: string) => {
+    if (!permissions.canDelete) return;
     if (!confirm('Bedarf wirklich löschen?')) return;
 
     try {
@@ -148,8 +154,8 @@ export function EventsManagement() {
         <h2 className="text-2xl font-bold text-gray-900">Events & Zimmerbedarf</h2>
         {!isAdding && (
           <button
-            onClick={() => setIsAdding(true)}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            onClick={() => permissions.canCreate && setIsAdding(true)}
+            disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="w-5 h-5 mr-2" />
             Event hinzufügen
@@ -260,7 +266,7 @@ export function EventsManagement() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleEdit(event);
+                        permissions.canEdit && handleEdit(event);
                       }}
                       className="text-blue-600 hover:text-blue-800"
                     >
@@ -269,7 +275,7 @@ export function EventsManagement() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDelete(event.id);
+                        permissions.canDelete && handleDelete(event.id);
                       }}
                       className="text-red-600 hover:text-red-800"
                     >
@@ -383,7 +389,7 @@ export function EventsManagement() {
                           </p>
                         </div>
                         <button
-                          onClick={() => handleDeleteDemand(selectedEvent.id, demand.id)}
+                          onClick={() => permissions.canDelete && handleDeleteDemand(selectedEvent.id, demand.id)}
                           className="text-red-600 hover:text-red-800"
                         >
                           <Trash2 className="w-4 h-4" />
