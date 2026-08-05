@@ -1,9 +1,12 @@
 import { Outlet, NavLink, useLocation } from 'react-router';
-import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers } from 'lucide-react';
+import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut } from 'lucide-react';
+import { useAuth } from '../auth/AuthProvider';
 
 export function Layout() {
   const location = useLocation();
   const isAssignmentsPage = location.pathname === '/assignments';
+  const { user, hasPermission } = useAuth();
+  const canWrite = hasPermission('data.write');
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -107,7 +110,7 @@ export function Layout() {
                   <BarChart3 className="w-5 h-5 mr-2" />
                   Analysen
                 </NavLink>
-                <NavLink
+                {hasPermission('imports.write') && <NavLink
                   to="/import"
                   className={({ isActive }) =>
                     `inline-flex items-center px-3 py-2 border-b-2 transition-colors ${
@@ -119,8 +122,20 @@ export function Layout() {
                 >
                   <Upload className="w-5 h-5 mr-2" />
                   Import
-                </NavLink>
+                </NavLink>}
+                {hasPermission('audit.read') && <NavLink
+                  to="/audit"
+                  className={({ isActive }) => `inline-flex items-center px-3 py-2 border-b-2 ${isActive ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700'}`}
+                >
+                  <ShieldCheck className="w-5 h-5 mr-2" />Audit
+                </NavLink>}
               </div>
+            </div>
+            <div className="flex items-center gap-3 text-sm">
+              <div className="text-right"><div className="font-medium">{user?.displayName}</div><div className="text-xs text-gray-500">{user?.username}</div></div>
+              <button title="Abmelden" className="rounded p-2 hover:bg-gray-100" onClick={() => window.location.assign(import.meta.env.VITE_AUTHELIA_LOGOUT_URL || '/auth/logout')}>
+                <LogOut className="h-5 w-5" />
+              </button>
             </div>
           </div>
         </div>
@@ -129,6 +144,7 @@ export function Layout() {
         ? 'mx-auto w-full max-w-[1920px] px-2 py-2'
         : 'max-w-7xl mx-auto px-4 py-8 sm:px-6 lg:px-8'
       }>
+        {!canWrite && <div className="mb-4 rounded border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">Nur-Lesen-Modus: Änderungen und Importe sind für deine Rolle gesperrt.</div>}
         <Outlet />
       </main>
     </div>

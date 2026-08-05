@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify, send_from_directory, send_file
+from flask import Flask, g, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
-from models import db, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment
+from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment
+from auth import load_user_from_request, current_user
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from datetime import datetime
 import os
@@ -10,12 +11,14 @@ import tempfile
 import json
 import zipfile
 from pathlib import Path
+import uuid
 from sqlalchemy import text, func
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
 
 app = Flask(__name__)
-CORS(app)
+if os.environ.get('CORS_ORIGINS'):
+    CORS(app, origins=[origin.strip() for origin in os.environ['CORS_ORIGINS'].split(',')])
 
 # Database configuration
 basedir = os.path.abspath(os.path.dirname(__file__))
@@ -27,6 +30,81 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + database_path
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+
+def _required_permission():
+    if request.path == '/api/auth/me':
+        return None
+    if request.path.startswith('/api/audit-events'):
+        return 'audit.read'
+    if request.method in {'GET', 'HEAD', 'OPTIONS'}:
+        return 'data.read'
+    if request.path.startswith('/api/import/'):
+        return 'imports.write'
+    if request.path.startswith('/api/assignments/') or request.path.startswith('/api/room-assignments'):
+        return 'assignments.write'
+    return 'data.write'
+
+
+@app.before_request
+def authenticate_api_request():
+    if not request.path.startswith('/api/') or request.method == 'OPTIONS':
+        return None
+    g.current_user = load_user_from_request()
+    g.request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))[:100]
+    if g.current_user is None:
+        return jsonify({'error': 'UNAUTHENTICATED', 'message': 'Authentication required'}), 401
+    permission = _required_permission()
+    if permission and not g.current_user.has_permission(permission):
+        return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
+    return None
+
+
+def _audit_entity():
+    parts = [part for part in request.path.removeprefix('/api/').split('/') if part]
+    entity_type = parts[0] if parts else 'api'
+    entity_id = next((part for part in parts[1:] if part.isdigit()), None)
+    return entity_type, entity_id
+
+
+@app.after_request
+def audit_successful_mutation(response):
+    user = current_user()
+    if (user is None or request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}
+            or not request.path.startswith('/api/') or response.status_code >= 400):
+        return response
+    try:
+        entity_type, entity_id = _audit_entity()
+        payload = request.get_json(silent=True)
+        if payload:
+            payload = {key: value for key, value in payload.items()
+                       if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
+        action = {'POST': 'create', 'PUT': 'update', 'PATCH': 'update', 'DELETE': 'delete'}[request.method]
+        if 'unassign' in request.path:
+            action = 'unassign'
+        elif '/assign' in request.path:
+            action = 'assign'
+        elif request.path.startswith('/api/import/'):
+            action = 'import'
+        db.session.add(AuditEvent(
+            username=user.username,
+            display_name=user.display_name,
+            email=user.email,
+            groups_json=json.dumps(list(user.groups)),
+            action=action,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            request_id=g.request_id,
+            method=request.method,
+            path=request.path,
+            changes_json=json.dumps(payload, ensure_ascii=False, default=str) if payload else None,
+        ))
+        db.session.commit()
+    except Exception:
+        app.logger.exception('Unable to write audit event')
+        db.session.rollback()
+    response.headers['X-Request-ID'] = getattr(g, 'request_id', '')
+    return response
 
 
 def ensure_reference_data():
@@ -1364,6 +1442,31 @@ def import_athletes(lines, section_info, end_line):
 # ============================================================================
 # API ENDPOINTS
 # ============================================================================
+
+@app.route('/api/auth/me', methods=['GET'])
+def get_authenticated_user():
+    return jsonify(current_user().to_dict())
+
+
+@app.route('/api/audit-events', methods=['GET'])
+def get_audit_events():
+    page = max(request.args.get('page', 1, type=int), 1)
+    per_page = min(max(request.args.get('perPage', 50, type=int), 1), 200)
+    query = AuditEvent.query
+    if request.args.get('username'):
+        query = query.filter(AuditEvent.username == request.args['username'])
+    if request.args.get('action'):
+        query = query.filter(AuditEvent.action == request.args['action'])
+    if request.args.get('entityType'):
+        query = query.filter(AuditEvent.entity_type == request.args['entityType'])
+    result = query.order_by(AuditEvent.created_at.desc()).paginate(page=page, per_page=per_page, error_out=False)
+    return jsonify({
+        'items': [event.to_dict() for event in result.items],
+        'page': result.page,
+        'perPage': result.per_page,
+        'total': result.total,
+        'pages': result.pages,
+    })
 
 # Room Types - CRUD
 @app.route('/api/room-types', methods=['GET'])

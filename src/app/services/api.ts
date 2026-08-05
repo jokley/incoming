@@ -15,6 +15,7 @@ import {
   AssignmentPlanningView,
   FisMockFilePair
 } from '../types';
+import type { AuthenticatedUser, AuditEvent } from '../types';
 import { OfficialQuotaUsage } from './fisRules';
 
 import {
@@ -80,6 +81,13 @@ class ApiService {
     }
 
     if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:unauthenticated'));
+        throw new Error('UNAUTHENTICATED');
+      }
+      if (response.status === 403) {
+        throw new Error('FORBIDDEN');
+      }
       if (typeof body === 'object' && body && 'message' in body) {
         throw body;
       }
@@ -94,6 +102,14 @@ class ApiService {
       return undefined as T;
     }
     return body as T;
+  }
+
+  async getCurrentUser(): Promise<AuthenticatedUser> {
+    return this.request<AuthenticatedUser>('/auth/me');
+  }
+
+  async getAuditEvents(page = 1): Promise<{ items: AuditEvent[]; total: number; pages: number }> {
+    return this.request(`/audit-events?page=${page}`);
   }
 
   // ============================================================================
@@ -716,6 +732,11 @@ class ApiService {
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        window.dispatchEvent(new CustomEvent('auth:unauthenticated'));
+        throw new Error('UNAUTHENTICATED');
+      }
+      if (response.status === 403) throw new Error('FORBIDDEN');
       const payload = await response.json().catch(() => null);
       throw new Error(payload?.error || `Preview failed: ${response.statusText}`);
     }
@@ -808,5 +829,3 @@ class ApiService {
 }
 
 export const api = new ApiService();
-
-
