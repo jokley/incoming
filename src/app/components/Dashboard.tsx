@@ -36,6 +36,53 @@ const getStatusTone = (percent: number): Tone => {
   return 'success';
 };
 
+const dashboardReadabilityTheme = {
+  '--ops-background': '#0D1117',
+  '--ops-surface': '#161B22',
+  '--ops-surface-raised': '#1C2128',
+  '--ops-surface-elevated': '#22272E',
+  '--ops-surface-overlay': '#2D333B',
+  '--ops-border': 'rgba(240, 246, 252, 0.10)',
+  '--ops-border-strong': 'rgba(240, 246, 252, 0.18)',
+  '--ops-divider': 'rgba(240, 246, 252, 0.08)',
+  '--ops-primary': '#6CB6FF',
+  '--ops-primary-emphasis': '#58A6FF',
+  '--ops-secondary': '#79C0FF',
+  '--ops-success': '#3FB950',
+  '--ops-warning': '#D29922',
+  '--ops-error': '#F85149',
+  '--ops-info': '#58A6FF',
+  '--ops-text': '#F0F6FC',
+  '--ops-text-muted': '#C9D1D9',
+  '--ops-text-subtle': '#D0D7DE',
+  '--ops-tone-neutral-border': 'rgba(240, 246, 252, 0.12)',
+  '--ops-tone-neutral-surface': 'rgba(201, 209, 217, 0.12)',
+  '--ops-tone-neutral-text': '#F0F6FC',
+  '--ops-tone-primary-border': 'rgba(88, 166, 255, 0.45)',
+  '--ops-tone-primary-surface': 'rgba(56, 139, 253, 0.20)',
+  '--ops-tone-primary-text': '#DDF4FF',
+  '--ops-tone-success-border': 'rgba(63, 185, 80, 0.50)',
+  '--ops-tone-success-surface': 'rgba(46, 160, 67, 0.20)',
+  '--ops-tone-success-text': '#D2FEDB',
+  '--ops-tone-warning-border': 'rgba(210, 153, 34, 0.52)',
+  '--ops-tone-warning-surface': 'rgba(187, 128, 9, 0.22)',
+  '--ops-tone-warning-text': '#FFF8C5',
+  '--ops-tone-error-border': 'rgba(248, 81, 73, 0.52)',
+  '--ops-tone-error-surface': 'rgba(218, 54, 51, 0.22)',
+  '--ops-tone-error-text': '#FFDCD7',
+  '--ops-tone-info-border': 'rgba(88, 166, 255, 0.45)',
+  '--ops-tone-info-surface': 'rgba(56, 139, 253, 0.18)',
+  '--ops-tone-info-text': '#DDF4FF',
+  '--ops-type-section-title-size': '0.875rem',
+  '--ops-type-caption-size': '0.8125rem',
+  '--ops-type-label-size': '0.75rem',
+  '--ops-type-kpi-size': '2rem',
+  '--ops-shadow-xs': '0 1px 2px rgba(1, 4, 9, 0.18)',
+  '--ops-shadow-sm': '0 10px 28px rgba(1, 4, 9, 0.22)',
+  '--ops-shadow-md': '0 16px 44px rgba(1, 4, 9, 0.26)',
+  '--ops-shadow-lg': '0 22px 60px rgba(1, 4, 9, 0.30)',
+};
+
 export function Dashboard() {
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [hotels, setHotels] = useState<HotelType[]>([]);
@@ -191,10 +238,10 @@ export function Dashboard() {
   if (loading) return <LoadingState label="Dashboard-Lagebild wird geladen…" />;
 
   return (
-    <div className="space-y-[calc(var(--ops-space)*3)]">
-      <ContentCard className="p-6" surface="raised">
+    <div className="space-y-[calc(var(--ops-space)*3)] rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-5 text-[var(--ops-text)] md:p-6" style={dashboardReadabilityTheme}>
+      <ContentCard className="p-7" surface="raised">
         <SectionHeader title="Operations Center" subtitle="Aktuelles WM-Lagebild für Unterkünfte, Events und Disposition." actions={<StatusChip tone={operations.roomDelta < 0 ? 'error' : 'success'}>{operations.roomDelta < 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
-        <div className="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-6">
           <MetricCard label="Athleten" value={formatNumber(operations.athletes)} helper="registrierte Teilnehmer" tone="primary" trend="Live" />
           <MetricCard label="Officials" value={formatNumber(operations.officials)} helper="Staff & Betreuung" />
           <MetricCard label="Hotels" value={formatNumber(operations.hotels)} helper={`${operations.roomTypes} Zimmerkategorien`} />
@@ -204,9 +251,9 @@ export function Dashboard() {
         </div>
       </ContentCard>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1.1fr_0.9fr]">
+      <div className="grid grid-cols-1 gap-7 xl:grid-cols-[1.1fr_0.9fr]">
         <DataPanel title="Kritische Hinweise">
-          <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
             {criticalAlerts.map(alert => <StatusCard key={alert.id} title={alert.title} status={alert.status} tone={alert.tone}>{alert.detail}</StatusCard>)}
           </div>
         </DataPanel>
@@ -220,21 +267,21 @@ export function Dashboard() {
       </div>
 
       <DataPanel title="Hotelübersicht" actions={<StatusChip tone="info">Top Auslastung</StatusChip>}>
-        <div className="grid grid-cols-1 gap-4 p-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 p-5 lg:grid-cols-3">
           {hotelOverview.map(item => (
             <ProgressCard key={item.hotel.id} title={item.hotel.name} value={item.assigned} max={Math.max(item.rooms, 1)} label={<StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip>} />
           ))}
         </div>
-        <div className="grid grid-cols-1 gap-4 px-4 pb-4 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-5 px-5 pb-5 lg:grid-cols-3">
           {hotelOverview.map(item => (
             <EntityCard key={`${item.hotel.id}-meta`} title={item.hotel.name} subtitle={[item.hotel.location, item.hotel.region].filter(Boolean).join(' · ') || 'Standort offen'} meta={<><StatusChip tone={item.tone}>{item.tone === 'error' ? 'überbelegt' : item.tone === 'warning' ? 'angespannt' : 'verfügbar'}</StatusChip><StatusChip>{item.remaining} Zimmer frei</StatusChip><StatusChip>{item.availableBeds} Betten verfügbar</StatusChip></>} />
           ))}
         </div>
       </DataPanel>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_0.8fr]">
+      <div className="grid grid-cols-1 gap-7 xl:grid-cols-[1fr_0.8fr]">
         <DataPanel title="Importstatus">
-          <div className="grid grid-cols-1 gap-3 p-4 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
             {importStatuses.map(status => <StatusCard key={status.id} title={status.title} status={status.count} tone={status.tone}>{status.helper}</StatusCard>)}
           </div>
         </DataPanel>
