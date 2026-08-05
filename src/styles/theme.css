@@ -179,3 +179,73 @@
     line-height: 1.5;
   }
 }
+
+/* Operations design system foundation — aligned with the assignment dispatch UI. */
+:root {
+  --ops-background: #08111f;
+  --ops-surface: #111c2e;
+  --ops-surface-elevated: #17263d;
+  --ops-border: #2d4260;
+  --ops-divider: #21344f;
+  --ops-primary: #5b9dff;
+  --ops-secondary: #7dd3fc;
+  --ops-success: #34d399;
+  --ops-warning: #fbbf24;
+  --ops-error: #fb7185;
+  --ops-info: #60a5fa;
+  --ops-text: #e5edf7;
+  --ops-text-muted: #93a4ba;
+  --ops-text-subtle: #64748b;
+  --ops-layout-max: 1980px;
+  --ops-space: 8px;
+  --ops-radius-sm: 0.5rem;
+  --ops-radius-md: 0.75rem;
+  --ops-radius-lg: 1rem;
+  --ops-radius-xl: 1.25rem;
+  --ops-radius-xxl: 1.75rem;
+  --ops-shadow-sm: 0 8px 24px rgba(3, 10, 24, 0.22);
+  --ops-shadow-md: 0 18px 60px rgba(3, 10, 24, 0.32);
+  --ops-focus-ring: 0 0 0 3px rgba(91, 157, 255, 0.28);
+  --ops-transition-fast: 120ms ease-out;
+  --ops-transition: 180ms ease-out;
+  --ops-transition-slow: 260ms ease-out;
+  --ops-type-display-size: 2rem;
+  --ops-type-page-title-size: 1.5rem;
+  --ops-type-section-title-size: 0.8125rem;
+  --ops-type-body-size: 0.875rem;
+  --ops-type-caption-size: 0.75rem;
+  --ops-type-label-size: 0.6875rem;
+  --ops-type-kpi-size: 1.75rem;
+}
+
+@layer base {
+  :focus-visible {
+    outline: none;
+    box-shadow: var(--ops-focus-ring);
+  }
+
+  ::selection {
+    background: rgba(91, 157, 255, 0.35);
+    color: var(--ops-text);
+  }
+
+  * {
+    scrollbar-color: #49617d #0c1624;
+    scrollbar-width: thin;
+  }
+
+  *::-webkit-scrollbar {
+    height: 10px;
+    width: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: #0c1624;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: #49617d;
+    border: 2px solid #0c1624;
+    border-radius: 999px;
+  }
+}
