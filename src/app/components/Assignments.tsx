@@ -20,6 +20,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import type {
@@ -53,6 +54,7 @@ const REGION_COLORS: Record<string, string> = {
 };
 
 export function Assignments() {
+  const permissions = usePermissions();
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
@@ -265,6 +267,10 @@ export function Assignments() {
   const selectedAssignedUnit = selectedBookingContext ? findAssignedUnitForBooking(selectedBookingContext.booking.bookingId, assignedUnits) : null;
 
   const handleAssignToHotel = async (unitId: string, hotelId: string, athleteIds?: string[]) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     const validationKey = getValidationKey(unitId, athleteIds);
     const validSlot = findFirstValidSlot(validationByUnit[validationKey] || [], allHotels, hotelId);
     if (!validSlot) {
@@ -275,6 +281,10 @@ export function Assignments() {
   };
 
   const handleAssignToRoomType = async (unitId: string, hotelId: string, roomTypeId: string, athleteIds?: string[]) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     const validationKey = getValidationKey(unitId, athleteIds);
     const slot = findFirstValidSlotForRoomType(validationByUnit[validationKey] || [], allHotels, hotelId, roomTypeId);
     if (!slot) {
@@ -285,6 +295,10 @@ export function Assignments() {
   };
 
   const assignUnitToSlot = async (unitId: string, slot: AssignmentSlot, athleteIds?: string[]) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     const unit = unitById.get(unitId);
     if (!unit) return;
     const normalizedAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
@@ -317,6 +331,10 @@ export function Assignments() {
   };
 
   const handleUnassignBooking = async (bookingId: string) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
@@ -334,6 +352,10 @@ export function Assignments() {
   };
 
   const handleUnassignOccupant = async (bookingId: string, athleteId: string) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
@@ -350,6 +372,10 @@ export function Assignments() {
   };
 
   const handleMarkBookingAsSingle = async (bookingId: string, countsAsSingle: boolean) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     try {
       setSaving(true);
       setError(null);
@@ -370,6 +396,10 @@ export function Assignments() {
     booking: AssignmentGridBooking,
     athleteIds?: string[],
   ) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
     const unit = unitById.get(unitId);
     if (!unit) return;
     const incomingAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
@@ -461,7 +491,9 @@ export function Assignments() {
               genderOptions={genderOptions}
               draggingUnitId={dragging?.unitId || null}
               draggingAthleteIds={dragging?.athleteIds || []}
+              canEditAssignments={permissions.canManageAssignments}
               onDragStart={(unitId, athleteIds, label) => {
+                if (!permissions.canManageAssignments) return;
                 setDragging({ unitId, athleteIds, label });
                 setSelected({ type: 'unit', id: unitId });
               }}
@@ -473,6 +505,7 @@ export function Assignments() {
               }}
               onSelectUnit={(unitId) => setSelected({ type: 'unit', id: unitId })}
               onQuickAssignPair={(unitId, athleteIds) => {
+                if (!permissions.canManageAssignments) return;
                 const targetHotel = activeHotel ?? filteredHotels[0];
                 if (targetHotel) void handleAssignToHotel(unitId, targetHotel.hotelId, athleteIds);
               }}
@@ -495,14 +528,14 @@ export function Assignments() {
                   onSelectHotel={setActiveHotelId}
                   onDragOverHotel={(hotelId) => setDragOverHotelId(hotelId)}
                   onDragLeaveHotel={() => setDragOverHotelId(null)}
-                  onDropHotel={(hotelId) => dragging && void handleAssignToHotel(dragging.unitId, hotelId, dragging.athleteIds)}
+                  onDropHotel={(hotelId) => permissions.canManageAssignments && dragging && void handleAssignToHotel(dragging.unitId, hotelId, dragging.athleteIds)}
                   onDragOverRoomType={(roomTypeKey) => setDragOverRoomTypeKey(roomTypeKey)}
                   onDragLeaveRoomType={() => setDragOverRoomTypeKey(null)}
-                  onDropRoomType={(hotelId, roomTypeId) => dragging && void handleAssignToRoomType(dragging.unitId, hotelId, roomTypeId, dragging.athleteIds)}
+                  onDropRoomType={(hotelId, roomTypeId) => permissions.canManageAssignments && dragging && void handleAssignToRoomType(dragging.unitId, hotelId, roomTypeId, dragging.athleteIds)}
                   dragOverBookingId={dragOverBookingId}
                   onDragOverBooking={(bookingId) => setDragOverBookingId(bookingId)}
                   onDragLeaveBooking={() => setDragOverBookingId(null)}
-                  onDropBooking={(booking) => dragging && void handleAssignToExistingBooking(dragging.unitId, booking, dragging.athleteIds)}
+                  onDropBooking={(booking) => permissions.canManageAssignments && dragging && void handleAssignToExistingBooking(dragging.unitId, booking, dragging.athleteIds)}
                   hotelSearch={hotelSearch}
                   onHotelSearch={setHotelSearch}
                   regionFilter={regionFilter}
@@ -687,6 +720,7 @@ function QueueSidebar({
   genderOptions,
   draggingUnitId,
   draggingAthleteIds,
+  canEditAssignments,
   onDragStart,
   onDragEnd,
   onSelectUnit,
@@ -714,6 +748,7 @@ function QueueSidebar({
   genderOptions: string[];
   draggingUnitId: string | null;
   draggingAthleteIds: string[];
+  canEditAssignments: boolean;
   onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
   onDragEnd: () => void;
   onSelectUnit: (unitId: string) => void;
@@ -798,6 +833,7 @@ function QueueSidebar({
                   selected={selectedUnitId === unit.unitId}
                   dragging={draggingUnitId === unit.unitId}
                   draggingAthleteIds={draggingAthleteIds}
+                  canEditAssignments={canEditAssignments}
                   highlighted
                   onSelect={() => onSelectUnit(unit.unitId)}
                   onDragStart={onDragStart}
@@ -818,6 +854,7 @@ function QueueSidebar({
                 selected={selectedUnitId === unit.unitId}
                 dragging={draggingUnitId === unit.unitId}
                 draggingAthleteIds={draggingAthleteIds}
+                canEditAssignments={canEditAssignments}
                 onSelect={() => onSelectUnit(unit.unitId)}
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
@@ -853,6 +890,7 @@ function QueueUnitCard({
   selected,
   dragging,
   draggingAthleteIds,
+  canEditAssignments,
   highlighted = false,
   onSelect,
   onDragStart,
@@ -863,6 +901,7 @@ function QueueUnitCard({
   selected: boolean;
   dragging: boolean;
   draggingAthleteIds: string[];
+  canEditAssignments: boolean;
   highlighted?: boolean;
   onSelect: () => void;
   onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
@@ -921,6 +960,7 @@ function QueueUnitCard({
           title="Athlet"
           occupant={primaryOccupant}
           isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === primaryOccupant?.athleteId}
+          canEditAssignments={canEditAssignments}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
@@ -931,6 +971,7 @@ function QueueUnitCard({
           occupant={partnerOccupant}
           emptyLabel="Zimmerpartner offen"
           isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === partnerOccupant?.athleteId}
+          canEditAssignments={canEditAssignments}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
@@ -938,7 +979,8 @@ function QueueUnitCard({
         />
         {unit.occupants.length >= 2 && (
           <button
-            draggable
+            draggable={canEditAssignments}
+            title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
             onDragStart={() => onDragStart(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId), 'Beide zusammen')}
             onDragEnd={onDragEnd}
             onClick={(event) => {
@@ -960,6 +1002,7 @@ function QueueOccupantActionRow({
   occupant,
   emptyLabel = '—',
   isDragging,
+  canEditAssignments,
   onDragStart,
   onDragEnd,
   onQuickAssign,
@@ -969,6 +1012,7 @@ function QueueOccupantActionRow({
   occupant?: RoomBookingUnit['occupants'][number] | null;
   emptyLabel?: string;
   isDragging: boolean;
+  canEditAssignments: boolean;
   onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
   onDragEnd: () => void;
   onQuickAssign: (unitId: string, athleteIds: string[]) => void;
@@ -995,7 +1039,8 @@ function QueueOccupantActionRow({
       </div>
       <div className="mt-2 flex gap-2">
         <button
-          draggable
+          draggable={canEditAssignments}
+          title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
           onDragStart={() => onDragStart(unitId, [occupant.athleteId], occupant.firstname)}
           onDragEnd={onDragEnd}
           onClick={(event) => {

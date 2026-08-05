@@ -1,9 +1,12 @@
+import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
 import { useState, useEffect } from 'react';
+import { usePermissions } from '../auth/AuthProvider';
 import { Plus, Building2, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
 import { Hotel } from '../types';
 
 export function Hotels() {
+  const permissions = usePermissions();
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -35,6 +38,7 @@ export function Hotels() {
   };
 
   const handleAddHotel = async () => {
+    if (!permissions.canCreate) return;
     if (newHotel.name && (newHotel.singleRooms || newHotel.doubleRooms)) {
       try {
         await api.createHotel({
@@ -72,8 +76,8 @@ export function Hotels() {
       <div className="flex justify-between items-center">
         <h2 className="text-2xl font-bold text-gray-900">Hotelverwaltung</h2>
         <button
-          onClick={() => setIsAdding(true)}
-          className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          onClick={() => permissions.canCreate && setIsAdding(true)}
+          disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Plus className="w-5 h-5 mr-2" />
           Hotel hinzufügen
@@ -122,7 +126,7 @@ export function Hotels() {
           </div>
           <div className="flex gap-2">
             <button
-              onClick={handleAddHotel}
+              onClick={permissions.canCreate ? handleAddHotel : undefined}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
             >
               Speichern

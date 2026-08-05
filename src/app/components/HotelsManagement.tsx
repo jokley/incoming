@@ -1,9 +1,12 @@
+import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
 import { useState, useEffect } from 'react';
+import { usePermissions } from '../auth/AuthProvider';
 import { Plus, Pencil, Trash2, Loader2, Building2, Calendar, X } from 'lucide-react';
 import { api } from '../services/api';
 import { Hotel, RoomType } from '../types';
 
 export function HotelsManagement() {
+  const permissions = usePermissions();
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,6 +50,7 @@ export function HotelsManagement() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
+    if (!permissions.canEdit) return;
     e.preventDefault();
 
     try {
@@ -76,6 +80,7 @@ export function HotelsManagement() {
   };
 
   const handleDelete = async (id: string) => {
+    if (!permissions.canDelete) return;
     if (!confirm('Hotel wirklich löschen? Alle Inventories werden ebenfalls gelöscht.')) return;
 
     try {
@@ -90,6 +95,7 @@ export function HotelsManagement() {
   };
 
   const handleAddInventory = async (e: React.FormEvent) => {
+    if (!permissions.canCreate) return;
     e.preventDefault();
     if (!selectedHotel) return;
 
@@ -116,6 +122,7 @@ export function HotelsManagement() {
   };
 
   const handleDeleteInventory = async (hotelId: string, inventoryId: string) => {
+    if (!permissions.canDelete) return;
     if (!confirm('Inventory wirklich löschen?')) return;
 
     try {
@@ -152,8 +159,8 @@ export function HotelsManagement() {
         <h2 className="text-2xl font-bold text-gray-900">Hotels & Zimmerkontingente</h2>
         {!isAdding && (
           <button
-            onClick={() => setIsAdding(true)}
-            className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            onClick={() => permissions.canCreate && setIsAdding(true)}
+            disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Plus className="w-5 h-5 mr-2" />
             Hotel hinzufügen
@@ -266,7 +273,7 @@ export function HotelsManagement() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleEdit(hotel);
+                        permissions.canEdit && handleEdit(hotel);
                       }}
                       className="text-blue-600 hover:text-blue-800"
                     >
@@ -275,7 +282,7 @@ export function HotelsManagement() {
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleDelete(hotel.id);
+                        permissions.canDelete && handleDelete(hotel.id);
                       }}
                       className="text-red-600 hover:text-red-800"
                     >
@@ -418,7 +425,7 @@ export function HotelsManagement() {
                           </p>
                         </div>
                         <button
-                          onClick={() => handleDeleteInventory(selectedHotel.id, inv.id)}
+                          onClick={() => permissions.canDelete && handleDeleteInventory(selectedHotel.id, inv.id)}
                           className="text-red-600 hover:text-red-800"
                         >
                           <Trash2 className="w-4 h-4" />
