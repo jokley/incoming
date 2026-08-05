@@ -1,18 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
+import AdminPanelSettingsRoundedIcon from '@mui/icons-material/AdminPanelSettingsRounded';
+import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
+import BedRoundedIcon from '@mui/icons-material/BedRounded';
+import AssignmentTurnedInRoundedIcon from '@mui/icons-material/AssignmentTurnedInRounded';
+import PieChartRoundedIcon from '@mui/icons-material/PieChartRounded';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import CalendarMonthRoundedIcon from '@mui/icons-material/CalendarMonthRounded';
+import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
+import TimelineRoundedIcon from '@mui/icons-material/TimelineRounded';
+import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
+import ShieldRoundedIcon from '@mui/icons-material/ShieldRounded';
+import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
+import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 
 import { api } from '../services/api';
 import type { Athlete, Event, Hotel as HotelType, RoomAssignment, RoomAvailability, RoomType } from '../types';
 import {
   ContentCard,
   DataPanel,
-  EntityCard,
   LoadingState,
-  MetricCard,
-  ProgressCard,
   SectionHeader,
-  StatusCard,
   StatusChip,
-  TimelineCard,
 } from '../design-system';
 
 type Tone = 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info';
@@ -36,16 +45,38 @@ const getStatusTone = (percent: number): Tone => {
   return 'success';
 };
 
+
+const toneAccent: Record<Tone, string> = {
+  neutral: 'bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)]',
+  primary: 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]',
+  success: 'bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]',
+  warning: 'bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]',
+  error: 'bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]',
+  info: 'bg-[var(--ops-tone-info-surface)] text-[var(--ops-info)]',
+};
+
+function IconTile({ icon, tone = 'neutral' }: { icon: ReactNode; tone?: Tone }) {
+  return <span className={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)] ${toneAccent[tone]}`}>{icon}</span>;
+}
+
+function KpiCard({ label, value, helper, trend, tone = 'neutral', icon }: { label: string; value: ReactNode; helper: ReactNode; trend?: ReactNode; tone?: Tone; icon: ReactNode }) {
+  return <ContentCard className="p-4" surface="elevated" elevation="none"><div className="flex items-start gap-3"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><div className="text-xs font-extrabold uppercase tracking-[0.08em] text-[var(--ops-text-subtle)]">{label}</div><div className="mt-3 text-[var(--ops-type-kpi-size)] font-extrabold leading-none tracking-[-0.03em] text-[var(--ops-text)]">{value}</div><div className="mt-3 flex items-center justify-between gap-2 text-xs leading-5 text-[var(--ops-text-muted)]"><span className="truncate">{helper}</span>{trend && <StatusChip tone={tone}>{trend}</StatusChip>}</div></div></div></ContentCard>;
+}
+
+function TextLink({ children }: { children: ReactNode }) {
+  return <span className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--ops-primary)]">{children}<OpenInNewRoundedIcon fontSize="inherit" /></span>;
+}
+
 const dashboardReadabilityTheme = {
-  '--ops-background': '#0D1117',
-  '--ops-surface': '#161B22',
-  '--ops-surface-raised': '#1C2128',
-  '--ops-surface-elevated': '#22272E',
-  '--ops-surface-overlay': '#2D333B',
+  '--ops-background': '#0B1220',
+  '--ops-surface': '#172234',
+  '--ops-surface-raised': '#1D2A3D',
+  '--ops-surface-elevated': '#223149',
+  '--ops-surface-overlay': '#2A3B54',
   '--ops-border': 'rgba(240, 246, 252, 0.10)',
   '--ops-border-strong': 'rgba(240, 246, 252, 0.18)',
   '--ops-divider': 'rgba(240, 246, 252, 0.08)',
-  '--ops-primary': '#6CB6FF',
+  '--ops-primary': '#60AFFF',
   '--ops-primary-emphasis': '#58A6FF',
   '--ops-secondary': '#79C0FF',
   '--ops-success': '#3FB950',
@@ -73,10 +104,10 @@ const dashboardReadabilityTheme = {
   '--ops-tone-info-border': 'rgba(88, 166, 255, 0.45)',
   '--ops-tone-info-surface': 'rgba(56, 139, 253, 0.18)',
   '--ops-tone-info-text': '#DDF4FF',
-  '--ops-type-section-title-size': '0.875rem',
+  '--ops-type-section-title-size': '0.95rem',
   '--ops-type-caption-size': '0.8125rem',
   '--ops-type-label-size': '0.75rem',
-  '--ops-type-kpi-size': '2rem',
+  '--ops-type-kpi-size': '1.9rem',
   '--ops-shadow-xs': '0 1px 2px rgba(1, 4, 9, 0.18)',
   '--ops-shadow-sm': '0 10px 28px rgba(1, 4, 9, 0.22)',
   '--ops-shadow-md': '0 16px 44px rgba(1, 4, 9, 0.26)',
@@ -238,56 +269,56 @@ export function Dashboard() {
   if (loading) return <LoadingState label="Dashboard-Lagebild wird geladen…" />;
 
   return (
-    <div className="space-y-[calc(var(--ops-space)*3)] rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-5 text-[var(--ops-text)] md:p-6" style={dashboardReadabilityTheme}>
-      <ContentCard className="p-7" surface="raised">
+    <div className="space-y-4 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-4 text-[var(--ops-text)] md:p-6" style={dashboardReadabilityTheme}>
+      <ContentCard className="p-5 md:p-6" surface="raised" elevation="none">
         <SectionHeader title="Operations Center" subtitle="Aktuelles WM-Lagebild für Unterkünfte, Events und Disposition." actions={<StatusChip tone={operations.roomDelta < 0 ? 'error' : 'success'}>{operations.roomDelta < 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
-        <div className="mt-6 grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-6">
-          <MetricCard label="Athleten" value={formatNumber(operations.athletes)} helper="registrierte Teilnehmer" tone="primary" trend="Live" />
-          <MetricCard label="Officials" value={formatNumber(operations.officials)} helper="Staff & Betreuung" />
-          <MetricCard label="Hotels" value={formatNumber(operations.hotels)} helper={`${operations.roomTypes} Zimmerkategorien`} />
-          <MetricCard label="Zimmer" value={formatNumber(operations.roomsAvailable)} helper={`${formatNumber(operations.roomsDemand)} benötigt`} tone={operations.roomDelta < 0 ? 'error' : 'success'} trend={operations.roomDelta >= 0 ? `+${operations.roomDelta}` : operations.roomDelta} />
-          <MetricCard label="Assignments" value={formatNumber(operations.assignedRooms)} helper={`${formatNumber(operations.openAssignments)} offen`} tone={operations.openAssignments > 0 ? 'warning' : 'success'} trend={formatPercent(operations.assignmentCoverage)} />
-          <MetricCard label="Auslastung" value={formatPercent(operations.utilization)} helper="Bedarf vs. Kapazität" tone={getStatusTone(operations.utilization)} trend={operations.utilization > 100 ? 'Limit' : 'OK'} />
+        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-6">
+          <KpiCard label="Athleten" value={formatNumber(operations.athletes)} helper="registrierte Teilnehmer" tone="primary" trend="Live" icon={<GroupsRoundedIcon />} />
+          <KpiCard label="Officials" value={formatNumber(operations.officials)} helper="Staff & Betreuung" tone="neutral" icon={<AdminPanelSettingsRoundedIcon />} />
+          <KpiCard label="Hotels" value={formatNumber(operations.hotels)} helper={`${operations.roomTypes} Zimmerkategorien`} tone="success" icon={<ApartmentRoundedIcon />} />
+          <KpiCard label="Zimmer" value={formatNumber(operations.roomsAvailable)} helper={`${formatNumber(operations.roomsDemand)} benötigt`} tone={operations.roomDelta < 0 ? 'error' : 'success'} trend={operations.roomDelta >= 0 ? `+${operations.roomDelta}` : operations.roomDelta} icon={<BedRoundedIcon />} />
+          <KpiCard label="Assignments" value={formatNumber(operations.assignedRooms)} helper={`${formatNumber(operations.openAssignments)} offen`} tone={operations.openAssignments > 0 ? 'warning' : 'success'} trend={formatPercent(operations.assignmentCoverage)} icon={<AssignmentTurnedInRoundedIcon />} />
+          <KpiCard label="Auslastung" value={formatPercent(operations.utilization)} helper="Bedarf vs. Kapazität" tone={getStatusTone(operations.utilization)} trend={operations.utilization > 100 ? 'Limit' : 'OK'} icon={<PieChartRoundedIcon />} />
         </div>
       </ContentCard>
 
-      <div className="grid grid-cols-1 gap-7 xl:grid-cols-[1.1fr_0.9fr]">
-        <DataPanel title="Kritische Hinweise">
-          <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-            {criticalAlerts.map(alert => <StatusCard key={alert.id} title={alert.title} status={alert.status} tone={alert.tone}>{alert.detail}</StatusCard>)}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.02fr]">
+        <DataPanel title={<span className="inline-flex items-center gap-2"><WarningAmberRoundedIcon fontSize="small" />Kritische Hinweise</span>}>
+          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
+            {criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-4" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-4 text-sm leading-6 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-4"><TextLink>Details anzeigen</TextLink></div></ContentCard>)}
           </div>
         </DataPanel>
 
-        <TimelineCard title="Event Übersicht" items={nextEvents.map(event => ({
-          id: event.id,
-          title: event.discipline,
-          meta: `${formatDate(event.startDate)} – ${formatDate(event.endDate)} · ${(event.roomDemands || []).reduce((sum, demand) => sum + demand.roomCount, 0)} Zimmer Bedarf`,
-          tone: 'primary',
-        }))} />
+        <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Event Übersicht</span>} actions={<StatusChip tone="info">Alle Events anzeigen</StatusChip>}>
+          <div className="divide-y divide-[var(--ops-divider)] p-4">
+            {nextEvents.map(event => <div key={event.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 py-3 text-sm"><span className="h-2.5 w-2.5 rounded-full bg-[var(--ops-primary)]" /><strong>{event.discipline}</strong><span className="text-[var(--ops-text-muted)]">{formatDate(event.startDate)} – {formatDate(event.endDate)}</span><span className="text-[var(--ops-text-muted)]">{(event.roomDemands || []).reduce((sum, demand) => sum + demand.roomCount, 0)} Zimmer Bedarf</span></div>)}
+          </div>
+        </DataPanel>
       </div>
 
-      <DataPanel title="Hotelübersicht" actions={<StatusChip tone="info">Top Auslastung</StatusChip>}>
-        <div className="grid grid-cols-1 gap-5 p-5 lg:grid-cols-3">
-          {hotelOverview.map(item => (
-            <ProgressCard key={item.hotel.id} title={item.hotel.name} value={item.assigned} max={Math.max(item.rooms, 1)} label={<StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip>} />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 gap-5 px-5 pb-5 lg:grid-cols-3">
-          {hotelOverview.map(item => (
-            <EntityCard key={`${item.hotel.id}-meta`} title={item.hotel.name} subtitle={[item.hotel.location, item.hotel.region].filter(Boolean).join(' · ') || 'Standort offen'} meta={<><StatusChip tone={item.tone}>{item.tone === 'error' ? 'überbelegt' : item.tone === 'warning' ? 'angespannt' : 'verfügbar'}</StatusChip><StatusChip>{item.remaining} Zimmer frei</StatusChip><StatusChip>{item.availableBeds} Betten verfügbar</StatusChip></>} />
-          ))}
-        </div>
-      </DataPanel>
-
-      <div className="grid grid-cols-1 gap-7 xl:grid-cols-[1fr_0.8fr]">
-        <DataPanel title="Importstatus">
-          <div className="grid grid-cols-1 gap-4 p-5 md:grid-cols-2">
-            {importStatuses.map(status => <StatusCard key={status.id} title={status.title} status={status.count} tone={status.tone}>{status.helper}</StatusCard>)}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
+        <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Hotelübersicht</span>} actions={<StatusChip tone="info">Top Auslastung</StatusChip>} className="xl:col-span-1">
+          <div className="space-y-4 p-4">
+            {hotelOverview.map(item => <div key={item.hotel.id} className="grid gap-3 border-b border-[var(--ops-divider)] pb-4 last:border-0 last:pb-0 md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></div>)}
+            <div className="pt-2 text-center"><TextLink>Alle Hotels anzeigen</TextLink></div>
           </div>
         </DataPanel>
 
-        <TimelineCard title="Aktivitäten" items={activityItems} />
+        <DataPanel title={<span className="inline-flex items-center gap-2"><CloudUploadRoundedIcon fontSize="small" />Importstatus</span>}>
+          <div className="space-y-3 p-4">
+            {importStatuses.map(status => <ContentCard key={status.id} className="flex items-center justify-between gap-3 p-3" surface="elevated" elevation="none"><div className="flex min-w-0 items-center gap-3"><IconTile tone={status.tone} icon={status.tone === 'success' ? <CheckRoundedIcon /> : <SyncRoundedIcon />} /><div><strong className="text-sm">{status.title}</strong><div className="text-xs text-[var(--ops-text-muted)]">{status.helper}</div></div></div><StatusChip tone={status.tone}>{status.tone === 'success' ? 'Abgeschlossen' : status.count}</StatusChip></ContentCard>)}
+          </div>
+        </DataPanel>
+
+        <DataPanel title={<span className="inline-flex items-center gap-2"><TimelineRoundedIcon fontSize="small" />Aktivitäten</span>} actions={<StatusChip tone="info">Alle Aktivitäten</StatusChip>}>
+          <ol className="relative m-4 space-y-5 border-l border-[var(--ops-divider)] pl-5">
+            {activityItems.map((item, index) => <li key={item.id} className="relative"><span className="absolute -left-[1.58rem] top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--ops-primary)] ring-4 ring-[var(--ops-surface)]" /><div className="grid grid-cols-[3rem_1fr] gap-3 text-sm"><span className="text-[var(--ops-text-muted)]">{['09:24', '09:15', '09:02'][index]}</span><div><strong>{item.title}</strong><p className="mt-1 text-[var(--ops-text-muted)]">{item.meta}</p></div></div></li>)}
+          </ol>
+          <div className="border-t border-[var(--ops-divider)] p-4 text-center"><TextLink>Alle Aktivitäten anzeigen</TextLink></div>
+        </DataPanel>
       </div>
+
+      <div className="flex flex-col justify-between gap-2 px-1 text-xs text-[var(--ops-text-muted)] md:flex-row"><span>Letzte Aktualisierung: {new Date().toLocaleDateString('de-DE')}, {new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}</span><span>Alle Zeiten in Europe/Vienna</span></div>
     </div>
   );
 }
