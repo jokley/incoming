@@ -13,3 +13,6 @@ backend/*.sqlite
 backend/*.sqlite3
 backend/mock_fis_files/*.xlsx
 backend/mock_fis_files/*.xls
+
+# Local Incoming runtime secrets
+incoming.env

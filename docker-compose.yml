@@ -9,6 +9,8 @@ services:
     volumes:
       - ./backend:/app
       - backend-data:/app/data
+    env_file:
+      - incoming.env
     environment:
       - FLASK_ENV=development
       - APP_DATA_DIR=/app/data

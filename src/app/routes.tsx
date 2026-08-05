@@ -9,6 +9,7 @@ import { RoomTypesManagement } from "./components/RoomTypesManagement";
 import { HotelsManagement } from "./components/HotelsManagement";
 import { EventsManagement } from "./components/EventsManagement";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
+import { AuditLog } from "./components/AuditLog";
 
 export const router = createBrowserRouter([
   {
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: "events", Component: EventsManagement },
       { path: "import", Component: DataImport },
       { path: "analytics", Component: RoomAnalytics },
+      { path: "audit", Component: AuditLog },
     ],
   },
 ]);

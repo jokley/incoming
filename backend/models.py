@@ -1,7 +1,44 @@
 from flask_sqlalchemy import SQLAlchemy
 from datetime import datetime
+import json
 
 db = SQLAlchemy()
+
+
+class AuditEvent(db.Model):
+    """Append-only record of successful state-changing API requests."""
+    __tablename__ = 'audit_event'
+
+    id = db.Column(db.Integer, primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False, index=True)
+    username = db.Column(db.String(100), nullable=False, index=True)
+    display_name = db.Column(db.String(200))
+    email = db.Column(db.String(200))
+    groups_json = db.Column(db.Text, nullable=False, default='[]')
+    action = db.Column(db.String(20), nullable=False, index=True)
+    entity_type = db.Column(db.String(100), nullable=False, index=True)
+    entity_id = db.Column(db.String(100), index=True)
+    request_id = db.Column(db.String(36), nullable=False, index=True)
+    method = db.Column(db.String(10), nullable=False)
+    path = db.Column(db.String(500), nullable=False)
+    changes_json = db.Column(db.Text)
+
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'createdAt': self.created_at.isoformat() + 'Z' if self.created_at else None,
+            'username': self.username,
+            'displayName': self.display_name,
+            'email': self.email,
+            'groups': json.loads(self.groups_json or '[]'),
+            'action': self.action,
+            'entityType': self.entity_type,
+            'entityId': self.entity_id,
+            'requestId': self.request_id,
+            'method': self.method,
+            'path': self.path,
+            'changes': json.loads(self.changes_json) if self.changes_json else None,
+        }
 
 class ImportRun(db.Model):
     """Tracks the latest import timestamps for change detection"""
