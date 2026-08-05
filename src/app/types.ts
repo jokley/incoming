@@ -4,6 +4,27 @@ export interface RoomType {
   maxPersons: number;
 }
 
+export interface AuthenticatedUser {
+  username: string;
+  displayName: string;
+  email: string;
+  groups: string[];
+  permissions: string[];
+}
+
+export interface AuditEvent {
+  id: string;
+  createdAt: string;
+  username: string;
+  displayName: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  method: string;
+  path: string;
+  changes?: Record<string, unknown>;
+}
+
 export interface HotelRoomInventory {
   id: string;
   hotelId: string;
