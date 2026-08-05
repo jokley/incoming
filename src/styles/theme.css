@@ -184,35 +184,68 @@
 :root {
   --ops-background: #08111f;
   --ops-surface: #111c2e;
+  --ops-surface-raised: #142238;
   --ops-surface-elevated: #17263d;
+  --ops-surface-overlay: #1d2f4a;
   --ops-border: #2d4260;
+  --ops-border-strong: #3e5c82;
   --ops-divider: #21344f;
-  --ops-primary: #5b9dff;
+  --ops-focus: #93c5fd;
+  --ops-primary: #93c5fd;
+  --ops-primary-emphasis: #5b9dff;
   --ops-secondary: #7dd3fc;
-  --ops-success: #34d399;
-  --ops-warning: #fbbf24;
-  --ops-error: #fb7185;
-  --ops-info: #60a5fa;
+  --ops-success: #6ee7b7;
+  --ops-warning: #fcd34d;
+  --ops-error: #fda4af;
+  --ops-info: #93c5fd;
   --ops-text: #e5edf7;
-  --ops-text-muted: #93a4ba;
-  --ops-text-subtle: #64748b;
+  --ops-text-muted: #a8b6c8;
+  --ops-text-subtle: #cbd5e1;
+  --ops-on-accent: #06101e;
+  --ops-tone-neutral-border: #3e5c82;
+  --ops-tone-neutral-surface: rgba(148, 163, 184, 0.14);
+  --ops-tone-neutral-text: #e5edf7;
+  --ops-tone-primary-border: rgba(147, 197, 253, 0.56);
+  --ops-tone-primary-surface: rgba(91, 157, 255, 0.18);
+  --ops-tone-primary-text: #dbeafe;
+  --ops-tone-success-border: rgba(110, 231, 183, 0.56);
+  --ops-tone-success-surface: rgba(16, 185, 129, 0.18);
+  --ops-tone-success-text: #d1fae5;
+  --ops-tone-warning-border: rgba(252, 211, 77, 0.6);
+  --ops-tone-warning-surface: rgba(245, 158, 11, 0.2);
+  --ops-tone-warning-text: #fef3c7;
+  --ops-tone-error-border: rgba(253, 164, 175, 0.6);
+  --ops-tone-error-surface: rgba(244, 63, 94, 0.18);
+  --ops-tone-error-text: #ffe4e6;
+  --ops-tone-info-border: rgba(125, 211, 252, 0.56);
+  --ops-tone-info-surface: rgba(14, 165, 233, 0.18);
+  --ops-tone-info-text: #e0f2fe;
   --ops-layout-max: 1980px;
   --ops-space: 8px;
+  --ops-radius-xs: 0.375rem;
   --ops-radius-sm: 0.5rem;
   --ops-radius-md: 0.75rem;
   --ops-radius-lg: 1rem;
   --ops-radius-xl: 1.25rem;
   --ops-radius-xxl: 1.75rem;
+  --ops-radius-full: 9999px;
+  --ops-shadow-xs: 0 1px 2px rgba(3, 10, 24, 0.24);
   --ops-shadow-sm: 0 8px 24px rgba(3, 10, 24, 0.22);
   --ops-shadow-md: 0 18px 60px rgba(3, 10, 24, 0.32);
-  --ops-focus-ring: 0 0 0 3px rgba(91, 157, 255, 0.28);
-  --ops-transition-fast: 120ms ease-out;
-  --ops-transition: 180ms ease-out;
-  --ops-transition-slow: 260ms ease-out;
+  --ops-shadow-lg: 0 28px 90px rgba(3, 10, 24, 0.42);
+  --ops-focus-ring: 0 0 0 3px rgba(147, 197, 253, 0.38);
+  --ops-motion-fast: 120ms cubic-bezier(0.2, 0, 0, 1);
+  --ops-motion-normal: 180ms cubic-bezier(0.2, 0, 0, 1);
+  --ops-motion-slow: 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  --ops-transition-fast: var(--ops-motion-fast);
+  --ops-transition: var(--ops-motion-normal);
+  --ops-transition-slow: var(--ops-motion-slow);
   --ops-type-display-size: 2rem;
   --ops-type-page-title-size: 1.5rem;
+  --ops-type-title-size: 1.125rem;
   --ops-type-section-title-size: 0.8125rem;
   --ops-type-body-size: 0.875rem;
+  --ops-type-body-line: 1.5;
   --ops-type-caption-size: 0.75rem;
   --ops-type-label-size: 0.6875rem;
   --ops-type-kpi-size: 1.75rem;
@@ -225,12 +258,12 @@
   }
 
   ::selection {
-    background: rgba(91, 157, 255, 0.35);
+    background: var(--ops-tone-primary-surface);
     color: var(--ops-text);
   }
 
   * {
-    scrollbar-color: #49617d #0c1624;
+    scrollbar-color: var(--ops-border-strong) var(--ops-background);
     scrollbar-width: thin;
   }
 
@@ -240,12 +273,12 @@
   }
 
   *::-webkit-scrollbar-track {
-    background: #0c1624;
+    background: var(--ops-background);
   }
 
   *::-webkit-scrollbar-thumb {
-    background: #49617d;
-    border: 2px solid #0c1624;
-    border-radius: 999px;
+    background: var(--ops-border-strong);
+    border: 2px solid var(--ops-background);
+    border-radius: var(--ops-radius-full);
   }
 }
