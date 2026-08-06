@@ -1,235 +1,81 @@
-import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField } from '@mui/material';
+import { BedDouble, Pencil, Plus, Search, Trash2, Users } from 'lucide-react';
+import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
-import { Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { api } from '../services/api';
+import type { RoomType } from '../types';
+import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip, Toolbar } from '../design-system';
+import { READ_ONLY_TOOLTIP } from './PageLayout';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+type RoomTypeForm = { name: string; maxPersons: number };
+const EMPTY_FORM: RoomTypeForm = { name: '', maxPersons: 2 };
 
-interface RoomType {
-  id: string;
-  name: string;
-  maxPersons: number;
+function RoomTypeDialog({ open, roomType, onClose, onSave }: { open: boolean; roomType: RoomType | null; onClose: () => void; onSave: (value: RoomTypeForm) => Promise<void> }) {
+  const initial = roomType ? { name: roomType.name, maxPersons: roomType.maxPersons } : EMPTY_FORM;
+  const [form, setForm] = useState<RoomTypeForm>(initial);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => { if (open) setForm(initial); }, [open, roomType?.id]);
+
+  return <CrudDialog
+    open={open}
+    title={roomType ? 'Zimmertyp bearbeiten' : 'Zimmertyp hinzufügen'}
+    dirty={JSON.stringify(form) !== JSON.stringify(initial)}
+    saving={saving}
+    saveDisabled={!form.name.trim() || form.maxPersons < 1 || form.maxPersons > 10}
+    onClose={onClose}
+    onSave={async () => { setSaving(true); try { await onSave(form); onClose(); } finally { setSaving(false); } }}
+  >
+    <Stack spacing={2.25} sx={{ pt: 1 }}>
+      <TextField required label="Bezeichnung" placeholder="z. B. DZ / DU" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} />
+      <TextField required type="number" label="Maximale Personen" value={form.maxPersons || ''} inputProps={{ min: 1, max: 10, step: 1 }} helperText="Zulässige Belegung dieses Zimmertyps" onChange={event => setForm({ ...form, maxPersons: Number(event.target.value) })} />
+    </Stack>
+  </CrudDialog>;
 }
 
 export function RoomTypesManagement() {
+  const detailScrollRef = useRef<HTMLDivElement>(null);
   const permissions = usePermissions();
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [dialog, setDialog] = useState<{ open: boolean; roomType: RoomType | null }>({ open: false, roomType: null });
+  const [deleting, setDeleting] = useState<RoomType | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isAdding, setIsAdding] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState({ name: '', maxPersons: 2 });
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
+  const load = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_BASE_URL}/room-types`);
-      if (!response.ok) throw new Error('Failed to load');
-      const data = await response.json();
+      const data = await api.getRoomTypes();
       setRoomTypes(data);
+      setSelectedId(current => current && data.some(item => item.id === current) ? current : data[0]?.id || null);
       setError(null);
-    } catch (err) {
-      setError('Fehler beim Laden');
+    } catch {
+      setError('Zimmertypen konnten nicht geladen werden.');
     } finally {
       setLoading(false);
     }
   };
+  useEffect(() => { void load(); }, []);
+  useEffect(() => { detailScrollRef.current?.scrollTo({ top: 0 }); }, [selectedId]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    if (!permissions.canEdit) return;
-    e.preventDefault();
+  const selected = roomTypes.find(item => item.id === selectedId) || null;
+  const filtered = useMemo(() => roomTypes.filter(item => !search.trim() || item.name.toLowerCase().includes(search.trim().toLowerCase())), [roomTypes, search]);
 
-    try {
-      const url = editingId
-        ? `${API_BASE_URL}/room-types/${editingId}`
-        : `${API_BASE_URL}/room-types`;
+  if (loading) return <div className="flex h-64 items-center justify-center text-sm text-slate-500">Zimmertypen werden geladen …</div>;
 
-      const response = await fetch(url, {
-        method: editingId ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(formData),
-      });
-
-      if (!response.ok) throw new Error('Failed to save');
-
-      await loadData();
-      setFormData({ name: '', maxPersons: 2 });
-      setIsAdding(false);
-      setEditingId(null);
-    } catch (err) {
-      setError('Fehler beim Speichern');
-    }
-  };
-
-  const handleEdit = (roomType: RoomType) => {
-    setFormData({ name: roomType.name, maxPersons: roomType.maxPersons });
-    setEditingId(roomType.id);
-    setIsAdding(true);
-  };
-
-  const handleDelete = async (id: string) => {
-    if (!permissions.canDelete) return;
-    if (!confirm('Zimmertyp wirklich löschen?')) return;
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/room-types/${id}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) throw new Error('Failed to delete');
-      await loadData();
-    } catch (err) {
-      setError('Fehler beim Löschen');
-    }
-  };
-
-  const handleCancel = () => {
-    setFormData({ name: '', maxPersons: 2 });
-    setIsAdding(false);
-    setEditingId(null);
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">Zimmertypen</h2>
-        {!isAdding && (
-          <button
-            onClick={() => permissions.canCreate && setIsAdding(true)}
-            disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Plus className="w-5 h-5 mr-2" />
-            Zimmertyp hinzufügen
-          </button>
-        )}
-      </div>
-
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          {error}
-        </div>
-      )}
-
-      {isAdding && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">
-            {editingId ? 'Zimmertyp bearbeiten' : 'Neuer Zimmertyp'}
-          </h3>
-          <form onSubmit={handleSubmit}>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Name (z.B. "DZ / DU")
-                </label>
-                <input
-                  type="text"
-                  value={formData.name}
-                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                  required
-                  placeholder="DZ / DU"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Max. Personen
-                </label>
-                <input
-                  type="number"
-                  value={formData.maxPersons}
-                  onChange={(e) => setFormData({ ...formData, maxPersons: parseInt(e.target.value) || 0 })}
-                  required
-                  min="1"
-                  max="10"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-              >
-                {editingId ? 'Aktualisieren' : 'Erstellen'}
-              </button>
-              <button
-                type="button"
-                onClick={handleCancel}
-                className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-              >
-                Abbrechen
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Max. Personen</th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">Aktionen</th>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {roomTypes.map((rt) => (
-              <tr key={rt.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                  {rt.name}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-center text-sm text-gray-500">
-                  {rt.maxPersons}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm">
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      onClick={() => permissions.canEdit && handleEdit(rt)}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      <Pencil className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => permissions.canDelete && handleDelete(rt.id)}
-                      className="text-red-600 hover:text-red-800"
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {roomTypes.length === 0 && (
-          <div className="text-center py-12 text-gray-500">
-            Keine Zimmertypen vorhanden. Fügen Sie den ersten hinzu!
-          </div>
-        )}
-      </div>
-
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-        <h4 className="text-sm font-semibold text-blue-900 mb-2">💡 Beispiele für Zimmertypen</h4>
-        <ul className="text-sm text-blue-800 space-y-1">
-          <li><strong>DZ / DU</strong> - Doppelzimmer mit Dusche (2 Personen)</li>
-          <li><strong>EZ / DU</strong> - Einzelzimmer mit Dusche (1 Person)</li>
-          <li><strong>APP: 2 DZ + 2 DU</strong> - Apartment mit 2 Doppelzimmern (4 Personen)</li>
-          <li><strong>3BZ / DU</strong> - 3-Bett-Zimmer mit Dusche (2 Personen)</li>
-        </ul>
-      </div>
+  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+    <PageHeader eyebrow="Operations Center" title="Zimmertypen" subtitle="Zimmerkategorien und maximale Belegung zentral verwalten." meta={<><StatusChip tone="primary">{roomTypes.length} Zimmertypen</StatusChip><StatusChip tone="info">bis zu {Math.max(0, ...roomTypes.map(item => item.maxPersons))} Personen</StatusChip></>} actions={<OpsButton onClick={() => setDialog({ open: true, roomType: null })} disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined}><Plus className="mr-2 inline h-4 w-4" />Zimmertyp hinzufügen</OpsButton>} />
+    {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
+    <div className="flex flex-col gap-4 xl:min-h-0 xl:flex-1 xl:flex-row">
+      <ContentCard surface="raised" className="flex flex-col overflow-hidden xl:min-h-0 xl:w-[22rem] xl:shrink-0">
+        <div className="shrink-0 border-b border-[var(--ops-divider)] p-4"><SectionHeader title={`Zimmertypen (${filtered.length})`} /><Toolbar className="mt-3"><Search className="h-4 w-4 text-[var(--ops-text-muted)]" /><input aria-label="Zimmertypen suchen" className="min-w-0 flex-1 bg-transparent text-sm outline-none" placeholder="Bezeichnung suchen" value={search} onChange={event => setSearch(event.target.value)} /></Toolbar></div>
+        <div className="space-y-2 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">{filtered.map(item => <button key={item.id} onClick={() => setSelectedId(item.id)} className={clsx('w-full rounded-xl border p-3 text-left transition hover:bg-[var(--ops-surface-elevated)]', selectedId === item.id ? 'border-[var(--ops-primary)] bg-[var(--ops-surface-overlay)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]')}><div className="flex items-start justify-between gap-2"><div className="min-w-0"><b className="block truncate">{item.name}</b><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Maximal {item.maxPersons} {item.maxPersons === 1 ? 'Person' : 'Personen'}</div></div><StatusChip tone="info">{item.maxPersons} Pers.</StatusChip></div></button>)}{!filtered.length && <EmptyState title="Keine Zimmertypen gefunden" description="Passen Sie die Suche an oder legen Sie einen neuen Zimmertyp an." />}</div>
+      </ContentCard>
+      <ContentCard surface="raised" className="overflow-hidden xl:min-h-0 xl:flex-1"><div ref={detailScrollRef} className="xl:h-full xl:overflow-y-auto">{selected ? <><div className="flex items-start justify-between gap-4 border-b border-[var(--ops-divider)] p-5"><div><SectionHeader title="Stammdaten" /><h2 className="mt-3 text-2xl font-extrabold">{selected.name}</h2><p className="mt-1 text-sm text-[var(--ops-text-muted)]">Zimmertyp und Belegungsgrenze</p></div><div className="flex gap-2"><OpsButton disabled={!permissions.canEdit} title={!permissions.canEdit ? READ_ONLY_TOOLTIP : undefined} onClick={() => setDialog({ open: true, roomType: selected })}><Pencil className="mr-2 inline h-4 w-4" />Bearbeiten</OpsButton><OpsButton className="text-[var(--ops-error)]" disabled={!permissions.canDelete} title={!permissions.canDelete ? READ_ONLY_TOOLTIP : undefined} onClick={() => setDeleting(selected)}><Trash2 className="mr-2 inline h-4 w-4" />Löschen</OpsButton></div></div><div className="grid gap-4 p-5 md:grid-cols-2"><ContentCard className="p-5"><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]"><BedDouble size={16} />Bezeichnung</div><div className="mt-3 text-xl font-extrabold">{selected.name}</div></ContentCard><ContentCard className="p-5"><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]"><Users size={16} />Maximale Personen</div><div className="mt-3 text-xl font-extrabold">{selected.maxPersons}</div></ContentCard></div></> : <div className="p-12"><EmptyState title="Kein Zimmertyp ausgewählt" description="Wählen Sie links einen Zimmertyp aus." /></div>}</div></ContentCard>
     </div>
-  );
+    <RoomTypeDialog open={dialog.open} roomType={dialog.roomType} onClose={() => setDialog({ open: false, roomType: null })} onSave={async value => { dialog.roomType ? await api.updateRoomType(dialog.roomType.id, value) : await api.createRoomType(value); await load(); }} />
+    <Dialog open={Boolean(deleting)} onClose={() => setDeleting(null)}><DialogTitle>Zimmertyp löschen?</DialogTitle><DialogContent>Der Zimmertyp <b>{deleting?.name}</b> wird dauerhaft entfernt.</DialogContent><DialogActions><Button onClick={() => setDeleting(null)}>Abbrechen</Button><Button color="error" variant="contained" onClick={async () => { if (!deleting) return; try { await api.deleteRoomType(deleting.id); setDeleting(null); await load(); } catch { setError('Zimmertyp konnte nicht gelöscht werden.'); setDeleting(null); } }}>Löschen</Button></DialogActions></Dialog>
+  </PageLayout>;
 }
