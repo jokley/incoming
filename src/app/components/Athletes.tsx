@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useNavigate } from 'react-router';
 import {
   Box,
   Button,
@@ -12,14 +13,13 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, History, LockKeyhole, Plus, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, History, LockKeyhole, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 import type { Athlete } from '../types';
-import { READ_ONLY_TOOLTIP } from './PageLayout';
 
 type FilterKey = 'nation' | 'discipline' | 'gender' | 'function' | 'status';
 type Filters = Record<FilterKey, string>;
@@ -127,7 +127,7 @@ function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; op
           </FieldGrid>
         </DialogSection>
 
-        <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Nur Information – Zuweisungen erfolgen ausschließlich im Assignment-Modul." actions={<Button variant="outlined" size="small" disabled startIcon={<ChevronRight size={16} />}>Zum Assignment</Button>}>
+        <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Nur Information – Zuweisungen erfolgen ausschließlich im Assignment-Modul.">
           <FieldGrid>
             <ReadonlyField label="Hotel" value={athlete?.assignment?.hotelName} />
             <ReadonlyField label="Zimmertyp" value={athlete?.assignment?.roomTypeName || athlete?.roomType} />
@@ -180,34 +180,12 @@ function ReadonlyField({ label, value }: { label: string; value?: string | null 
   return <TextField fullWidth label={label} value={value || '—'} slotProps={{ input: { readOnly: true } }} sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'rgba(255,255,255,0.025)' }, '& .MuiInputBase-input': { color: 'text.secondary' } }} />;
 }
 
-function NewAthleteDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (athlete: Athlete) => void }) {
-  const [form, setForm] = useState({ firstname: '', lastname: '', nationCode: '' });
-  const [saving, setSaving] = useState(false);
-  const save = async () => {
-    setSaving(true);
-    try {
-      const created = await api.createAthlete({ ...form, nationCode: form.nationCode.trim().toUpperCase(), function: 'Athlete' });
-      onCreated(created);
-      setForm({ firstname: '', lastname: '', nationCode: '' });
-      onClose();
-    } finally {
-      setSaving(false);
-    }
-  };
-  return <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-    <DialogTitle>Athlet hinzufügen</DialogTitle>
-    <DialogContent dividers><Stack spacing={2.25} sx={{ pt: 1 }}><TextField required label="Vorname" value={form.firstname} onChange={event => setForm({ ...form, firstname: event.target.value })} /><TextField required label="Nachname" value={form.lastname} onChange={event => setForm({ ...form, lastname: event.target.value })} /><TextField required label="Nation" helperText="Dreistelliger Nationencode, z. B. AUT" value={form.nationCode} onChange={event => setForm({ ...form, nationCode: event.target.value.toUpperCase() })} /></Stack></DialogContent>
-    <DialogActions><Button onClick={onClose}>Abbrechen</Button><Button variant="contained" disabled={saving || !form.firstname.trim() || !form.lastname.trim() || !form.nationCode.trim()} onClick={() => void save()}>{saving ? 'Speichern …' : 'Speichern'}</Button></DialogActions>
-  </Dialog>;
-}
-
 export function Athletes() {
-  const permissions = usePermissions();
+  const navigate = useNavigate();
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [search, setSearch] = useState('');
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
-  const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -256,7 +234,7 @@ export function Athletes() {
   if (loading) return <div className="flex h-64 items-center justify-center"><CircularProgress /></div>;
 
   return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
-    <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => athlete.assignment?.hasAssignment).length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => !athlete.assignment?.hasAssignment).length} offen</StatusChip></>} actions={<OpsButton onClick={() => setAdding(true)} disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : 'Athlet hinzufügen'}><Plus className="mr-2 inline h-4 w-4" />Athlet hinzufügen</OpsButton>} />
+    <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => athlete.assignment?.hasAssignment).length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => !athlete.assignment?.hasAssignment).length} offen</StatusChip></>} />
     {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
 
     <div className="flex flex-col gap-4 xl:min-h-0 xl:flex-1 xl:flex-row">
@@ -292,7 +270,22 @@ export function Athletes() {
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]"><Users className="h-4 w-4" /></span><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b>{athlete.fisCode && <span className="text-[11px] text-[var(--ops-text-subtle)]">FIS {athlete.fisCode}</span>}</div></div></Cell>
-                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell><Cell>{athlete.assignment?.hotelName || '—'}</Cell><Cell>{athlete.assignment?.roomNumber || athlete.assignment?.roomTypeName || '—'}</Cell>
+                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
+                <Cell>
+                  <button
+                    type="button"
+                    onClick={event => {
+                      event.stopPropagation();
+                      void navigate('/assignments', { state: { athleteId: athlete.id } });
+                    }}
+                    onKeyDown={event => event.stopPropagation()}
+                    className="font-bold text-[var(--ops-primary)] underline decoration-transparent underline-offset-4 transition hover:decoration-current focus-visible:decoration-current focus-visible:outline-none"
+                    aria-label={`${athlete.assignment?.hasAssignment ? 'Assignment öffnen' : 'Zuweisung starten'} für ${athlete.firstname} ${athlete.lastname}`}
+                  >
+                    {athlete.assignment?.hotelName || 'Zuweisung starten'}
+                  </button>
+                </Cell>
+                <Cell>{athlete.assignment?.roomNumber || athlete.assignment?.roomTypeName || '—'}</Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
                 <Cell><StatusChip tone={athlete.hasPendingRoomlistReview ? 'warning' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
               </tr>)}
@@ -303,7 +296,6 @@ export function Athletes() {
       </ContentCard>
     </div>
     <AthleteDialog athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} />
-    <NewAthleteDialog open={adding} onClose={() => setAdding(false)} onCreated={athlete => setAthletes(current => [...current, athlete])} />
   </PageLayout>;
 }
 
