@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import {
   AlertCircle,
@@ -469,7 +469,7 @@ export function Assignments() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
+    <div className="relative flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
       <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[#49617d] bg-[#20324a] text-slate-100 shadow-[0_18px_60px_rgba(10,20,35,0.24)]">
         <TopBar
           view={view}
@@ -478,13 +478,14 @@ export function Assignments() {
           violations={quotaViolations.length}
           saving={saving}
           onRefresh={handleRefresh}
+          quotaRows={quotaUsage}
         />
 
         {showAlert && quotaViolations.length > 0 && (
           <AlertBanner row={quotaViolations[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
         )}
 
-        <div className="grid min-h-0 flex-1 grid-cols-[336px_minmax(0,1fr)_332px] border-t border-[#49617d]">
+        <div className="grid min-h-0 flex-1 grid-cols-[352px_minmax(0,1fr)] border-t border-[#49617d]">
           <aside className="min-h-0 border-r border-[#49617d] bg-[#263a54]">
             <QueueSidebar
               units={queueUnits}
@@ -512,7 +513,6 @@ export function Assignments() {
               onDragStart={(unitId, athleteIds, label) => {
                 if (!permissions.canManageAssignments) return;
                 setDragging({ unitId, athleteIds, label });
-                setSelected({ type: 'unit', id: unitId });
               }}
               onDragEnd={() => {
                 setDragging(null);
@@ -582,7 +582,10 @@ export function Assignments() {
             )}
           </main>
 
-          <aside className="min-h-0 border-l border-[#49617d] bg-[#314763]">
+        </div>
+
+        {selected && (
+          <AssignmentDialog onClose={() => setSelected(null)}>
             <DetailPanel
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
@@ -591,8 +594,8 @@ export function Assignments() {
               onUnassignOccupant={handleUnassignOccupant}
               onMarkBookingAsSingle={handleMarkBookingAsSingle}
             />
-          </aside>
-        </div>
+          </AssignmentDialog>
+        )}
 
         {error && (
           <div className="border-t border-red-800/40 bg-red-950/40 px-4 py-3 text-sm text-red-100">
@@ -611,6 +614,7 @@ function TopBar({
   violations,
   saving,
   onRefresh,
+  quotaRows,
 }: {
   view: AppView;
   onViewChange: (view: AppView) => void;
@@ -618,6 +622,7 @@ function TopBar({
   violations: number;
   saving: boolean;
   onRefresh: () => void;
+  quotaRows: OfficialQuotaUsage[];
 }) {
   return (
     <div className="flex h-14 items-center justify-between border-b border-[#334766] bg-[#122033] px-4">
@@ -653,6 +658,7 @@ function TopBar({
       </div>
 
       <div className="flex items-center gap-4 text-xs">
+        <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} />
         <div className="flex items-center gap-2">
           <div className="w-20">
             <CapacityBar pct={progress.percent} trackClassName="bg-[#314766]" />
@@ -677,6 +683,56 @@ function TopBar({
         <button className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[#152034] hover:text-slate-200">
           <Bell className="h-4 w-4" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+function LiveQuotaStrip({ rows, onOpen }: { rows: OfficialQuotaUsage[]; onOpen: () => void }) {
+  const row = rows[0];
+  if (!row) return <span className="hidden text-slate-500 xl:inline">Keine Quoten verfügbar</span>;
+
+  return (
+    <button onClick={onOpen} className="hidden items-center overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-colors hover:border-[var(--ops-primary)] xl:flex">
+      <span className="border-r border-[var(--ops-divider)] px-3 py-1.5">
+        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
+        <span className="font-mono font-bold text-[var(--ops-text)]">{row.assignedOfficials} / {row.officialQuota}</span>
+      </span>
+      <span className="px-3 py-1.5">
+        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Single Rooms</span>
+        <span className="font-mono font-bold text-[var(--ops-text)]">{row.singleRoomsUsed} / {row.singleRoomsAllowed}</span>
+      </span>
+    </button>
+  );
+}
+
+function WarningLegend() {
+  return (
+    <div className="mt-4 grid grid-cols-2 gap-2" aria-label="Warnungsstufen">
+      <div className="rounded-xl border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] p-2.5">
+        <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-error)]"><AlertCircle className="h-3.5 w-3.5" /> Blockierend</div>
+        <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-error-text)]">Zimmer voll · Zeitraum überschneidet sich · nicht verfügbar</div>
+      </div>
+      <div className="rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-2.5">
+        <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-warning)]"><AlertTriangle className="h-3.5 w-3.5" /> Warnung</div>
+        <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-warning-text)]">Gender gemischt · Official-Quote · Single-Room-Quote</div>
+      </div>
+    </div>
+  );
+}
+
+function AssignmentDialog({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <div role="dialog" aria-modal="true" aria-label="Assignment Details" className="absolute inset-0 z-50 flex items-center justify-center bg-[#06101e]/80 p-5 backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="relative h-[min(760px,calc(100vh-150px))] w-full max-w-2xl overflow-hidden rounded-[var(--ops-radius-xxl)] border border-[var(--ops-border-strong)] bg-[var(--ops-surface-raised)] shadow-[var(--ops-shadow-lg)]" onMouseDown={(event) => event.stopPropagation()}>
+        <button onClick={onClose} aria-label="Dialog schließen" className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)] hover:text-white"><X className="h-4 w-4" /></button>
+        {children}
       </div>
     </div>
   );
@@ -828,6 +884,8 @@ function QueueSidebar({
             </button>
           ))}
         </div>
+
+        <WarningLegend />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
