@@ -1,536 +1,223 @@
-import { PageLayout, PageHeader, ContentCard, PermissionButton, READ_ONLY_TOOLTIP } from './PageLayout';
-import { ReactNode, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Filter, Loader2, Plus, Search } from 'lucide-react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  Button,
+  CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
+  Stack,
+  TextField,
+} from '@mui/material';
+import { Check, ChevronRight, FilterX, Plus, Search, Users } from 'lucide-react';
+import { clsx } from 'clsx';
 
+import { usePermissions } from '../auth/AuthProvider';
+import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
-import { Athlete } from '../types';
+import type { Athlete } from '../types';
+import { READ_ONLY_TOOLTIP } from './PageLayout';
+
+type FilterKey = 'nation' | 'discipline' | 'gender' | 'function' | 'status';
+type Filters = Record<FilterKey, string>;
+type CountItem = { value: string; label: string; count: number };
+
+const emptyFilters: Filters = { nation: '', discipline: '', gender: '', function: '', status: '' };
+const date = (value?: string | null) => value ? new Date(value).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+const genderLabel = (value?: string) => {
+  const normalized = value?.trim().toUpperCase();
+  if (normalized === 'W' || normalized === 'F' || normalized === 'FEMALE') return 'Damen';
+  if (normalized === 'M' || normalized === 'MALE') return 'Herren';
+  if (normalized === 'A' || normalized === 'X' || normalized === 'MIXED') return 'Mixed';
+  return value || 'Nicht angegeben';
+};
+const assignmentLabel = (athlete: Athlete) => athlete.assignment?.hasAssignment ? 'Zugewiesen' : 'Nicht zugewiesen';
+const importLabel = (athlete: Athlete) => athlete.hasPendingRoomlistReview ? 'Import geändert' : 'Aktuell';
+
+function countValues(athletes: Athlete[], getValue: (athlete: Athlete) => string, getLabel: (value: string) => string = value => value): CountItem[] {
+  const counts = new Map<string, number>();
+  athletes.forEach(athlete => {
+    const value = getValue(athlete).trim();
+    if (value) counts.set(value, (counts.get(value) || 0) + 1);
+  });
+  return [...counts.entries()]
+    .map(([value, count]) => ({ value, label: getLabel(value), count }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+}
+
+function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: string; filterKey: FilterKey; items: CountItem[]; selected: string; onSelect: (key: FilterKey, value: string) => void }) {
+  return <section>
+    <h3 className="mb-2 px-2 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[var(--ops-text-subtle)]">{title}</h3>
+    <div className="space-y-1">
+      {items.map(item => {
+        const active = selected === item.value;
+        return <button
+          key={item.value || 'all'}
+          type="button"
+          aria-pressed={active}
+          onClick={() => onSelect(filterKey, active ? '' : item.value)}
+          className={clsx('group flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm transition', active ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] text-[var(--ops-tone-primary-text)]' : 'border-transparent text-[var(--ops-text-muted)] hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]')}
+        >
+          <span className="min-w-0 flex-1 truncate font-semibold">{item.label}</span>
+          <span className={clsx('min-w-7 rounded-md border px-1.5 py-0.5 text-center text-[11px] font-bold', active ? 'border-[var(--ops-tone-primary-border)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)] text-[var(--ops-text-subtle)]')}>{item.count}</span>
+          {active ? <Check className="h-3.5 w-3.5 shrink-0" /> : <ChevronRight className="h-3.5 w-3.5 shrink-0 opacity-0 transition group-hover:opacity-70" />}
+        </button>;
+      })}
+    </div>
+  </section>;
+}
+
+function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; open: boolean; onClose: () => void }) {
+  return <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <DialogTitle>{athlete ? 'Athlet bearbeiten' : 'Athlet bearbeiten'}</DialogTitle>
+    <DialogContent dividers>
+      <Stack spacing={2.25} sx={{ pt: 1 }}>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <TextField fullWidth label="Vorname" value={athlete?.firstname || ''} slotProps={{ input: { readOnly: true } }} />
+          <TextField fullWidth label="Nachname" value={athlete?.lastname || ''} slotProps={{ input: { readOnly: true } }} />
+        </Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <TextField fullWidth label="Nation" value={athlete?.nationCode || ''} slotProps={{ input: { readOnly: true } }} />
+          <TextField fullWidth label="Disziplin" value={athlete?.discipline || ''} slotProps={{ input: { readOnly: true } }} />
+        </Stack>
+        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
+          <TextField fullWidth label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} slotProps={{ input: { readOnly: true } }} />
+          <TextField fullWidth label="Funktion" value={athlete?.function || 'Athlet'} slotProps={{ input: { readOnly: true } }} />
+        </Stack>
+        <InfoPanel tone="info" title="Stammdaten aus dem FIS-Import">Die Bearbeitung verwendet den bestehenden Athleten-Workflow; Zimmerzuweisungen werden ausschließlich im Assignment-Modul vorgenommen.</InfoPanel>
+      </Stack>
+    </DialogContent>
+    <DialogActions><Button onClick={onClose}>Schließen</Button></DialogActions>
+  </Dialog>;
+}
+
+function NewAthleteDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (athlete: Athlete) => void }) {
+  const [form, setForm] = useState({ firstname: '', lastname: '', nationCode: '' });
+  const [saving, setSaving] = useState(false);
+  const save = async () => {
+    setSaving(true);
+    try {
+      const created = await api.createAthlete({ ...form, nationCode: form.nationCode.trim().toUpperCase(), function: 'Athlete' });
+      onCreated(created);
+      setForm({ firstname: '', lastname: '', nationCode: '' });
+      onClose();
+    } finally {
+      setSaving(false);
+    }
+  };
+  return <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
+    <DialogTitle>Athlet hinzufügen</DialogTitle>
+    <DialogContent dividers><Stack spacing={2.25} sx={{ pt: 1 }}><TextField required label="Vorname" value={form.firstname} onChange={event => setForm({ ...form, firstname: event.target.value })} /><TextField required label="Nachname" value={form.lastname} onChange={event => setForm({ ...form, lastname: event.target.value })} /><TextField required label="Nation" helperText="Dreistelliger Nationencode, z. B. AUT" value={form.nationCode} onChange={event => setForm({ ...form, nationCode: event.target.value.toUpperCase() })} /></Stack></DialogContent>
+    <DialogActions><Button onClick={onClose}>Abbrechen</Button><Button variant="contained" disabled={saving || !form.firstname.trim() || !form.lastname.trim() || !form.nationCode.trim()} onClick={() => void save()}>{saving ? 'Speichern …' : 'Speichern'}</Button></DialogActions>
+  </Dialog>;
+}
 
 export function Athletes() {
   const permissions = usePermissions();
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [searchTerm, setSearchTerm] = useState('');
-  const [disciplineFilter, setDisciplineFilter] = useState('');
-  const [nationFilter, setNationFilter] = useState('');
-  const [reviewFilter, setReviewFilter] = useState<'all' | 'changed' | 'assigned_changed'>('all');
-  const [isAdding, setIsAdding] = useState(false);
+  const [filters, setFilters] = useState<Filters>(emptyFilters);
+  const [search, setSearch] = useState('');
+  const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
+  const [adding, setAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [savingAcknowledgeId, setSavingAcknowledgeId] = useState<string | null>(null);
-  const [newAthlete, setNewAthlete] = useState<Partial<Athlete>>({
-    lastname: '',
-    firstname: '',
-    nationCode: '',
-    discipline: '',
-  });
 
   useEffect(() => {
-    loadData();
+    const load = async () => {
+      try {
+        setLoading(true);
+        setAthletes(await api.getAthletes());
+        setError(null);
+      } catch {
+        setError('Athleten konnten nicht geladen werden.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    void load();
   }, []);
 
-  const loadData = async () => {
-    try {
-      setLoading(true);
-      const athletesData = await api.getAthletes();
-      setAthletes(athletesData);
-      setError(null);
-    } catch (err) {
-      setError('Fehler beim Laden der Daten');
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const groups = useMemo(() => ({
+    nation: countValues(athletes, athlete => athlete.nationCode),
+    discipline: countValues(athletes, athlete => athlete.discipline || ''),
+    gender: countValues(athletes, athlete => genderLabel(athlete.gender || athlete.forGender)),
+    function: countValues(athletes, athlete => athlete.function || 'Athlet'),
+    status: [
+      { value: '', label: 'Alle', count: athletes.length },
+      { value: 'unassigned', label: 'Nicht zugewiesen', count: athletes.filter(athlete => !athlete.assignment?.hasAssignment).length },
+      { value: 'changed', label: 'Import geändert', count: athletes.filter(athlete => athlete.hasPendingRoomlistReview).length },
+    ],
+  }), [athletes]);
 
-  const uniqueDisciplines = Array.from(new Set(athletes.map((athlete) => athlete.discipline).filter(Boolean))).sort();
-  const uniqueNations = Array.from(new Set(athletes.map((athlete) => athlete.nationCode).filter(Boolean))).sort();
+  const filtered = useMemo(() => athletes.filter(athlete => {
+    const term = search.trim().toLocaleLowerCase('de');
+    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
+    const statusMatches = !filters.status || (filters.status === 'unassigned' && !athlete.assignment?.hasAssignment) || (filters.status === 'changed' && athlete.hasPendingRoomlistReview);
+    return (!term || searchable.includes(term))
+      && (!filters.nation || athlete.nationCode === filters.nation)
+      && (!filters.discipline || athlete.discipline === filters.discipline)
+      && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
+      && (!filters.function || (athlete.function || 'Athlet') === filters.function)
+      && statusMatches;
+  }), [athletes, filters, search]);
 
-  const changedAthletes = useMemo(
-    () => athletes.filter((athlete) => athlete.hasPendingRoomlistReview),
-    [athletes]
-  );
-  const assignedChangedAthletes = useMemo(
-    () => athletes.filter((athlete) => athlete.changeTouchesAssignment),
-    [athletes]
-  );
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const setFilter = (key: FilterKey, value: string) => setFilters(current => ({ ...current, [key]: value }));
 
-  const filteredAthletes = athletes.filter((athlete) => {
-    const search = searchTerm.toLowerCase();
-    const fullName = `${athlete.firstname} ${athlete.lastname}`.toLowerCase();
-    const nation = (athlete.nationCode || '').toLowerCase();
-    const discipline = (athlete.discipline || '').toLowerCase();
-    const roomType = (athlete.roomType || '').toLowerCase();
-    const hotelName = (athlete.assignment?.hotelName || '').toLowerCase();
+  if (loading) return <div className="flex h-64 items-center justify-center"><CircularProgress /></div>;
 
-    const matchesSearch = (
-      fullName.includes(search) ||
-      nation.includes(search) ||
-      discipline.includes(search) ||
-      roomType.includes(search) ||
-      hotelName.includes(search)
-    );
-    const matchesDiscipline = !disciplineFilter || athlete.discipline === disciplineFilter;
-    const matchesNation = !nationFilter || athlete.nationCode === nationFilter;
-    const matchesReview = (
-      reviewFilter === 'all' ||
-      (reviewFilter === 'changed' && athlete.hasPendingRoomlistReview) ||
-      (reviewFilter === 'assigned_changed' && athlete.changeTouchesAssignment)
-    );
+  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+    <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => athlete.assignment?.hasAssignment).length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => !athlete.assignment?.hasAssignment).length} offen</StatusChip></>} actions={<OpsButton onClick={() => setAdding(true)} disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : 'Athlet hinzufügen'}><Plus className="mr-2 inline h-4 w-4" />Athlet hinzufügen</OpsButton>} />
+    {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
 
-    return matchesSearch && matchesDiscipline && matchesNation && matchesReview;
-  });
-
-  const handleAddAthlete = async () => {
-    if (!permissions.canCreate) return;
-    if (!newAthlete.lastname || !newAthlete.firstname || !newAthlete.nationCode) {
-      setError('Vorname, Nachname und Nation sind Pflichtfelder.');
-      return;
-    }
-
-    try {
-      await api.createAthlete({
-        lastname: newAthlete.lastname,
-        firstname: newAthlete.firstname,
-        nationCode: newAthlete.nationCode.toUpperCase(),
-        function: 'Athlete',
-      });
-      await loadData();
-      setNewAthlete({ lastname: '', firstname: '', nationCode: '', discipline: '' });
-      setIsAdding(false);
-    } catch (err) {
-      setError('Fehler beim Hinzufügen des Athleten');
-      console.error(err);
-    }
-  };
-
-  const handleAcknowledgeChange = async (athlete: Athlete) => {
-    if (!permissions.canEdit) return;
-    try {
-      setSavingAcknowledgeId(athlete.id);
-      const updated = await api.acknowledgeAthleteRoomlistChange(athlete.id);
-      setAthletes((current) => current.map((entry) => (
-        entry.id === athlete.id
-          ? {
-              ...entry,
-              ...updated,
-              assignment: entry.assignment,
-              hasPendingRoomlistReview: false,
-              changeTouchesAssignment: false,
-            }
-          : entry
-      )));
-    } catch (err) {
-      setError('Änderung konnte nicht bestätigt werden');
-      console.error(err);
-    } finally {
-      setSavingAcknowledgeId(null);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-6">
-      {error && (
-        <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">
-          {error}
+    <div className="flex flex-col gap-4 xl:min-h-0 xl:flex-1 xl:flex-row">
+      <ContentCard surface="raised" className="flex flex-col overflow-hidden xl:min-h-0 xl:w-[20rem] xl:shrink-0">
+        <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
+          <SectionHeader title="Filter" subtitle="Alle Filter werden kombiniert" actions={activeFilterCount > 0 ? <button type="button" onClick={() => setFilters(emptyFilters)} className="flex items-center gap-1 text-xs font-bold text-[var(--ops-primary)]"><FilterX className="h-3.5 w-3.5" />Zurücksetzen</button> : undefined} />
         </div>
-      )}
+        <nav aria-label="Athletenfilter" className="space-y-5 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
+          <FilterGroup title="Nationen" filterKey="nation" items={groups.nation} selected={filters.nation} onSelect={setFilter} />
+          <FilterGroup title="Disziplinen" filterKey="discipline" items={groups.discipline} selected={filters.discipline} onSelect={setFilter} />
+          <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
+          <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
+          <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
+        </nav>
+      </ContentCard>
 
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h2 className="text-2xl font-bold text-gray-900">Athletenverwaltung</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Hier sieht der Disponent sofort, welche importierten Änderungen geprüft werden müssen.
-          </p>
-        </div>
-        <button
-          onClick={() => permissions.canCreate && setIsAdding(true)}
-          disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined} className="inline-flex items-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          <Plus className="w-5 h-5 mr-2" />
-          Athlet hinzufügen
-        </button>
-      </div>
-
-      <div className="grid gap-4 md:grid-cols-3">
-        <SummaryCard
-          title="Änderungen offen"
-          value={changedAthletes.length}
-          subtitle="Importierte Änderungen warten auf Prüfung"
-          tone={changedAthletes.length > 0 ? 'amber' : 'default'}
-        />
-        <SummaryCard
-          title="Mit Zuweisung betroffen"
-          value={assignedChangedAthletes.length}
-          subtitle="Hier besteht bereits Hotel- oder Zimmerbezug"
-          tone={assignedChangedAthletes.length > 0 ? 'red' : 'default'}
-        />
-        <SummaryCard
-          title="Gesamt Athleten"
-          value={athletes.length}
-          subtitle="Aktuell im System"
-        />
-      </div>
-
-      <div className="bg-white rounded-lg shadow p-4 space-y-4">
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="relative md:col-span-2">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="text"
-              placeholder="Nach Name, Nation, Disziplin, Zimmer oder Hotel suchen..."
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-
-          <SelectFilter
-            value={disciplineFilter}
-            onChange={setDisciplineFilter}
-            options={uniqueDisciplines}
-            placeholder="Alle Disziplinen"
-          />
-
-          <SelectFilter
-            value={nationFilter}
-            onChange={setNationFilter}
-            options={uniqueNations}
-            placeholder="Alle Nationen"
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2">
-          <FilterChip label="Alle" active={reviewFilter === 'all'} onClick={() => setReviewFilter('all')} />
-          <FilterChip label={`Nur Änderungen (${changedAthletes.length})`} active={reviewFilter === 'changed'} onClick={() => setReviewFilter('changed')} />
-          <FilterChip
-            label={`Zuweisung betroffen (${assignedChangedAthletes.length})`}
-            active={reviewFilter === 'assigned_changed'}
-            onClick={() => setReviewFilter('assigned_changed')}
-            tone="red"
-          />
-        </div>
-      </div>
-
-      {changedAthletes.length > 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <AlertCircle className="w-5 h-5 text-amber-700 mt-0.5" />
-            <div>
-              <p className="font-medium text-amber-900">Änderungen aus dem letzten Import müssen geprüft werden</p>
-              <p className="text-sm text-amber-800 mt-1">
-                Sobald du geprüft hast, dass An-/Abreise, Zimmerwunsch oder Partner weiterhin passen, kannst du die Änderung pro Person bestätigen.
-                {assignedChangedAthletes.length > 0 && ' Rot markierte Zeilen haben bereits eine bestehende Hotel- oder Zimmerzuweisung.'}
-              </p>
-            </div>
+      <ContentCard surface="raised" className="flex min-w-0 flex-col overflow-hidden xl:min-h-0 xl:flex-1">
+        <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+            <div><SectionHeader title="Athletenliste" /><div className="mt-1 text-sm text-[var(--ops-text-muted)]"><b className="text-[var(--ops-text)]">{filtered.length}</b> von {athletes.length} Personen</div></div>
+            <label className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 lg:w-[27rem]">
+              <Search className="h-4 w-4 shrink-0 text-[var(--ops-text-muted)]" />
+              <input aria-label="Athleten suchen" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-muted)]" placeholder="Name, Nation, Disziplin, Hotel oder Zimmer" value={search} onChange={event => setSearch(event.target.value)} />
+              {search && <button type="button" onClick={() => setSearch('')} className="text-xs font-bold text-[var(--ops-primary)]">Löschen</button>}
+            </label>
           </div>
         </div>
-      )}
-
-      {isAdding && (
-        <div className="bg-white rounded-lg shadow p-6">
-          <h3 className="text-lg font-semibold mb-4">Neuer Athlet</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
-            <input
-              type="text"
-              placeholder="Vorname"
-              value={newAthlete.firstname || ''}
-              onChange={(event) => setNewAthlete({ ...newAthlete, firstname: event.target.value })}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <input
-              type="text"
-              placeholder="Nachname"
-              value={newAthlete.lastname || ''}
-              onChange={(event) => setNewAthlete({ ...newAthlete, lastname: event.target.value })}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <input
-              type="text"
-              placeholder="Nation (z.B. AUT)"
-              value={newAthlete.nationCode || ''}
-              onChange={(event) => setNewAthlete({ ...newAthlete, nationCode: event.target.value.toUpperCase() })}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <input
-              type="text"
-              placeholder="Disziplin (optional)"
-              value={newAthlete.discipline || ''}
-              onChange={(event) => setNewAthlete({ ...newAthlete, discipline: event.target.value })}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={permissions.canCreate ? handleAddAthlete : undefined}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-            >
-              Speichern
-            </button>
-            <button
-              onClick={() => {
-                setIsAdding(false);
-                setNewAthlete({ lastname: '', firstname: '', nationCode: '', discipline: '' });
-              }}
-              className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
-            >
-              Abbrechen
-            </button>
-          </div>
+        <div className="min-h-[24rem] overflow-auto xl:min-h-0 xl:flex-1">
+          <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-left text-sm">
+            <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
+              <tr>{['Name', 'Nation', 'Disziplin', 'Gender', 'Funktion', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Assignment Status', 'Import Status'].map(label => <th key={label} className="border-b border-[var(--ops-border)] px-3 py-3 whitespace-nowrap">{label}</th>)}</tr>
+            </thead>
+            <tbody>
+              {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
+                <Cell><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]"><Users className="h-4 w-4" /></span><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b>{athlete.fisCode && <span className="text-[11px] text-[var(--ops-text-subtle)]">FIS {athlete.fisCode}</span>}</div></div></Cell>
+                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell><Cell>{athlete.assignment?.hotelName || '—'}</Cell><Cell>{athlete.assignment?.roomNumber || athlete.assignment?.roomTypeName || '—'}</Cell>
+                <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
+                <Cell><StatusChip tone={athlete.hasPendingRoomlistReview ? 'warning' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
+              </tr>)}
+            </tbody>
+          </table>
+          {!filtered.length && <div className="p-8"><EmptyState title="Keine Athleten gefunden" description="Passen Sie die Suche oder die kombinierten Filter an." action={<OpsButton onClick={() => { setFilters(emptyFilters); setSearch(''); }}>Alle Filter zurücksetzen</OpsButton>} /></div>}
         </div>
-      )}
-
-      <div className="bg-white rounded-lg shadow overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
-            <tr>
-              <HeaderCell>Name / Status</HeaderCell>
-              <HeaderCell>Nation</HeaderCell>
-              <HeaderCell>Disziplin</HeaderCell>
-              <HeaderCell>Funktion</HeaderCell>
-              <HeaderCell>Import-Änderung</HeaderCell>
-              <HeaderCell>Zuweisung</HeaderCell>
-              <HeaderCell>Wunsch aus Import</HeaderCell>
-              <HeaderCell>Aktion</HeaderCell>
-            </tr>
-          </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
-            {filteredAthletes.length > 0 ? (
-              filteredAthletes.map((athlete) => {
-                const hasPendingReview = Boolean(athlete.hasPendingRoomlistReview);
-                const assignedAndChanged = Boolean(athlete.changeTouchesAssignment);
-                const assignment = athlete.assignment;
-                const rowClassName = assignedAndChanged
-                  ? 'bg-red-50 hover:bg-red-100'
-                  : hasPendingReview
-                    ? 'bg-amber-50 hover:bg-amber-100'
-                    : 'hover:bg-gray-50';
-
-                return (
-                  <tr key={athlete.id} className={rowClassName}>
-                    <td className="px-6 py-4 align-top text-sm font-medium text-gray-900">
-                      <div className="space-y-2">
-                        <div>{athlete.firstname} {athlete.lastname}</div>
-                        <div className="flex flex-wrap gap-1">
-                          {athlete.missingFromLatestAthletesImport && <StatusBadge text="Nicht in letzter Athletenliste" tone="red" />}
-                          {athlete.missingFromLatestRoomlistImport && <StatusBadge text="Nicht in letzter Roomlist" tone="orange" />}
-                          {hasPendingReview && <StatusBadge text="Prüfung offen" tone={assignedAndChanged ? 'red' : 'amber'} />}
-                          {!hasPendingReview && athlete.roomlistChangeAcknowledgedAt && <StatusBadge text="Änderung bestätigt" tone="green" />}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top whitespace-nowrap text-sm text-gray-600">{athlete.nationCode}</td>
-                    <td className="px-6 py-4 align-top whitespace-nowrap text-sm text-gray-600">{athlete.discipline || '-'}</td>
-                    <td className="px-6 py-4 align-top whitespace-nowrap text-sm text-gray-600">
-                      <span className="px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">
-                        {athlete.function || 'Athlete'}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 align-top text-sm text-gray-700">
-                      {hasPendingReview ? (
-                        <div className="space-y-1">
-                          <div className="font-medium text-gray-900">{translateChangeSummary(athlete.roomlistChangeSummary)}</div>
-                          <div>Anreise: {formatDate(athlete.arrivalDate)}</div>
-                          <div>Abreise: {formatDate(athlete.departureDate)}</div>
-                          <div>Zimmerwunsch: {athlete.roomType || '-'}</div>
-                          <div>Partner: {athlete.sharedWithName || '-'}</div>
-                        </div>
-                      ) : (
-                        <span className="text-gray-500">Keine offene Änderung</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 align-top text-sm text-gray-700">
-                      {assignment?.hasAssignment ? (
-                        <div className="space-y-1">
-                          <div className="font-medium text-gray-900">{assignment.hotelName || 'Hotel zugewiesen'}</div>
-                          <div>Zimmer: {assignment.roomNumber || 'noch keine Nummer'} · {assignment.roomTypeName || '-'}</div>
-                          <div>{formatDate(assignment.checkInDate)} – {formatDate(assignment.checkOutDate)}</div>
-                          {assignedAndChanged && (
-                            <div className="text-red-700 font-medium">
-                              Achtung: Import-Änderung betrifft bestehende Zuweisung
-                            </div>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="text-gray-500">Noch keine Hotel-/Zimmerzuweisung</span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 align-top text-sm text-gray-700">
-                      <div className="space-y-1">
-                        <div>{athlete.roomType || '-'}</div>
-                        <div>{athlete.sharedWithName || 'kein Partnerwunsch'}</div>
-                      </div>
-                    </td>
-                    <td className="px-6 py-4 align-top whitespace-nowrap text-sm text-gray-700">
-                      {hasPendingReview ? (
-                        <button
-                          onClick={() => handleAcknowledgeChange(athlete)}
-                          disabled={savingAcknowledgeId === athlete.id}
-                          className="inline-flex items-center px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-                        >
-                          {savingAcknowledgeId === athlete.id ? (
-                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="w-4 h-4 mr-2" />
-                          )}
-                          Änderung bestätigen
-                        </button>
-                      ) : (
-                        <span className="text-gray-500">—</span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })
-            ) : (
-              <tr>
-                <td colSpan={8} className="px-6 py-12 text-center text-gray-500">
-                  Keine Athleten gefunden. Versuche andere Filter oder Suchbegriffe.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-
-        {filteredAthletes.length > 0 && (
-          <div className="px-6 py-3 bg-gray-50 border-t border-gray-200 text-sm text-gray-600">
-            {filteredAthletes.length} von {athletes.length} Athleten angezeigt
-          </div>
-        )}
-      </div>
+      </ContentCard>
     </div>
-  );
+    <AthleteDialog athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} />
+    <NewAthleteDialog open={adding} onClose={() => setAdding(false)} onCreated={athlete => setAthletes(current => [...current, athlete])} />
+  </PageLayout>;
 }
 
-function SummaryCard({
-  title,
-  value,
-  subtitle,
-  tone = 'default',
-}: {
-  title: string;
-  value: number;
-  subtitle: string;
-  tone?: 'default' | 'amber' | 'red';
-}) {
-  const className = tone === 'red'
-    ? 'border-red-200 bg-red-50'
-    : tone === 'amber'
-      ? 'border-amber-200 bg-amber-50'
-      : 'border-gray-200 bg-white';
-  return (
-    <div className={`rounded-lg border p-4 ${className}`}>
-      <div className="text-sm text-gray-500">{title}</div>
-      <div className="text-2xl font-semibold text-gray-900 mt-1">{value}</div>
-      <div className="text-sm text-gray-600 mt-1">{subtitle}</div>
-    </div>
-  );
-}
-
-function SelectFilter({
-  value,
-  onChange,
-  options,
-  placeholder,
-}: {
-  value: string;
-  onChange: (value: string) => void;
-  options: string[];
-  placeholder: string;
-}) {
-  return (
-    <div className="relative">
-      <Filter className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-      <select
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent appearance-none"
-      >
-        <option value="">{placeholder}</option>
-        {options.map((option) => (
-          <option key={option} value={option}>{option}</option>
-        ))}
-      </select>
-    </div>
-  );
-}
-
-function FilterChip({
-  label,
-  active,
-  onClick,
-  tone = 'default',
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-  tone?: 'default' | 'red';
-}) {
-  const className = active
-    ? tone === 'red'
-      ? 'bg-red-600 text-white border-red-600'
-      : 'bg-blue-600 text-white border-blue-600'
-    : tone === 'red'
-      ? 'bg-white text-red-700 border-red-200'
-      : 'bg-white text-gray-700 border-gray-200';
-  return (
-    <button
-      onClick={onClick}
-      className={`px-3 py-1.5 rounded-full border text-sm transition-colors ${className}`}
-    >
-      {label}
-    </button>
-  );
-}
-
-function HeaderCell({ children }: { children: ReactNode }) {
-  return (
-    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-      {children}
-    </th>
-  );
-}
-
-function StatusBadge({
-  text,
-  tone,
-}: {
-  text: string;
-  tone: 'red' | 'orange' | 'amber' | 'green';
-}) {
-  const className = {
-    red: 'bg-red-100 text-red-700 border-red-200',
-    orange: 'bg-orange-100 text-orange-700 border-orange-200',
-    amber: 'bg-amber-100 text-amber-700 border-amber-200',
-    green: 'bg-green-100 text-green-700 border-green-200',
-  }[tone];
-  return (
-    <span className={`px-2 py-0.5 rounded-full text-[11px] border ${className}`}>
-      {text}
-    </span>
-  );
-}
-
-function formatDate(value?: string | null) {
-  if (!value) return '-';
-  return new Date(value).toLocaleDateString('de-DE');
-}
-
-function translateChangeSummary(summary?: string | null) {
-  if (!summary) return 'Importdaten wurden geändert';
-  return summary
-    .replace('changed:', 'Geändert:')
-    .replace('arrivalDate', 'Anreise')
-    .replace('departureDate', 'Abreise')
-    .replace('roomType', 'Zimmertyp')
-    .replace('sharedWithName', 'Zimmerpartner')
-    .replace('firstMeal', 'erste Mahlzeit')
-    .replace('lastMeal', 'letzte Mahlzeit')
-    .replace('specialMeal', 'Sonderverpflegung');
+function Cell({ children }: { children: ReactNode }) {
+  return <td className="border-b border-[var(--ops-divider)] px-3 py-3 align-middle text-[var(--ops-text-muted)]">{children}</td>;
 }
