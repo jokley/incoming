@@ -15,7 +15,7 @@ const navItems = [
 export function Layout() {
   const { user, hasPermission, permissions } = useAuth();
   const { pathname } = useLocation();
-  const isOperationsSplitPage = pathname === '/hotels' || pathname === '/events';
+  const isOperationsSplitPage = pathname === '/hotels' || pathname === '/events' || pathname === '/room-types';
   const displayName = user?.displayName?.trim() || user?.username || 'Benutzer';
   const initials = displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U';
 
