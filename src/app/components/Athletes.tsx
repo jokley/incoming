@@ -1,15 +1,18 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  Box,
   Button,
   CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
   DialogTitle,
+  Divider,
   Stack,
   TextField,
+  Typography,
 } from '@mui/material';
-import { Check, ChevronRight, FilterX, Plus, Search, Users } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, History, LockKeyhole, Plus, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
@@ -68,27 +71,113 @@ function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: s
 }
 
 function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; open: boolean; onClose: () => void }) {
-  return <Dialog open={open} onClose={onClose} fullWidth maxWidth="sm">
-    <DialogTitle>{athlete ? 'Athlet bearbeiten' : 'Athlet bearbeiten'}</DialogTitle>
-    <DialogContent dividers>
-      <Stack spacing={2.25} sx={{ pt: 1 }}>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-          <TextField fullWidth label="Vorname" value={athlete?.firstname || ''} slotProps={{ input: { readOnly: true } }} />
-          <TextField fullWidth label="Nachname" value={athlete?.lastname || ''} slotProps={{ input: { readOnly: true } }} />
-        </Stack>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-          <TextField fullWidth label="Nation" value={athlete?.nationCode || ''} slotProps={{ input: { readOnly: true } }} />
-          <TextField fullWidth label="Disziplin" value={athlete?.discipline || ''} slotProps={{ input: { readOnly: true } }} />
-        </Stack>
-        <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-          <TextField fullWidth label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} slotProps={{ input: { readOnly: true } }} />
-          <TextField fullWidth label="Funktion" value={athlete?.function || 'Athlet'} slotProps={{ input: { readOnly: true } }} />
-        </Stack>
-        <InfoPanel tone="info" title="Stammdaten aus dem FIS-Import">Die Bearbeitung verwendet den bestehenden Athleten-Workflow; Zimmerzuweisungen werden ausschließlich im Assignment-Modul vorgenommen.</InfoPanel>
+  const permissions = usePermissions();
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
+
+  useEffect(() => {
+    setStay({
+      arrivalDate: athlete?.arrivalDate || '',
+      departureDate: athlete?.departureDate || '',
+      note: athlete?.additionalItems || '',
+    });
+  }, [athlete]);
+
+  const assignmentStatus = athlete ? assignmentLabel(athlete) : '—';
+
+  return <Dialog
+    open={open}
+    onClose={onClose}
+    fullWidth
+    maxWidth="md"
+    slotProps={{ paper: { sx: { maxHeight: '92vh' } } }}
+  >
+    <DialogTitle sx={{ px: { xs: 2.5, sm: 3 }, py: 2.5 }}>
+      <Stack direction="row" alignItems="center" justifyContent="space-between" gap={2}>
+        <Box>
+          <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 800, letterSpacing: '0.14em' }}>Athletenverwaltung</Typography>
+          <Typography variant="h3" component="h2" sx={{ mt: -0.25 }}>Athlet bearbeiten</Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+            {athlete ? `${athlete.firstname} ${athlete.lastname} · ${athlete.nationCode}` : 'Athletendetails'}
+          </Typography>
+        </Box>
+        <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 1, color: 'text.secondary', fontSize: 12, fontWeight: 700 }}>
+          <ShieldCheck size={17} /> FIS-geführt
+        </Box>
+      </Stack>
+    </DialogTitle>
+    <DialogContent dividers sx={{ p: { xs: 2, sm: 3 }, bgcolor: 'background.default' }}>
+      <Stack spacing={2.5}>
+        <DialogSection icon={<UserRound size={18} />} title="Stammdaten (FIS)" subtitle="Synchronisiert über den FIS-Import und nicht manuell editierbar." badge={<><LockKeyhole size={13} /> Schreibgeschützt</>}>
+          <FieldGrid>
+            <ReadonlyField label="Vorname" value={athlete?.firstname} />
+            <ReadonlyField label="Nachname" value={athlete?.lastname} />
+            <ReadonlyField label="Nation" value={athlete?.nationCode} />
+            <ReadonlyField label="Disziplin" value={athlete?.discipline} />
+            <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
+            <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
+            <ReadonlyField label="FIS-ID" value={athlete?.fisCode} />
+          </FieldGrid>
+        </DialogSection>
+
+        <DialogSection icon={<CalendarDays size={18} />} title="Aufenthalt" subtitle={permissions.canEdit ? 'Operative Aufenthaltsdaten können bearbeitet werden.' : 'Für Ihre Rolle nur zur Ansicht verfügbar.'} emphasis>
+          <FieldGrid>
+            <TextField fullWidth type="date" label="Anreise" value={stay.arrivalDate} onChange={event => setStay(current => ({ ...current, arrivalDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
+            <TextField fullWidth type="date" label="Abreise" value={stay.departureDate} onChange={event => setStay(current => ({ ...current, departureDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
+            <TextField fullWidth multiline minRows={3} label="Interne Bemerkung" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise zum Aufenthalt' : undefined} sx={{ gridColumn: '1 / -1' }} />
+          </FieldGrid>
+        </DialogSection>
+
+        <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Nur Information – Zuweisungen erfolgen ausschließlich im Assignment-Modul." actions={<Button variant="outlined" size="small" disabled startIcon={<ChevronRight size={16} />}>Zum Assignment</Button>}>
+          <FieldGrid>
+            <ReadonlyField label="Hotel" value={athlete?.assignment?.hotelName} />
+            <ReadonlyField label="Zimmertyp" value={athlete?.assignment?.roomTypeName || athlete?.roomType} />
+            <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
+            <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
+          </FieldGrid>
+        </DialogSection>
+
+        <DialogSection icon={<ClipboardList size={18} />} title="Import" subtitle="Vorbereitet für die zukünftige Änderungsverfolgung.">
+          <FieldGrid>
+            <ReadonlyField label="Importdatum" value={date(athlete?.athletesLastSeenAt)} />
+            <ReadonlyField label="Importstatus" value={athlete ? importLabel(athlete) : undefined} />
+            <ReadonlyField label="Quelle" value="FIS-Import" />
+          </FieldGrid>
+        </DialogSection>
+
+        <DialogSection icon={<History size={18} />} title="Audit" subtitle="Systeminformationen zur Nachvollziehbarkeit.">
+          <FieldGrid>
+            <ReadonlyField label="Erstellt" value={date(athlete?.entryDate)} />
+            <ReadonlyField label="Zuletzt geändert" value={date(athlete?.lastUpdate)} />
+            <ReadonlyField label="Zuletzt importiert" value={date(athlete?.athletesLastSeenAt)} />
+          </FieldGrid>
+        </DialogSection>
       </Stack>
     </DialogContent>
-    <DialogActions><Button onClick={onClose}>Schließen</Button></DialogActions>
+    <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button variant="contained" onClick={onClose}>Schließen</Button></DialogActions>
   </Dialog>;
+}
+
+function DialogSection({ icon, title, subtitle, badge, actions, emphasis = false, children }: { icon: ReactNode; title: string; subtitle: string; badge?: ReactNode; actions?: ReactNode; emphasis?: boolean; children: ReactNode }) {
+  return <Box component="section" sx={{ overflow: 'hidden', border: '1px solid', borderColor: emphasis ? 'primary.main' : 'divider', borderRadius: 2, bgcolor: 'background.paper', boxShadow: emphasis ? '0 0 0 1px rgba(60, 148, 255, 0.12)' : 'none' }}>
+    <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 2, px: 2.25, py: 1.75 }}>
+      <Stack direction="row" gap={1.25} alignItems="flex-start">
+        <Box sx={{ display: 'flex', color: emphasis ? 'primary.main' : 'text.secondary', mt: 0.25 }}>{icon}</Box>
+        <Box><Typography variant="subtitle1" sx={{ fontWeight: 800 }}>{title}</Typography><Typography variant="caption" color="text.secondary">{subtitle}</Typography></Box>
+      </Stack>
+      {badge && <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 0.75, color: 'text.secondary', fontSize: 11, fontWeight: 800, whiteSpace: 'nowrap' }}>{badge}</Box>}
+      {actions}
+    </Box>
+    <Divider />
+    <Box sx={{ p: 2.25 }}>{children}</Box>
+  </Box>;
+}
+
+function FieldGrid({ children }: { children: ReactNode }) {
+  return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>{children}</Box>;
+}
+
+function ReadonlyField({ label, value }: { label: string; value?: string | null }) {
+  return <TextField fullWidth label={label} value={value || '—'} slotProps={{ input: { readOnly: true } }} sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'rgba(255,255,255,0.025)' }, '& .MuiInputBase-input': { color: 'text.secondary' } }} />;
 }
 
 function NewAthleteDialog({ open, onClose, onCreated }: { open: boolean; onClose: () => void; onCreated: (athlete: Athlete) => void }) {
