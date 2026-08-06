@@ -276,6 +276,20 @@ class ApiService {
     });
   }
 
+  async updateHotelInventory(hotelId: string, inventoryId: string, data: {
+    roomTypeId: string; availableFrom: string; availableUntil: string; roomCount: number; hasHalfBoard?: boolean; hasSR?: boolean;
+  }): Promise<HotelRoomInventory> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === hotelId);
+      const index = hotel?.roomInventories?.findIndex(inv => inv.id === inventoryId) ?? -1;
+      const roomType = mockRoomTypes.find(rt => rt.id === data.roomTypeId);
+      if (!hotel?.roomInventories || index < 0 || !roomType) throw new Error('Inventory not found');
+      hotel.roomInventories[index] = { ...hotel.roomInventories[index], ...data, roomType, roomCount: data.roomCount };
+      return Promise.resolve(hotel.roomInventories[index]);
+    }
+    return this.request<HotelRoomInventory>(`/hotels/${hotelId}/inventory/${inventoryId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
   async deleteHotelInventory(hotelId: string, inventoryId: string): Promise<void> {
     if (USE_MOCK_DATA) {
       const hotel = mockHotels.find(h => h.id === hotelId);
