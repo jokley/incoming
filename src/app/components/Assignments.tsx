@@ -4,6 +4,7 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowRight,
+  BadgeEuro,
   Bell,
   Bed,
   Building2,
@@ -12,7 +13,10 @@ import {
   ChevronDown,
   ChevronLeft,
   Clock,
+  FileCheck2,
   Eye,
+  Flag,
+  History,
   Link2,
   RefreshCw,
   Search,
@@ -69,6 +73,7 @@ export function Assignments() {
   const [selected, setSelected] = useState<SelectedState>(null);
   const [activeHotelId, setActiveHotelId] = useState<string | null>(null);
   const [showAlert, setShowAlert] = useState(true);
+  const [selectedQuotaKey, setSelectedQuotaKey] = useState<string | null>(null);
 
   const [queueSearch, setQueueSearch] = useState('');
   const [hotelSearch, setHotelSearch] = useState('');
@@ -485,8 +490,8 @@ export function Assignments() {
           <AlertBanner row={quotaViolations[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
         )}
 
-        <div className="grid min-h-0 flex-1 grid-cols-[352px_minmax(0,1fr)] border-t border-[var(--ops-divider)]">
-          <aside className="min-h-0 border-r border-[var(--ops-divider)] bg-[var(--ops-surface-raised)]">
+        <div className={`grid min-h-0 flex-1 border-t border-[var(--ops-divider)] ${view === 'dispatch' ? 'grid-cols-[352px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
+          {view === 'dispatch' && <aside className="min-h-0 border-r border-[var(--ops-divider)] bg-[var(--ops-surface-raised)]">
             <QueueSidebar
               units={queueUnits}
               regularUnits={regularQueueUnits}
@@ -528,7 +533,7 @@ export function Assignments() {
               }}
               selectedUnitId={selected?.type === 'unit' ? selected.id : null}
             />
-          </aside>
+          </aside>}
 
           <main className="min-h-0 overflow-hidden bg-[var(--ops-surface-elevated)]">
             {view === 'dispatch' && (
@@ -567,7 +572,12 @@ export function Assignments() {
             )}
 
             {view === 'quotas' && (
-              <QuotasPanel rows={quotaUsage} />
+              <QuotasPanel
+                rows={quotaUsage}
+                assignedUnits={assignedUnits}
+                allUnits={allUnitsCombined}
+                onSelect={setSelectedQuotaKey}
+              />
             )}
           </main>
 
@@ -582,6 +592,17 @@ export function Assignments() {
               onUnassignBooking={handleUnassignBooking}
               onUnassignOccupant={handleUnassignOccupant}
               onMarkBookingAsSingle={handleMarkBookingAsSingle}
+            />
+          </AssignmentDialog>
+        )}
+
+        {selectedQuotaKey && (
+          <AssignmentDialog onClose={() => setSelectedQuotaKey(null)}>
+            <QuotaDetail
+              quotaKey={selectedQuotaKey}
+              rows={quotaUsage}
+              assignedUnits={assignedUnits}
+              allUnits={allUnitsCombined}
             />
           </AssignmentDialog>
         )}
@@ -1787,55 +1808,203 @@ function AthletesPanel({
   );
 }
 
-function QuotasPanel({ rows }: { rows: OfficialQuotaUsage[] }) {
+type QuotaCard = {
+  key: string;
+  nationCode: string;
+  discipline: string;
+  genders: string[];
+  athletes: number;
+  officialQuota: number;
+  assignedOfficials: number;
+  singleRoomsAllowed: number;
+  singleRoomsUsed: number;
+  peopleTotal: number;
+  peopleAssigned: number;
+};
+
+function buildQuotaCards(rows: OfficialQuotaUsage[], allUnits: RoomBookingUnit[], assignedUnits: RoomBookingUnit[]): QuotaCard[] {
+  const cards = new Map<string, QuotaCard>();
+  for (const row of rows) {
+    const key = `${row.nationCode}::${row.discipline || '—'}`;
+    const current = cards.get(key) ?? {
+      key,
+      nationCode: row.nationCode,
+      discipline: row.discipline || '—',
+      genders: [],
+      athletes: 0,
+      officialQuota: 0,
+      assignedOfficials: 0,
+      singleRoomsAllowed: 0,
+      singleRoomsUsed: 0,
+      peopleTotal: 0,
+      peopleAssigned: 0,
+    };
+    current.genders.push(row.gender);
+    current.athletes += row.athletesEntered;
+    current.officialQuota += row.officialQuota;
+    current.assignedOfficials += row.assignedOfficials;
+    current.singleRoomsAllowed += row.singleRoomsAllowed;
+    current.singleRoomsUsed += row.singleRoomsUsed;
+    cards.set(key, current);
+  }
+
+  for (const card of cards.values()) {
+    const matches = (unit: RoomBookingUnit) => unit.nationCode === card.nationCode
+      && unit.occupants.some((occupant) => (occupant.discipline || '—') === card.discipline);
+    card.peopleTotal = allUnits.filter(matches).reduce((sum, unit) => sum + unit.occupants.length, 0);
+    card.peopleAssigned = assignedUnits.filter(matches).reduce((sum, unit) => sum + unit.occupants.length, 0);
+  }
+  return [...cards.values()].sort((a, b) => a.nationCode.localeCompare(b.nationCode) || a.discipline.localeCompare(b.discipline));
+}
+
+function getQuotaState(card: QuotaCard) {
+  const officialsOver = card.assignedOfficials > card.officialQuota;
+  const singlesOver = card.singleRoomsUsed > card.singleRoomsAllowed;
+  if (officialsOver && singlesOver) return { label: 'Blockiert', tone: 'error' as const, icon: AlertCircle };
+  if (officialsOver || singlesOver) return { label: 'Genehmigung erforderlich', tone: 'warning' as const, icon: AlertTriangle };
+  return { label: 'OK', tone: 'success' as const, icon: CheckCircle2 };
+}
+
+function QuotasPanel({ rows, allUnits, assignedUnits, onSelect }: {
+  rows: OfficialQuotaUsage[];
+  allUnits: RoomBookingUnit[];
+  assignedUnits: RoomBookingUnit[];
+  onSelect: (key: string) => void;
+}) {
+  const cards = buildQuotaCards(rows, allUnits, assignedUnits);
+  const issues = cards.filter((card) => getQuotaState(card).tone !== 'success').length;
   return (
-    <div className="h-full overflow-auto p-4">
-      <div className="space-y-3">
-        {rows.map((row) => {
-          const offOver = row.assignedOfficials > row.officialQuota;
-          const singleOver = row.singleRoomsUsed > row.singleRoomsAllowed;
-          const total = row.athletesEntered || 0;
-          const donePct = total > 0 ? Math.round((Math.min(row.assignedOfficials, total) / total) * 100) : 0;
+    <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6">
+      <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--ops-primary)]"><Flag className="h-3.5 w-3.5" /> Live-Regelzentrale</div>
+          <h2 className="text-xl font-bold text-[var(--ops-text)]">Quoten nach Nation &amp; Disziplin</h2>
+          <p className="mt-1 text-sm text-[var(--ops-text-muted)]">Regelverstöße, Freigaben und Dispositionsstand auf einen Blick.</p>
+        </div>
+        <div className="flex gap-2">
+          <SummaryPill label="Kombinationen" value={cards.length} />
+          <SummaryPill label="Handlungsbedarf" value={issues} warning={issues > 0} />
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+        {cards.map((card) => {
+          const state = getQuotaState(card);
+          const StateIcon = state.icon;
+          const officialsOver = card.assignedOfficials > card.officialQuota;
+          const singlesOver = card.singleRoomsUsed > card.singleRoomsAllowed;
+          const dispatchPct = card.peopleTotal > 0 ? Math.round(card.peopleAssigned / card.peopleTotal * 100) : 0;
 
           return (
-            <div key={`${row.nationCode}-${row.discipline}-${row.gender}`} className="rounded-2xl border border-[#2D4260] bg-[#1C2B42] p-4">
-              <div className="mb-4 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-bold text-slate-100">{row.nationCode}</div>
-                  <div className="mt-0.5 text-[10px] font-mono text-slate-500">
-                    {row.discipline || '—'} · {row.gender}
+            <button key={card.key} onClick={() => onSelect(card.key)} className="group overflow-hidden rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:-translate-y-0.5 hover:border-[var(--ops-border-strong)] hover:shadow-[var(--ops-shadow-sm)] focus-visible:shadow-[var(--ops-focus-ring)]">
+              <div className={`h-1 ${state.tone === 'success' ? 'bg-[var(--ops-success)]' : state.tone === 'warning' ? 'bg-[var(--ops-warning)]' : 'bg-[var(--ops-error)]'}`} />
+              <div className="p-5">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 min-w-11 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-white">{card.nationCode}</div>
+                    <div><div className="font-bold text-white">{card.discipline}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">{card.nationCode} · {card.discipline}</div></div>
                   </div>
+                  <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
                 </div>
-                <div className="flex gap-2">
-                  {offOver && <StatusTag tone="red" label="Officials over" />}
-                  {singleOver && <StatusTag tone="red" label="Singles over" />}
-                  {!offOver && !singleOver && <StatusTag tone="green" label="OK" />}
-                </div>
-              </div>
 
-              <div className="grid grid-cols-3 gap-5">
-                <QuotaMetric label="Athletes" current={row.athletesEntered} max={row.athletesEntered} />
-                <QuotaMetric label="Officials" current={row.assignedOfficials} max={row.officialQuota} tone={offOver ? 'red' : 'blue'} />
-                <QuotaMetric label="Singles" current={row.singleRoomsUsed} max={row.singleRoomsAllowed} tone={singleOver ? 'red' : 'blue'} />
-              </div>
-
-              <div className="mt-4">
-                <div className="mb-2 flex items-center justify-between text-xs text-slate-400">
-                  <span>Dispatch progress</span>
-                  <span className="font-mono">{donePct}%</span>
+                <div className="grid grid-cols-3 gap-2">
+                  <KpiBlock label="Athleten" value={`${card.athletes}`} />
+                  <KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} />
+                  <KpiBlock label="Single Rooms" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
                 </div>
-                <CapacityBar pct={donePct} />
+
+                <div className="mt-4 space-y-3 rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface)] p-3.5">
+                  <QuotaProgress label="Officials" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} />
+                  <QuotaProgress label="Single Rooms" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
+                  <QuotaProgress label="Disposition" current={card.peopleAssigned} max={card.peopleTotal} />
+                </div>
+
+                <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+                  <InfoLine label="Gender" value={card.genders.length > 1 ? 'Gemischte Belegung' : 'OK'} warning={card.genders.length > 1} />
+                  <InfoLine label="Genehmigt" value="Nein" warning={state.tone !== 'success'} />
+                  <InfoLine label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal} Personen`} />
+                  <InfoLine label="Mehrkosten" value={state.tone === 'success' ? '0 €' : 'Noch offen'} warning={state.tone !== 'success'} />
+                </div>
+                <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{dispatchPct}% disponiert</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
               </div>
-            </div>
+            </button>
           );
         })}
 
-        {!rows.length && (
-          <div className="py-16 text-center text-sm text-slate-500">Keine Quotenzeilen verfügbar</div>
+        {!cards.length && (
+          <div className="col-span-full py-20 text-center text-sm text-[var(--ops-text-muted)]">Keine Quoten verfügbar</div>
         )}
       </div>
     </div>
   );
+}
+
+function SummaryPill({ label, value, warning = false }: { label: string; value: number; warning?: boolean }) {
+  return <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-3.5 py-2"><span className="text-[10px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</span><span className={`ml-2 font-mono font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-white'}`}>{value}</span></div>;
+}
+
+function StatusPill({ tone, label, icon }: { tone: 'success' | 'warning' | 'error'; label: string; icon: ReactNode }) {
+  const classes = tone === 'success' ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]' : tone === 'warning' ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]' : 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]';
+  return <span className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${classes}`}>{icon}{label}</span>;
+}
+
+function KpiBlock({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+  return <div className="rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3"><div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`mt-1.5 font-mono text-lg font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-white'}`}>{value}</div></div>;
+}
+
+function QuotaProgress({ label, current, max, warning = false }: { label: string; current: number; max: number; warning?: boolean }) {
+  const pct = max > 0 ? Math.round(current / max * 100) : 0;
+  return <div><div className="mb-1.5 flex justify-between text-[10px]"><span className="text-[var(--ops-text-muted)]">{label}</span><span className={`font-mono ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-text-subtle)]'}`}>{current} / {max}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[var(--ops-surface-elevated)]"><div className={`h-full rounded-full ${warning ? 'bg-[var(--ops-warning)]' : 'bg-[var(--ops-primary-emphasis)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>;
+}
+
+function InfoLine({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+  return <div><div className="mb-1 text-[9px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`flex items-center gap-1.5 font-semibold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-text-subtle)]'}`}>{warning ? <AlertTriangle className="h-3.5 w-3.5" /> : <Check className="h-3.5 w-3.5 text-[var(--ops-success)]" />}{value}</div></div>;
+}
+
+function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits }: {
+  quotaKey: string;
+  rows: OfficialQuotaUsage[];
+  allUnits: RoomBookingUnit[];
+  assignedUnits: RoomBookingUnit[];
+}) {
+  const card = buildQuotaCards(rows, allUnits, assignedUnits).find((candidate) => candidate.key === quotaKey);
+  if (!card) return <EmptyCenter text="Quote nicht mehr verfügbar." />;
+  const state = getQuotaState(card);
+  const StateIcon = state.icon;
+  const officialsOver = card.assignedOfficials > card.officialQuota;
+  const singlesOver = card.singleRoomsUsed > card.singleRoomsAllowed;
+  const reasons = [officialsOver && `Officials überschreiten die Quote um ${card.assignedOfficials - card.officialQuota}.`, singlesOver && `Single Rooms überschreiten die Quote um ${card.singleRoomsUsed - card.singleRoomsAllowed}.`].filter(Boolean);
+
+  return <div className="flex h-full flex-col">
+    <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3"><div className="flex h-12 min-w-12 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-white">{card.nationCode}</div><div><div className="text-lg font-bold text-white">{card.nationCode} · {card.discipline}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quoten- und Regelstatus</div></div></div>
+        <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
+      </div>
+    </header>
+    <div className="flex-1 space-y-4 overflow-auto p-6">
+      <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Single Rooms" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
+      </DetailSection>
+      <DetailSection icon={<Users className="h-4 w-4" />} title="Athleten">
+        <p className="text-sm text-[var(--ops-text-subtle)]"><strong className="font-mono text-white">{card.athletes}</strong> gemeldete Athleten · Gender {card.genders.join(' + ') || '—'}</p>
+      </DetailSection>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DetailSection icon={<Users className="h-4 w-4" />} title="Officials"><QuotaProgress label="Belegte Quote" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} /></DetailSection>
+        <DetailSection icon={<Bed className="h-4 w-4" />} title="Single Rooms"><QuotaProgress label="Belegtes Kontingent" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} /></DetailSection>
+      </div>
+      <DetailSection icon={<FileCheck2 className="h-4 w-4" />} title="Genehmigungen">
+        {reasons.length ? <div className="space-y-2">{reasons.map((reason) => <div key={String(reason)} className="flex gap-2 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3 text-sm text-[var(--ops-tone-warning-text)]"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{reason}</div>)}<p className="text-xs text-[var(--ops-text-muted)]">Eine Genehmigung wurde noch nicht erfasst. Regeln können hier nicht verändert werden.</p></div> : <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><CheckCircle2 className="h-4 w-4 text-[var(--ops-success)]" />Keine Genehmigung erforderlich.</div>}
+      </DetailSection>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <DetailSection icon={<BadgeEuro className="h-4 w-4" />} title="Mehrkosten"><p className="font-mono text-lg font-bold text-white">{reasons.length ? 'Noch nicht berechnet' : '0 €'}</p><p className="mt-1 text-xs text-[var(--ops-text-muted)]">Berechnung erfolgt durch die bestehende Quotenlogik.</p></DetailSection>
+        <DetailSection icon={<History className="h-4 w-4" />} title="Audit"><p className="text-sm text-[var(--ops-text-muted)]">Keine Genehmigungsaktivität vorhanden.</p></DetailSection>
+      </div>
+    </div>
+  </div>;
+}
+
+function DetailSection({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+  return <section className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4"><h3 className="mb-3 flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[var(--ops-primary)]">{icon}{title}</h3>{children}</section>;
 }
 
 function DetailPanel({
