@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router';
 import {
   AlertCircle,
   AlertTriangle,
@@ -55,6 +56,8 @@ const REGION_COLORS: Record<string, string> = {
 
 export function Assignments() {
   const permissions = usePermissions();
+  const location = useLocation();
+  const requestedAthleteId = (location.state as { athleteId?: string } | null)?.athleteId;
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
@@ -98,6 +101,20 @@ export function Assignments() {
       ]);
       setPlanning(planningData);
       setAthletes(athletesData);
+      if (requestedAthleteId) {
+        const booking = planningData.hotels
+          .flatMap((hotel) => hotel.slots.flatMap((slot) => slot.bookings))
+          .find((candidate) => candidate.occupants.some((occupant) => occupant.athleteId === requestedAthleteId));
+        const unit = [...planningData.units.unassigned, ...planningData.units.assigned]
+          .find((candidate) => candidate.occupants.some((occupant) => occupant.athleteId === requestedAthleteId));
+
+        if (booking) {
+          setSelected({ type: 'booking', id: booking.bookingId });
+          setActiveHotelId(booking.hotelId);
+        } else if (unit) {
+          setSelected({ type: 'unit', id: unit.unitId });
+        }
+      }
       setError(null);
     } catch (err) {
       console.error(err);
@@ -1986,7 +2003,7 @@ function DetailPanel({
         ) : (
           <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-amber-300">
             <AlertTriangle className="h-3.5 w-3.5" />
-            Noch nicht zugewiesen — auf einen Zimmerbereich ziehen
+            Zuweisung starten — auf einen Zimmerbereich ziehen
           </div>
         )}
       </div>
