@@ -59,11 +59,11 @@ const toneAccent: Record<Tone, string> = {
 };
 
 function IconTile({ icon, tone = 'neutral' }: { icon: ReactNode; tone?: Tone }) {
-  return <span className={`inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)] ${toneAccent[tone]}`}>{icon}</span>;
+  return <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)] ${toneAccent[tone]}`}>{icon}</span>;
 }
 
 function KpiCard({ label, value, helper, trend, tone = 'neutral', icon, href }: { label: string; value: ReactNode; helper: ReactNode; trend?: ReactNode; tone?: Tone; icon: ReactNode; href: string }) {
-  return <ContentCard interactive className="min-h-[10.5rem] p-5" surface="elevated" elevation="none"><Link to={href} className="flex h-full items-start gap-4 focus-visible:outline-none"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><div className="text-[11px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{label}</div><div className="mt-4 text-[var(--ops-type-kpi-size)] font-extrabold leading-none tracking-[-0.04em] text-[var(--ops-text)]">{value}</div><div className="mt-4 flex items-center justify-between gap-2 text-sm leading-5 text-[var(--ops-text-muted)]"><span className="truncate">{helper}</span>{trend && <StatusChip tone={tone}>{trend}</StatusChip>}</div></div></Link></ContentCard>;
+  return <ContentCard interactive className="min-h-[8rem] p-4" surface="elevated" elevation="none"><Link to={href} className="flex h-full items-start gap-3 focus-visible:outline-none"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{label}</div><div className="mt-2.5 text-[var(--ops-type-kpi-size)] font-extrabold leading-none tracking-[-0.04em] text-[var(--ops-text)]">{value}</div><div className="mt-2.5 flex items-center justify-between gap-2 text-xs leading-5 text-[var(--ops-text-muted)]"><span className="truncate">{helper}</span>{trend && <StatusChip tone={tone}>{trend}</StatusChip>}</div></div></Link></ContentCard>;
 }
 
 function TextLink({ children, to }: { children: ReactNode; to: string }) {
@@ -110,7 +110,7 @@ const dashboardReadabilityTheme = {
   '--ops-type-section-title-size': '0.9rem',
   '--ops-type-caption-size': '0.8125rem',
   '--ops-type-label-size': '0.75rem',
-  '--ops-type-kpi-size': '2.45rem',
+  '--ops-type-kpi-size': '2rem',
   '--ops-shadow-xs': '0 1px 2px rgba(1, 4, 9, 0.18)',
   '--ops-shadow-sm': '0 8px 24px rgba(1, 4, 9, 0.16)',
   '--ops-shadow-md': '0 14px 36px rgba(1, 4, 9, 0.20)',
@@ -286,10 +286,10 @@ export function Dashboard() {
   if (loading) return <LoadingState label="Dashboard-Lagebild wird geladen…" />;
 
   return (
-    <div className="space-y-4 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-4 text-[var(--ops-text)] md:p-6" style={dashboardReadabilityTheme}>
-      <ContentCard className="p-5 md:p-6" surface="raised" elevation="none">
+    <div className="space-y-3 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-4 text-[var(--ops-text)]" style={dashboardReadabilityTheme}>
+      <ContentCard className="p-4" surface="raised" elevation="none">
         <SectionHeader title="Operations Center" subtitle="Aktuelles WM-Lagebild für Unterkünfte, Events und Disposition." actions={<StatusChip tone={operations.roomDelta < 0 ? 'error' : 'success'}>{operations.roomDelta < 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
-        <div className="mt-6 grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-7">
+        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
           <KpiCard label="Athleten" value={formatNumber(operations.athletes)} helper="registrierte Teilnehmer" tone="primary" trend="Live" icon={<GroupsRoundedIcon />} href="/athletes" />
           <KpiCard label="Officials" value={formatNumber(operations.officials)} helper="Staff & Betreuung" tone="neutral" icon={<AdminPanelSettingsRoundedIcon />} href="/athletes" />
           <KpiCard label="Hotels" value={formatNumber(operations.hotels)} helper={`${operations.roomTypes} Zimmerkategorien`} tone="success" icon={<ApartmentRoundedIcon />} href="/hotels" />
@@ -300,39 +300,39 @@ export function Dashboard() {
         </div>
       </ContentCard>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1fr_1.02fr]">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1.02fr]">
         <DataPanel title={<span className="inline-flex items-center gap-2"><WarningAmberRoundedIcon fontSize="small" />Kritische Hinweise</span>}>
-          <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
-            {criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-4" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-4 text-sm leading-6 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-4"><TextLink to={alert.href}>Details anzeigen</TextLink></div></ContentCard>)}
+          <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2">
+            {criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-3" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-2 text-xs leading-5 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-2"><TextLink to={alert.href}>Details anzeigen</TextLink></div></ContentCard>)}
           </div>
         </DataPanel>
 
         <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Event Übersicht</span>} actions={<TextLink to="/events">Alle Events</TextLink>}>
-          <div className="divide-y divide-[var(--ops-divider)] p-4">
-            {nextEvents.map(event => <Link to="/events" key={event.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 rounded-[var(--ops-radius-lg)] px-3 py-3 text-sm transition-colors hover:bg-[var(--ops-surface-overlay)]"><span className="h-2.5 w-2.5 rounded-full bg-[var(--ops-primary)]" /><strong>{event.discipline}</strong><span className="text-[var(--ops-text-muted)]">{formatDate(event.startDate)} – {formatDate(event.endDate)}</span><span className="text-[var(--ops-text-muted)]">{(event.roomDemands || []).reduce((sum, demand) => sum + demand.roomCount, 0)} Zimmer Bedarf</span></Link>)}
+          <div className="divide-y divide-[var(--ops-divider)] p-3">
+            {nextEvents.map(event => <Link to="/events" key={event.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 rounded-[var(--ops-radius-lg)] px-3 py-2 text-xs transition-colors hover:bg-[var(--ops-surface-overlay)]"><span className="h-2.5 w-2.5 rounded-full bg-[var(--ops-primary)]" /><strong>{event.discipline}</strong><span className="text-[var(--ops-text-muted)]">{formatDate(event.startDate)} – {formatDate(event.endDate)}</span><span className="text-[var(--ops-text-muted)]">{(event.roomDemands || []).reduce((sum, demand) => sum + demand.roomCount, 0)} Zimmer Bedarf</span></Link>)}
           </div>
         </DataPanel>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
+      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
         <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Hotelübersicht</span>} actions={<StatusChip tone="info">Top Auslastung</StatusChip>} className="xl:col-span-1">
-          <div className="space-y-4 p-4">
-            {hotelOverview.map(item => <Link to="/hotels" key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-3 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
+          <div className="space-y-2 p-3">
+            {hotelOverview.map(item => <Link to="/hotels" key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
             <div className="pt-2 text-center"><TextLink to="/hotels">Alle Hotels anzeigen</TextLink></div>
           </div>
         </DataPanel>
 
         <DataPanel title={<span className="inline-flex items-center gap-2"><CloudUploadRoundedIcon fontSize="small" />Importstatus</span>}>
-          <div className="space-y-3 p-4">
+          <div className="space-y-2 p-3">
             {importStatuses.map(status => <ContentCard key={status.id} interactive className="p-0" surface="elevated" elevation="none"><Link to="/import" className="flex items-center justify-between gap-3 p-3 focus-visible:outline-none"><div className="flex min-w-0 items-center gap-3"><IconTile tone={status.tone} icon={status.tone === 'success' ? <CheckRoundedIcon /> : <SyncRoundedIcon />} /><div><strong className="text-sm">{status.title}</strong><div className="text-xs text-[var(--ops-text-muted)]">{status.helper}</div></div></div><StatusChip tone={status.tone}>{status.tone === 'success' ? 'Abgeschlossen' : status.count}</StatusChip></Link></ContentCard>)}
           </div>
         </DataPanel>
 
         <DataPanel title={<span className="inline-flex items-center gap-2"><TimelineRoundedIcon fontSize="small" />Aktivitäten</span>} actions={<TextLink to="/audit">Alle Aktivitäten</TextLink>}>
-          <ol className="relative m-4 space-y-5 border-l border-[var(--ops-divider)] pl-5">
+          <ol className="relative m-3 space-y-3 border-l border-[var(--ops-divider)] pl-5">
             {activityItems.map((item) => <li key={item.id} className="relative"><span className="absolute -left-[1.58rem] top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--ops-primary)] ring-4 ring-[var(--ops-surface)]" /><div className="grid grid-cols-[3rem_1fr] gap-3 text-sm"><span className="text-[var(--ops-text-muted)]">{item.time}</span><div><strong>{item.title}</strong><p className="mt-1 text-[var(--ops-text-muted)]">{item.meta}</p></div></div></li>)}
           </ol>
-          <div className="border-t border-[var(--ops-divider)] p-4 text-center"><TextLink to="/audit">Alle Aktivitäten anzeigen</TextLink></div>
+          <div className="border-t border-[var(--ops-divider)] p-3 text-center"><TextLink to="/audit">Alle Aktivitäten anzeigen</TextLink></div>
         </DataPanel>
       </div>
 
