@@ -1004,6 +1004,26 @@ with app.app_context():
 
     ensure_room_booking_columns()
 
+    def ensure_event_planning_columns():
+        """Keep existing SQLite installations compatible with person-based planning."""
+        cols = db.session.execute(text("PRAGMA table_info(event)")).fetchall()
+        existing = {c[1] for c in cols}
+        if "person_demand" not in existing:
+            db.session.execute(text("ALTER TABLE event ADD COLUMN person_demand INTEGER NOT NULL DEFAULT 0"))
+        if "single_room_percentage" not in existing:
+            db.session.execute(text("ALTER TABLE event ADD COLUMN single_room_percentage INTEGER NOT NULL DEFAULT 50"))
+        # Preserve the capacity represented by legacy room demands as the initial input.
+        db.session.execute(text("""
+            UPDATE event SET person_demand = COALESCE((
+                SELECT SUM(d.room_count * rt.max_persons)
+                FROM event_room_demand d JOIN room_type rt ON rt.id = d.room_type_id
+                WHERE d.event_id = event.id
+            ), 0) WHERE person_demand = 0
+        """))
+        db.session.commit()
+
+    ensure_event_planning_columns()
+
     def backfill_room_bookings():
         existing_booking = RoomBooking.query.first()
         if existing_booking:
@@ -1653,7 +1673,9 @@ def create_event():
     event = Event(
         discipline=data['discipline'],
         start_date=datetime.fromisoformat(data['startDate']).date(),
-        end_date=datetime.fromisoformat(data['endDate']).date()
+        end_date=datetime.fromisoformat(data['endDate']).date(),
+        person_demand=max(0, int(data['personDemand'])),
+        single_room_percentage=max(0, min(100, int(data.get('singleRoomPercentage', 50))))
     )
     db.session.add(event)
     db.session.commit()
@@ -1671,6 +1693,10 @@ def update_event(event_id):
         event.start_date = datetime.fromisoformat(data['startDate']).date()
     if 'endDate' in data:
         event.end_date = datetime.fromisoformat(data['endDate']).date()
+    if 'personDemand' in data:
+        event.person_demand = max(0, int(data['personDemand']))
+    if 'singleRoomPercentage' in data:
+        event.single_room_percentage = max(0, min(100, int(data['singleRoomPercentage'])))
 
     db.session.commit()
     return jsonify(event.to_dict())
@@ -1687,28 +1713,12 @@ def delete_event(event_id):
 # Event Room Demand
 @app.route('/api/events/<int:event_id>/demand', methods=['POST'])
 def add_event_demand(event_id):
-    event = Event.query.get_or_404(event_id)
-    data = request.json
-
-    demand = EventRoomDemand(
-        event_id=event_id,
-        room_type_id=int(data['roomTypeId']),
-        room_count=int(data['roomCount'])
-    )
-    db.session.add(demand)
-    db.session.commit()
-    return jsonify(demand.to_dict()), 201
+    return jsonify({'error': 'Zimmerbedarf wird automatisch aus Personenbedarf und Belegungsstrategie berechnet.'}), 405
 
 
 @app.route('/api/events/<int:event_id>/demand/<int:demand_id>', methods=['DELETE'])
 def delete_event_demand(event_id, demand_id):
-    demand = EventRoomDemand.query.filter_by(
-        id=demand_id,
-        event_id=event_id
-    ).first_or_404()
-    db.session.delete(demand)
-    db.session.commit()
-    return '', 204
+    return jsonify({'error': 'Berechneter Zimmerbedarf kann nicht manuell geändert werden.'}), 405
 
 
 # Athletes

@@ -317,7 +317,7 @@ class ApiService {
     return this.request<Event[]>('/events');
   }
 
-  async createEvent(data: { discipline: string; startDate: string; endDate: string }): Promise<Event> {
+  async createEvent(data: { discipline: string; startDate: string; endDate: string; personDemand: number; singleRoomPercentage: number }): Promise<Event> {
     if (USE_MOCK_DATA) {
       const maxId = mockEvents.reduce((max, e) => Math.max(max, parseInt(e.id) || 0), 0);
       const newEvent: Event = {
@@ -325,6 +325,8 @@ class ApiService {
         discipline: data.discipline,
         startDate: data.startDate,
         endDate: data.endDate,
+        personDemand: data.personDemand,
+        singleRoomPercentage: data.singleRoomPercentage,
         roomDemands: [],
       };
       mockEvents.push(newEvent);
@@ -336,7 +338,7 @@ class ApiService {
     });
   }
 
-  async updateEvent(id: string, data: { discipline?: string; startDate?: string; endDate?: string }): Promise<Event> {
+  async updateEvent(id: string, data: { discipline?: string; startDate?: string; endDate?: string; personDemand?: number; singleRoomPercentage?: number }): Promise<Event> {
     if (USE_MOCK_DATA) {
       const event = mockEvents.find(e => e.id === id);
       if (!event) throw new Error('Event not found');
@@ -344,6 +346,8 @@ class ApiService {
       if (data.discipline) event.discipline = data.discipline;
       if (data.startDate) event.startDate = data.startDate;
       if (data.endDate) event.endDate = data.endDate;
+      if (data.personDemand !== undefined) event.personDemand = data.personDemand;
+      if (data.singleRoomPercentage !== undefined) event.singleRoomPercentage = data.singleRoomPercentage;
 
       return Promise.resolve(event);
     }

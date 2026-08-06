@@ -56,6 +56,8 @@ export interface Event {
   discipline: string;
   startDate: string; // ISO date
   endDate: string; // ISO date
+  personDemand: number;
+  singleRoomPercentage: number;
   roomDemands?: EventRoomDemand[];
 }
 

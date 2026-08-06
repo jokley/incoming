@@ -135,6 +135,8 @@ class Event(db.Model):
     discipline = db.Column(db.String(100), nullable=False)  # Big Air, Moguls, etc.
     start_date = db.Column(db.Date, nullable=False)
     end_date = db.Column(db.Date, nullable=False)
+    person_demand = db.Column(db.Integer, nullable=False, default=0)
+    single_room_percentage = db.Column(db.Integer, nullable=False, default=50)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -146,6 +148,8 @@ class Event(db.Model):
             'discipline': self.discipline,
             'startDate': self.start_date.isoformat(),
             'endDate': self.end_date.isoformat(),
+            'personDemand': self.person_demand,
+            'singleRoomPercentage': self.single_room_percentage,
             'roomDemands': [demand.to_dict() for demand in self.room_demands]
         }
 
