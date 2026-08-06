@@ -1609,6 +1609,23 @@ def add_hotel_inventory(hotel_id):
     return jsonify(inventory.to_dict()), 201
 
 
+@app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['PUT'])
+@app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['PUT'])
+@app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['PUT'])
+@app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['PUT'])
+def update_hotel_inventory(hotel_id, inventory_id):
+    inventory = HotelRoomInventory.query.filter_by(id=inventory_id, hotel_id=hotel_id).first_or_404()
+    data = request.json
+    inventory.room_type_id = int(data['roomTypeId'])
+    inventory.available_from = datetime.fromisoformat(data['availableFrom']).date()
+    inventory.available_until = datetime.fromisoformat(data['availableUntil']).date()
+    inventory.room_count = int(data['roomCount'])
+    inventory.has_half_board = data.get('hasHalfBoard', False)
+    inventory.has_sr = data.get('hasSR', False)
+    db.session.commit()
+    return jsonify(inventory.to_dict())
+
+
 @app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['DELETE'])
 @app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['DELETE'])
 @app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['DELETE'])
