@@ -187,6 +187,7 @@
   --ops-surface-raised: #142238;
   --ops-surface-elevated: #17263d;
   --ops-surface-overlay: #1d2f4a;
+  --ops-backdrop: rgba(6, 16, 30, 0.8);
   --ops-border: #2d4260;
   --ops-border-strong: #3e5c82;
   --ops-divider: #21344f;

@@ -34,7 +34,7 @@ import type {
   RoomBookingUnit,
 } from '../types';
 
-type AppView = 'dispatch' | 'athletes' | 'quotas';
+type AppView = 'dispatch' | 'quotas';
 type QueueStatus = 'pending' | 'done' | 'all';
 type RoomCategoryFilter = '' | 'ez' | 'dz';
 type SelectedState =
@@ -566,17 +566,6 @@ export function Assignments() {
               )
             )}
 
-            {view === 'athletes' && (
-              <AthletesPanel
-                athletes={athletes}
-                selectedAthleteId={selected?.type === 'unit' ? unitById.get(selected.id)?.occupants[0]?.athleteId ?? null : null}
-                onSelectAthlete={(athleteId) => {
-                  const matchingUnit = allUnitsCombined.find((unit) => unit.occupants.some((occ) => occ.athleteId === athleteId));
-                  if (matchingUnit) setSelected({ type: 'unit', id: matchingUnit.unitId });
-                }}
-              />
-            )}
-
             {view === 'quotas' && (
               <QuotasPanel rows={quotaUsage} />
             )}
@@ -597,11 +586,7 @@ export function Assignments() {
           </AssignmentDialog>
         )}
 
-        {error && (
-          <div className="border-t border-red-800/40 bg-red-950/40 px-4 py-3 text-sm text-red-100">
-            {error}
-          </div>
-        )}
+        {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
       </div>
     </div>
   );
@@ -639,7 +624,6 @@ function TopBar({
         <div className="flex items-center gap-2">
           {[
             { id: 'dispatch', label: 'Disposition' },
-            { id: 'athletes', label: 'Athleten' },
             { id: 'quotas', label: 'Quoten' },
           ].map((item) => (
             <button
@@ -714,12 +698,12 @@ function LiveQuotaStrip({ rows, onOpen }: { rows: OfficialQuotaUsage[]; onOpen: 
 
 function WarningLegend() {
   return (
-    <div className="mt-4 grid grid-cols-2 gap-2" aria-label="Warnungsstufen">
-      <div className="rounded-xl border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] p-2.5">
+    <div className="mt-3 grid grid-cols-2 gap-1.5" aria-label="Warnungsstufen">
+      <div className="rounded-lg border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] p-2">
         <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-error)]"><AlertCircle className="h-3.5 w-3.5" /> Blockierend</div>
         <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-error-text)]">Zimmer voll · Zeitraum überschneidet sich · nicht verfügbar</div>
       </div>
-      <div className="rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-2.5">
+      <div className="rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-2">
         <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-warning)]"><AlertTriangle className="h-3.5 w-3.5" /> Warnung</div>
         <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-warning-text)]">Frau + Mann im DZ · Official-Quote überschritten · Single-Room-Kontingent überschritten</div>
       </div>
@@ -735,10 +719,28 @@ function AssignmentDialog({ children, onClose }: { children: ReactNode; onClose:
   }, [onClose]);
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Assignment Details" className="absolute inset-0 z-50 flex items-center justify-center bg-[#06101e]/80 p-5 backdrop-blur-sm" onMouseDown={onClose}>
-      <div className="relative h-[min(760px,calc(100vh-150px))] w-full max-w-2xl overflow-hidden rounded-[var(--ops-radius-xxl)] border border-[var(--ops-border-strong)] bg-[var(--ops-surface-raised)] shadow-[var(--ops-shadow-lg)]" onMouseDown={(event) => event.stopPropagation()}>
+    <div role="dialog" aria-modal="true" aria-label="Assignment Details" className="absolute inset-0 z-50 flex items-center justify-center bg-[var(--ops-backdrop)] p-5 backdrop-blur-sm" onMouseDown={onClose}>
+      <div className="relative h-[min(760px,calc(100vh-150px))] w-full max-w-2xl overflow-hidden rounded-[var(--ops-radius-xxl)] border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] shadow-[var(--ops-shadow-lg)]" onMouseDown={(event) => event.stopPropagation()}>
         <button onClick={onClose} aria-label="Dialog schließen" className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)] hover:text-white"><X className="h-4 w-4" /></button>
         {children}
+      </div>
+    </div>
+  );
+}
+
+function OperationsNotice({ message, onClose }: { message: string; onClose: () => void }) {
+  const isMissingContingent = /no kontingent available|keinen gültigen (slot|freien slot)/i.test(message);
+  return (
+    <div className="absolute inset-x-4 bottom-4 z-40 mx-auto max-w-2xl rounded-[var(--ops-radius-xl)] border border-[var(--ops-tone-info-border)] bg-[var(--ops-surface-raised)] p-4 shadow-[var(--ops-shadow-lg)]" role="status">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--ops-tone-info-surface)] text-[var(--ops-info)]"><Building2 className="h-4 w-4" /></div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-[var(--ops-text)]">{isMissingContingent ? 'Zimmerkontingent prüfen' : 'Hinweis zur Disposition'}</div>
+          <p className="mt-1 text-sm leading-5 text-[var(--ops-text-subtle)]">
+            {isMissingContingent ? 'Für den gewählten Zeitraum ist kein passendes Zimmerkontingent vorhanden.' : message}
+          </p>
+        </div>
+        <button onClick={onClose} aria-label="Meldung schließen" className="rounded-lg p-1.5 text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]"><X className="h-4 w-4" /></button>
       </div>
     </div>
   );
@@ -836,7 +838,7 @@ function QueueSidebar({
 }) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <div className="border-b border-[#49617d] px-4 py-3">
+      <div className="border-b border-[var(--ops-border)] px-3 py-2.5">
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-slate-100">Dispo-Warteschlange</div>
@@ -849,13 +851,13 @@ function QueueSidebar({
 
         <SearchInput value={search} onChange={onSearch} placeholder="Athleten suchen..." />
 
-        <div className="mt-4 space-y-2">
+        <div className="mt-3 grid grid-cols-3 gap-1.5">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
           <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
+        <div className="mt-3 flex flex-wrap gap-1.5">
           {[
             { id: 'pending', label: 'Offen' },
             { id: 'done', label: 'Erledigt' },
@@ -866,8 +868,8 @@ function QueueSidebar({
               onClick={() => onFilterStatus(item.id as QueueStatus)}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                 filterStatus === item.id
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-[#20324a] text-slate-300 hover:bg-[#2a3d58] hover:text-white'
+                  ? 'bg-[var(--ops-primary-emphasis)] text-[var(--ops-on-accent)]'
+                  : 'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-subtle)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]'
               }`}
             >
               {item.label}
@@ -882,8 +884,8 @@ function QueueSidebar({
               onClick={() => onFilterRoomCategory(filterRoomCategory === item.id ? '' : item.id as RoomCategoryFilter)}
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                 filterRoomCategory === item.id
-                  ? 'bg-violet-500 text-white'
-                  : 'bg-[#20324a] text-slate-300 hover:bg-[#2a3d58] hover:text-white'
+                  ? 'bg-[var(--ops-primary-emphasis)] text-[var(--ops-on-accent)]'
+                  : 'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-subtle)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]'
               }`}
             >
               {item.label}
@@ -1002,17 +1004,17 @@ function QueueUnitCard({
   return (
     <div
       onClick={onSelect}
-      className={`w-full cursor-pointer rounded-2xl border px-3 py-3 text-left transition-all ${cardBase} ${dragging ? 'opacity-70' : ''}`}
+      className={`w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging ? 'opacity-70' : ''}`}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-bold text-white">
+          <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
             {primaryOccupant ? `${primaryOccupant.firstname} ${primaryOccupant.lastname}` : '—'}
           </div>
-          <div className="mt-1 text-[11px] text-slate-300">
+          <div className="mt-0.5 text-[11px] font-medium text-[var(--ops-text-subtle)]">
             Zimmerpartner: {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Zimmerpartner offen'}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-2 text-[10px] font-mono text-slate-400">
+          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9px] font-mono text-[var(--ops-text-muted)]">
             <span>{unit.nationCode || '—'}</span>
             <span>·</span>
             <span>{roomCategory}</span>
@@ -1031,12 +1033,12 @@ function QueueUnitCard({
       </div>
 
       {hasPairWarning && (
-        <div className="mt-2 rounded-xl border border-amber-700/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-200">
+        <div className="mt-1.5 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-1.5 text-[10px] text-[var(--ops-tone-warning-text)]">
           Gemischtes Paar erkannt — Zuweisung ist erlaubt, bitte kurz prüfen.
         </div>
       )}
 
-      <div className="mt-3 grid gap-2">
+      <div className="mt-2 grid gap-1.5">
         <QueueOccupantActionRow
           title="Athlet"
           occupant={primaryOccupant}
@@ -1068,7 +1070,7 @@ function QueueUnitCard({
               event.stopPropagation();
               onQuickAssign(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId));
             }}
-            className="rounded-xl bg-violet-500 px-3 py-2 text-xs font-semibold text-white transition-colors hover:bg-violet-400"
+            className="rounded-lg bg-[var(--ops-primary-emphasis)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--ops-on-accent)] transition-colors hover:opacity-90"
           >
             Beide zusammen zuweisen
           </button>
@@ -1101,24 +1103,24 @@ function QueueOccupantActionRow({
 }) {
   if (!occupant) {
     return (
-      <div className="rounded-xl border border-dashed border-[#556d8b] px-3 py-2 text-[11px] text-slate-400">
+      <div className="rounded-lg border border-dashed border-[var(--ops-border-strong)] px-2.5 py-1.5 text-[10px] text-[var(--ops-text-muted)]">
         {title}: {emptyLabel}
       </div>
     );
   }
 
   return (
-    <div className={`rounded-xl border px-3 py-2 ${occupant.isAssigned ? 'border-emerald-700/40 bg-emerald-500/10' : 'border-[#4f6786] bg-[#243651]'} ${isDragging ? 'opacity-70' : ''}`}>
+    <div className={`rounded-lg border px-2.5 py-1.5 ${occupant.isAssigned ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'} ${isDragging ? 'opacity-70' : ''}`}>
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-[11px] uppercase tracking-wide text-slate-400">{title}</div>
-          <div className="text-sm font-semibold text-white">{occupant.firstname} {occupant.lastname}</div>
+          <div className="text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>
         </div>
         <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-slate-300'}`}>
           {occupant.isAssigned ? 'zugewiesen' : 'offen'}
         </span>
       </div>
-      <div className="mt-2 flex gap-2">
+      <div className="mt-1 flex gap-1.5">
         <button
           draggable={canEditAssignments}
           title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
@@ -1128,7 +1130,7 @@ function QueueOccupantActionRow({
             event.stopPropagation();
             onQuickAssign(unitId, [occupant.athleteId]);
           }}
-          className="flex-1 rounded-lg border border-[#5e7aa0] bg-[#314763] px-2.5 py-1.5 text-[11px] font-semibold text-slate-100 transition-colors hover:bg-[#395274]"
+          className="flex-1 rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-text)] transition-colors hover:border-[var(--ops-primary)]"
         >
           Einzeln zuweisen
         </button>
@@ -1433,6 +1435,7 @@ function HotelCard({
 }) {
   const totals = summarizeHotel(hotel);
   const regionColor = REGION_COLORS[hotel.region || ''] || '#4F8EF7';
+  const contingentRange = getHotelContingentRange(hotel);
 
   return (
     <div
@@ -1446,7 +1449,7 @@ function HotelCard({
         onDragOver();
       }}
       onDragLeave={onDragLeave}
-      className={`group relative flex cursor-pointer flex-col overflow-hidden rounded-2xl border transition-all ${
+      className={`group relative flex h-full min-h-[220px] cursor-pointer flex-col overflow-hidden rounded-2xl border transition-all ${
         dragOver
           ? canDrop
             ? 'scale-[1.02] border-blue-400/60 bg-blue-500/15'
@@ -1460,10 +1463,11 @@ function HotelCard({
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-sm font-bold text-white">{hotel.hotelName}</div>
+            <div className="truncate text-sm font-semibold text-[var(--ops-text)]">{hotel.hotelName}</div>
             <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
-              <span className="text-slate-400">{hotel.location || '—'}</span>
+              <span className="text-[var(--ops-text-muted)]">{hotel.location || '—'}</span>
             </div>
+            <div className="mt-1 text-[10px] font-semibold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
           <div className="rounded-md border border-[#5e7898] bg-[#405978] px-2 py-0.5 text-[10px] font-bold text-slate-100">
             {totals.totalRooms} Zimmer
@@ -1472,7 +1476,7 @@ function HotelCard({
 
         <div className="rounded-lg bg-[#2a3d58] px-2.5 py-2">
           <div className="mb-1.5 flex items-center justify-between text-[11px]">
-            <span className="font-medium text-slate-300">{totals.usedBeds} belegt · {Math.max(0, totals.totalBeds - totals.usedBeds)} frei</span>
+            <span className="font-semibold text-[var(--ops-text-subtle)]"><strong className="text-[var(--ops-text)]">{totals.usedBeds}</strong> belegt · <strong className="text-[var(--ops-success)]">{Math.max(0, totals.totalBeds - totals.usedBeds)}</strong> frei</span>
             <span className={`font-mono text-xs font-bold ${totals.percent >= 75 ? 'text-amber-300' : totals.percent > 0 ? 'text-blue-200' : 'text-slate-500'}`}>
               {totals.percent}%
             </span>
@@ -1563,6 +1567,7 @@ function HotelDetailView({
   }, [grouped]);
 
   const totals = summarizeHotel(hotel);
+  const contingentRange = getHotelContingentRange(hotel);
 
   return (
     <div className="flex h-full flex-col">
@@ -1582,6 +1587,7 @@ function HotelDetailView({
               <span>·</span>
               <span style={{ color: REGION_COLORS[hotel.region || ''] || '#4F8EF7' }}>{hotel.region}</span>
             </div>
+            <div className="mt-1 text-[11px] font-semibold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -1630,7 +1636,7 @@ function HotelDetailView({
                 </button>
 
                 {isOpen && (
-                  <div className="grid grid-cols-1 gap-2 bg-[#314763] p-2.5 2xl:grid-cols-2">
+                  <div className="grid auto-rows-fr grid-cols-1 gap-2 bg-[var(--ops-surface-elevated)] p-2 2xl:grid-cols-2">
                     {flattenBookingsFromSlots(group.slots).map((entry, index) => (
                       (() => {
                         const canAddPartner =
@@ -1655,7 +1661,7 @@ function HotelDetailView({
                           onDragOverBooking(entry.booking.bookingId);
                         }}
                         onDragLeave={onDragLeaveBooking}
-                        className={`flex w-full items-start justify-between rounded-xl border px-3 py-2.5 text-left transition-all ${
+                        className={`flex h-full w-full items-start justify-between rounded-xl border px-3 py-2 text-left transition-all ${
                           selectedBookingId === entry.booking.bookingId
                             ? 'border-blue-400/60 bg-[#45607f]'
                             : isBookingDropTarget && canAddPartner
@@ -1664,14 +1670,14 @@ function HotelDetailView({
                         }`}
                       >
                         <div className="flex min-w-0 items-start gap-3">
-                          <span className="mt-0.5 flex h-7 min-w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#2a3d58] px-1.5 text-[10px] font-bold text-slate-200">
+                          <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
                             {entry.slot.roomNumber || `#${index + 1}`}
                           </span>
                           <div className="min-w-0">
                             <div className="truncate text-sm font-bold text-white">
                               {entry.slot.roomNumber ? `Zimmer ${entry.slot.roomNumber}` : `${group.roomTypeName} · Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
-                            <div className="mt-1 truncate text-xs font-semibold text-slate-200">
+                            <div className="mt-0.5 truncate text-xs font-bold text-[var(--ops-text)]">
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
@@ -2298,6 +2304,18 @@ function summarizeRoomType(slots: AssignmentSlot[]) {
 
 function flattenBookingsFromSlots(slots: AssignmentSlot[]) {
   return slots.flatMap((slot) => slot.bookings.map((booking) => ({ booking, slot })));
+}
+
+function getHotelContingentRange(hotel: AssignmentGridHotel) {
+  const starts = hotel.slots.map((slot) => slot.dateCoverage.availableFrom).filter((date): date is string => Boolean(date)).sort();
+  const ends = hotel.slots.map((slot) => slot.dateCoverage.availableUntil).filter((date): date is string => Boolean(date)).sort();
+  if (!starts.length || !ends.length) return 'Zeitraum nicht hinterlegt';
+  return `${formatGermanDate(starts[0])} – ${formatGermanDate(ends[ends.length - 1])}`;
+}
+
+function formatGermanDate(value: string) {
+  const [year, month, day] = value.slice(0, 10).split('-');
+  return day && month && year ? `${day}.${month}.${year}` : value;
 }
 
 function hasSlotForRoomType(slots: AssignmentSlot[]) {
