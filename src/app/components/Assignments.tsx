@@ -693,14 +693,20 @@ function LiveQuotaStrip({ rows, onOpen }: { rows: OfficialQuotaUsage[]; onOpen: 
   if (!row) return <span className="hidden text-slate-500 xl:inline">Keine Quoten verfügbar</span>;
 
   return (
-    <button onClick={onOpen} className="hidden items-center overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-colors hover:border-[var(--ops-primary)] xl:flex">
-      <span className="border-r border-[var(--ops-divider)] px-3 py-1.5">
+    <button onClick={onOpen} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:border-[var(--ops-primary)] hover:bg-[#263a54] xl:flex">
+      <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
-        <span className="font-mono font-bold text-[var(--ops-text)]">{row.assignedOfficials} / {row.officialQuota}</span>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-amber-300' : 'text-[var(--ops-text)]'}`}>
+          {row.assignedOfficials} / {row.officialQuota}
+          {row.assignedOfficials <= row.officialQuota && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+        </span>
       </span>
-      <span className="px-3 py-1.5">
+      <span className="min-w-[112px] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Single Rooms</span>
-        <span className="font-mono font-bold text-[var(--ops-text)]">{row.singleRoomsUsed} / {row.singleRoomsAllowed}</span>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.singleRoomsUsed > row.singleRoomsAllowed ? 'text-amber-300' : 'text-[var(--ops-text)]'}`}>
+          {row.singleRoomsUsed} / {row.singleRoomsAllowed}
+          {row.singleRoomsUsed <= row.singleRoomsAllowed && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+        </span>
       </span>
     </button>
   );
@@ -715,7 +721,7 @@ function WarningLegend() {
       </div>
       <div className="rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-2.5">
         <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-warning)]"><AlertTriangle className="h-3.5 w-3.5" /> Warnung</div>
-        <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-warning-text)]">Gender gemischt · Official-Quote · Single-Room-Quote</div>
+        <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-warning-text)]">Frau + Mann im DZ · Official-Quote überschritten · Single-Room-Kontingent überschritten</div>
       </div>
     </div>
   );
@@ -748,10 +754,10 @@ function AlertBanner({
   onGoQuotas: () => void;
 }) {
   const officialText = row.assignedOfficials > row.officialQuota
-    ? `${row.nationCode} überschreitet die Offiziellen-Quote (${row.assignedOfficials}/${row.officialQuota})`
+    ? `Official-Quote überschritten: ${row.nationCode} (${row.assignedOfficials}/${row.officialQuota})`
     : '';
   const singleText = row.singleRoomsUsed > row.singleRoomsAllowed
-    ? `Einzelzimmer-Quote (${row.singleRoomsUsed}/${row.singleRoomsAllowed})`
+    ? `Single-Room-Kontingent überschritten (${row.singleRoomsUsed}/${row.singleRoomsAllowed})`
     : '';
   const message = [officialText, singleText].filter(Boolean).join(' und ');
 
@@ -1275,8 +1281,8 @@ function HotelGridOrDetail({
   onSelectBooking: (bookingId: string) => void;
 }) {
   return (
-    <div className={`grid h-full min-h-0 ${activeHotel ? 'grid-rows-[310px_minmax(0,1fr)]' : 'grid-rows-[minmax(0,1fr)]'}`}>
-      <div className={activeHotel ? 'border-b border-[#49617d]' : ''}>
+    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]">
+      {!activeHotel && <div>
         <HotelGridView
           hotels={hotels}
           hotelSearch={hotelSearch}
@@ -1293,7 +1299,7 @@ function HotelGridOrDetail({
           onDragLeaveHotel={onDragLeaveHotel}
           onDropHotel={onDropHotel}
         />
-      </div>
+      </div>}
       {activeHotel && (
         <div className="min-h-0">
           <HotelDetailView
@@ -1382,8 +1388,8 @@ function HotelGridView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4">
-        <div className="grid grid-cols-2 gap-3 xl:grid-cols-3">
+      <div className="flex-1 overflow-y-auto p-3 [scrollbar-color:#5e7aa0_#263a54] [scrollbar-width:thin]">
+        <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-3">
           {hotels.map((hotel) => (
             <HotelCard
               key={hotel.hotelId}
@@ -1451,46 +1457,48 @@ function HotelCard({
       }`}
     >
       <div className="h-[3px] w-full" style={{ backgroundColor: regionColor }} />
-      <div className="flex flex-1 flex-col gap-3 p-4">
+      <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="truncate text-sm font-bold text-white">{hotel.hotelName}</div>
-            <div className="mt-1 flex items-center gap-1.5 text-xs">
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
               <span className="text-slate-400">{hotel.location || '—'}</span>
-              <span className="text-slate-600">·</span>
-              <span className="font-semibold" style={{ color: regionColor }}>{hotel.region}</span>
             </div>
           </div>
-          <div className="rounded-md bg-[#4a6382] px-2 py-0.5 text-[10px] font-bold text-slate-100">
-            {totals.days}d
+          <div className="rounded-md border border-[#5e7898] bg-[#405978] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+            {totals.totalRooms} Zimmer
           </div>
         </div>
 
-          <div className="rounded-xl bg-[#2a3d58] p-3">
-          <div className="mb-2 flex items-center justify-between text-xs">
-            <span className="font-medium text-slate-300">{totals.usedBeds} / {totals.totalBeds} Betten</span>
-            <span className={`font-mono text-sm font-bold ${totals.percent >= 75 ? 'text-amber-300' : totals.percent > 0 ? 'text-blue-200' : 'text-slate-500'}`}>
+        <div className="rounded-lg bg-[#2a3d58] px-2.5 py-2">
+          <div className="mb-1.5 flex items-center justify-between text-[11px]">
+            <span className="font-medium text-slate-300">{totals.usedBeds} belegt · {Math.max(0, totals.totalBeds - totals.usedBeds)} frei</span>
+            <span className={`font-mono text-xs font-bold ${totals.percent >= 75 ? 'text-amber-300' : totals.percent > 0 ? 'text-blue-200' : 'text-slate-500'}`}>
               {totals.percent}%
             </span>
           </div>
-          <CapacityBar pct={totals.percent} />
+          <CapacityBar pct={totals.percent} className="h-1.5" />
+          <div className="mt-1.5 flex items-center justify-between text-[9px] text-slate-400">
+            <span>{totals.usedRooms} Zimmer belegt</span>
+            <span>{totals.totalRooms - totals.usedRooms} frei</span>
+          </div>
         </div>
 
-        <div className="space-y-2">
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
           {totals.roomTypes.map((row) => (
             <div key={row.roomTypeId}>
-              <div className="mb-1 flex items-center justify-between text-[10px]">
-                <span className="font-mono text-slate-300">{row.roomTypeName}</span>
-                <span className="font-mono text-slate-400">{row.usedBeds}/{row.totalBeds}</span>
+              <div className="mb-1 flex items-center justify-between gap-2 text-[9px]">
+                <span className="truncate text-slate-300">{row.roomTypeName}</span>
+                <span className="whitespace-nowrap font-mono text-slate-400">{row.usedBeds} / {row.totalBeds - row.usedBeds}</span>
               </div>
-              <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1.5" />
+              <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1" />
             </div>
           ))}
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-[#49617d]/60 px-4 pb-3 pt-1">
-        <span className="text-[10px] font-mono text-slate-400">{totals.totalRooms} Zimmer · {totals.days}d</span>
+      <div className="flex items-center justify-between border-t border-[#49617d]/60 px-3 py-2">
+        <span className="text-[10px] text-slate-400">{totals.roomTypes.length} Zimmertypen</span>
         <div className={`flex items-center gap-1 text-[11px] font-bold ${dragOver && canDrop ? 'text-blue-200' : active ? 'text-blue-200' : 'text-slate-400 group-hover:text-blue-200'}`}>
           {dragging && dragOver ? (canDrop ? 'Loslassen zum Zuweisen' : 'Blockiert') : 'Öffnen →'}
         </div>
@@ -1558,28 +1566,26 @@ function HotelDetailView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[#49617d] bg-[#314763] px-4 pb-3 pt-4">
+      <div className="border-b border-[#49617d] bg-[#314763] px-4 py-2.5">
         <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="rounded-lg border border-[#5d7695] bg-[#3b5576] px-3 py-1.5 text-xs text-slate-100 transition-colors hover:bg-[#496688]"
+              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-[#496688] hover:text-white"
             >
               <ChevronLeft className="mr-1 inline h-3.5 w-3.5" />
             Alle Hotels
           </button>
           <div className="flex-1">
-            <h2 className="truncate text-lg font-bold text-slate-100">{hotel.hotelName}</h2>
-            <div className="mt-0.5 flex items-center gap-2 text-xs text-slate-500">
+            <h2 className="truncate text-base font-bold text-slate-100">{hotel.hotelName}</h2>
+            <div className="flex items-center gap-2 text-[11px] text-slate-400">
               <span>{hotel.location || '—'}</span>
               <span>·</span>
               <span style={{ color: REGION_COLORS[hotel.region || ''] || '#4F8EF7' }}>{hotel.region}</span>
-              <span>·</span>
-              <span className="font-mono">{totals.days} nights</span>
             </div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="font-mono text-xl font-bold text-slate-100">
+              <div className="font-mono text-base font-bold text-slate-100">
                 {totals.usedBeds}
                 <span className="text-sm text-slate-500">/{totals.totalBeds}</span>
               </div>
@@ -1592,8 +1598,8 @@ function HotelDetailView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto bg-[#2b405d] p-4">
-        <div className="space-y-3">
+      <div className="flex-1 overflow-y-auto bg-[#2b405d] p-3 [scrollbar-color:#5e7aa0_#263a54] [scrollbar-width:thin]">
+        <div className="space-y-2.5">
           {grouped.map((group) => {
             const summary = summarizeRoomType(group.slots);
             const roomTypeKey = `${hotel.hotelId}_${group.roomTypeId}`;
@@ -1604,7 +1610,7 @@ function HotelDetailView({
               <div key={group.roomTypeId} className="overflow-hidden rounded-2xl border border-[#506987]">
                 <button
                   onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
-                  className="flex w-full items-center gap-3 bg-[#395274] px-4 py-3 text-left hover:bg-[#45607f]"
+                  className="flex w-full items-center gap-3 bg-[#395274] px-3 py-2.5 text-left hover:bg-[#45607f]"
                 >
                   <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
                   <div className="flex-1">
@@ -1624,7 +1630,7 @@ function HotelDetailView({
                 </button>
 
                 {isOpen && (
-                  <div className="space-y-2 bg-[#314763] p-3">
+                  <div className="grid grid-cols-1 gap-2 bg-[#314763] p-2.5 2xl:grid-cols-2">
                     {flattenBookingsFromSlots(group.slots).map((entry, index) => (
                       (() => {
                         const canAddPartner =
@@ -1649,7 +1655,7 @@ function HotelDetailView({
                           onDragOverBooking(entry.booking.bookingId);
                         }}
                         onDragLeave={onDragLeaveBooking}
-                        className={`flex w-full items-center justify-between rounded-xl border px-3 py-2.5 text-left transition-all ${
+                        className={`flex w-full items-start justify-between rounded-xl border px-3 py-2.5 text-left transition-all ${
                           selectedBookingId === entry.booking.bookingId
                             ? 'border-blue-400/60 bg-[#45607f]'
                             : isBookingDropTarget && canAddPartner
@@ -1657,29 +1663,32 @@ function HotelDetailView({
                               : 'border-[#506987] bg-[#395274] hover:border-[#6580a1]'
                         }`}
                       >
-                        <div className="flex min-w-0 items-center gap-3">
-                          <span className="w-5 flex-shrink-0 text-[10px] font-mono text-slate-600">#{index + 1}</span>
+                        <div className="flex min-w-0 items-start gap-3">
+                          <span className="mt-0.5 flex h-7 min-w-9 flex-shrink-0 items-center justify-center rounded-lg bg-[#2a3d58] px-1.5 text-[10px] font-bold text-slate-200">
+                            {entry.slot.roomNumber || `#${index + 1}`}
+                          </span>
                           <div className="min-w-0">
-                            <div className="truncate text-xs font-semibold text-slate-200">
+                            <div className="truncate text-sm font-bold text-white">
+                              {entry.slot.roomNumber ? `Zimmer ${entry.slot.roomNumber}` : `${group.roomTypeName} · Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
+                            </div>
+                            <div className="mt-1 truncate text-xs font-semibold text-slate-200">
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
-                            <div className="mt-1 text-[10px] font-mono text-slate-500">
-                              {entry.booking.checkInDate || '—'} → {entry.booking.checkOutDate || '—'}
-                            </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              <span className={`rounded-md px-1.5 py-0.5 font-semibold ${entry.booking.countsAsSingle ? 'bg-amber-500/15 text-amber-200' : 'bg-slate-500/10 text-slate-300'}`}>
-                                {entry.booking.countsAsSingle ? 'EZ' : entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'DZ offen' : 'DZ'}
+                              <span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-emerald-700/50 bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
+                                {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
                               </span>
+                              {entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-emerald-300">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}
                               {canAddPartner && (
-                                <span className={`${isBookingDropTarget ? 'text-violet-200' : 'text-violet-300'}`}>
+                                <span className={`${isBookingDropTarget ? 'text-blue-200' : 'text-slate-400'}`}>
                                   Partner hinzufügen
                                 </span>
                               )}
                             </div>
+                            <div className="mt-1.5 text-[10px] font-mono text-slate-400">
+                              {entry.booking.checkInDate || '—'} → {entry.booking.checkOutDate || '—'}
+                            </div>
                           </div>
-                        </div>
-                        <div className="text-[10px] font-mono text-slate-500">
-                          {entry.slot.roomNumber || `Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                         </div>
                       </button>
                         );
@@ -2230,12 +2239,14 @@ function summarizeHotel(hotel: AssignmentGridHotel) {
   const roomTypeMap = new Map<string, { roomTypeId: string; roomTypeName: string; usedBeds: number; totalBeds: number; capacity: number }>();
   let usedBeds = 0;
   let totalBeds = 0;
+  let usedRooms = 0;
 
   for (const slot of hotel.slots) {
     const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
     const slotUsedBeds = slot.bookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
     usedBeds += slotUsedBeds;
     totalBeds += slot.capacity;
+    if (slot.bookings.length > 0) usedRooms += 1;
 
     if (!roomTypeMap.has(key)) {
       roomTypeMap.set(key, {
@@ -2261,6 +2272,7 @@ function summarizeHotel(hotel: AssignmentGridHotel) {
   return {
     usedBeds,
     totalBeds,
+    usedRooms,
     totalRooms: hotel.slots.length,
     percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
     days,
