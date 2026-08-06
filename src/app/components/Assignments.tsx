@@ -470,7 +470,7 @@ export function Assignments() {
 
   return (
     <div className="relative flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
-      <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[#49617d] bg-[#20324a] text-slate-100 shadow-[0_18px_60px_rgba(10,20,35,0.24)]">
+      <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[var(--ops-border)] bg-[var(--ops-surface)] text-[var(--ops-text)] shadow-[var(--ops-shadow-md)] [--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-primary:#60a5fa] [--ops-primary-emphasis:#60a5fa] [--ops-text-muted:#c5cfdb]">
         <TopBar
           view={view}
           onViewChange={setView}
@@ -485,8 +485,8 @@ export function Assignments() {
           <AlertBanner row={quotaViolations[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
         )}
 
-        <div className="grid min-h-0 flex-1 grid-cols-[352px_minmax(0,1fr)] border-t border-[#49617d]">
-          <aside className="min-h-0 border-r border-[#49617d] bg-[#263a54]">
+        <div className="grid min-h-0 flex-1 grid-cols-[352px_minmax(0,1fr)] border-t border-[var(--ops-divider)]">
+          <aside className="min-h-0 border-r border-[var(--ops-divider)] bg-[var(--ops-surface-raised)]">
             <QueueSidebar
               units={queueUnits}
               regularUnits={regularQueueUnits}
@@ -530,7 +530,7 @@ export function Assignments() {
             />
           </aside>
 
-          <main className="min-h-0 overflow-hidden bg-[#2b405d]">
+          <main className="min-h-0 overflow-hidden bg-[var(--ops-surface-elevated)]">
             {view === 'dispatch' && (
               filteredHotels.length > 0 ? (
                 <DispatchWorkspace
@@ -693,21 +693,6 @@ function LiveQuotaStrip({ rows, onOpen }: { rows: OfficialQuotaUsage[]; onOpen: 
         </span>
       </span>
     </button>
-  );
-}
-
-function WarningLegend() {
-  return (
-    <div className="mt-3 grid grid-cols-2 gap-1.5" aria-label="Warnungsstufen">
-      <div className="rounded-lg border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] p-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-error)]"><AlertCircle className="h-3.5 w-3.5" /> Blockierend</div>
-        <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-error-text)]">Zimmer voll · Zeitraum überschneidet sich · nicht verfügbar</div>
-      </div>
-      <div className="rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-2">
-        <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-[var(--ops-warning)]"><AlertTriangle className="h-3.5 w-3.5" /> Warnung</div>
-        <div className="mt-1 text-[10px] leading-4 text-[var(--ops-tone-warning-text)]">Frau + Mann im DZ · Official-Quote überschritten · Single-Room-Kontingent überschritten</div>
-      </div>
-    </div>
   );
 }
 
@@ -892,13 +877,11 @@ function QueueSidebar({
             </button>
           ))}
         </div>
-
-        <WarningLegend />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         {shareRequests.length > 0 && (
-          <div className="border-b border-[#49617d] px-3 py-2">
+          <div className="border-b border-[var(--ops-divider)] px-3 py-2">
             <div className="mb-2 flex items-center justify-between px-1">
               <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
                 <Link2 className="h-3.5 w-3.5 text-violet-400" />
@@ -953,7 +936,7 @@ function QueueSidebar({
         </div>
       </div>
 
-      <div className="border-t border-[#49617d] px-4 py-3">
+      <div className="border-t border-[var(--ops-divider)] px-4 py-3">
         <div className="mb-2 flex items-center justify-between text-xs">
           <span className="text-slate-400">Gesamtfortschritt</span>
           <span className="font-mono text-slate-300">{progress.done}/{progress.total}</span>
@@ -996,10 +979,10 @@ function QueueUnitCard({
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
   const roomCategory = getUnitRoomCategory(unit).toUpperCase();
   const cardBase = highlighted
-    ? 'border-violet-700/40 bg-[#22324a] hover:border-violet-400/60 hover:bg-[#2a3d58]'
+    ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
     : selected
-      ? 'border-blue-400/60 bg-[#244064]'
-      : 'border-[#39506f] bg-[#1b2c43] hover:border-[#4b6587] hover:bg-[#213652]';
+      ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]'
+      : 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-elevated)]';
 
   return (
     <div
@@ -1014,7 +997,7 @@ function QueueUnitCard({
           <div className="mt-0.5 text-[11px] font-medium text-[var(--ops-text-subtle)]">
             Zimmerpartner: {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Zimmerpartner offen'}
           </div>
-          <div className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[9px] font-mono text-[var(--ops-text-muted)]">
+          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-mono font-semibold text-[var(--ops-text-subtle)]">
             <span>{unit.nationCode || '—'}</span>
             <span>·</span>
             <span>{roomCategory}</span>
@@ -1023,8 +1006,8 @@ function QueueUnitCard({
           </div>
         </div>
         <div className="flex flex-col items-end gap-1">
-          <span className={`text-xs font-semibold ${hasPairWarning ? 'text-amber-300' : 'text-emerald-300'}`}>
-            {hasPairWarning ? 'Warnung' : 'ok'}
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${hasPairWarning ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]' : 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]'}`}>
+            {hasPairWarning ? 'Warnung' : 'Bereit'}
           </span>
           <span className="text-[10px] text-slate-400">
             {unit.isFullyAssigned ? 'erledigt' : unit.hasAnyAssigned ? 'teilweise' : 'offen'}
@@ -1463,20 +1446,20 @@ function HotelCard({
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
-            <div className="truncate text-sm font-semibold text-[var(--ops-text)]">{hotel.hotelName}</div>
+            <div className="truncate text-[15px] font-extrabold text-[var(--ops-text)]">{hotel.hotelName}</div>
             <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
               <span className="text-[var(--ops-text-muted)]">{hotel.location || '—'}</span>
             </div>
-            <div className="mt-1 text-[10px] font-semibold text-[var(--ops-primary)]">{contingentRange}</div>
+            <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
           <div className="rounded-md border border-[#5e7898] bg-[#405978] px-2 py-0.5 text-[10px] font-bold text-slate-100">
             {totals.totalRooms} Zimmer
           </div>
         </div>
 
-        <div className="rounded-lg bg-[#2a3d58] px-2.5 py-2">
+        <div className="rounded-lg bg-[var(--ops-surface-raised)] px-2.5 py-2">
           <div className="mb-1.5 flex items-center justify-between text-[11px]">
-            <span className="font-semibold text-[var(--ops-text-subtle)]"><strong className="text-[var(--ops-text)]">{totals.usedBeds}</strong> belegt · <strong className="text-[var(--ops-success)]">{Math.max(0, totals.totalBeds - totals.usedBeds)}</strong> frei</span>
+            <span className="font-semibold text-[var(--ops-text-subtle)]"><strong className="text-sm font-extrabold text-[var(--ops-text)]">{totals.usedBeds}</strong> belegt · <strong className="text-sm font-extrabold text-[var(--ops-success)]">{Math.max(0, totals.totalBeds - totals.usedBeds)}</strong> frei</span>
             <span className={`font-mono text-xs font-bold ${totals.percent >= 75 ? 'text-amber-300' : totals.percent > 0 ? 'text-blue-200' : 'text-slate-500'}`}>
               {totals.percent}%
             </span>
@@ -1492,8 +1475,8 @@ function HotelCard({
           {totals.roomTypes.map((row) => (
             <div key={row.roomTypeId}>
               <div className="mb-1 flex items-center justify-between gap-2 text-[9px]">
-                <span className="truncate text-slate-300">{row.roomTypeName}</span>
-                <span className="whitespace-nowrap font-mono text-slate-400">{row.usedBeds} / {row.totalBeds - row.usedBeds}</span>
+                <span className="truncate text-[10px] font-bold text-[var(--ops-text-subtle)]">{row.roomTypeName}</span>
+                <span className="whitespace-nowrap font-mono text-[10px] font-bold text-[var(--ops-text)]">{row.usedBeds} / <span className="text-[var(--ops-success)]">{row.totalBeds - row.usedBeds}</span></span>
               </div>
               <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1" />
             </div>
@@ -1581,13 +1564,13 @@ function HotelDetailView({
             Alle Hotels
           </button>
           <div className="flex-1">
-            <h2 className="truncate text-base font-bold text-slate-100">{hotel.hotelName}</h2>
+            <h2 className="truncate text-lg font-extrabold text-[var(--ops-text)]">{hotel.hotelName}</h2>
             <div className="flex items-center gap-2 text-[11px] text-slate-400">
               <span>{hotel.location || '—'}</span>
               <span>·</span>
               <span style={{ color: REGION_COLORS[hotel.region || ''] || '#4F8EF7' }}>{hotel.region}</span>
             </div>
-            <div className="mt-1 text-[11px] font-semibold text-[var(--ops-primary)]">{contingentRange}</div>
+            <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
@@ -1621,7 +1604,7 @@ function HotelDetailView({
                   <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold text-white">{group.roomTypeName}</span>
+                      <span className="text-[15px] font-extrabold text-white">{group.roomTypeName}</span>
                       <span className="rounded-md bg-[#4a6382] px-2 py-0.5 text-[10px] font-bold text-slate-100">
                         {summary.capacityPerRoom}p max
                       </span>
@@ -1691,7 +1674,7 @@ function HotelDetailView({
                                 </span>
                               )}
                             </div>
-                            <div className="mt-1.5 text-[10px] font-mono text-slate-400">
+                            <div className="mt-1.5 text-xs font-mono font-semibold text-[var(--ops-text-subtle)]">
                               {entry.booking.checkInDate || '—'} → {entry.booking.checkOutDate || '—'}
                             </div>
                           </div>
@@ -2160,7 +2143,7 @@ function CapacityBar({
   className?: string;
   trackClassName?: string;
 }) {
-  const color = pct >= 95 ? '#F87171' : pct >= 75 ? '#FBBF24' : pct > 0 ? '#4F8EF7' : '#2D4260';
+  const color = pct >= 95 ? 'var(--ops-error)' : pct >= 75 ? 'var(--ops-warning)' : pct > 0 ? 'var(--ops-primary)' : 'var(--ops-border)';
   return (
     <div className={`h-2 overflow-hidden rounded-full ${trackClassName} ${className}`}>
       <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(0, Math.min(pct, 100))}%`, backgroundColor: color }} />
