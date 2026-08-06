@@ -960,7 +960,6 @@ CRITICAL_ROUTE_ALIASES = [
 # Initialize database
 with app.app_context():
     db.create_all()
-    ensure_reference_data()
 
     # Lightweight SQLite migration for added columns (no Alembic in this repo)
     def ensure_athlete_columns():
@@ -1012,6 +1011,10 @@ with app.app_context():
             db.session.execute(text("ALTER TABLE event ADD COLUMN person_demand INTEGER NOT NULL DEFAULT 0"))
         if "single_room_percentage" not in existing:
             db.session.execute(text("ALTER TABLE event ADD COLUMN single_room_percentage INTEGER NOT NULL DEFAULT 50"))
+        # The ORM-based reference-data setup must only run after every mapped
+        # Event column exists in an older database.
+        db.session.commit()
+        ensure_reference_data()
         # Preserve the capacity represented by legacy room demands as the initial input.
         db.session.execute(text("""
             UPDATE event SET person_demand = COALESCE((
