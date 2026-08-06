@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import {
   Plus, Pencil, Trash2, Loader2, Building2, X, BedDouble,
-  DoorOpen, Users, AlertTriangle, Euro, ArrowRight, Search
+  DoorOpen, Users, AlertTriangle, ArrowRight, Search
 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
@@ -63,11 +63,8 @@ function getHotelStats(hotel: Hotel, bookings: RoomBooking[]): HotelStats {
   const freeRooms = Math.max(totalRooms - occupiedRooms, 0);
   const freeBeds = Math.max(totalBeds - occupiedBeds, 0);
 
-  if (hasSurcharge) {
-    return { inventoryCount: inventories.length, totalRooms, occupiedRooms, freeRooms, totalBeds, occupiedBeds, freeBeds, occupancy, hasSurcharge, dateRange: getHotelDateRange(hotel), statusLabel: 'Aufpreis', statusTone: 'info', statusIcon: '🟣' };
-  }
   if (freeRooms <= 0 && totalRooms > 0) {
-    return { inventoryCount: inventories.length, totalRooms, occupiedRooms, freeRooms, totalBeds, occupiedBeds, freeBeds, occupancy, hasSurcharge, dateRange: getHotelDateRange(hotel), statusLabel: 'Ausgebucht', statusTone: 'error', statusIcon: '🔴' };
+    return { inventoryCount: inventories.length, totalRooms, occupiedRooms, freeRooms, totalBeds, occupiedBeds, freeBeds, occupancy, hasSurcharge, dateRange: getHotelDateRange(hotel), statusLabel: 'Voll', statusTone: 'error', statusIcon: '🔴' };
   }
   if (occupancy >= 85) {
     return { inventoryCount: inventories.length, totalRooms, occupiedRooms, freeRooms, totalBeds, occupiedBeds, freeBeds, occupancy, hasSurcharge, dateRange: getHotelDateRange(hotel), statusLabel: 'Fast voll', statusTone: 'warning', statusIcon: '🟡' };
@@ -97,6 +94,14 @@ function StatPill({ label, value, icon }: { label: string; value: number | strin
   return <div className="rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-raised)] p-3"><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.1em] text-[var(--ops-text-subtle)]">{icon}{label}</div><div className="mt-2 text-xl font-extrabold text-[var(--ops-text)]">{value}</div></div>;
 }
 
+function getHotelCapabilities(hotel: Hotel) {
+  const inventories = hotel.roomInventories || [];
+  return [
+    { key: 'half-board', label: 'Halbpension', icon: '🍽', active: inventories.some((inventory) => inventory.hasHalfBoard) },
+    { key: 'ski-room', label: 'Skiraum', icon: '🎿', active: inventories.some((inventory) => inventory.hasSR) },
+  ].filter((item) => item.active);
+}
+
 export function HotelsManagement() {
   const permissions = usePermissions();
   const [hotels, setHotels] = useState<Hotel[]>([]);
@@ -109,7 +114,6 @@ export function HotelsManagement() {
   const [selectedHotelId, setSelectedHotelId] = useState<string | null>(null);
   const [hotelSearch, setHotelSearch] = useState('');
   const [regionFilter, setRegionFilter] = useState('');
-  const [statusFilter, setStatusFilter] = useState<Tone | ''>('');
   const [formData, setFormData] = useState({ name: '', location: '', region: '' });
   const [showInventoryForm, setShowInventoryForm] = useState(false);
   const [inventoryForm, setInventoryForm] = useState({ roomTypeId: '', availableFrom: '', availableUntil: '', roomCount: 0, hasHalfBoard: false, hasSR: false });
@@ -138,18 +142,29 @@ export function HotelsManagement() {
   const regionOptions = useMemo(() => Array.from(new Set(hotels.map((hotel) => hotel.region).filter(Boolean) as string[])).sort((a, b) => a.localeCompare(b, 'de')), [hotels]);
   const filteredHotels = useMemo(() => {
     const query = hotelSearch.trim().toLowerCase();
-    return hotels.filter((hotel) => {
-      const stats = getHotelStats(hotel, bookings);
-      const matchesQuery = !query || [hotel.name, hotel.location, hotel.region].filter(Boolean).some((value) => value!.toLowerCase().includes(query));
-      const matchesRegion = !regionFilter || hotel.region === regionFilter;
-      const matchesStatus = !statusFilter || stats.statusTone === statusFilter;
-      return matchesQuery && matchesRegion && matchesStatus;
-    });
-  }, [hotels, bookings, hotelSearch, regionFilter, statusFilter]);
+    return hotels
+      .filter((hotel) => {
+        const matchesQuery = !query || [hotel.name, hotel.location, hotel.region].filter(Boolean).some((value) => value!.toLowerCase().includes(query));
+        const matchesRegion = !regionFilter || hotel.region === regionFilter;
+        return matchesQuery && matchesRegion;
+      })
+      .sort((a, b) => {
+        const aStats = getHotelStats(a, bookings);
+        const bStats = getHotelStats(b, bookings);
+        const priority = (stats: HotelStats) => {
+          if (stats.freeRooms <= 0 && stats.totalRooms > 0) return 1;
+          if (stats.occupancy >= 85) return 2;
+          if (stats.hasSurcharge) return 3;
+          if (stats.occupiedRooms > 0) return 4;
+          return 5;
+        };
+        return priority(aStats) - priority(bStats) || a.name.localeCompare(b.name, 'de');
+      });
+  }, [hotels, bookings, hotelSearch, regionFilter]);
   const fleetStats = useMemo(() => hotels.reduce((acc, hotel) => {
     const stats = getHotelStats(hotel, bookings);
     acc.rooms += stats.totalRooms; acc.freeRooms += stats.freeRooms; acc.beds += stats.totalBeds; acc.freeBeds += stats.freeBeds;
-    if (stats.statusLabel === 'Ausgebucht') acc.soldOut += 1;
+    if (stats.statusLabel === 'Voll') acc.soldOut += 1;
     if (stats.hasSurcharge) acc.surcharge += 1;
     return acc;
   }, { rooms: 0, freeRooms: 0, beds: 0, freeBeds: 0, soldOut: 0, surcharge: 0 }), [hotels, bookings]);
@@ -175,12 +190,12 @@ export function HotelsManagement() {
 
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-[var(--ops-primary)]" /></div>;
 
-  return <PageLayout>
+  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-border-strong:#6d86a5] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4]">
     <PageHeader
       eyebrow="Operations Center"
       title="Hotels & Zimmerkontingente"
-      subtitle="Zentrale Statusübersicht aller WM-Hotels, freier Kapazitäten, Aufpreise und kritischer Kontingente."
-      meta={<><StatusChip tone="success">{formatNumber(fleetStats.freeRooms)} freie Zimmer</StatusChip><StatusChip tone="primary">{formatNumber(fleetStats.freeBeds)} freie Betten</StatusChip><StatusChip tone={fleetStats.soldOut ? 'error' : 'neutral'}>{fleetStats.soldOut} ausgebucht</StatusChip><StatusChip tone={fleetStats.surcharge ? 'info' : 'neutral'}>{fleetStats.surcharge} mit Aufpreis</StatusChip></>}
+      subtitle="Zentrale Statusübersicht aller WM-Hotels, freier Kapazitäten und kritischer Kontingente."
+      meta={<><StatusChip tone="success">{formatNumber(fleetStats.freeRooms)} freie Zimmer</StatusChip><StatusChip tone="primary">{formatNumber(fleetStats.freeBeds)} freie Betten</StatusChip><StatusChip tone={fleetStats.soldOut ? 'error' : 'neutral'}>{fleetStats.soldOut} ausgebucht</StatusChip><StatusChip tone={fleetStats.surcharge ? 'info' : 'neutral'}>{fleetStats.surcharge} mit HP/SR</StatusChip></>}
       actions={!isAdding && <OpsButton onClick={() => permissions.canCreate && setIsAdding(true)} disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined}><Plus className="mr-2 inline h-4 w-4" />Hotel hinzufügen</OpsButton>}
     />
 
@@ -188,7 +203,7 @@ export function HotelsManagement() {
 
     {isAdding && <ContentCard className="p-5" surface="raised"><SectionHeader title={editingId ? 'Hotel bearbeiten' : 'Neues Hotel'} /><form onSubmit={handleSubmit} className="mt-4 space-y-4"><div className="grid grid-cols-1 gap-4 md:grid-cols-3">{(['name','location','region'] as const).map((field) => <label key={field} className="text-sm font-semibold text-[var(--ops-text-muted)]">{field === 'name' ? 'Hotel Name *' : field === 'location' ? 'Ort' : 'Region'}<input type="text" value={formData[field]} onChange={(e) => setFormData({ ...formData, [field]: e.target.value })} required={field === 'name'} className="mt-2 w-full rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 text-[var(--ops-text)] outline-none focus:shadow-[var(--ops-focus-ring)]" /></label>)}</div><div className="flex gap-2"><OpsButton type="submit">{editingId ? 'Aktualisieren' : 'Erstellen'}</OpsButton><OpsButton type="button" onClick={handleCancel}>Abbrechen</OpsButton></div></form></ContentCard>}
 
-    <div className="grid min-h-[calc(100vh-22rem)] grid-cols-1 gap-6 xl:grid-cols-[minmax(22rem,0.34fr)_minmax(0,0.66fr)]">
+    <div className="grid h-[calc(100vh-19rem)] min-h-[34rem] grid-cols-1 gap-5 overflow-hidden xl:grid-cols-[minmax(21rem,0.34fr)_minmax(0,0.66fr)]">
       <ContentCard className="flex min-h-0 overflow-hidden" surface="raised">
         <div className="flex min-h-0 w-full flex-col">
           <div className="border-b border-[var(--ops-divider)] p-4">
@@ -198,19 +213,10 @@ export function HotelsManagement() {
                 <Search className="h-4 w-4" />
                 <input value={hotelSearch} onChange={(e) => setHotelSearch(e.target.value)} placeholder="Hotel oder Ort suchen..." className="w-full bg-transparent text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-subtle)]" />
               </label>
-              <div className="grid grid-cols-2 gap-2">
-                <select value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)} className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 text-sm text-[var(--ops-text)] outline-none">
-                  <option value="">Alle Regionen</option>
-                  {regionOptions.map((region) => <option key={region} value={region}>{region}</option>)}
-                </select>
-                <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value as Tone | '')} className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 text-sm text-[var(--ops-text)] outline-none">
-                  <option value="">Alle Status</option>
-                  <option value="success">Verfügbar</option>
-                  <option value="warning">Fast voll</option>
-                  <option value="error">Ausgebucht</option>
-                  <option value="info">Aufpreis</option>
-                </select>
-              </div>
+              <select value={regionFilter} onChange={(e) => setRegionFilter(e.target.value)} className="w-full rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 text-sm text-[var(--ops-text)] outline-none">
+                <option value="">Alle Regionen</option>
+                {regionOptions.map((region) => <option key={region} value={region}>{region}</option>)}
+              </select>
             </div>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
@@ -218,20 +224,25 @@ export function HotelsManagement() {
               {filteredHotels.map((hotel) => {
                 const stats = getHotelStats(hotel, bookings);
                 const active = selectedHotelId === hotel.id;
-                return <button key={hotel.id} onClick={() => setSelectedHotelId(hotel.id)} className={clsx('w-full rounded-[var(--ops-radius-lg)] border px-3 py-2 text-left transition-all hover:bg-[var(--ops-surface-elevated)]', active ? 'border-[var(--ops-primary)] bg-[var(--ops-surface-elevated)] shadow-[var(--ops-shadow-sm)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]')}>
+                return <button key={hotel.id} onClick={() => setSelectedHotelId(hotel.id)} className={clsx('w-full rounded-[var(--ops-radius-lg)] border px-3 py-2.5 text-left transition-all hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-elevated)]', active ? 'border-[var(--ops-primary)] bg-[var(--ops-surface-elevated)] shadow-[var(--ops-shadow-sm)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]')}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-sm font-extrabold text-[var(--ops-text)]">{hotel.name}</div>
-                      <div className="mt-0.5 truncate text-xs text-[var(--ops-text-muted)]">{hotel.location || hotel.region || 'Keine Ortsinformation'}</div>
+                      <div className="mt-0.5 truncate text-xs text-[var(--ops-text-muted)]">{hotel.location || 'Kein Ort'} · {hotel.region || 'Keine Region'}</div>
                     </div>
                     <StatusChip tone={stats.statusTone}>{stats.statusIcon} {stats.statusLabel}</StatusChip>
                   </div>
-                  <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-[var(--ops-text-muted)]">
-                    <span>Auslastung <b className="text-[var(--ops-text)]">{formatPercent(stats.occupancy)}</b></span>
-                    <span>Zimmer frei <b className="text-[var(--ops-text)]">{stats.freeRooms}</b></span>
-                    <span>Betten frei <b className="text-[var(--ops-text)]">{stats.freeBeds}</b></span>
+                  <div className="mt-2 flex items-center justify-between gap-2 text-[11px] text-[var(--ops-text-muted)]">
+                    <span className="truncate">{stats.dateRange}</span>
+                    <b className="font-mono text-[var(--ops-text)]">{formatPercent(stats.occupancy)}</b>
                   </div>
                   <div className="mt-2"><ProgressBar value={stats.occupancy} tone={stats.statusTone} /></div>
+                  <div className="mt-2 grid grid-cols-4 gap-1 text-[10px] text-[var(--ops-text-muted)]">
+                    <span>Zi. frei <b className="block text-xs text-[var(--ops-text)]">{stats.freeRooms}</b></span>
+                    <span>Zi. bel. <b className="block text-xs text-[var(--ops-text)]">{stats.occupiedRooms}</b></span>
+                    <span>Bet. frei <b className="block text-xs text-[var(--ops-text)]">{stats.freeBeds}</b></span>
+                    <span>Bet. bel. <b className="block text-xs text-[var(--ops-text)]">{stats.occupiedBeds}</b></span>
+                  </div>
                 </button>;
               })}
               {filteredHotels.length === 0 && <EmptyState title="Keine Hotels gefunden" description="Passen Sie Suche oder Filter an." />}
@@ -242,12 +253,22 @@ export function HotelsManagement() {
 
       <ContentCard className="flex min-h-0 overflow-hidden" surface="raised">
         <div className="flex min-h-0 w-full flex-col">
-          <div className="border-b border-[var(--ops-divider)] p-4"><SectionHeader title={selectedHotel ? selectedHotel.name : '🏨 Kein Hotel ausgewählt'} subtitle={selectedHotel ? 'KPIs, Kontingente, Timeline, Zimmerbelegung und Aktionen' : 'Wähle links ein Hotel aus. Danach werden KPIs, Kontingente, Timeline, Zimmerbelegung und Aktionen angezeigt.'} actions={selectedHotel && <div className="flex flex-wrap gap-2"><Link to={assignmentHref(selectedHotel.id)} className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-tone-primary-surface)] px-3 py-2 text-sm font-bold text-[var(--ops-tone-primary-text)]">Zimmerbelegung öffnen <ArrowRight className="inline h-4 w-4" /></Link><OpsButton onClick={() => handleEdit(selectedHotel)} disabled={!permissions.canEdit} title={!permissions.canEdit ? READ_ONLY_TOOLTIP : undefined}><Pencil className="mr-2 inline h-4 w-4" />Hotel bearbeiten</OpsButton><OpsButton onClick={() => setShowInventoryForm(true)} disabled={!permissions.canCreate}><Plus className="mr-2 inline h-4 w-4" />Kontingent</OpsButton></div>} /></div>
+          <div className="border-b border-[var(--ops-divider)] p-4">
+            <SectionHeader
+              title={selectedHotel ? selectedHotel.name : '🏨 Kein Hotel ausgewählt'}
+              subtitle={selectedHotel ? `${selectedHotel.location || 'Kein Ort'} · ${selectedHotel.region || 'Keine Region'} · ${selectedStats?.dateRange || 'Kein Zeitraum'}` : 'Wähle links ein Hotel aus. Danach werden KPIs, Kontingente, Timeline, Zimmerbelegung und Aktionen angezeigt.'}
+              actions={selectedHotel && <div className="flex flex-wrap gap-2"><Link to={assignmentHref(selectedHotel.id)} className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-tone-primary-surface)] px-3 py-2 text-sm font-bold text-[var(--ops-tone-primary-text)]">Zimmerbelegung öffnen <ArrowRight className="inline h-4 w-4" /></Link><OpsButton onClick={() => handleEdit(selectedHotel)} disabled={!permissions.canEdit} title={!permissions.canEdit ? READ_ONLY_TOOLTIP : undefined}><Pencil className="mr-2 inline h-4 w-4" />Hotel bearbeiten</OpsButton><OpsButton onClick={() => setShowInventoryForm(true)} disabled={!permissions.canCreate}><Plus className="mr-2 inline h-4 w-4" />Kontingent</OpsButton></div>}
+            />
+            {selectedHotel && <div className="mt-3 flex flex-wrap gap-2">
+              {getHotelCapabilities(selectedHotel).map((capability) => <StatusChip key={capability.key} tone="info">{capability.icon} {capability.label}</StatusChip>)}
+              {getHotelCapabilities(selectedHotel).length === 0 && <StatusChip tone="neutral">Weitere Eigenschaften vorbereitet</StatusChip>}
+            </div>}
+          </div>
           {selectedHotel && selectedStats ? <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-6"><StatPill label="Freie Zimmer" value={selectedStats.freeRooms} icon={<DoorOpen className="h-3.5 w-3.5" />} /><StatPill label="Belegte Zimmer" value={selectedStats.occupiedRooms} icon={<Building2 className="h-3.5 w-3.5" />} /><StatPill label="Freie Betten" value={selectedStats.freeBeds} icon={<BedDouble className="h-3.5 w-3.5" />} /><StatPill label="Belegte Betten" value={selectedStats.occupiedBeds} icon={<Users className="h-3.5 w-3.5" />} /><StatPill label="Auslastung" value={formatPercent(selectedStats.occupancy)} icon={<AlertTriangle className="h-3.5 w-3.5" />} /><StatPill label="Aufpreis" value={selectedStats.hasSurcharge ? 'Ja' : 'Nein'} icon={<Euro className="h-3.5 w-3.5" />} /></div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5"><StatPill label="Freie Zimmer" value={selectedStats.freeRooms} icon={<DoorOpen className="h-3.5 w-3.5" />} /><StatPill label="Belegte Zimmer" value={selectedStats.occupiedRooms} icon={<Building2 className="h-3.5 w-3.5" />} /><StatPill label="Freie Betten" value={selectedStats.freeBeds} icon={<BedDouble className="h-3.5 w-3.5" />} /><StatPill label="Belegte Betten" value={selectedStats.occupiedBeds} icon={<Users className="h-3.5 w-3.5" />} /><StatPill label="Auslastung" value={formatPercent(selectedStats.occupancy)} icon={<AlertTriangle className="h-3.5 w-3.5" />} /></div>
           {showInventoryForm && <ContentCard className="p-4" surface="elevated"><div className="flex items-center justify-between"><SectionHeader title="Neues Zimmerkontingent" /><button onClick={() => setShowInventoryForm(false)}><X className="h-5 w-5" /></button></div><form onSubmit={handleAddInventory} className="mt-4 space-y-3"><div className="grid grid-cols-2 gap-3"><select value={inventoryForm.roomTypeId} onChange={(e) => setInventoryForm({ ...inventoryForm, roomTypeId: e.target.value })} required className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2 text-sm"><option value="">Zimmertyp wählen</option>{roomTypes.map((rt) => <option key={rt.id} value={rt.id}>{rt.name}</option>)}</select><input type="number" value={inventoryForm.roomCount || ''} onChange={(e) => setInventoryForm({ ...inventoryForm, roomCount: parseInt(e.target.value) || 0 })} min="1" required placeholder="Anzahl Zimmer" className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2 text-sm" /><input type="date" value={inventoryForm.availableFrom} onChange={(e) => setInventoryForm({ ...inventoryForm, availableFrom: e.target.value })} required className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2 text-sm" /><input type="date" value={inventoryForm.availableUntil} onChange={(e) => setInventoryForm({ ...inventoryForm, availableUntil: e.target.value })} required className="rounded-[var(--ops-radius-md)] border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2 text-sm" /></div><div className="flex gap-4 text-sm text-[var(--ops-text-muted)]"><label><input type="checkbox" checked={inventoryForm.hasHalfBoard} onChange={(e) => setInventoryForm({ ...inventoryForm, hasHalfBoard: e.target.checked })} className="mr-2" />Halbpension (HP)</label><label><input type="checkbox" checked={inventoryForm.hasSR} onChange={(e) => setInventoryForm({ ...inventoryForm, hasSR: e.target.checked })} className="mr-2" />SR</label></div><OpsButton type="submit">Hinzufügen</OpsButton></form></ContentCard>}
           <SectionHeader title="Kontingente" subtitle="Zimmerbelegung bleibt im Assignment-Modul." />
-          <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">{(selectedHotel.roomInventories || []).map((inventory) => { const stats = getInventoryStats(inventory, bookings.filter((booking) => booking.hotel.id === selectedHotel.id)); return <Link key={inventory.id} to={assignmentHref(selectedHotel.id)} className="rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4 transition-colors hover:bg-[var(--ops-surface-elevated)]"><div className="flex items-start justify-between"><div><h4 className="text-lg font-extrabold text-[var(--ops-text)]">{inventory.roomType.name}</h4><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{formatDate(inventory.availableFrom)} – {formatDate(inventory.availableUntil)}</p></div><StatusChip tone={stats.tone}>{stats.freeRooms <= 0 ? 'Ausgebucht' : stats.occupancy >= 85 ? 'Fast voll' : 'Verfügbar'}</StatusChip></div><div className="mt-4 grid grid-cols-3 gap-2"><StatPill label="Zimmer gesamt" value={stats.totalRooms} icon={<Building2 className="h-3.5 w-3.5" />} /><StatPill label="Zimmer frei" value={stats.freeRooms} icon={<DoorOpen className="h-3.5 w-3.5" />} /><StatPill label="Zimmer belegt" value={stats.occupiedRooms} icon={<Users className="h-3.5 w-3.5" />} /><StatPill label="Betten gesamt" value={stats.totalBeds} icon={<BedDouble className="h-3.5 w-3.5" />} /><StatPill label="Betten frei" value={stats.freeBeds} icon={<BedDouble className="h-3.5 w-3.5" />} /><StatPill label="Auslastung" value={formatPercent(stats.occupancy)} icon={<AlertTriangle className="h-3.5 w-3.5" />} /></div><div className="mt-3"><ProgressBar value={stats.occupancy} tone={stats.tone} /></div><div className="mt-3 flex items-center justify-between"><div className="flex gap-2">{inventory.hasHalfBoard && <StatusChip tone="info">HP Aufpreis</StatusChip>}{inventory.hasSR && <StatusChip tone="info">SR Aufpreis</StatusChip>}</div><button onClick={(e) => { e.preventDefault(); handleDeleteInventory(selectedHotel.id, inventory.id); }} className="text-[var(--ops-error)] hover:opacity-80"><Trash2 className="h-4 w-4" /></button></div></Link>; })}</div>
+          <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">{(selectedHotel.roomInventories || []).map((inventory) => { const stats = getInventoryStats(inventory, bookings.filter((booking) => booking.hotel.id === selectedHotel.id)); return <Link key={inventory.id} to={assignmentHref(selectedHotel.id)} className="rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4 transition-colors hover:bg-[var(--ops-surface-elevated)]"><div className="flex items-start justify-between"><div><h4 className="text-lg font-extrabold text-[var(--ops-text)]">{inventory.roomType.name}</h4><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{formatDate(inventory.availableFrom)} – {formatDate(inventory.availableUntil)}</p></div><StatusChip tone={stats.tone}>{stats.freeRooms <= 0 ? 'Voll' : stats.occupancy >= 85 ? 'Fast voll' : 'Verfügbar'}</StatusChip></div><div className="mt-4 grid grid-cols-3 gap-2"><StatPill label="Zimmer gesamt" value={stats.totalRooms} icon={<Building2 className="h-3.5 w-3.5" />} /><StatPill label="Zimmer frei" value={stats.freeRooms} icon={<DoorOpen className="h-3.5 w-3.5" />} /><StatPill label="Zimmer belegt" value={stats.occupiedRooms} icon={<Users className="h-3.5 w-3.5" />} /><StatPill label="Betten gesamt" value={stats.totalBeds} icon={<BedDouble className="h-3.5 w-3.5" />} /><StatPill label="Betten frei" value={stats.freeBeds} icon={<BedDouble className="h-3.5 w-3.5" />} /><StatPill label="Auslastung" value={formatPercent(stats.occupancy)} icon={<AlertTriangle className="h-3.5 w-3.5" />} /></div><div className="mt-3"><ProgressBar value={stats.occupancy} tone={stats.tone} /></div><div className="mt-3 flex items-center justify-between"><div className="flex gap-2">{inventory.hasHalfBoard && <StatusChip tone="info">HP Aufpreis</StatusChip>}{inventory.hasSR && <StatusChip tone="info">SR Aufpreis</StatusChip>}</div><button onClick={(e) => { e.preventDefault(); handleDeleteInventory(selectedHotel.id, inventory.id); }} className="text-[var(--ops-error)] hover:opacity-80"><Trash2 className="h-4 w-4" /></button></div></Link>; })}</div>
           {(selectedHotel.roomInventories || []).length === 0 && <EmptyState title="Keine Zimmerkontingente" description="Für dieses Hotel sind noch keine Verfügbarkeiten hinterlegt." />}
           <SectionHeader title="Timeline" subtitle="Verfügbarkeitszeitraum und Auslastung für das ausgewählte Hotel." />
           <div className="space-y-3">{(selectedHotel.roomInventories || []).map((inventory) => { const invStats = getInventoryStats(inventory, bookings.filter((booking) => booking.hotel.id === selectedHotel.id)); return <div key={inventory.id} className="rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-raised)] p-3"><div className="mb-2 flex items-center justify-between text-xs"><span className="font-bold text-[var(--ops-text)]">{inventory.roomType.name} · {inventory.roomCount} Zimmer verfügbar</span><span className="text-[var(--ops-text-muted)]">{formatDate(inventory.availableFrom)} – {formatDate(inventory.availableUntil)} · {formatPercent(invStats.occupancy)}</span></div><ProgressBar value={invStats.occupancy} tone={invStats.tone} /></div>; })}</div>
