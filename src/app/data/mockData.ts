@@ -476,6 +476,8 @@ export const mockEvents: Event[] = [
     discipline: 'Big Air',
     startDate: '2027-03-07',
     endDate: '2027-03-14',
+    personDemand: 421,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '1',
@@ -496,6 +498,8 @@ export const mockEvents: Event[] = [
     discipline: 'Areals',
     startDate: '2027-03-15',
     endDate: '2027-03-21',
+    personDemand: 150,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '3',
@@ -516,6 +520,8 @@ export const mockEvents: Event[] = [
     discipline: 'Moguls',
     startDate: '2027-03-12',
     endDate: '2027-03-20',
+    personDemand: 169,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '5',
@@ -536,6 +542,8 @@ export const mockEvents: Event[] = [
     discipline: 'Parallel',
     startDate: '2027-03-04',
     endDate: '2027-03-11',
+    personDemand: 169,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '7',
@@ -556,6 +564,8 @@ export const mockEvents: Event[] = [
     discipline: 'Slopestyle',
     startDate: '2027-03-12',
     endDate: '2027-03-21',
+    personDemand: 424,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '9',
@@ -576,6 +586,8 @@ export const mockEvents: Event[] = [
     discipline: 'Snowboard Cross',
     startDate: '2027-03-16',
     endDate: '2027-03-22',
+    personDemand: 179,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '11',
@@ -596,6 +608,8 @@ export const mockEvents: Event[] = [
     discipline: 'Ski Cross',
     startDate: '2027-03-09',
     endDate: '2027-03-15',
+    personDemand: 160,
+    singleRoomPercentage: 50,
     roomDemands: [
       {
         id: '13',
