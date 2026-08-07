@@ -1,4 +1,4 @@
-from flask import Flask, g, request, jsonify, send_from_directory, send_file
+from flask import Flask, g, request, jsonify, send_from_directory, send_file, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportApproval
 from auth import load_user_from_request, current_user
@@ -12,7 +12,11 @@ import json
 import zipfile
 from pathlib import Path
 import uuid
-from sqlalchemy import text, func
+import time
+from contextlib import contextmanager
+from functools import wraps
+from sqlalchemy import text, func, event
+from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
 
@@ -30,6 +34,75 @@ app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + database_path
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 db.init_app(app)
+
+
+def _is_assignment_request():
+    return (request.path.startswith('/api/assignments/')
+            or request.path.startswith('/api/official-quota')
+            or request.path.startswith('/api/fis/official-quotas'))
+
+
+@app.before_request
+def start_assignment_performance_measurement():
+    if _is_assignment_request():
+        g.assignment_perf = {'api_started': time.perf_counter(), 'db': 0.0, 'queries': 0}
+
+
+@event.listens_for(Engine, 'before_cursor_execute')
+def _measure_query_start(conn, cursor, statement, parameters, context, executemany):
+    if has_request_context() and hasattr(g, 'assignment_perf'):
+        context._assignment_query_started = time.perf_counter()
+
+
+@event.listens_for(Engine, 'after_cursor_execute')
+def _measure_query_end(conn, cursor, statement, parameters, context, executemany):
+    started = getattr(context, '_assignment_query_started', None)
+    if started is not None and has_request_context() and hasattr(g, 'assignment_perf'):
+        g.assignment_perf['db'] += (time.perf_counter() - started) * 1000
+        g.assignment_perf['queries'] += 1
+
+
+@contextmanager
+def _assignment_phase(name):
+    started = time.perf_counter()
+    try:
+        yield
+    finally:
+        if hasattr(g, 'assignment_perf'):
+            g.assignment_perf[name] = g.assignment_perf.get(name, 0.0) + (time.perf_counter() - started) * 1000
+
+
+def _assignment_jsonify(payload):
+    with _assignment_phase('serialization'):
+        return jsonify(payload)
+
+
+def _measure_assignment_logic(function):
+    @wraps(function)
+    def measured(*args, **kwargs):
+        with _assignment_phase('assignment'):
+            return function(*args, **kwargs)
+    return measured
+
+
+@app.after_request
+def report_assignment_performance(response):
+    perf = getattr(g, 'assignment_perf', None)
+    if not perf:
+        return response
+    perf['api'] = (time.perf_counter() - perf['api_started']) * 1000
+    perf['response_bytes'] = response.calculate_content_length() or 0
+    names = ('api', 'db', 'quota', 'rooms', 'assignment', 'serialization')
+    response.headers['Server-Timing'] = ', '.join(
+        f'{name};dur={perf.get(name, 0):.2f}' for name in names
+    )
+    response.headers['X-Assignment-Query-Count'] = str(perf['queries'])
+    response.headers['X-Response-Size'] = str(perf['response_bytes'])
+    app.logger.info('assignment_performance %s', json.dumps({
+        key: round(value, 2) if isinstance(value, float) else value
+        for key, value in perf.items() if key != 'api_started'
+    }))
+    return response
 
 
 def _required_permission():
@@ -525,8 +598,10 @@ def _build_room_booking_units():
             if not athlete:
                 continue
             pending_review = _has_pending_roomlist_review(athlete)
-            assigned_change = _change_touches_assignment_for_athlete(athlete)
             athlete_booking = _find_booking_for_athlete(athlete_booking_index, athlete.id)
+            # athlete_booking was populated from the eagerly loaded booking set above;
+            # reusing it avoids one existence query per athlete.
+            assigned_change = bool(pending_review and athlete_booking)
             athlete_level_bookings.append(athlete_booking)
             occupants.append({
                 'athleteId': str(athlete.id),
@@ -584,7 +659,9 @@ def _build_room_booking_units():
 
 
 def _build_assignment_planning_view():
-    units, bookings = _build_room_booking_units()
+    with _assignment_phase('assignment'):
+        units, bookings = _build_room_booking_units()
+    rooms_started = time.perf_counter()
     hotels = Hotel.query.options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
 
     all_dates = []
@@ -645,6 +722,8 @@ def _build_assignment_planning_view():
                 for slot in slots
             ],
         })
+    if hasattr(g, 'assignment_perf'):
+        g.assignment_perf['rooms'] = (time.perf_counter() - rooms_started) * 1000
 
     unassigned_units = []
     assigned_units = []
@@ -1970,22 +2049,24 @@ def get_official_quotas():
     nation_code = request.args.get('nationCode')
     discipline = request.args.get('discipline')
     gender = request.args.get('gender')
-    rows = _build_official_quota_usage_rows(
-        nation_code=nation_code,
-        discipline=discipline,
-        gender=gender
-    )
-    return jsonify(rows)
+    with _assignment_phase('quota'):
+        rows = _build_official_quota_usage_rows(
+            nation_code=nation_code,
+            discipline=discipline,
+            gender=gender
+        )
+    return _assignment_jsonify(rows)
 
 
 @app.route('/api/assignments/planning-view', methods=['GET'])
 @app.route('/api/assignments/planning-view/', methods=['GET'])
 def get_assignments_planning_view():
-    return jsonify(_build_assignment_planning_view())
+    return _assignment_jsonify(_build_assignment_planning_view())
 
 
 @app.route('/api/assignments/units/<int:unit_id>/assign', methods=['POST'])
 @app.route('/api/assignments/units/<int:unit_id>/assign/', methods=['POST'])
+@_measure_assignment_logic
 def assign_room_booking_unit(unit_id):
     assignment = FisRoomAssignment.query.get_or_404(unit_id)
     data = request.json or {}
@@ -2012,7 +2093,7 @@ def assign_room_booking_unit(unit_id):
         existing_booking = RoomBooking.query.get(int(data['assignedBookingId']))
     else:
         athlete_id_tuple = tuple(sorted(athlete_ids))
-        for booking in RoomBooking.query.all():
+        for booking in RoomBooking.query.options(db.joinedload(RoomBooking.occupants)).all():
             if tuple(_collect_booking_athlete_ids(booking)) == athlete_id_tuple:
                 existing_booking = booking
                 break
@@ -2023,11 +2104,12 @@ def assign_room_booking_unit(unit_id):
     _detach_athletes_from_existing_bookings(payload['athlete_ids'], exclude_booking_id=existing_booking.id if existing_booking else None)
     booking = _save_booking_from_payload(payload, existing_booking=existing_booking)
     _refresh_fis_assignment_links()
-    return jsonify(booking.to_dict()), 200 if existing_booking else 201
+    return _assignment_jsonify(booking.to_dict()), 200 if existing_booking else 201
 
 
 @app.route('/api/assignments/bookings/<int:booking_id>', methods=['PUT'])
 @app.route('/api/assignments/bookings/<int:booking_id>/', methods=['PUT'])
+@_measure_assignment_logic
 def update_assigned_unit(booking_id):
     booking = RoomBooking.query.get_or_404(booking_id)
     data = request.json or {}
@@ -2051,6 +2133,7 @@ def update_assigned_unit(booking_id):
 
 @app.route('/api/assignments/bookings/<int:booking_id>/unassign', methods=['POST'])
 @app.route('/api/assignments/bookings/<int:booking_id>/unassign/', methods=['POST'])
+@_measure_assignment_logic
 def unassign_room_booking_unit(booking_id):
     booking = RoomBooking.query.get_or_404(booking_id)
     db.session.delete(booking)
@@ -2061,6 +2144,7 @@ def unassign_room_booking_unit(booking_id):
 
 @app.route('/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign', methods=['POST'])
 @app.route('/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign/', methods=['POST'])
+@_measure_assignment_logic
 def unassign_room_booking_occupant(booking_id, athlete_id):
     booking = RoomBooking.query.get_or_404(booking_id)
     membership = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id, athlete_id=athlete_id).first()

@@ -18,6 +18,7 @@ import {
 import type { AuthenticatedUser, AuditEvent } from '../types';
 import { OfficialQuotaUsage } from './fisRules';
 import type { ImportSession } from '../data/importSessions';
+import { finishAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
 
 import {
   mockRoomTypes as initialRoomTypes,
@@ -49,6 +50,8 @@ let mockRoomBookings: RoomBooking[] = [];
 
 class ApiService {
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    const isAssignmentMutation = endpoint.startsWith('/assignments/') && options?.method !== undefined && options.method !== 'GET';
+    const measurement = isAssignmentMutation ? startAssignmentMeasurement(endpoint) : null;
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
@@ -59,6 +62,9 @@ class ApiService {
 
     const contentType = response.headers.get('content-type') || '';
     const bodyText = await response.text();
+    if (measurement) {
+      finishAssignmentRequest(measurement.operationId, measurement.startedAt, response, new Blob([bodyText]).size);
+    }
 
     const looksLikeJson = (() => {
       const trimmed = bodyText.trim();
