@@ -1,13 +1,31 @@
-import { useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle, Download, FileText, Loader2, Upload } from 'lucide-react';
+import { type CSSProperties, useMemo, useState } from 'react';
+import { CheckCircle, Download, FileCheck2, FileText, Loader2, RefreshCcw, Upload } from 'lucide-react';
 
 import { api } from '../services/api';
 import { FisImportIssue, FisImportPreview } from '../types';
+import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SectionHeader, StatusChip } from '../design-system';
+import { MetricCard } from '../design-system/components/cards';
 
 const REQUIRED_FILE_HINTS = [
   'ENTRIES-LIST',
   'ENTRIES-ROOM-LIST-DETAILED',
 ];
+
+const importCenterTheme = {
+  '--ops-background': '#0B1220', '--ops-surface': '#172234', '--ops-surface-raised': '#1D2A3D',
+  '--ops-surface-elevated': '#223149', '--ops-surface-overlay': '#2A3B54', '--ops-border': 'rgba(240,246,252,.08)',
+  '--ops-border-strong': 'rgba(240,246,252,.16)', '--ops-divider': 'rgba(240,246,252,.07)', '--ops-primary': '#60AFFF',
+  '--ops-primary-emphasis': '#79C0FF', '--ops-success': '#3FB950', '--ops-warning': '#D29922', '--ops-error': '#F85149',
+  '--ops-info': '#58A6FF', '--ops-text': '#F0F6FC', '--ops-text-muted': '#C9D1D9', '--ops-text-subtle': '#8B949E',
+  '--ops-tone-neutral-border': 'rgba(240,246,252,.12)', '--ops-tone-neutral-surface': 'rgba(201,209,217,.10)', '--ops-tone-neutral-text': '#F0F6FC',
+  '--ops-tone-primary-border': 'rgba(88,166,255,.45)', '--ops-tone-primary-surface': 'rgba(56,139,253,.18)', '--ops-tone-primary-text': '#DDF4FF',
+  '--ops-tone-success-border': 'rgba(63,185,80,.50)', '--ops-tone-success-surface': 'rgba(46,160,67,.18)', '--ops-tone-success-text': '#D2FEDB',
+  '--ops-tone-warning-border': 'rgba(210,153,34,.52)', '--ops-tone-warning-surface': 'rgba(187,128,9,.20)', '--ops-tone-warning-text': '#FFF8C5',
+  '--ops-tone-error-border': 'rgba(248,81,73,.52)', '--ops-tone-error-surface': 'rgba(218,54,51,.20)', '--ops-tone-error-text': '#FFDCD7',
+  '--ops-tone-info-border': 'rgba(88,166,255,.45)', '--ops-tone-info-surface': 'rgba(56,139,253,.16)', '--ops-tone-info-text': '#DDF4FF',
+} as CSSProperties;
+
+const workflowSteps = ['Datei', 'Preview', 'Prüfung', 'Import', 'Auswirkungen', 'Nachbearbeitung'];
 
 export function DataImport() {
   const [files, setFiles] = useState<File[]>([]);
@@ -44,6 +62,15 @@ export function DataImport() {
     setPreview(null);
     setSuccess(null);
     setError(null);
+  };
+
+  const cancelImport = () => {
+    setFiles([]);
+    setPreview(null);
+    setError(null);
+    setSuccess(null);
+    const input = document.getElementById('fis-files-input') as HTMLInputElement | null;
+    if (input) input.value = '';
   };
 
   const runPreview = async () => {
@@ -83,138 +110,59 @@ export function DataImport() {
     }
   };
 
+  const currentStep = success ? 4 : preview ? 2 : files.length ? 1 : 0;
+  const kpis = preview ? [
+    ['Personen', preview.summary.people.total, 'Importumfang', 'neutral'],
+    ['Neue Personen', preview.summary.people.wouldCreate, 'werden angelegt', 'success'],
+    ['Updates', preview.summary.people.wouldUpdate, 'werden aktualisiert', 'info'],
+    ['Warnungen', preview.summary.validation.warningCount, 'zu prüfen', 'warning'],
+    ['Fehler', preview.summary.validation.errorCount, preview.isValid ? 'nicht blockierend' : 'blockierend', 'error'],
+    ['Disziplin', preview.detectedDiscipline || '—', preview.detectedDiscipline ? 'automatisch erkannt' : 'nicht erkannt', 'primary'],
+  ] as const : [];
+
   return (
-    <div className="space-y-6">
-      <div className="flex justify-between items-center">
-        <h2 className="text-2xl font-bold text-gray-900">FIS Daten Import</h2>
-      </div>
+    <div style={importCenterTheme} className="-m-6 min-h-screen bg-[var(--ops-background)] p-6 text-[var(--ops-text)]">
+      <div className="mx-auto max-w-[1440px] space-y-6">
+        <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="Import von FIS Excel-Dateien mit automatischer Validierung und Änderungsanalyse." meta={<StatusChip tone={preview?.isValid ? 'success' : preview ? 'error' : 'neutral'}>{preview ? (preview.isValid ? 'Bereit zum Import' : 'Prüfung erforderlich') : 'Kein Preview'}</StatusChip>} />
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
-        <h3 className="text-md font-semibold text-blue-900 mb-2">Ein gemeinsamer Upload für beide Dateien</h3>
-        <ul className="text-sm text-blue-800 space-y-1 list-disc list-inside">
-          <li>Ziehe einfach beide FIS-Dateien in dieselbe Upload-Zone.</li>
-          <li>Die Software erkennt automatisch <strong>ENTRIES-LIST</strong> und <strong>ENTRIES-ROOM-LIST-DETAILED</strong>.</li>
-          <li>Erst Preview prüfen, dann Import bestätigen.</li>
-        </ul>
-      </div>
+        {preview && <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{kpis.map(([label, value, helper, tone]) => <MetricCard key={label} label={label} value={value} helper={helper} tone={tone} />)}</div>}
 
-      <MockFilesCard />
+        <ContentCard className="p-5" surface="elevated"><SectionHeader title="Workflow" subtitle="Orientierung im FIS-Importprozess" /><ol className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-6">{workflowSteps.map((step, index) => <li key={step} className="relative"><div className={`rounded-lg border p-3 ${index <= currentStep ? 'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}><span className="font-mono text-xs text-[var(--ops-text-subtle)]">0{index + 1}</span><div className="mt-1 text-sm font-bold">{step}</div></div>{index < workflowSteps.length - 1 && <span className="absolute -right-2 top-1/2 hidden text-[var(--ops-text-subtle)] md:block">→</span>}</li>)}</ol></ContentCard>
 
-      <UnifiedUploadCard files={files} onChange={handleFilesSelected} />
-
-      <div className="bg-white rounded-lg shadow p-6 space-y-4">
-        <div className="flex flex-wrap gap-3">
-          <button
-            onClick={runPreview}
-            disabled={!readyForPreview || loading}
-            className="inline-flex items-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            {loading ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <Upload className="w-5 h-5 mr-2" />}
-            Preview prüfen
-          </button>
-
-          <button
-            onClick={confirmImport}
-            disabled={previewBlocked || confirming}
-            className="inline-flex items-center px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors"
-          >
-            {confirming ? <Loader2 className="w-5 h-5 mr-2 animate-spin" /> : <CheckCircle className="w-5 h-5 mr-2" />}
-            Import bestätigen
-          </button>
+        <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,.65fr)]">
+          <div className="space-y-6">
+            <UnifiedUploadCard files={files} onChange={handleFilesSelected} />
+            <ContentCard className="p-5" surface="raised"><SectionHeader title="Import Aktionen" subtitle="Erst Preview prüfen, dann den validierten Import bestätigen." /><div className="mt-4 flex flex-wrap gap-3"><OpsButton onClick={runPreview} disabled={!readyForPreview || loading} className="inline-flex items-center gap-2 border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <FileCheck2 className="h-4 w-4" />}Preview prüfen</OpsButton><OpsButton onClick={confirmImport} disabled={previewBlocked || confirming} className="inline-flex items-center gap-2 border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]">{confirming ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle className="h-4 w-4" />}Import bestätigen</OpsButton><OpsButton onClick={cancelImport} disabled={!files.length && !preview} className="inline-flex items-center gap-2"><RefreshCcw className="h-4 w-4" />Abbrechen</OpsButton></div>{error && <div className="mt-4"><InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel></div>}{success && <div className="mt-4"><InfoPanel tone="success" title="Import abgeschlossen">{success}</InfoPanel></div>}</ContentCard>
+            {preview && <PreviewContent preview={preview} quotaWarnings={quotaWarnings} otherWarnings={otherWarnings} />}
+          </div>
+          <aside className="space-y-6 xl:sticky xl:top-6"><InfoPanel tone="info" title="Ein gemeinsamer Upload für beide Dateien"><ul className="list-inside list-disc space-y-2"><li>Beide FIS-Dateien in dieselbe Upload-Zone ziehen.</li><li>ENTRIES-LIST und ENTRIES-ROOM-LIST-DETAILED werden automatisch erkannt.</li><li>Vor dem Import alle Prüfhinweise kontrollieren.</li></ul></InfoPanel><MockFilesCard /></aside>
         </div>
-
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-center gap-3">
-            <AlertCircle className="w-6 h-6 text-red-600" />
-            <div>
-              <p className="font-medium text-red-900">Aktion fehlgeschlagen</p>
-              <p className="text-sm text-red-700">{error}</p>
-            </div>
-          </div>
-        )}
-
-        {success && (
-          <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
-            <CheckCircle className="w-6 h-6 text-green-600" />
-            <div>
-              <p className="font-medium text-green-900">Import abgeschlossen</p>
-              <p className="text-sm text-green-700">{success}</p>
-            </div>
-          </div>
-        )}
       </div>
-
-      {preview && (
-        <div className="space-y-4">
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold mb-4">Preview Ergebnis</h3>
-            <div className="grid gap-3 md:grid-cols-3 text-sm">
-              <PreviewMetric label="Personen gesamt" value={preview.summary.people.total} />
-              <PreviewMetric label="Neu" value={preview.summary.people.wouldCreate} />
-              <PreviewMetric label="Updates" value={preview.summary.people.wouldUpdate} />
-              <PreviewMetric label="FIS-Zimmer" value={preview.summary.rooms.total} />
-              <PreviewMetric label="Warnings" value={preview.summary.validation.warningCount} />
-              <PreviewMetric label="Fehler" value={preview.summary.validation.errorCount} />
-            </div>
-            <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-900">
-              <span className="font-medium">Erkannte Disziplin:</span>{' '}
-              {preview.detectedDiscipline || 'nicht erkannt'}
-            </div>
-          </div>
-
-          <IssueList title="Blockierende Fehler" issues={preview.errors} emptyText="Keine blockierenden Fehler gefunden." tone="red" />
-          <QuotaValidationPanel warnings={quotaWarnings} people={preview.people} />
-          <IssueList title="Weitere Warnungen" issues={otherWarnings} emptyText="Keine weiteren Warnungen gefunden." tone="yellow" />
-          <AffectedRowsPanel issues={preview.errors} />
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <PreviewTable
-              title="Personen"
-              rows={preview.people.slice(0, 12).map((person) => [
-                `${person.firstname} ${person.lastname}`,
-                person.nationCode,
-                person.discipline || '-',
-                person.function || '-',
-                person.operation,
-              ])}
-              headers={['Name', 'Nation', 'Disziplin', 'Funktion', 'Aktion']}
-              footer={preview.people.length > 12 ? `+ ${preview.people.length - 12} weitere Personen` : undefined}
-            />
-            <PreviewTable
-              title="Zimmer"
-              rows={preview.rooms.slice(0, 12).map((room) => [
-                room.person1Name,
-                room.person2Name || '-',
-                room.roomType,
-                [room.checkInDate, room.checkOutDate].filter(Boolean).join(' → ') || '-',
-              ])}
-              headers={['Person 1', 'Person 2', 'Zimmer', 'Aufenthalt']}
-              footer={preview.rooms.length > 12 ? `+ ${preview.rooms.length - 12} weitere Zimmer` : undefined}
-            />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
 
+function PreviewContent({ preview, quotaWarnings, otherWarnings }: { preview: FisImportPreview; quotaWarnings: FisImportIssue[]; otherWarnings: FisImportIssue[] }) {
+  return <div className="space-y-6"><SectionHeader title="Import Preview" subtitle="Änderungen und bestehende Validierungen im Überblick" /><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><MetricCard label="Neue Personen" value={preview.summary.people.wouldCreate} helper="Anlegen" tone="success" /><MetricCard label="Aktualisierte Personen" value={preview.summary.people.wouldUpdate} helper="Aktualisieren" tone="info" /><MetricCard label="Zimmerbedarf" value={preview.summary.rooms.total} helper={`${preview.summary.rooms.singles} Einzel · ${preview.summary.rooms.shared} geteilt`} /><MetricCard label="Ersetzte FIS-Zimmer" value={preview.summary.rooms.wouldReplaceFisRooms} helper="Bestehender Bestand" tone="warning" /><MetricCard label="Warnungen" value={preview.summary.validation.warningCount} helper="Prüfung" tone="warning" /><MetricCard label="Fehler" value={preview.summary.validation.errorCount} helper="Validierung" tone="error" /><MetricCard label="Quota-Hinweise" value={quotaWarnings.length} helper="Bestehende Quota-Prüfung" tone="warning" /><MetricCard label="Disziplin" value={preview.detectedDiscipline || '—'} helper="Erkannt" tone="primary" /></div><SectionHeader title="Prüfung" subtitle="Blockierende Fehler, Quoten und weitere Hinweise" /><IssueList title="Blockierende Fehler" issues={preview.errors} emptyText="Keine blockierenden Fehler gefunden." tone="red" /><QuotaValidationPanel warnings={quotaWarnings} people={preview.people} /><IssueList title="Weitere Hinweise" issues={otherWarnings} emptyText="Keine weiteren Warnungen gefunden." tone="yellow" /><AffectedRowsPanel issues={preview.errors} /><div className="grid gap-4 lg:grid-cols-2"><PreviewTable title="Personen" rows={preview.people.slice(0, 12).map(p => [`${p.firstname} ${p.lastname}`, p.nationCode, p.discipline || '-', p.function || '-', p.operation])} headers={['Name', 'Nation', 'Disziplin', 'Funktion', 'Aktion']} footer={preview.people.length > 12 ? `+ ${preview.people.length - 12} weitere Personen` : undefined} /><PreviewTable title="Zimmer" rows={preview.rooms.slice(0, 12).map(r => [r.person1Name, r.person2Name || '-', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '-'])} headers={['Person 1', 'Person 2', 'Zimmer', 'Aufenthalt']} footer={preview.rooms.length > 12 ? `+ ${preview.rooms.length - 12} weitere Zimmer` : undefined} /></div><ContentCard className="p-5" surface="raised"><SectionHeader title="Auswirkungen des Imports" subtitle="Grundlage für die operative Nachbearbeitung" /><div className="mt-4"><EmptyState title="Auswirkungsanalyse nach Import" description="Nach dem Import werden hier alle betroffenen Zimmerzuweisungen, Zimmerpartner, Quoten und Änderungen angezeigt." /></div></ContentCard></div>;
+}
+
 function MockFilesCard() {
   return (
-    <div className="bg-white rounded-lg shadow p-6">
+    <ContentCard className="p-5" surface="raised">
       <div className="mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">Mock-Dateien herunterladen</h3>
-        <p className="text-sm text-gray-500">
+        <SectionHeader title="Vorlagen" />
+        <p className="mt-2 text-sm text-[var(--ops-text-muted)]">
           Lade alle aktuellen Mock-Dateien gesammelt als ZIP herunter, passe sie in Excel an und lade sie danach wieder hoch.
         </p>
       </div>
       <a
         href="/api/import/fis/mock-files/download-all"
-        className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-4 py-3 text-sm font-medium text-blue-700 hover:bg-blue-100"
+        className="inline-flex items-center gap-2 rounded-lg border border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)] px-4 py-3 text-sm font-bold text-[var(--ops-tone-primary-text)] transition-colors hover:border-[var(--ops-border-strong)]"
       >
         <Download className="w-4 h-4" />
         Alle Mock-Dateien herunterladen
       </a>
-    </div>
+    </ContentCard>
   );
 }
 
@@ -228,11 +176,10 @@ function UnifiedUploadCard({
   const [dragActive, setDragActive] = useState(false);
 
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <h3 className="text-lg font-semibold mb-1">FIS Dateien hochladen</h3>
-      <p className="text-sm text-gray-500 mb-4">Eine Dropzone für beide Dateien. Die Zuordnung passiert automatisch.</p>
+    <ContentCard className="p-5" surface="raised">
+      <SectionHeader title="Datei auswählen" subtitle="Eine Dropzone für beide Dateien – die Zuordnung passiert automatisch." />
       <div
-        className={`border-2 border-dashed rounded-lg p-8 text-center transition-colors ${dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300'}`}
+        className={`mt-4 rounded-xl border-2 border-dashed p-10 text-center transition-colors ${dragActive ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]' : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface)]'}`}
         onDragOver={(event) => {
           event.preventDefault();
           setDragActive(true);
@@ -253,42 +200,33 @@ function UnifiedUploadCard({
           className="hidden"
         />
         <label htmlFor="fis-files-input" className="cursor-pointer block">
-          <Upload className="w-14 h-14 mx-auto text-gray-400 mb-4" />
-          <p className="text-lg font-medium text-gray-700 mb-2">
+          <Upload className="mx-auto mb-4 h-12 w-12 text-[var(--ops-primary)]" />
+          <p className="mb-2 text-lg font-bold text-[var(--ops-text)]">
             {files.length > 0 ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder hierher ziehen'}
           </p>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-[var(--ops-text-muted)]">
             Erwartet werden: {REQUIRED_FILE_HINTS.join(' + ')}
           </p>
         </label>
       </div>
 
       {files.length > 0 && (
-        <div className="mt-4 rounded-lg border border-gray-200 bg-gray-50 p-4">
-          <p className="text-sm font-medium text-gray-700 mb-2">Ausgewählte Dateien</p>
+        <div className="mt-4 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4">
+          <p className="mb-2 text-sm font-bold text-[var(--ops-text)]">Ausgewählte Dateien</p>
           <ul className="space-y-2">
             {files.map((file) => (
-              <li key={file.name} className="flex items-center justify-between gap-3 text-sm text-gray-700">
+              <li key={file.name} className="flex items-center justify-between gap-3 text-sm text-[var(--ops-text)]">
                 <span className="flex items-center gap-2 min-w-0">
-                  <FileText className="w-4 h-4 shrink-0 text-gray-500" />
+                  <FileText className="h-4 w-4 shrink-0 text-[var(--ops-primary)]" />
                   <span className="truncate">{file.name}</span>
                 </span>
-                <span className="text-xs text-gray-500 shrink-0">{(file.size / 1024).toFixed(1)} KB</span>
+                <span className="shrink-0 font-mono text-xs text-[var(--ops-text-muted)]">{(file.size / 1024).toFixed(1)} KB</span>
               </li>
             ))}
           </ul>
         </div>
       )}
-    </div>
-  );
-}
-
-function PreviewMetric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <div className="rounded-lg border border-gray-200 p-3">
-      <div className="text-gray-500">{label}</div>
-      <div className="text-lg font-semibold text-gray-900">{value}</div>
-    </div>
+    </ContentCard>
   );
 }
 
@@ -304,8 +242,8 @@ function IssueList({
   tone: 'red' | 'yellow';
 }) {
   const styles = tone === 'red'
-    ? 'bg-red-50 border-red-200 text-red-800'
-    : 'bg-yellow-50 border-yellow-200 text-yellow-800';
+    ? 'bg-[var(--ops-tone-error-surface)] border-[var(--ops-tone-error-border)] text-[var(--ops-tone-error-text)]'
+    : 'bg-[var(--ops-tone-warning-surface)] border-[var(--ops-tone-warning-border)] text-[var(--ops-tone-warning-text)]';
 
   return (
     <div className={`rounded-lg border p-6 ${styles}`}>
@@ -330,12 +268,12 @@ function IssueCard({ issue, tone }: { issue: FisImportIssue; tone: 'red' | 'yell
   const rowLabel = row ? `${sourceFile}, Zeile ${row}` : sourceFile;
   const hint = buildIssueHint(issue);
   const syntax = buildIssueSyntax(issue);
-  const cardStyles = tone === 'red' ? 'border-red-200 bg-white/70' : 'border-yellow-200 bg-white/60';
+  const cardStyles = tone === 'red' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-surface)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-surface)]';
 
   return (
     <div className={`rounded-lg border p-4 ${cardStyles}`}>
       <div className="flex flex-wrap items-start gap-2">
-        <span className="text-xs font-semibold px-2 py-1 rounded bg-white border border-current/20">{issue.code}</span>
+        <span className="rounded border border-current/20 bg-[var(--ops-surface-elevated)] px-2 py-1 font-mono text-xs font-semibold">{issue.code}</span>
         {rowLabel && <span className="text-xs opacity-80">{rowLabel}</span>}
       </div>
       <p className="mt-2 text-sm font-medium">{issue.message}</p>
@@ -424,30 +362,30 @@ function PreviewTable({
   rowClassName?: (row: string[], rowIndex: number) => string;
 }) {
   return (
-    <div className="bg-white rounded-lg shadow p-6">
-      <h3 className="text-lg font-semibold mb-4">{title}</h3>
+    <ContentCard className="overflow-hidden" surface="raised">
+      <div className="border-b border-[var(--ops-divider)] px-5 py-4"><SectionHeader title={title} /></div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
           <thead>
-            <tr className="border-b border-gray-200">
+            <tr className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)]">
               {headers.map((header) => (
-                <th key={header} className="text-left py-2 pr-4 font-medium text-gray-600">{header}</th>
+                <th key={header} className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wide text-[var(--ops-text-subtle)]">{header}</th>
               ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((row, rowIndex) => (
-              <tr key={rowIndex} className={`border-b border-gray-100 last:border-b-0 ${rowClassName ? rowClassName(row, rowIndex) : ''}`}>
+              <tr key={rowIndex} className={`border-b border-[var(--ops-divider)] last:border-b-0 ${rowClassName ? rowClassName(row, rowIndex) : ''}`}>
                 {row.map((cell, cellIndex) => (
-                  <td key={`${rowIndex}-${cellIndex}`} className="py-2 pr-4 text-gray-900">{cell}</td>
+                  <td key={`${rowIndex}-${cellIndex}`} className="px-4 py-3 text-[var(--ops-text)]">{cell}</td>
                 ))}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
-      {footer && <p className="text-xs text-gray-500 mt-3">{footer}</p>}
-    </div>
+      {footer && <p className="border-t border-[var(--ops-divider)] px-5 py-3 text-xs text-[var(--ops-text-muted)]">{footer}</p>}
+    </ContentCard>
   );
 }
 
@@ -483,16 +421,16 @@ function QuotaValidationPanel({
 }) {
   if (warnings.length === 0) {
     return (
-      <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-6">
-        <h3 className="text-lg font-semibold text-yellow-900 mb-2">Warnungen & Quoten</h3>
-        <p className="text-sm text-yellow-800">Keine Warnungen gefunden.</p>
+      <div className="rounded-lg border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] p-6 text-[var(--ops-tone-success-text)]">
+        <h3 className="mb-2 text-lg font-semibold">Quoten</h3>
+        <p className="text-sm">Keine Quota-Warnungen gefunden.</p>
       </div>
     );
   }
 
   return (
-    <div className="rounded-lg border border-yellow-200 bg-yellow-50 p-6 space-y-4">
-      <h3 className="text-lg font-semibold text-yellow-900">Warnungen & Quoten</h3>
+    <div className="space-y-4 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-6">
+      <h3 className="text-lg font-semibold text-[var(--ops-tone-warning-text)]">Quoten</h3>
       {warnings.map((warning, index) => (
         <QuotaWarningCard key={`${warning.code}-${index}`} warning={warning} people={people} />
       ))}
@@ -556,10 +494,10 @@ function QuotaWarningCard({
     : `Zu viele Einzelzimmer für Officials ${nationCode}${gender ? ` ${gender}` : ''}${discipline ? ` · ${discipline}` : ''}`;
 
   return (
-    <div className="rounded-lg border border-yellow-300 bg-white p-5 space-y-4">
+    <div className="space-y-4 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-surface)] p-5">
       <div>
-        <h4 className="text-base font-semibold text-yellow-900">{title}</h4>
-        <p className="text-sm text-yellow-800 mt-1">{buildQuotaUserMessage(warning)}</p>
+        <h4 className="text-base font-semibold text-[var(--ops-tone-warning-text)]">{title}</h4>
+        <p className="mt-1 text-sm text-[var(--ops-text-muted)]">{buildQuotaUserMessage(warning)}</p>
       </div>
       <div className="grid gap-3 md:grid-cols-5 text-sm">
         <QuotaMetric label="Athleten" value={athletesEntered} />
@@ -573,7 +511,7 @@ function QuotaWarningCard({
         headers={['Excel-Zeile', 'Name', 'Funktion', 'Geschlecht', 'Zimmerwunsch', 'EZ', 'Status']}
         rows={rows}
         footer="Rot markierte Zeilen verursachen aktuell die Quota-Warnung und sollten angepasst werden."
-        rowClassName={(row) => row[6] !== 'OK' ? 'bg-red-50' : ''}
+        rowClassName={(row) => row[6] !== 'OK' ? 'bg-[var(--ops-tone-error-surface)]' : ''}
       />
     </div>
   );
@@ -589,9 +527,9 @@ function QuotaMetric({
   highlight?: boolean;
 }) {
   return (
-    <div className={`rounded-lg border p-3 ${highlight ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}>
-      <div className={`text-xs ${highlight ? 'text-red-700' : 'text-gray-500'}`}>{label}</div>
-      <div className={`text-lg font-semibold ${highlight ? 'text-red-900' : 'text-gray-900'}`}>{value}</div>
+    <div className={`rounded-lg border p-3 ${highlight ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'}`}>
+      <div className={`text-xs ${highlight ? 'text-[var(--ops-tone-error-text)]' : 'text-[var(--ops-text-muted)]'}`}>{label}</div>
+      <div className="text-lg font-semibold text-[var(--ops-text)]">{value}</div>
     </div>
   );
 }
