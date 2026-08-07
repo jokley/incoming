@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Profiler, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation } from 'react-router';
 import {
   AlertCircle,
@@ -27,6 +27,7 @@ import {
 
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
+import { markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import type {
   AssignmentGridBooking,
@@ -465,6 +466,10 @@ export function Assignments() {
     ]);
   };
 
+  const onProfileRender = useCallback((id: string, _phase: string, actualDuration: number) => {
+    recordAssignmentRender(id, actualDuration);
+  }, []);
+
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -474,6 +479,16 @@ export function Assignments() {
   }
 
   return (
+    <Profiler id="Assignments" onRender={onProfileRender}>
+    <div className="relative">
+      {saving && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-50" role="status" aria-live="polite">
+          <div className="h-1 overflow-hidden bg-blue-950"><div className="h-full w-1/2 animate-pulse bg-blue-400" /></div>
+          <div className="absolute right-4 top-3 flex items-center gap-2 rounded-lg bg-[#122033] px-3 py-2 text-xs font-semibold text-blue-100 shadow-xl">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Zuweisung wird verarbeitet …
+          </div>
+        </div>
+      )}
     <div className="relative flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
       <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[var(--ops-border)] bg-[var(--ops-surface)] text-[var(--ops-text)] shadow-[var(--ops-shadow-md)] [--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-primary:#60a5fa] [--ops-primary-emphasis:#60a5fa] [--ops-text-muted:#c5cfdb]">
         <TopBar
@@ -619,6 +634,8 @@ export function Assignments() {
         {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
       </div>
     </div>
+    </div>
+    </Profiler>
   );
 }
 
@@ -1455,6 +1472,7 @@ function HotelCard({
       onClick={onSelect}
       onDrop={(event) => {
         event.preventDefault();
+        markAssignmentDrop();
         onDrop();
       }}
       onDragOver={(event) => {
@@ -1665,6 +1683,7 @@ function HotelDetailView({
                           if (!canAddPartner) return;
                           event.preventDefault();
                           event.stopPropagation();
+                          markAssignmentDrop();
                           onDropBooking(entry.booking);
                         }}
                         onDragOver={(event) => {
@@ -1718,6 +1737,7 @@ function HotelDetailView({
                       <div
                         onDrop={(event) => {
                           event.preventDefault();
+                          markAssignmentDrop();
                           onDropRoomType(hotel.hotelId, group.roomTypeId);
                         }}
                         onDragOver={(event) => {
