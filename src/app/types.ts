@@ -373,6 +373,20 @@ export interface FisImportPreview {
   rooms: FisImportPreviewRoom[];
   errors: FisImportIssue[];
   warnings: FisImportIssue[];
+  dispositionAnalysis: {
+    categories: Record<DispositionImpactCategory, DispositionImpact>;
+  };
+}
+
+export type DispositionImpactCategory =
+  | 'newAthletes' | 'updatedAthletes' | 'removedAthletes'
+  | 'dispositionAffected' | 'hotelAssignmentAffected' | 'roommateAffected'
+  | 'stayChanged' | 'roomRequirementChanged' | 'quotaAffected'
+  | 'approvalRequired' | 'additionalCostsPossible';
+
+export interface DispositionImpact {
+  count: number;
+  records: Array<Record<string, unknown>>;
 }
 
 export interface FisMockFilePair {

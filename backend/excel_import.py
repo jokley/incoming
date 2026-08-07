@@ -840,6 +840,184 @@ def _serialize_room_preview(room):
     }
 
 
+def _display_room_type(value):
+    value = normalize_string(value)
+    if 'single' in value or value in {'ez', '1'}:
+        return 'EZ'
+    if 'double' in value or 'shared' in value or value in {'dz', '2'}:
+        return 'DZ'
+    return value.upper() if value else '—'
+
+
+def _person_name(person):
+    return f"{person.firstname} {person.lastname}".strip()
+
+
+def _assignment_context(athlete):
+    """Return the existing disposition without changing it."""
+    membership = next(iter(athlete.room_booking_memberships), None)
+    if membership:
+        booking = membership.room_booking
+        partners = [item.athlete for item in booking.occupants if item.athlete_id != athlete.id]
+        return {
+            'hotel': booking.hotel.name if booking.hotel else None,
+            'roomType': _display_room_type(booking.room_type.name if booking.room_type else None),
+            'partners': partners,
+            'checkInDate': booking.check_in_date,
+            'checkOutDate': booking.check_out_date,
+        }
+    fis_assignment = next(iter(athlete.fis_room_assignments_as_person1), None)
+    if not fis_assignment:
+        fis_assignment = next(iter(athlete.fis_room_assignments_as_person2), None)
+    if fis_assignment:
+        partner = fis_assignment.person2 if fis_assignment.person1_id == athlete.id else fis_assignment.person1
+        return {
+            'hotel': fis_assignment.hotel.name if fis_assignment.hotel else None,
+            'roomType': _display_room_type(fis_assignment.room_type),
+            'partners': [partner] if partner else [],
+            'checkInDate': fis_assignment.check_in_date,
+            'checkOutDate': fis_assignment.check_out_date,
+        }
+    return None
+
+
+def build_disposition_analysis(people, rooms, quota_warnings):
+    """Compare staged import data to live planning; this function is read-only."""
+    categories = {
+        key: {'count': 0, 'records': []}
+        for key in (
+            'newAthletes', 'updatedAthletes', 'removedAthletes', 'dispositionAffected',
+            'hotelAssignmentAffected', 'roommateAffected', 'stayChanged',
+            'roomRequirementChanged', 'quotaAffected', 'approvalRequired',
+            'additionalCostsPossible',
+        )
+    }
+    imported_by_id = {}
+    room_by_key = {}
+    for room in rooms:
+        room_by_key[room.get('person1Key')] = room
+        if room.get('person2Key'):
+            room_by_key[room.get('person2Key')] = room
+
+    changed_by_id = {}
+    for person in people:
+        existing = _find_existing_athlete(person, _build_existing_athlete_maps())
+        name = f"{person.get('firstname', '')} {person.get('lastname', '')}".strip()
+        base = {'athlete': name, 'nation': person.get('nationCode'), 'discipline': person.get('industryName')}
+        if existing is None:
+            categories['newAthletes']['records'].append(base)
+            continue
+        imported_by_id[existing.id] = person
+        changes = []
+        for field, label in (('firstname', 'Vorname'), ('lastname', 'Nachname'), ('discipline', 'Disziplin'), ('gender', 'Gender')):
+            new_value = person.get('industryName') if field == 'discipline' else person.get(field)
+            if (getattr(existing, field, None) or '') != (new_value or ''):
+                changes.append({'field': label, 'old': getattr(existing, field, None), 'new': new_value})
+        old_arrival, old_departure = existing.arrival_date, existing.departure_date
+        new_arrival, new_departure = person.get('arrivalDate'), person.get('departureDate')
+        if old_arrival != new_arrival or old_departure != new_departure:
+            stay = {**base, 'old': {'arrival': old_arrival.isoformat() if old_arrival else None, 'departure': old_departure.isoformat() if old_departure else None},
+                    'new': {'arrival': new_arrival.isoformat() if new_arrival else None, 'departure': new_departure.isoformat() if new_departure else None},
+                    'impact': 'Hotelbelegung prüfen'}
+            categories['stayChanged']['records'].append(stay)
+            changes.append({'field': 'Aufenthalt', 'old': stay['old'], 'new': stay['new']})
+        room = room_by_key.get(person.get('matchKey'))
+        new_room_type = _display_room_type(room.get('roomType') if room else person.get('roomType'))
+        old_room_type = _display_room_type(existing.room_type)
+        if old_room_type != new_room_type:
+            categories['roomRequirementChanged']['records'].append({**base, 'old': old_room_type, 'new': new_room_type,
+                                                                      'impact': 'Single Room notwendig' if new_room_type == 'EZ' else 'Zimmerbelegung prüfen'})
+            changes.append({'field': 'Zimmerbedarf', 'old': old_room_type, 'new': new_room_type})
+        if changes:
+            categories['updatedAthletes']['records'].append({**base, 'changes': changes})
+            changed_by_id[existing.id] = changes
+
+    nations = {person.get('nationCode') for person in people if person.get('nationCode')}
+    disciplines = {person.get('industryName') for person in people if person.get('industryName')}
+    scoped_existing = Athlete.query.filter(Athlete.nation_code.in_(nations)).all() if nations else []
+    if disciplines:
+        scoped_existing = [person for person in scoped_existing if person.discipline in disciplines]
+    for existing in scoped_existing:
+        if existing.id not in imported_by_id:
+            record = {'athlete': _person_name(existing), 'nation': existing.nation_code, 'discipline': existing.discipline,
+                      'reason': 'Person ist im neuen Import nicht mehr vorhanden'}
+            categories['removedAthletes']['records'].append(record)
+            changed_by_id[existing.id] = [{'field': 'Person', 'old': 'vorhanden', 'new': 'entfernt'}]
+
+    # A changed pairing is itself a disposition impact, even if the person's
+    # master data and travel dates are unchanged.
+    for athlete_id, person in imported_by_id.items():
+        athlete = db.session.get(Athlete, athlete_id)
+        context = _assignment_context(athlete)
+        if not context or not context.get('partners'):
+            continue
+        room = room_by_key.get(person.get('matchKey'))
+        desired_key = None
+        if room:
+            desired_key = room.get('person2Key') if room.get('person1Key') == person.get('matchKey') else room.get('person1Key')
+        desired = next((candidate for candidate in people if candidate.get('matchKey') == desired_key), None)
+        desired_name = f"{desired.get('firstname', '')} {desired.get('lastname', '')}".strip() if desired else None
+        current_names = [_person_name(partner) for partner in context['partners']]
+        if not desired_name or desired_name not in current_names:
+            changed_by_id.setdefault(athlete_id, []).append(
+                {'field': 'Zimmerpartner', 'old': current_names, 'new': [desired_name] if desired_name else []}
+            )
+
+    affected_ids = set(changed_by_id)
+    for athlete_id in affected_ids:
+        athlete = db.session.get(Athlete, athlete_id)
+        context = _assignment_context(athlete)
+        if not context:
+            continue
+        reasons = [change['field'] for change in changed_by_id[athlete_id]]
+        disposition = {'athlete': _person_name(athlete), 'nation': athlete.nation_code,
+                       'reason': ', '.join(reasons), 'status': 'Disposition prüfen'}
+        categories['dispositionAffected']['records'].append(disposition)
+        if context.get('hotel'):
+            categories['hotelAssignmentAffected']['records'].append({**disposition, 'hotel': context['hotel']})
+
+        new_person = imported_by_id.get(athlete_id)
+        room = room_by_key.get(new_person.get('matchKey')) if new_person else None
+        old_partners = context.get('partners', [])
+        desired_partner_key = None
+        if room:
+            desired_partner_key = room.get('person2Key') if room.get('person1Key') == new_person.get('matchKey') else room.get('person1Key')
+        desired_partner = next((candidate for candidate in people if candidate.get('matchKey') == desired_partner_key), None)
+        old_partner_names = [_person_name(partner) for partner in old_partners]
+        desired_name = f"{desired_partner.get('firstname', '')} {desired_partner.get('lastname', '')}".strip() if desired_partner else None
+        if old_partners and (not desired_name or desired_name not in old_partner_names):
+            categories['roommateAffected']['records'].append({
+                'athlete': _person_name(athlete), 'oldPartners': old_partner_names,
+                'newPartners': [desired_name] if desired_name else [],
+                'reason': 'Partner entfernt, Reisezeitraum oder Zimmerbedarf geändert',
+            })
+
+        new_room = next((row for row in categories['roomRequirementChanged']['records'] if row['athlete'] == _person_name(athlete)), None)
+        stay = next((row for row in categories['stayChanged']['records'] if row['athlete'] == _person_name(athlete)), None)
+        extended = bool(stay and ((stay['new']['arrival'] and (not stay['old']['arrival'] or stay['new']['arrival'] < stay['old']['arrival'])) or
+                                  (stay['new']['departure'] and (not stay['old']['departure'] or stay['new']['departure'] > stay['old']['departure']))))
+        if extended or (new_room and new_room['new'] == 'EZ'):
+            categories['additionalCostsPossible']['records'].append({
+                'athlete': _person_name(athlete), 'nation': athlete.nation_code,
+                'reason': 'Zusätzliche Nächte' if extended else 'Wechsel auf Einzelzimmer',
+                'additionalCostPerNight': None, 'approvalRequired': True,
+            })
+
+    for warning in quota_warnings:
+        details = warning.get('details', {})
+        record = {
+            'nation': details.get('nationCode'), 'discipline': details.get('discipline'), 'gender': details.get('gender'),
+            'currentQuota': details.get('importedOfficials', details.get('importedSingleRooms')),
+            'allowedQuota': details.get('officialQuota', details.get('singleRoomsAllowed')),
+            'status': 'Genehmigung erforderlich', 'reason': warning.get('message'),
+        }
+        categories['quotaAffected']['records'].append(record)
+        categories['approvalRequired']['records'].append(record)
+    for category in categories.values():
+        category['count'] = len(category['records'])
+    return {'categories': categories}
+
+
 def cleanup_preview_store():
     now = datetime.utcnow()
     expired = [
@@ -869,6 +1047,9 @@ def create_fis_import_preview(entries_path, roomlist_path):
         })
     room_result = parse_room_list(room_df, people_result['people'])
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'])
+    disposition_analysis = build_disposition_analysis(
+        people_result['people'], room_result['rooms'], quota_warnings
+    )
 
     blocking_errors = people_result['errors'] + room_result['errors']
     preview = {
@@ -881,6 +1062,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
         'detectedDiscipline': next((person.get('industryName') for person in people_result['people'] if person.get('industryName')), None),
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
+        'dispositionAnalysis': disposition_analysis,
     }
 
     preview_token = uuid.uuid4().hex
@@ -914,6 +1096,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
         'rooms': [_serialize_room_preview(room) for room in room_result['rooms']],
         'errors': blocking_errors,
         'warnings': preview['warnings'],
+        'dispositionAnalysis': disposition_analysis,
     }
 
 
@@ -976,42 +1159,6 @@ def _snapshot_roomlist_fields(athlete):
     }
 
 
-def _replace_fis_assignments_for_import_scope(persisted_people):
-    imported_athlete_ids = {athlete.id for athlete in persisted_people.values() if athlete and athlete.id}
-    imported_disciplines = {
-        (athlete.discipline or '').strip()
-        for athlete in persisted_people.values()
-        if athlete and (athlete.discipline or '').strip()
-    }
-
-    replaced = 0
-    for assignment in FisRoomAssignment.query.all():
-        assignment_people = [assignment.person1]
-        if assignment.person2:
-            assignment_people.append(assignment.person2)
-
-        assignment_athlete_ids = {
-            athlete.id
-            for athlete in assignment_people
-            if athlete and athlete.id
-        }
-        assignment_disciplines = {
-            (athlete.discipline or '').strip()
-            for athlete in assignment_people
-            if athlete and (athlete.discipline or '').strip()
-        }
-
-        if (
-            assignment_athlete_ids & imported_athlete_ids
-            or (imported_disciplines and assignment_disciplines & imported_disciplines)
-        ):
-            db.session.delete(assignment)
-            replaced += 1
-
-    db.session.flush()
-    return replaced
-
-
 def confirm_fis_import(preview_token):
     cleanup_preview_store()
     preview = PREVIEW_STORE.get(preview_token)
@@ -1063,25 +1210,6 @@ def confirm_fis_import(preview_token):
         persisted_people[person['matchKey']] = athlete
         athlete_maps = _build_existing_athlete_maps()
 
-    replaced_assignments = _replace_fis_assignments_for_import_scope(persisted_people)
-
-    for room in preview['rooms']:
-        person1 = persisted_people.get(room['person1Key'])
-        person2 = persisted_people.get(room['person2Key']) if room.get('person2Key') else None
-        assignment = FisRoomAssignment(
-            import_run_id=run.id,
-            source_row_key=room['sourceRowKey'],
-            room_type=room['roomType'],
-            person1_id=person1.id,
-            person2_id=person2.id if person2 else None,
-            shared_with_raw_name=room.get('sharedWithRawName'),
-            shared_with_nation_code=room.get('sharedWithNationCode'),
-            check_in_date=room.get('checkInDate'),
-            check_out_date=room.get('checkOutDate'),
-            nightly_snapshot=json.dumps(room.get('daySnapshot', {})),
-        )
-        db.session.add(assignment)
-
     run.finished_at = datetime.utcnow()
     db.session.commit()
     PREVIEW_STORE.pop(preview_token, None)
@@ -1091,8 +1219,9 @@ def confirm_fis_import(preview_token):
         'summary': {
             'peopleCreated': created,
             'peopleUpdated': updated,
-            'fisRoomsImported': len(preview['rooms']),
-            'fisRoomsReplaced': replaced_assignments,
+            'fisRoomsImported': 0,
+            'fisRoomsReplaced': 0,
+            'dispositionsChanged': 0,
         },
         'run': run.to_dict(),
     }
