@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router';
 import { Button, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField } from '@mui/material';
 import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import type { RoomType } from '../types';
+import { ImportConflictNotice } from './ImportConflictNotice';
+import type { OperationsLocationState } from '../operationsContext';
 import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip, Toolbar } from '../design-system';
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 
@@ -48,6 +51,7 @@ function RoomTypeSummary({ roomType }: { roomType: RoomType }) {
 }
 
 export function RoomTypesManagement() {
+  const location=useLocation(); const operations=(location.state as OperationsLocationState|null)?.operationsContext;
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const permissions = usePermissions();
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
@@ -62,7 +66,7 @@ export function RoomTypesManagement() {
     try {
       setLoading(true);
       const data = await api.getRoomTypes();
-      setRoomTypes(data);
+      setRoomTypes(data); if(operations?.roomTypeId){const target=data.find(item=>item.id===operations.roomTypeId);if(target){setSelectedId(target.id);setDialog({open:true,roomType:target});}}
       setSelectedId(current => current && data.some(item => item.id === current) ? current : data[0]?.id || null);
       setError(null);
     } catch {
@@ -80,6 +84,7 @@ export function RoomTypesManagement() {
   if (loading) return <div className="flex h-64 items-center justify-center text-sm text-slate-500">Zimmertypen werden geladen …</div>;
 
   return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+    <ImportConflictNotice/>
     <PageHeader eyebrow="Operations Center" title="Zimmertypen" subtitle="Zimmerkategorien und maximale Belegung zentral verwalten." meta={<><StatusChip tone="primary">{roomTypes.length} Zimmertypen</StatusChip><StatusChip tone="info">bis zu {Math.max(0, ...roomTypes.map(item => item.maxPersons))} Personen</StatusChip></>} actions={<OpsButton onClick={() => setDialog({ open: true, roomType: null })} disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined}><Plus className="mr-2 inline h-4 w-4" />Zimmertyp hinzufügen</OpsButton>} />
     {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
     <div className="flex flex-col gap-4 xl:min-h-0 xl:flex-1 xl:flex-row">

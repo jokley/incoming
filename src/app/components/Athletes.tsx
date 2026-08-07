@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import {
   Box,
   Button,
@@ -19,6 +19,8 @@ import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
+import { ImportConflictNotice } from './ImportConflictNotice';
+import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 
 type FilterKey = 'nation' | 'discipline' | 'gender' | 'function' | 'status';
@@ -183,6 +185,7 @@ function ReadonlyField({ label, value }: { label: string; value?: string | null 
 
 export function Athletes() {
   const navigate = useNavigate();
+  const location = useLocation(); const operations = (location.state as OperationsLocationState | null)?.operationsContext;
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [search, setSearch] = useState('');
@@ -194,7 +197,8 @@ export function Athletes() {
     const load = async () => {
       try {
         setLoading(true);
-        setAthletes(await api.getAthletes());
+        const loaded = await api.getAthletes(); setAthletes(loaded);
+        if (operations?.personId) setSelectedAthlete(loaded.find(athlete => athlete.id === operations.personId) || null);
         setError(null);
       } catch {
         setError('Athleten konnten nicht geladen werden.');
@@ -235,6 +239,7 @@ export function Athletes() {
   if (loading) return <div className="flex h-64 items-center justify-center"><CircularProgress /></div>;
 
   return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+    <ImportConflictNotice />
     <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => athlete.assignment?.hasAssignment).length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => !athlete.assignment?.hasAssignment).length} offen</StatusChip></>} />
     {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
 
