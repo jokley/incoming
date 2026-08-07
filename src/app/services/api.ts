@@ -17,7 +17,7 @@ import {
 } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
 import { OfficialQuotaUsage } from './fisRules';
-import type { ImportSession } from '../data/importSessions';
+import type { ImportApproval, ImportSession } from '../data/importSessions';
 import { finishAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
 
 import {
@@ -772,6 +772,12 @@ class ApiService {
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
+  async decideImportTask(sessionId: string, taskId: string, decision: ImportApproval['decision'], comment: string): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/approvals/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ decision, comment }),
+    });
+  }
   async approveImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST' }); }
   async importSession(id: string): Promise<FisImportConfirmResult> { return this.request(`/import/sessions/${id}/import`, { method: 'POST' }); }
 
