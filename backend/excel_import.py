@@ -751,7 +751,7 @@ def parse_room_list(df, imported_people):
     }
 
 
-def build_quota_warnings(people, rooms):
+def build_quota_warnings(people, rooms, quota_checks=None):
     athlete_counts = {}
     official_counts = {}
     single_official_counts = {}
@@ -785,6 +785,15 @@ def build_quota_warnings(people, rooms):
         official_quota = compute_official_quota(athletes_entered)
         imported_officials = official_counts.get(key, 0)
         imported_single_rooms = single_official_counts.get(key, 0)
+        single_room_entitlement = compute_single_room_entitlement(imported_officials)
+        if quota_checks is not None:
+            quota_checks.append({
+                'nationCode': nation_code, 'discipline': discipline, 'gender': gender,
+                'officials': imported_officials, 'officialQuota': official_quota,
+                'singleRooms': imported_single_rooms, 'singleRoomsAllowed': single_room_entitlement,
+                'officialsExceeded': imported_officials > official_quota,
+                'singleRoomsExceeded': imported_single_rooms > single_room_entitlement,
+            })
         if imported_officials > official_quota:
             warnings.append({
                 'code': 'QUOTA_OFFICIALS_EXCEEDED',
@@ -799,7 +808,6 @@ def build_quota_warnings(people, rooms):
                     'existingAssignedOfficials': live_usage.get(key, 0),
                 },
             })
-        single_room_entitlement = compute_single_room_entitlement(imported_officials)
         if imported_single_rooms > single_room_entitlement:
             warnings.append({
                 'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
@@ -1079,7 +1087,8 @@ def create_fis_import_preview(entries_path, roomlist_path):
             },
         })
     room_result = parse_room_list(room_df, people_result['people'])
-    quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'])
+    quota_checks = []
+    quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'], quota_checks)
     disposition_analysis = build_disposition_analysis(
         people_result['people'], room_result['rooms'], quota_warnings
     )
@@ -1095,6 +1104,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
         'detectedDiscipline': next((person.get('industryName') for person in people_result['people'] if person.get('industryName')), None),
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
+        'quotaChecks': quota_checks,
         'dispositionAnalysis': disposition_analysis,
     }
 

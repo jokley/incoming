@@ -377,6 +377,7 @@ export interface FisImportPreview {
   rooms: FisImportPreviewRoom[];
   errors: FisImportIssue[];
   warnings: FisImportIssue[];
+  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
   };

@@ -1105,6 +1105,21 @@ with app.app_context():
 
     ensure_room_booking_columns()
 
+    def ensure_import_approval_columns():
+        cols = db.session.execute(text("PRAGMA table_info(import_approval)")).fetchall()
+        existing = {c[1] for c in cols}
+        needed = {
+            "approval_method": "VARCHAR(20)", "approval_by": "VARCHAR(200)",
+            "approval_date": "DATETIME", "contact_subject": "VARCHAR(300)",
+            "deadline_at": "DATETIME",
+        }
+        for name, sql_type in needed.items():
+            if name not in existing:
+                db.session.execute(text(f"ALTER TABLE import_approval ADD COLUMN {name} {sql_type}"))
+        db.session.commit()
+
+    ensure_import_approval_columns()
+
     def ensure_event_planning_columns():
         """Keep existing SQLite installations compatible with person-based planning."""
         cols = db.session.execute(text("PRAGMA table_info(event)")).fetchall()
@@ -1287,9 +1302,18 @@ def preview_fis_import():
                 description='Neue Meldeliste gespeichert; technische Prüfung abgeschlossen.' if not result['errors'] else 'Neue Meldeliste gespeichert; technische Fehler gefunden.',
                 username=user.username))
             for issue in quota_issues:
+                details = issue.get('details') or {}
+                combination = ' • '.join(filter(None, [details.get('nationCode'), details.get('discipline'), details.get('gender')]))
                 db.session.add(ImportApproval(session_id=session.id, nation=nation,
                     approval_type=issue.get('code', 'QUOTA'), description=issue.get('message', ''),
                     decision='PENDING', username=user.username))
+                db.session.add(ImportSessionEvent(session_id=session.id, event_type='QUOTA_VIOLATION',
+                    title='Single Room Quote verletzt' if issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED' else 'Official Quote verletzt',
+                    description=combination, username=user.username))
+            if not quota_issues and not result['errors']:
+                db.session.add(ImportSessionEvent(session_id=session.id, event_type='QUOTA_PASSED',
+                    title='Quote erfüllt', description='Alle Kombinationen aus Nation, Disziplin und Gender sind erfüllt.',
+                    username=user.username))
             db.session.commit()
             result['session'] = session.to_dict(include_preview=True)
         return jsonify(result), 200
@@ -1335,15 +1359,45 @@ def decide_import_approval(session_id, approval_id):
     approval = ImportApproval.query.filter_by(id=approval_id, session_id=session.id).first_or_404()
     data = request.get_json(silent=True) or {}
     decision = data.get('decision')
-    if decision not in {'APPROVED', 'REJECTED'}:
-        return jsonify({'error': 'decision must be APPROVED or REJECTED'}), 400
+    if decision not in {'APPROVED', 'NEW_LIST_ANNOUNCED'}:
+        return jsonify({'error': 'decision must be APPROVED or NEW_LIST_ANNOUNCED'}), 400
+    approval_type = data.get('approvalType')
+    if decision == 'APPROVED' and approval_type not in {'NATION_APPROVED', 'ORGANIZER_APPROVED'}:
+        return jsonify({'error': 'approvalType must identify the approving party'}), 400
+    method = data.get('approvalMethod', 'EMAIL')
+    if method not in {'EMAIL', 'PHONE'}:
+        return jsonify({'error': 'approvalMethod must be EMAIL or PHONE'}), 400
+    approval_by = str(data.get('approvalBy') or '').strip()
+    if not approval_by:
+        return jsonify({'error': 'approvalBy is required'}), 400
+    try:
+        approval_date = datetime.fromisoformat(str(data.get('approvalDate')).replace('Z', '+00:00')).replace(tzinfo=None)
+        deadline_at = datetime.fromisoformat(str(data.get('deadlineAt')).replace('Z', '+00:00')).replace(tzinfo=None) if data.get('deadlineAt') else None
+    except (TypeError, ValueError):
+        return jsonify({'error': 'approvalDate or deadlineAt is invalid'}), 400
+    if approval_type == 'ORGANIZER_APPROVED' and not deadline_at:
+        return jsonify({'error': 'deadlineAt is required for organizer approval'}), 400
     approval.decision = decision
+    approval.approval_type = approval_type or approval.approval_type
+    approval.approval_method = method
+    approval.approval_by = approval_by
+    approval.approval_date = approval_date
+    approval.contact_subject = str(data.get('contactSubject') or '').strip() or None
+    approval.deadline_at = deadline_at
     approval.comment = data.get('comment')
     approval.username = current_user().username
     approval.created_at = datetime.utcnow()
-    session.status = 'PROFESSIONALLY_REVIEWED' if all(a.decision == 'APPROVED' for a in session.approvals) else 'WAITING_FOR_NATION'
+    session.status = 'EXCEPTION_APPROVED' if all(a.decision == 'APPROVED' for a in session.approvals) else 'WAITING_FOR_NATION'
+    db.session.add(ImportSessionEvent(session_id=session.id, event_type='NATION_CONTACT',
+        title=f'Rückfrage an Nation per {"E-Mail" if method == "EMAIL" else "Telefon"}',
+        description=f'{approval_by}' + (f' · {data.get("contactSubject")}' if data.get('contactSubject') else ''),
+        username=current_user().username))
+    result_title = ('Neue Meldeliste angekündigt' if decision == 'NEW_LIST_ANNOUNCED' else
+                    ('Organisatorische Freigabe' if approval_type == 'ORGANIZER_APPROVED' else 'Ausnahme durch Nation genehmigt'))
     db.session.add(ImportSessionEvent(session_id=session.id, event_type='QUOTA_DECISION',
-        title='Quotenentscheidung dokumentiert', description=data.get('comment') or decision,
+        title=result_title, description=data.get('comment'), username=current_user().username))
+    db.session.add(ImportSessionEvent(session_id=session.id, event_type='STATUS_CHANGED',
+        title='Status', description='Warten auf Nation' if decision == 'NEW_LIST_ANNOUNCED' else 'Ausnahme genehmigt',
         username=current_user().username))
     db.session.commit()
     return jsonify(session.to_dict(include_preview=True))

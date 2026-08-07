@@ -61,7 +61,7 @@ class ImportRun(db.Model):
 IMPORT_SESSION_STATUSES = (
     'DRAFT', 'TECHNICALLY_REVIEWED', 'PROFESSIONALLY_REVIEWED',
     'WAITING_FOR_NATION', 'NEW_LIST_RECEIVED', 'RECHECK_REQUIRED',
-    'APPROVED', 'IMPORTED', 'ERROR',
+    'EXCEPTION_APPROVED', 'APPROVED', 'IMPORTED', 'ERROR',
     # Kept for records created by the first iteration of the Import Center.
     'PREVIEW_CREATED', 'READY_FOR_IMPORT', 'NATION_CLARIFICATION', 'REPLACED', 'ARCHIVED',
 )
@@ -164,6 +164,11 @@ class ImportApproval(db.Model):
     description = db.Column(db.Text, nullable=False)
     decision = db.Column(db.String(30), nullable=False)
     comment = db.Column(db.Text)
+    approval_method = db.Column(db.String(20))
+    approval_by = db.Column(db.String(200))
+    approval_date = db.Column(db.DateTime)
+    contact_subject = db.Column(db.String(300))
+    deadline_at = db.Column(db.DateTime)
     username = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -171,6 +176,11 @@ class ImportApproval(db.Model):
         return {'id': str(self.id), 'sessionId': str(self.session_id), 'nation': self.nation,
                 'type': self.approval_type, 'description': self.description,
                 'decision': self.decision, 'comment': self.comment, 'user': self.username,
+                'approvalType': self.approval_type if self.decision == 'APPROVED' else None,
+                'approvalMethod': self.approval_method, 'approvalBy': self.approval_by,
+                'approvalDate': self.approval_date.isoformat() + 'Z' if self.approval_date else None,
+                'contactSubject': self.contact_subject,
+                'deadlineAt': self.deadline_at.isoformat() + 'Z' if self.deadline_at else None,
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
 class RoomType(db.Model):
