@@ -53,6 +53,14 @@ type DragState = {
   label: string;
 };
 
+type PendingAssignmentAction = {
+  kind: 'assign' | 'unassign' | 'single';
+  unitId?: string;
+  athleteIds?: string[];
+  hotelId?: string;
+  bookingId?: string;
+};
+
 const REGION_COLORS: Record<string, string> = {
   Bludenz: '#4F8EF7',
   Montafon: '#34D399',
@@ -68,6 +76,8 @@ export function Assignments() {
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAssignmentAction | null>(null);
+  const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const [view, setView] = useState<AppView>('dispatch');
@@ -150,6 +160,7 @@ export function Assignments() {
 
   const loadQuotaUsage = async () => {
     try {
+      setQuotaRefreshing(true);
       const rows = await api.getOfficialQuotaUsage({
         nationCode: filterNation || undefined,
         discipline: filterDiscipline || undefined,
@@ -158,6 +169,8 @@ export function Assignments() {
       setQuotaUsage(rows);
     } catch (err) {
       console.error(err);
+    } finally {
+      setQuotaRefreshing(false);
     }
   };
 
@@ -329,6 +342,7 @@ export function Assignments() {
     if (!unit) return;
     const normalizedAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
     try {
+      setPendingAction({ kind: 'assign', unitId, athleteIds: normalizedAthleteIds, hotelId: slot.hotelId });
       setSaving(true);
       setError(null);
       await api.assignRoomBookingUnit({
@@ -352,6 +366,7 @@ export function Assignments() {
     } catch (err) {
       setError(extractErrorMessage(err, 'Zuweisung fehlgeschlagen'));
     } finally {
+      setPendingAction(null);
       setSaving(false);
     }
   };
@@ -362,6 +377,7 @@ export function Assignments() {
       return;
     }
     try {
+      setPendingAction({ kind: 'unassign', bookingId });
       setSaving(true);
       setError(null);
       await api.unassignRoomBookingUnit(bookingId);
@@ -373,6 +389,7 @@ export function Assignments() {
     } catch (err) {
       setError(extractErrorMessage(err, 'Ausbuchen fehlgeschlagen'));
     } finally {
+      setPendingAction(null);
       setSaving(false);
     }
   };
@@ -383,6 +400,7 @@ export function Assignments() {
       return;
     }
     try {
+      setPendingAction({ kind: 'unassign', bookingId, athleteIds: [athleteId] });
       setSaving(true);
       setError(null);
       await api.unassignRoomBookingOccupant(bookingId, athleteId);
@@ -393,6 +411,7 @@ export function Assignments() {
     } catch (err) {
       setError(extractErrorMessage(err, 'Teil-Ausbuchung fehlgeschlagen'));
     } finally {
+      setPendingAction(null);
       setSaving(false);
     }
   };
@@ -403,6 +422,7 @@ export function Assignments() {
       return;
     }
     try {
+      setPendingAction({ kind: 'single', bookingId });
       setSaving(true);
       setError(null);
       await api.updateAssignedUnit(bookingId, { countsAsSingle });
@@ -413,6 +433,7 @@ export function Assignments() {
     } catch (err) {
       setError(extractErrorMessage(err, 'EZ-Markierung fehlgeschlagen'));
     } finally {
+      setPendingAction(null);
       setSaving(false);
     }
   };
@@ -435,6 +456,7 @@ export function Assignments() {
     ]));
 
     try {
+      setPendingAction({ kind: 'assign', unitId, athleteIds: incomingAthleteIds, hotelId: booking.hotelId, bookingId: booking.bookingId });
       setSaving(true);
       setError(null);
       await api.assignRoomBookingUnit({
@@ -458,6 +480,7 @@ export function Assignments() {
     } catch (err) {
       setError(extractErrorMessage(err, 'Partner zum Doppelzimmer hinzufügen fehlgeschlagen'));
     } finally {
+      setPendingAction(null);
       setSaving(false);
     }
   };
@@ -483,7 +506,7 @@ export function Assignments() {
 
   return (
     <Profiler id="Assignments" onRender={onProfileRender}>
-    <div className="relative">
+    <div className="relative" aria-busy={saving}>
       {saving && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-50" role="status" aria-live="polite">
           <div className="h-1 overflow-hidden bg-blue-950"><div className="h-full w-1/2 animate-pulse bg-blue-400" /></div>
@@ -502,6 +525,7 @@ export function Assignments() {
           saving={saving}
           onRefresh={handleRefresh}
           quotaRows={quotaUsage}
+          quotaRefreshing={quotaRefreshing}
         />
 
         {showAlert && quotaViolations.length > 0 && (
@@ -550,6 +574,7 @@ export function Assignments() {
                 if (targetHotel) void handleAssignToHotel(unitId, targetHotel.hotelId, athleteIds);
               }}
               selectedUnitId={selected?.type === 'unit' ? selected.id : null}
+              pendingAction={pendingAction}
             />
           </aside>}
 
@@ -583,6 +608,7 @@ export function Assignments() {
                   onClearActiveHotel={() => setActiveHotelId(null)}
                   selectedBookingId={selected?.type === 'booking' ? selected.id : null}
                   onSelectBooking={(bookingId) => setSelected({ type: 'booking', id: bookingId })}
+                  pendingAction={pendingAction}
                 />
               ) : (
                 <EmptyCenter text="Keine Hotels für die aktuelle Auswahl gefunden." />
@@ -604,6 +630,7 @@ export function Assignments() {
                 nationOptions={nationOptions}
                 disciplineOptions={disciplineOptions}
                 genderOptions={genderOptions}
+                refreshing={quotaRefreshing}
               />
             )}
           </main>
@@ -619,6 +646,7 @@ export function Assignments() {
               onUnassignBooking={handleUnassignBooking}
               onUnassignOccupant={handleUnassignOccupant}
               onMarkBookingAsSingle={handleMarkBookingAsSingle}
+              pendingAction={pendingAction}
             />
           </AssignmentDialog>
         )}
@@ -650,6 +678,7 @@ function TopBar({
   saving,
   onRefresh,
   quotaRows,
+  quotaRefreshing,
 }: {
   view: AppView;
   onViewChange: (view: AppView) => void;
@@ -658,6 +687,7 @@ function TopBar({
   saving: boolean;
   onRefresh: () => void;
   quotaRows: OfficialQuotaUsage[];
+  quotaRefreshing: boolean;
 }) {
   return (
     <div className="flex h-14 items-center justify-between border-b border-[#334766] bg-[#122033] px-4">
@@ -692,7 +722,7 @@ function TopBar({
       </div>
 
       <div className="flex items-center gap-4 text-xs">
-        <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} />
+        <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} refreshing={quotaRefreshing} />
         <div className="flex items-center gap-2">
           <div className="w-20">
             <CapacityBar pct={progress.percent} trackClassName="bg-[#314766]" />
@@ -722,12 +752,13 @@ function TopBar({
   );
 }
 
-function LiveQuotaStrip({ rows, onOpen }: { rows: OfficialQuotaUsage[]; onOpen: () => void }) {
+function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage[]; onOpen: () => void; refreshing: boolean }) {
   const row = rows[0];
   if (!row) return <span className="hidden text-slate-500 xl:inline">Keine Quoten verfügbar</span>;
 
   return (
-    <button onClick={onOpen} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:border-[var(--ops-primary)] hover:bg-[#263a54] xl:flex">
+    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:border-[var(--ops-primary)] hover:bg-[#263a54] xl:flex">
+      {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[#122033]/95 py-0.5 text-[9px] text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
       <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
         <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-amber-300' : 'text-[var(--ops-text)]'}`}>
@@ -842,6 +873,7 @@ function QueueSidebar({
   onSelectUnit,
   onQuickAssignPair,
   selectedUnitId,
+  pendingAction,
 }: {
   units: RoomBookingUnit[];
   regularUnits: RoomBookingUnit[];
@@ -870,6 +902,7 @@ function QueueSidebar({
   onSelectUnit: (unitId: string) => void;
   onQuickAssignPair: (unitId: string, athleteIds: string[]) => void;
   selectedUnitId: string | null;
+  pendingAction: PendingAssignmentAction | null;
 }) {
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -955,6 +988,7 @@ function QueueSidebar({
                   onDragStart={onDragStart}
                   onDragEnd={onDragEnd}
                   onQuickAssign={onQuickAssignPair}
+                  pending={pendingAction?.unitId === unit.unitId}
                 />
               ))}
             </div>
@@ -975,6 +1009,7 @@ function QueueSidebar({
                 onDragStart={onDragStart}
                 onDragEnd={onDragEnd}
                 onQuickAssign={onQuickAssignPair}
+                pending={pendingAction?.unitId === unit.unitId}
               />
             ))}
             {!regularUnits.length && !shareRequests.length && (
@@ -1012,6 +1047,7 @@ function QueueUnitCard({
   onDragStart,
   onDragEnd,
   onQuickAssign,
+  pending,
 }: {
   unit: RoomBookingUnit;
   selected: boolean;
@@ -1023,6 +1059,7 @@ function QueueUnitCard({
   onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
   onDragEnd: () => void;
   onQuickAssign: (unitId: string, athleteIds: string[]) => void;
+  pending: boolean;
 }) {
   const primaryOccupant = unit.occupants[0];
   const partnerOccupant = unit.occupants[1] ?? null;
@@ -1037,8 +1074,10 @@ function QueueUnitCard({
   return (
     <div
       onClick={onSelect}
-      className={`w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging ? 'opacity-70' : ''}`}
+      aria-busy={pending}
+      className={`relative w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging || pending ? 'opacity-60' : ''}`}
     >
+      {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[#122033] px-2 py-1 text-[9px] font-semibold text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
@@ -1081,6 +1120,7 @@ function QueueUnitCard({
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
           unitId={unit.unitId}
+          pending={pending}
         />
         <QueueOccupantActionRow
           title="Zimmerpartner"
@@ -1092,10 +1132,12 @@ function QueueUnitCard({
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
           unitId={unit.unitId}
+          pending={pending}
         />
         {unit.occupants.length >= 2 && (
           <button
-            draggable={canEditAssignments}
+            draggable={canEditAssignments && !pending}
+            disabled={pending}
             title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
             onDragStart={() => onDragStart(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId), 'Beide zusammen')}
             onDragEnd={onDragEnd}
@@ -1103,7 +1145,7 @@ function QueueUnitCard({
               event.stopPropagation();
               onQuickAssign(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId));
             }}
-            className="rounded-lg bg-[var(--ops-primary-emphasis)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--ops-on-accent)] transition-colors hover:opacity-90"
+            className="rounded-lg bg-[var(--ops-primary-emphasis)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--ops-on-accent)] transition-colors hover:opacity-90 disabled:cursor-wait"
           >
             Beide zusammen zuweisen
           </button>
@@ -1123,6 +1165,7 @@ function QueueOccupantActionRow({
   onDragEnd,
   onQuickAssign,
   unitId,
+  pending,
 }: {
   title: string;
   occupant?: RoomBookingUnit['occupants'][number] | null;
@@ -1133,6 +1176,7 @@ function QueueOccupantActionRow({
   onDragEnd: () => void;
   onQuickAssign: (unitId: string, athleteIds: string[]) => void;
   unitId: string;
+  pending: boolean;
 }) {
   if (!occupant) {
     return (
@@ -1155,7 +1199,8 @@ function QueueOccupantActionRow({
       </div>
       <div className="mt-1 flex gap-1.5">
         <button
-          draggable={canEditAssignments}
+          draggable={canEditAssignments && !pending}
+          disabled={pending}
           title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
           onDragStart={() => onDragStart(unitId, [occupant.athleteId], occupant.firstname)}
           onDragEnd={onDragEnd}
@@ -1163,7 +1208,7 @@ function QueueOccupantActionRow({
             event.stopPropagation();
             onQuickAssign(unitId, [occupant.athleteId]);
           }}
-          className="flex-1 rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-text)] transition-colors hover:border-[var(--ops-primary)]"
+          className="flex-1 rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-text)] transition-colors hover:border-[var(--ops-primary)] disabled:cursor-wait"
         >
           Einzeln zuweisen
         </button>
@@ -1198,6 +1243,7 @@ function DispatchWorkspace({
   onClearActiveHotel,
   selectedBookingId,
   onSelectBooking,
+  pendingAction,
 }: {
   hotels: AssignmentGridHotel[];
   activeHotel: AssignmentGridHotel | null;
@@ -1225,6 +1271,7 @@ function DispatchWorkspace({
   onClearActiveHotel: () => void;
   selectedBookingId: string | null;
   onSelectBooking: (bookingId: string) => void;
+  pendingAction: PendingAssignmentAction | null;
 }) {
   return (
     <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)]">
@@ -1256,6 +1303,7 @@ function DispatchWorkspace({
           onClearActiveHotel={onClearActiveHotel}
           selectedBookingId={selectedBookingId}
           onSelectBooking={onSelectBooking}
+          pendingAction={pendingAction}
         />
       </div>
     </div>
@@ -1288,6 +1336,7 @@ function HotelGridOrDetail({
   onClearActiveHotel,
   selectedBookingId,
   onSelectBooking,
+  pendingAction,
 }: {
   hotels: AssignmentGridHotel[];
   activeHotel: AssignmentGridHotel | null;
@@ -1314,6 +1363,7 @@ function HotelGridOrDetail({
   onClearActiveHotel: () => void;
   selectedBookingId: string | null;
   onSelectBooking: (bookingId: string) => void;
+  pendingAction: PendingAssignmentAction | null;
 }) {
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]">
@@ -1333,6 +1383,7 @@ function HotelGridOrDetail({
           onDragOverHotel={onDragOverHotel}
           onDragLeaveHotel={onDragLeaveHotel}
           onDropHotel={onDropHotel}
+          pendingHotelId={pendingAction?.hotelId ?? null}
         />
       </div>}
       {activeHotel && (
@@ -1351,6 +1402,7 @@ function HotelGridOrDetail({
             onBack={onClearActiveHotel}
             selectedBookingId={selectedBookingId}
             onSelectBooking={onSelectBooking}
+            pendingAction={pendingAction}
           />
         </div>
       )}
@@ -1373,6 +1425,7 @@ function HotelGridView({
   onDragOverHotel,
   onDragLeaveHotel,
   onDropHotel,
+  pendingHotelId,
 }: {
   hotels: AssignmentGridHotel[];
   hotelSearch: string;
@@ -1388,6 +1441,7 @@ function HotelGridView({
   onDragOverHotel: (hotelId: string) => void;
   onDragLeaveHotel: () => void;
   onDropHotel: (hotelId: string) => void;
+  pendingHotelId: string | null;
 }) {
   const usedBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slot.bookings.reduce((bSum, booking) => bSum + booking.occupants.length, 0), 0), 0);
   const totalBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slot.capacity, 0), 0);
@@ -1437,6 +1491,7 @@ function HotelGridView({
               onDragOver={() => onDragOverHotel(hotel.hotelId)}
               onDragLeave={onDragLeaveHotel}
               onDrop={() => onDropHotel(hotel.hotelId)}
+              pending={pendingHotelId === hotel.hotelId}
             />
           ))}
         </div>
@@ -1455,6 +1510,7 @@ function HotelCard({
   onDragOver,
   onDragLeave,
   onDrop,
+  pending,
 }: {
   hotel: AssignmentGridHotel;
   active: boolean;
@@ -1465,6 +1521,7 @@ function HotelCard({
   onDragOver: () => void;
   onDragLeave: () => void;
   onDrop: () => void;
+  pending: boolean;
 }) {
   const totals = summarizeHotel(hotel);
   const regionColor = REGION_COLORS[hotel.region || ''] || '#4F8EF7';
@@ -1483,6 +1540,7 @@ function HotelCard({
         onDragOver();
       }}
       onDragLeave={onDragLeave}
+      aria-busy={pending}
       className={`group relative flex h-full min-h-[220px] cursor-pointer flex-col overflow-hidden rounded-2xl border transition-all ${
         dragOver
           ? canDrop
@@ -1493,6 +1551,7 @@ function HotelCard({
             : 'border-[#506987] bg-[#314763] hover:border-[#6580a1] hover:bg-[#395274]'
       }`}
     >
+      {pending && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#122033]/55" role="status" aria-live="polite"><span className="flex items-center gap-2 rounded-lg bg-[#122033] px-3 py-2 text-xs font-semibold text-blue-100"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span></div>}
       <div className="h-[3px] w-full" style={{ backgroundColor: regionColor }} />
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
@@ -1559,6 +1618,7 @@ function HotelDetailView({
   onBack,
   selectedBookingId,
   onSelectBooking,
+  pendingAction,
 }: {
   hotel: AssignmentGridHotel;
   draggingUnitId: string | null;
@@ -1573,6 +1633,7 @@ function HotelDetailView({
   onBack: () => void;
   selectedBookingId: string | null;
   onSelectBooking: (bookingId: string) => void;
+  pendingAction: PendingAssignmentAction | null;
 }) {
   const grouped = useMemo(() => {
     const map = new Map<string, AssignmentSlot[]>();
@@ -1696,7 +1757,9 @@ function HotelDetailView({
                           onDragOverBooking(entry.booking.bookingId);
                         }}
                         onDragLeave={onDragLeaveBooking}
-                        className={`flex h-full w-full items-start justify-between rounded-xl border px-3 py-2 text-left transition-all ${
+                        aria-busy={pendingAction?.bookingId === entry.booking.bookingId}
+                        disabled={pendingAction?.bookingId === entry.booking.bookingId}
+                        className={`relative flex h-full w-full items-start justify-between rounded-xl border px-3 py-2 text-left transition-all ${
                           selectedBookingId === entry.booking.bookingId
                             ? 'border-blue-400/60 bg-[#45607f]'
                             : isBookingDropTarget && canAddPartner
@@ -1704,6 +1767,7 @@ function HotelDetailView({
                               : 'border-[#506987] bg-[#395274] hover:border-[#6580a1]'
                         }`}
                       >
+                        {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[#122033]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
                         <div className="flex min-w-0 items-start gap-3">
                           <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
                             {entry.slot.roomNumber || `#${index + 1}`}
@@ -1906,7 +1970,7 @@ function getQuotaState(card: QuotaCard) {
 function QuotasPanel({
   rows, allUnits, assignedUnits, onSelect,
   filterNation, onFilterNation, filterDiscipline, onFilterDiscipline,
-  filterGender, onFilterGender, nationOptions, disciplineOptions, genderOptions,
+  filterGender, onFilterGender, nationOptions, disciplineOptions, genderOptions, refreshing,
 }: {
   rows: OfficialQuotaUsage[];
   allUnits: RoomBookingUnit[];
@@ -1921,16 +1985,17 @@ function QuotasPanel({
   nationOptions: string[];
   disciplineOptions: string[];
   genderOptions: string[];
+  refreshing: boolean;
 }) {
   const cards = buildQuotaCards(rows, allUnits, assignedUnits);
   const issues = cards.filter((card) => getQuotaState(card).tone !== 'success').length;
   return (
-    <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6">
+    <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
       <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--ops-primary)]"><Flag className="h-3.5 w-3.5" /> Live-Regelzentrale</div>
           <h2 className="text-xl font-bold text-[var(--ops-text)]">Quoten nach Nation, Disziplin &amp; Gender</h2>
-          <p className="mt-1 text-sm text-[var(--ops-text-muted)]">Regelverstöße, Freigaben und Dispositionsstand auf einen Blick.</p>
+          <p className="mt-1 flex items-center gap-2 text-sm text-[var(--ops-text-muted)]">Regelverstöße, Freigaben und Dispositionsstand auf einen Blick. {refreshing && <span className="flex items-center gap-1 text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> wird aktualisiert</span>}</p>
         </div>
         <div className="flex gap-2">
           <SummaryPill label="Kombinationen" value={cards.length} />
@@ -2078,6 +2143,7 @@ function DetailPanel({
   onUnassignBooking,
   onUnassignOccupant,
   onMarkBookingAsSingle,
+  pendingAction,
 }: {
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
@@ -2085,6 +2151,7 @@ function DetailPanel({
   onUnassignBooking: (bookingId: string) => void;
   onUnassignOccupant: (bookingId: string, athleteId: string) => void;
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
+  pendingAction: PendingAssignmentAction | null;
 }) {
   if (!selectedUnit && !selectedBookingContext) {
     return (
@@ -2104,7 +2171,7 @@ function DetailPanel({
   if (selectedBookingContext) {
     const { booking, hotel, slot } = selectedBookingContext;
     return (
-      <div className="flex h-full flex-col overflow-y-auto">
+      <div className="flex h-full flex-col overflow-y-auto" aria-busy={pendingAction?.bookingId === booking.bookingId}>
         <div className="flex items-start justify-between border-b border-[#334766] px-4 py-4">
           <div>
             <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Zimmerdetail</div>
@@ -2126,10 +2193,11 @@ function DetailPanel({
                   </div>
                   {booking.occupants.length > 1 && (
                     <button
+                      disabled={pendingAction?.bookingId === booking.bookingId}
                       onClick={() => onUnassignOccupant(booking.bookingId, occupant.athleteId)}
                       className="rounded-lg border border-amber-700/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
                     >
-                      Nur diese Person
+                      {pendingAction?.athleteIds?.includes(occupant.athleteId) ? <><RefreshCw className="mr-1 inline h-3 w-3 animate-spin" /> Loading</> : 'Nur diese Person'}
                     </button>
                   )}
                 </div>
@@ -2172,6 +2240,7 @@ function DetailPanel({
           </div>
           {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
             <button
+              disabled={pendingAction?.bookingId === booking.bookingId}
               onClick={() => onMarkBookingAsSingle(booking.bookingId, !booking.countsAsSingle)}
               className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
                 booking.countsAsSingle
@@ -2179,16 +2248,17 @@ function DetailPanel({
                   : 'border-[#5e7aa0] bg-[#314763] text-slate-100 hover:bg-[#395274]'
               }`}
             >
-              <Bed className="h-3.5 w-3.5" />
+              {pendingAction?.kind === 'single' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Bed className="h-3.5 w-3.5" />}
               {booking.countsAsSingle ? 'EZ-Markierung entfernen' : 'Als EZ werten'}
             </button>
           )}
           <button
+            disabled={pendingAction?.bookingId === booking.bookingId}
             onClick={() => onUnassignBooking(booking.bookingId)}
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
           >
-            <Trash2 className="h-3.5 w-3.5" />
-            Zuweisung entfernen
+            {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? 'Ausbuchen läuft...' : 'Zuweisung entfernen'}
           </button>
         </div>
       </div>
