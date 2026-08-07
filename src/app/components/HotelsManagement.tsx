@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation } from 'react-router';
 import { Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle, Stack, TextField } from '@mui/material';
 import { BedDouble, Building2, DoorOpen, Pencil, Plus, Search, Trash2, Users } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -9,6 +10,8 @@ import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, 
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 import { HotelContingentDialog } from './HotelContingentDialog';
 import type { HotelContingentValues } from './HotelContingentValidation';
+import { ImportConflictNotice } from './ImportConflictNotice';
+import type { OperationsLocationState } from '../operationsContext';
 import { OperationsTimeline, type TimelineRowData } from './timeline';
 
 type Tone = 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info';
@@ -22,15 +25,16 @@ function Metric({label,value,icon}:{label:string;value:number|string;icon:React.
 function HotelDialog({open,hotel,onClose,onSave}:{open:boolean;hotel:Hotel|null;onClose:()=>void;onSave:(v:{name:string;location:string;region:string})=>Promise<void>}) { const initial={name:hotel?.name||'',location:hotel?.location||'',region:hotel?.region||''}; const [form,setForm]=useState(initial),[saving,setSaving]=useState(false); useEffect(()=>{if(open)setForm(initial);},[open,hotel?.id]); return <CrudDialog open={open} title={hotel?'Hotel bearbeiten':'Hotel hinzufügen'} dirty={JSON.stringify(form)!==JSON.stringify(initial)} saving={saving} saveDisabled={!form.name.trim()} onClose={onClose} onSave={async()=>{setSaving(true);try{await onSave(form);onClose();}finally{setSaving(false);}}}><Stack spacing={2.25} sx={{pt:1}}><TextField required label="Hotelname" value={form.name} onChange={e=>setForm({...form,name:e.target.value})}/><TextField label="Ort" value={form.location} onChange={e=>setForm({...form,location:e.target.value})}/><TextField label="Region" value={form.region} onChange={e=>setForm({...form,region:e.target.value})}/></Stack></CrudDialog>; }
 
 export function HotelsManagement() {
- const detailScrollRef=useRef<HTMLDivElement>(null);
+ const detailScrollRef=useRef<HTMLDivElement>(null); const location=useLocation(); const operations=(location.state as OperationsLocationState|null)?.operationsContext;
  const permissions=usePermissions(); const [hotels,setHotels]=useState<Hotel[]>([]),[roomTypes,setRoomTypes]=useState<RoomType[]>([]),[bookings,setBookings]=useState<RoomBooking[]>([]),[loading,setLoading]=useState(true),[error,setError]=useState<string|null>(null),[selectedId,setSelectedId]=useState<string|null>(null),[search,setSearch]=useState(''),[region,setRegion]=useState('');
  const [hotelDialog,setHotelDialog]=useState<{open:boolean;hotel:Hotel|null}>({open:false,hotel:null}); const [contingentDialog,setContingentDialog]=useState<{open:boolean;mode:'create'|'edit';item:HotelRoomInventory|null}>({open:false,mode:'create',item:null}); const [deleting,setDeleting]=useState<HotelRoomInventory|null>(null);
- const load=async()=>{try{setLoading(true);const [h,r,b]=await Promise.all([api.getHotels(),api.getRoomTypes(),api.getRoomAssignments()]);setHotels(h);setRoomTypes(r);setBookings(b);setSelectedId(v=>v&&h.some(x=>x.id===v)?v:h[0]?.id||null);setError(null);}catch{setError('Hotels konnten nicht geladen werden.');}finally{setLoading(false);}}; useEffect(()=>{void load();},[]);
+ const load=async()=>{try{setLoading(true);const [h,r,b]=await Promise.all([api.getHotels(),api.getRoomTypes(),api.getRoomAssignments()]);setHotels(h);setRoomTypes(r);setBookings(b);setSelectedId(v=>operations?.hotelId&&h.some(x=>x.id===operations.hotelId)?operations.hotelId:v&&h.some(x=>x.id===v)?v:h[0]?.id||null); if(operations?.hotelId){const target=h.find(x=>x.id===operations.hotelId);if(target)setHotelDialog({open:true,hotel:target});}setError(null);}catch{setError('Hotels konnten nicht geladen werden.');}finally{setLoading(false);}}; useEffect(()=>{void load();},[]);
  const selected=hotels.find(h=>h.id===selectedId)||null, selectedStats=selected?stats(selected,bookings):null; const regions=useMemo(()=>[...new Set(hotels.map(h=>h.region).filter(Boolean) as string[])].sort(),[hotels]); const filtered=hotels.filter(h=>(!region||h.region===region)&&(!search.trim()||`${h.name} ${h.location} ${h.region}`.toLowerCase().includes(search.toLowerCase()))); const totals=hotels.reduce((a,h)=>{const s=stats(h,bookings);a.rooms+=s.freeRooms;a.beds+=s.freeBeds;return a;},{rooms:0,beds:0});
  const timelineRows:TimelineRowData[]=(selected?.roomInventories||[]).map(i=>({id:i.id,title:i.roomType.name,subtitle:`${i.roomCount} Zimmer · ${i.roomCount*i.roomType.maxPersons} Betten`,segments:[{id:i.id,start:i.availableFrom,end:i.availableUntil,color:'var(--ops-primary-emphasis)',tooltip:<span><b>{i.roomType.name}</b><br/>{date(i.availableFrom)} – {date(i.availableUntil)}<br/>{i.roomCount} Zimmer</span>}]}));
  useEffect(()=>{detailScrollRef.current?.scrollTo({top:0});},[selectedId]);
  if(loading)return <div className="flex h-64 items-center justify-center"><CircularProgress/></div>;
  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-5 xl:space-y-0">
+  <ImportConflictNotice/>
   <PageHeader eyebrow="Operations Center" title="Hotels & Zimmerkontingente" subtitle="Hotelstruktur, Verfügbarkeit und Kontingente im operativen Überblick." meta={<><StatusChip tone="success">{totals.rooms} freie Zimmer</StatusChip><StatusChip tone="primary">{totals.beds} freie Betten</StatusChip></>} actions={<OpsButton onClick={()=>setHotelDialog({open:true,hotel:null})} disabled={!permissions.canCreate} title={!permissions.canCreate?READ_ONLY_TOOLTIP:undefined}><Plus className="mr-2 inline h-4 w-4"/>Hotel hinzufügen</OpsButton>}/>
   {error&&<InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
   <div className="flex flex-col gap-5 xl:min-h-0 xl:flex-1 xl:flex-row">

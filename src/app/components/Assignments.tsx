@@ -25,6 +25,8 @@ import {
   X,
 } from 'lucide-react';
 
+import { ImportConflictNotice } from './ImportConflictNotice';
+import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
@@ -70,7 +72,8 @@ const REGION_COLORS: Record<string, string> = {
 export function Assignments() {
   const permissions = usePermissions();
   const location = useLocation();
-  const requestedAthleteId = (location.state as { athleteId?: string } | null)?.athleteId;
+  const routeState = location.state as ({ athleteId?: string; assignmentId?: string; view?: AppView; quotaKey?: string } & OperationsLocationState) | null;
+  const requestedAthleteId = routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
@@ -80,11 +83,11 @@ export function Assignments() {
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const [view, setView] = useState<AppView>('dispatch');
+  const [view, setView] = useState<AppView>(routeState?.view || (routeState?.operationsContext?.quotaKey ? 'quotas' : 'dispatch'));
   const [selected, setSelected] = useState<SelectedState>(null);
   const [activeHotelId, setActiveHotelId] = useState<string | null>(null);
   const [showAlert, setShowAlert] = useState(true);
-  const [selectedQuotaKey, setSelectedQuotaKey] = useState<string | null>(null);
+  const [selectedQuotaKey, setSelectedQuotaKey] = useState<string | null>(routeState?.quotaKey || routeState?.operationsContext?.quotaKey || null);
 
   const [queueSearch, setQueueSearch] = useState('');
   const [hotelSearch, setHotelSearch] = useState('');
@@ -117,7 +120,11 @@ export function Assignments() {
       ]);
       setPlanning(planningData);
       setAthletes(athletesData);
-      if (requestedAthleteId) {
+      if (requestedAssignmentId) {
+        const booking = planningData.hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings)).find(candidate => candidate.bookingId === requestedAssignmentId);
+        const unit = [...planningData.units.unassigned, ...planningData.units.assigned].find(candidate => candidate.unitId === requestedAssignmentId);
+        if (booking) { setSelected({type:'booking',id:booking.bookingId}); setActiveHotelId(booking.hotelId); } else if(unit) setSelected({type:'unit',id:unit.unitId});
+      } else if (requestedAthleteId) {
         const booking = planningData.hotels
           .flatMap((hotel) => hotel.slots.flatMap((slot) => slot.bookings))
           .find((candidate) => candidate.occupants.some((occupant) => occupant.athleteId === requestedAthleteId));
@@ -517,6 +524,7 @@ export function Assignments() {
       )}
     <div className="relative flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
       <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[var(--ops-border)] bg-[var(--ops-surface)] text-[var(--ops-text)] shadow-[var(--ops-shadow-md)] [--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-primary:#60a5fa] [--ops-primary-emphasis:#60a5fa] [--ops-text-muted:#c5cfdb]">
+        <div className="p-3 pb-0"><ImportConflictNotice/></div>
         <TopBar
           view={view}
           onViewChange={setView}

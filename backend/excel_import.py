@@ -880,6 +880,8 @@ def _assignment_context(athlete):
         partners = [item.athlete for item in booking.occupants if item.athlete_id not in identity_ids]
         return {
             'hotel': booking.hotel.name if booking.hotel else None,
+            'hotelId': str(booking.hotel_id) if booking.hotel_id else None, 'assignmentId': str(booking.id),
+            'roomTypeId': str(booking.room_type_id) if booking.room_type_id else None,
             'roomType': _display_room_type(booking.room_type.name if booking.room_type else None),
             'partners': partners,
             'checkInDate': booking.check_in_date,
@@ -892,6 +894,7 @@ def _assignment_context(athlete):
         partner = fis_assignment.person2 if fis_assignment.person1_id == athlete.id else fis_assignment.person1
         return {
             'hotel': fis_assignment.hotel.name if fis_assignment.hotel else None,
+            'hotelId': str(fis_assignment.hotel_id) if fis_assignment.hotel_id else None,
             'roomType': _display_room_type(fis_assignment.room_type),
             'partners': [partner] if partner else [],
             'checkInDate': fis_assignment.check_in_date,
@@ -927,6 +930,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
             categories['newAthletes']['records'].append(base)
             continue
         imported_by_id[existing.id] = person
+        base['personId'] = str(existing.id)
         changes = []
         for field, label in (('firstname', 'Vorname'), ('lastname', 'Nachname'), ('discipline', 'Disziplin'), ('gender', 'Gender')):
             new_value = person.get('industryName') if field == 'discipline' else person.get(field)
@@ -958,7 +962,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         scoped_existing = [person for person in scoped_existing if person.discipline in disciplines]
     for existing in scoped_existing:
         if existing.id not in imported_by_id:
-            record = {'athlete': _person_name(existing), 'nation': existing.nation_code, 'discipline': existing.discipline,
+            record = {'personId': str(existing.id), 'athlete': _person_name(existing), 'nation': existing.nation_code, 'discipline': existing.discipline,
                       'reason': 'Person ist im neuen Import nicht mehr vorhanden'}
             categories['removedAthletes']['records'].append(record)
             changed_by_id[existing.id] = [{'field': 'Person', 'old': 'vorhanden', 'new': 'entfernt'}]
@@ -989,7 +993,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         if not context:
             continue
         reasons = [change['field'] for change in changed_by_id[athlete_id]]
-        disposition = {'athlete': _person_name(athlete), 'nation': athlete.nation_code,
+        disposition = {'personId': str(athlete.id), 'athlete': _person_name(athlete), **{key: context[key] for key in ('assignmentId','hotelId','roomTypeId') if context.get(key)}, 'nation': athlete.nation_code,
                        'reason': ', '.join(reasons), 'status': 'Disposition prüfen'}
         categories['dispositionAffected']['records'].append(disposition)
         if context.get('hotel'):
@@ -1029,6 +1033,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
             'currentQuota': details.get('importedOfficials', details.get('importedSingleRooms')),
             'allowedQuota': details.get('officialQuota', details.get('singleRoomsAllowed')),
             'status': 'Genehmigung erforderlich', 'reason': warning.get('message'),
+            'quotaKey': f"{details.get('nationCode')}::{details.get('discipline') or '—'}::{details.get('gender')}",
         }
         categories['quotaAffected']['records'].append(record)
         categories['approvalRequired']['records'].append(record)
