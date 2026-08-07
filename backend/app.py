@@ -576,7 +576,10 @@ def _build_partial_unit_variant(unit, occupant):
 
 
 def _build_room_booking_units():
-    fis_assignments = FisRoomAssignment.query.order_by(FisRoomAssignment.check_in_date.asc().nullslast(), FisRoomAssignment.id.asc()).all()
+    fis_assignments = FisRoomAssignment.query.options(
+        db.joinedload(FisRoomAssignment.person1),
+        db.joinedload(FisRoomAssignment.person2),
+    ).order_by(FisRoomAssignment.check_in_date.asc().nullslast(), FisRoomAssignment.id.asc()).all()
     bookings = RoomBooking.query.options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     booking_index = {}
     athlete_booking_index = {}
@@ -678,6 +681,14 @@ def _build_assignment_planning_view():
     timeline_start = min(all_dates).isoformat() if all_dates else None
     timeline_end = max(all_dates).isoformat() if all_dates else None
 
+    bookings_by_hotel_room_type = {}
+    bookings_by_slot = {}
+    for booking in bookings:
+        hotel_room_type_key = (booking.hotel_id, booking.room_type_id)
+        bookings_by_hotel_room_type.setdefault(hotel_room_type_key, []).append(booking)
+        slot_key = (str(booking.hotel_id), str(booking.room_type_id), booking.room_number or '')
+        bookings_by_slot.setdefault(slot_key, []).append(booking)
+
     hotel_sections = []
     for hotel in hotels:
         by_room_type = {}
@@ -687,7 +698,8 @@ def _build_assignment_planning_view():
 
         slots = []
         for room_type_id, payload in by_room_type.items():
-            slots.extend(_build_virtual_slots(hotel, payload['roomType'], payload['inventories'], bookings))
+            relevant_bookings = bookings_by_hotel_room_type.get((hotel.id, room_type_id), [])
+            slots.extend(_build_virtual_slots(hotel, payload['roomType'], payload['inventories'], relevant_bookings))
 
         hotel_sections.append({
             'hotelId': str(hotel.id),
@@ -738,7 +750,11 @@ def _build_assignment_planning_view():
                     covers_requested_range = slot['dateCoverage']['availableFrom'] <= unit['checkInDate'] and slot['dateCoverage']['availableUntil'] >= unit['checkOutDate']
                 slot_copy['dateCoverage'] = dict(slot['dateCoverage'])
                 slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
-                validation = _calculate_unit_validation(unit, slot_copy, bookings)
+                relevant_bookings = bookings_by_slot.get(
+                    (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
+                    [],
+                )
+                validation = _calculate_unit_validation(unit, slot_copy, relevant_bookings)
                 validations.append({
                     'slotId': slot['slotId'],
                     **validation,
@@ -756,7 +772,11 @@ def _build_assignment_planning_view():
                         covers_requested_range = slot['dateCoverage']['availableFrom'] <= partial_unit['checkInDate'] and slot['dateCoverage']['availableUntil'] >= partial_unit['checkOutDate']
                     slot_copy['dateCoverage'] = dict(slot['dateCoverage'])
                     slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
-                    partial_validation = _calculate_unit_validation(partial_unit, slot_copy, bookings)
+                    relevant_bookings = bookings_by_slot.get(
+                        (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
+                        [],
+                    )
+                    partial_validation = _calculate_unit_validation(partial_unit, slot_copy, relevant_bookings)
                     partial_validations.append({
                         'slotId': slot['slotId'],
                         **partial_validation,
@@ -969,7 +989,10 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     usage_grouped = {}
     single_used_grouped = {}
 
-    bookings = RoomBooking.query.all()
+    bookings = RoomBooking.query.options(
+        db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete),
+        db.joinedload(RoomBooking.room_type),
+    ).all()
     for booking in bookings:
         for occupant in booking.occupants or []:
             a = occupant.athlete
