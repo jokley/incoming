@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Dialog, DialogContent } from '@mui/material';
-import { AlertTriangle, CheckCircle2, Clock3, Mail, UserRound } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Mail } from 'lucide-react';
 
 import type { ImportApproval, ImportSession } from '../data/importSessions';
 import { DialogFooter, DialogHeader, InfoPanel, OpsButton, SectionHeader, StatusChip } from '../design-system';
@@ -53,20 +53,26 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
     {task && <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]">
       <DialogHeader title={task.approval.description || 'Aufgabe entscheiden'} subtitle={`${task.nation}${task.discipline ? ` · ${task.discipline}` : ''}`} />
       <DialogContent dividers className="space-y-6">
-        <section>
-          <SectionHeader title="Problem" />
-          <div className="mt-3 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-4">
-            <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><div><p className="font-bold">{task.approval.description}</p><p className="mt-2 text-sm text-[var(--ops-text-muted)]"><strong className="text-[var(--ops-text)]">Regel:</strong> {task.rule}</p><p className="mt-1 text-sm text-[var(--ops-text-muted)]"><strong className="text-[var(--ops-text)]">Auswirkung:</strong> {task.impact}</p></div></div>
+        <section><SectionHeader title="1. Betroffene Person" subtitle="Wichtigste Stammdaten aus der Meldung" />
+          <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4">
+            <div className="grid gap-3 sm:grid-cols-2"><div><div className="text-xs font-bold text-[var(--ops-text-subtle)]">Athlet</div><div className="mt-1 font-bold">{task.people.length ? task.people.join(', ') : 'Gemeldete Gruppe'}</div></div><div><div className="text-xs font-bold text-[var(--ops-text-subtle)]">Nation</div><div className="mt-1 font-bold">{task.nation}</div></div>{task.discipline&&<div><div className="text-xs font-bold text-[var(--ops-text-subtle)]">Disziplin</div><div className="mt-1 font-bold">{task.discipline}</div></div>}</div>
           </div>
         </section>
 
-        <section><SectionHeader title="Betroffene Personen" subtitle="Aus der produktiven Planung und der neuen Meldung" />
-          <div className="mt-3 flex flex-wrap gap-2">{task.people.length ? task.people.map(person => <button type="button" key={person} className="flex items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 text-sm font-bold hover:border-[var(--ops-border-strong)]"><UserRound className="h-4 w-4"/>{person}</button>) : <span className="text-sm text-[var(--ops-text-muted)]">Die Aufgabe betrifft die gemeldete Gruppe der Nation {task.nation}.</span>}</div>
+        <section>
+          <SectionHeader title="2. Änderung" />
+          <div className="mt-3 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-4">
+            <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><div><p className="font-bold">{task.approval.description}</p><p className="mt-2 text-sm text-[var(--ops-text-muted)]">{task.rule}</p></div></div>
+          </div>
         </section>
 
-        <InfoPanel tone="info" title="Empfehlung">{task.recommendation}</InfoPanel>
+        <section><SectionHeader title="3. Auswirkungen" />
+          <div className="mt-3 flex items-center gap-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4"><CheckCircle2 className="h-5 w-5 shrink-0 text-[var(--ops-success)]"/><p className="font-bold">{task.impact}</p></div>
+        </section>
 
-        <fieldset><legend><SectionHeader title="Entscheidung" /></legend><div className="mt-3 grid gap-2">{decisionOptions.map(option => { const Icon=option.icon; return <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${decision===option.value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'}`}><input className="mt-1 accent-[var(--ops-primary)]" type="radio" name="operations-decision" checked={decision===option.value} onChange={()=>setDecision(option.value)}/><Icon className="mt-0.5 h-4 w-4 shrink-0"/><span><strong className="block text-sm">{option.title}</strong><span className="text-xs text-[var(--ops-text-muted)]">{option.hint}</span></span></label>; })}</div></fieldset>
+        <section><SectionHeader title="4. Empfohlene Aktion" /><div className="mt-3"><InfoPanel tone="info" title="Empfehlung">{task.recommendation}</InfoPanel></div>
+          <fieldset className="mt-4"><legend className="text-sm font-bold">Aktion im bestehenden Freigabeprozess ausführen</legend><div className="mt-3 grid gap-2">{decisionOptions.map(option => { const Icon=option.icon; return <label key={option.value} className={`flex cursor-pointer items-start gap-3 rounded-xl border p-3 ${decision===option.value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'}`}><input className="mt-1 accent-[var(--ops-primary)]" type="radio" name="operations-decision" checked={decision===option.value} onChange={()=>setDecision(option.value)}/><Icon className="mt-0.5 h-4 w-4 shrink-0"/><span><strong className="block text-sm">{option.title}</strong><span className="text-xs text-[var(--ops-text-muted)]">{option.hint}</span></span></label>; })}</div></fieldset>
+        </section>
 
         <section><label htmlFor="decision-comment" className="block"><SectionHeader title="Bemerkung" subtitle="Telefonnotiz, Mail oder ergänzende Information" /></label><textarea id="decision-comment" value={comment} onChange={event=>setComment(event.target.value)} rows={4} placeholder="Bemerkung zur Entscheidung …" className="mt-3 w-full resize-y rounded-xl border border-[var(--ops-border)] bg-[var(--ops-background)] p-3 text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-subtle)] focus:border-[var(--ops-primary)]" /></section>
       </DialogContent>
