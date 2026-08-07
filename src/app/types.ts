@@ -67,6 +67,9 @@ export interface Athlete {
   competitorId?: string;
   accredId?: string;
   fisCode?: string;
+  sourceRecordIds?: string[];
+  disciplines?: string[];
+  stays?: Array<{ arrivalDate?: string | null; departureDate?: string | null; discipline?: string | null }>;
   lastname: string;
   firstname: string;
   nationCode: string;
@@ -127,6 +130,7 @@ export interface Athlete {
     checkOutDate?: string | null;
     bookingId?: string | null;
   };
+  assignments?: NonNullable<Athlete['assignment']>[];
 }
 
 export interface RoomAssignment {

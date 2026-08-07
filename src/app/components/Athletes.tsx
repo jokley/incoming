@@ -112,7 +112,8 @@ function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; op
             <ReadonlyField label="Vorname" value={athlete?.firstname} />
             <ReadonlyField label="Nachname" value={athlete?.lastname} />
             <ReadonlyField label="Nation" value={athlete?.nationCode} />
-            <ReadonlyField label="Disziplin" value={athlete?.discipline} />
+            <ReadonlyField label="Disziplinen" value={athlete?.disciplines?.join(', ') || athlete?.discipline} />
+            <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${stay.discipline})` : ''}`).join(', ')} />
             <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
             <ReadonlyField label="FIS-ID" value={athlete?.fisCode} />
@@ -129,7 +130,7 @@ function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; op
 
         <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Nur Information – Zuweisungen erfolgen ausschließlich im Assignment-Modul.">
           <FieldGrid>
-            <ReadonlyField label="Hotel" value={athlete?.assignment?.hotelName} />
+            <ReadonlyField label="Hotel" value={athlete?.assignments?.map(item => item.hotelName).filter(Boolean).join(', ') || athlete?.assignment?.hotelName} />
             <ReadonlyField label="Zimmertyp" value={athlete?.assignment?.roomTypeName || athlete?.roomType} />
             <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
             <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
@@ -218,11 +219,11 @@ export function Athletes() {
 
   const filtered = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
-    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
+    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
     const statusMatches = !filters.status || (filters.status === 'unassigned' && !athlete.assignment?.hasAssignment) || (filters.status === 'changed' && athlete.hasPendingRoomlistReview);
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
-      && (!filters.discipline || athlete.discipline === filters.discipline)
+      && (!filters.discipline || (athlete.disciplines || [athlete.discipline]).includes(filters.discipline))
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.function || (athlete.function || 'Athlet') === filters.function)
       && statusMatches;
@@ -270,7 +271,7 @@ export function Athletes() {
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]"><Users className="h-4 w-4" /></span><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b>{athlete.fisCode && <span className="text-[11px] text-[var(--ops-text-subtle)]">FIS {athlete.fisCode}</span>}</div></div></Cell>
-                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
+                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell>
                   <button
                     type="button"
