@@ -1,25 +1,31 @@
-import type { ReactNode } from 'react';
-import { Archive, Eye, MoreHorizontal } from 'lucide-react';
-import { ContentCard, OpsButton, SectionHeader, StatusChip } from '../design-system';
-import { ImportSessionStatus, mockImportSessions } from '../data/importSessions';
+import { useState } from 'react';
+import { AlertCircle, Clock3, Search } from 'lucide-react';
+import { clsx } from 'clsx';
+import { ContentCard, EmptyState, SectionHeader, StatusChip } from '../design-system';
+import { ImportSession, ImportSessionStatus, mockImportSessions } from '../data/importSessions';
 
 const statusTone: Record<ImportSessionStatus, 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info'> = {
   UPLOAD: 'neutral', PREVIEW: 'primary', PRÜFUNG: 'info', 'RÜCKSPRACHE NATION': 'warning', 'IMPORT BEREIT': 'warning', IMPORTIERT: 'success', ERSETZT: 'neutral', ABGEBROCHEN: 'neutral', FEHLER: 'error',
 };
 
-export function ImportQueue() {
-  return <ContentCard className="overflow-hidden" surface="raised">
-    <div className="flex flex-col gap-4 border-b border-[var(--ops-divider)] p-5 md:flex-row md:items-center md:justify-between"><SectionHeader title="Import Queue" subtitle="Alle Import Sessions im Staging – parallel, versioniert und unabhängig voneinander." /><div className="flex items-center gap-2 text-xs text-[var(--ops-text-muted)]"><span className="h-2 w-2 rounded-full bg-[var(--ops-success)]" />Mock-Daten · keine produktiven Änderungen</div></div>
-    <div className="overflow-x-auto"><table className="w-full min-w-[1120px] text-sm"><thead className="bg-[var(--ops-surface-elevated)] text-left text-xs font-bold uppercase tracking-wide text-[var(--ops-text-subtle)]"><tr>{['Nation', 'Disziplin', 'Uploadzeit', 'Benutzer', 'Status', 'Warnungen', 'Fehler', 'Version', 'Aktionen'].map(header => <th key={header} className="px-4 py-3">{header}</th>)}</tr></thead>
-      <tbody>{mockImportSessions.map(session => <tr key={session.id} className="border-t border-[var(--ops-divider)] transition-colors hover:bg-[var(--ops-surface-elevated)]">
-        <td className="px-4 py-3"><div className="font-extrabold text-[var(--ops-text)]">{session.nation}</div><div className="font-mono text-[11px] text-[var(--ops-text-subtle)]">{session.id}</div></td><td className="px-4 py-3">{session.discipline}</td><td className="whitespace-nowrap px-4 py-3 text-[var(--ops-text-muted)]">{session.uploadedAt}</td><td className="px-4 py-3 text-[var(--ops-text-muted)]">{session.uploadedBy}</td><td className="px-4 py-3"><SessionStatusChip status={session.status} /></td><td className="px-4 py-3"><Count value={session.warnings} tone="warning" /></td><td className="px-4 py-3"><Count value={session.errors} tone="error" /></td><td className="px-4 py-3 font-mono text-[var(--ops-text-muted)]">v{session.version}</td><td className="px-4 py-3"><div className="flex gap-1"><IconAction label={`${session.id} öffnen`}><Eye className="h-4 w-4" /></IconAction><IconAction label={`${session.id} archivieren`}><Archive className="h-4 w-4" /></IconAction><IconAction label={`Weitere Aktionen für ${session.id}`}><MoreHorizontal className="h-4 w-4" /></IconAction></div></td>
-      </tr>)}</tbody></table></div><div className="border-t border-[var(--ops-divider)] px-5 py-3 text-xs text-[var(--ops-text-muted)]">6 Import Sessions · zuletzt aktualisiert: gerade eben</div>
+export function ImportQueue({ selectedId, onSelect }: { selectedId: string | null; onSelect: (session: ImportSession) => void }) {
+  const [search, setSearch] = useState('');
+  const filtered = mockImportSessions.filter(session => `${session.id} ${session.nation} ${session.discipline} ${session.uploadedBy}`.toLowerCase().includes(search.toLowerCase()));
+  return <ContentCard surface="raised" className="flex min-h-0 flex-col overflow-hidden xl:w-[23rem] xl:shrink-0">
+    <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
+      <SectionHeader title={`Import Queue (${mockImportSessions.length})`} subtitle="Session auswählen und rechts bearbeiten" />
+      <label className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
+        <Search className="h-4 w-4 text-[var(--ops-text-subtle)]" />
+        <input value={search} onChange={event => setSearch(event.target.value)} className="w-full bg-transparent text-sm outline-none placeholder:text-[var(--ops-text-subtle)]" placeholder="Session, Nation oder Benutzer" aria-label="Import Queue durchsuchen" />
+      </label>
+    </div>
+    <div className="space-y-2 overflow-y-auto p-3 xl:min-h-0 xl:flex-1">
+      {filtered.map(session => <button key={session.id} type="button" onClick={() => onSelect(session)} className={clsx('w-full rounded-xl border p-3 text-left transition-colors hover:bg-[var(--ops-surface-elevated)]', selectedId === session.id ? 'border-[var(--ops-primary)] bg-[var(--ops-surface-overlay)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]')}>
+        <div className="flex items-start justify-between gap-2"><div><div className="font-extrabold">{session.nation} · {session.discipline}</div><div className="mt-0.5 font-mono text-[11px] text-[var(--ops-text-subtle)]">{session.id} · v{session.version}</div></div><StatusChip tone={statusTone[session.status]}>{session.status}</StatusChip></div>
+        <div className="mt-3 grid grid-cols-[1fr_auto] items-end gap-2 text-xs text-[var(--ops-text-muted)]"><div className="space-y-1"><div className="flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" />{session.uploadedAt}</div><div>von {session.uploadedBy}</div></div><div className="flex gap-1.5"><StatusChip tone="warning">{session.warnings} W</StatusChip><StatusChip tone={session.errors ? 'error' : 'neutral'}>{session.errors} F</StatusChip></div></div>
+      </button>)}
+      {!filtered.length && <EmptyState title="Keine Import Sessions gefunden" />}
+    </div>
+    <div className="flex shrink-0 items-center gap-2 border-t border-[var(--ops-divider)] px-4 py-3 text-xs text-[var(--ops-text-muted)]"><AlertCircle className="h-3.5 w-3.5" />Mock-Daten · keine produktiven Änderungen</div>
   </ContentCard>;
 }
-
-function Count({ value, tone }: { value: number; tone: 'warning' | 'error' }) { return value ? <StatusChip tone={tone}>{value}</StatusChip> : <span className="text-[var(--ops-text-subtle)]">0</span>; }
-function SessionStatusChip({ status }: { status: ImportSessionStatus }) {
-  if (status === 'IMPORT BEREIT') return <span className="inline-flex rounded-[var(--ops-radius-sm)] border border-[rgba(240,136,62,.55)] bg-[rgba(240,136,62,.18)] px-2 py-0.5 text-[11px] font-bold text-[#FFD8B5]">{status}</span>;
-  return <StatusChip tone={statusTone[status]}>{status}</StatusChip>;
-}
-function IconAction({ label, children }: { label: string; children: ReactNode }) { return <OpsButton type="button" aria-label={label} title={`${label} (Platzhalter)`} className="!p-2">{children}</OpsButton>; }
