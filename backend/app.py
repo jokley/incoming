@@ -1,6 +1,6 @@
 from flask import Flask, g, request, jsonify, send_from_directory, send_file
 from flask_cors import CORS
-from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment
+from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportApproval
 from auth import load_user_from_request, current_user
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from datetime import datetime
@@ -1147,6 +1147,28 @@ def preview_fis_import():
         entries_path = detected['entries']
         room_path = detected['roomlist']
         result = create_fis_import_preview(entries_path, room_path)
+        if request.form.get('createSession') == 'true':
+            nations = sorted({person.get('nationCode') for person in result['people'] if person.get('nationCode')})
+            if len(nations) != 1:
+                return jsonify({'error': 'Eine Import Session muss genau eine Nation enthalten.', 'nations': nations}), 400
+            nation = nations[0]
+            latest_version = db.session.query(func.max(ImportSession.version)).filter_by(nation=nation).scalar() or 0
+            quota_issues = [issue for issue in result['warnings'] if issue.get('code', '').startswith('QUOTA_')]
+            status = 'ERROR' if result['errors'] else ('NATION_CLARIFICATION' if quota_issues else 'READY_FOR_IMPORT')
+            user = current_user()
+            session = ImportSession(
+                nation=nation, discipline=result.get('detectedDiscipline'), version=latest_version + 1,
+                status=status, preview_token=result['previewToken'],
+                preview_json=json.dumps(result, ensure_ascii=False), uploaded_by=user.username,
+            )
+            db.session.add(session)
+            db.session.flush()
+            for issue in quota_issues:
+                db.session.add(ImportApproval(session_id=session.id, nation=nation,
+                    approval_type=issue.get('code', 'QUOTA'), description=issue.get('message', ''),
+                    decision='PENDING', username=user.username))
+            db.session.commit()
+            result['session'] = session.to_dict()
         return jsonify(result), 200
     except Exception as e:
         import traceback
@@ -1171,6 +1193,83 @@ def confirm_previewed_fis_import():
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/import/sessions', methods=['GET'])
+def list_import_sessions():
+    sessions = ImportSession.query.order_by(ImportSession.created_at.desc()).all()
+    return jsonify([session.to_dict() for session in sessions])
+
+
+@app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
+def get_import_session(session_id):
+    return jsonify(ImportSession.query.get_or_404(session_id).to_dict(include_preview=True))
+
+
+@app.route('/api/import/sessions/<int:session_id>/approvals/<int:approval_id>', methods=['PATCH'])
+def decide_import_approval(session_id, approval_id):
+    session = ImportSession.query.get_or_404(session_id)
+    approval = ImportApproval.query.filter_by(id=approval_id, session_id=session.id).first_or_404()
+    data = request.get_json(silent=True) or {}
+    decision = data.get('decision')
+    if decision not in {'APPROVED', 'REJECTED'}:
+        return jsonify({'error': 'decision must be APPROVED or REJECTED'}), 400
+    approval.decision = decision
+    approval.comment = data.get('comment')
+    approval.username = current_user().username
+    approval.created_at = datetime.utcnow()
+    session.status = 'READY_FOR_IMPORT' if all(a.decision == 'APPROVED' for a in session.approvals) else 'NATION_CLARIFICATION'
+    db.session.commit()
+    return jsonify(session.to_dict(include_preview=True))
+
+
+@app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
+def approve_import_session(session_id):
+    session = ImportSession.query.get_or_404(session_id)
+    preview = json.loads(session.preview_json or '{}')
+    if preview.get('errors'):
+        return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.'}), 409
+    if any(approval.decision != 'APPROVED' for approval in session.approvals):
+        return jsonify({'error': 'Alle erforderlichen Entscheidungen müssen getroffen werden.'}), 409
+    if session.status in {'IMPORTED', 'REPLACED', 'ARCHIVED'}:
+        return jsonify({'error': 'Diese Session kann nicht mehr freigegeben werden.'}), 409
+    session.status, session.approved_at = 'APPROVED', datetime.utcnow()
+    session.approved_by = current_user().username
+    db.session.commit()
+    return jsonify(session.to_dict(include_preview=True))
+
+
+@app.route('/api/import/sessions/<int:session_id>/import', methods=['POST'])
+def import_approved_session(session_id):
+    session = ImportSession.query.get_or_404(session_id)
+    if session.status != 'APPROVED' or not session.approved_at:
+        return jsonify({'error': 'Die Session muss vor dem Import explizit freigegeben werden.'}), 409
+    try:
+        result = confirm_fis_import(session.preview_token)
+        now = datetime.utcnow()
+        previous = ImportSession.query.filter(ImportSession.nation == session.nation,
+            ImportSession.id != session.id, ImportSession.status.notin_(['REPLACED', 'ARCHIVED'])).all()
+        for older in previous:
+            older.status, older.replaced_by_id = 'REPLACED', session.id
+        session.status, session.imported_at = 'IMPORTED', now
+        db.session.commit()
+        result['session'] = session.to_dict()
+        return jsonify(result)
+    except Exception as exc:
+        db.session.rollback()
+        session.status, session.error_message = 'ERROR', str(exc)
+        db.session.commit()
+        return jsonify({'error': str(exc)}), 400
+
+
+@app.route('/api/import/sessions/<int:session_id>/archive', methods=['POST'])
+def archive_import_session(session_id):
+    session = ImportSession.query.get_or_404(session_id)
+    if session.status not in {'IMPORTED', 'REPLACED', 'ERROR'}:
+        return jsonify({'error': 'Nur abgeschlossene Sessions können archiviert werden.'}), 409
+    session.status, session.archived_at = 'ARCHIVED', datetime.utcnow()
+    db.session.commit()
+    return jsonify(session.to_dict())
 
 
 @app.route('/api/import/fis/mock-files', methods=['GET'])

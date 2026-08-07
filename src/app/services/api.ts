@@ -17,6 +17,7 @@ import {
 } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
 import { OfficialQuotaUsage } from './fisRules';
+import type { ImportSession } from '../data/importSessions';
 
 import {
   mockRoomTypes as initialRoomTypes,
@@ -740,9 +741,10 @@ class ApiService {
   // IMPORT
   // ============================================================================
 
-  async previewFisImport(files: File[]): Promise<FisImportPreview> {
+  async previewFisImport(files: File[], createSession = false): Promise<FisImportPreview & { session?: ImportSession }> {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
+    if (createSession) formData.append('createSession', 'true');
 
     const response = await fetch(`${API_BASE_URL}/import/fis/preview`, {
       method: 'POST',
@@ -761,6 +763,11 @@ class ApiService {
 
     return response.json();
   }
+
+  async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
+  async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
+  async approveImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST' }); }
+  async importSession(id: string): Promise<FisImportConfirmResult> { return this.request(`/import/sessions/${id}/import`, { method: 'POST' }); }
 
   async confirmFisImport(previewToken: string): Promise<FisImportConfirmResult> {
     return this.request<FisImportConfirmResult>('/import/fis/confirm', {
