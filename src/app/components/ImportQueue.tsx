@@ -5,7 +5,7 @@ import { ContentCard, EmptyState, SectionHeader, StatusChip } from '../design-sy
 import { completedImportStatuses, IMPORT_SESSION_STATUS, ImportSession, ImportSessionStatus } from '../data/importSessions';
 
 const statusTone: Record<ImportSessionStatus, 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info'> = {
-  DRAFT:'neutral', PREVIEW_CREATED:'primary', READY_FOR_IMPORT:'info', NATION_CLARIFICATION:'warning', APPROVED:'success', IMPORTED:'success', REPLACED:'neutral', ARCHIVED:'neutral', ERROR:'error',
+  DRAFT:'neutral', TECHNICALLY_REVIEWED:'primary', PROFESSIONALLY_REVIEWED:'info', WAITING_FOR_NATION:'warning', NEW_LIST_RECEIVED:'primary', RECHECK_REQUIRED:'warning', PREVIEW_CREATED:'primary', READY_FOR_IMPORT:'info', NATION_CLARIFICATION:'warning', APPROVED:'success', IMPORTED:'success', REPLACED:'neutral', ARCHIVED:'neutral', ERROR:'error',
 };
 
 export function ImportQueue({ sessions, selectedId, isCreating, onCreate, onSelect }: { sessions: ImportSession[]; selectedId: string | null; isCreating: boolean; onCreate: () => void; onSelect: (session: ImportSession) => void }) {

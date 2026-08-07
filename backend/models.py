@@ -59,13 +59,16 @@ class ImportRun(db.Model):
 
 
 IMPORT_SESSION_STATUSES = (
-    'DRAFT', 'PREVIEW_CREATED', 'READY_FOR_IMPORT', 'NATION_CLARIFICATION',
-    'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'ERROR',
+    'DRAFT', 'TECHNICALLY_REVIEWED', 'PROFESSIONALLY_REVIEWED',
+    'WAITING_FOR_NATION', 'NEW_LIST_RECEIVED', 'RECHECK_REQUIRED',
+    'APPROVED', 'IMPORTED', 'ERROR',
+    # Kept for records created by the first iteration of the Import Center.
+    'PREVIEW_CREATED', 'READY_FOR_IMPORT', 'NATION_CLARIFICATION', 'REPLACED', 'ARCHIVED',
 )
 
 
 class ImportSession(db.Model):
-    """Durable staging/audit record for exactly one nation's upload."""
+    """Long-lived workflow for one nation; uploads are immutable versions."""
     __tablename__ = 'import_session'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -86,25 +89,68 @@ class ImportSession(db.Model):
 
     approvals = db.relationship('ImportApproval', backref='session', lazy=True,
                                 cascade='all, delete-orphan')
+    versions = db.relationship('ImportSessionVersion', backref='session', lazy=True,
+                               cascade='all, delete-orphan', order_by='ImportSessionVersion.version')
+    history = db.relationship('ImportSessionEvent', backref='session', lazy=True,
+                              cascade='all, delete-orphan', order_by='ImportSessionEvent.created_at')
     __table_args__ = (db.UniqueConstraint('nation', 'version', name='uq_import_session_nation_version'),)
 
     def to_dict(self, include_preview=False):
         preview = json.loads(self.preview_json) if self.preview_json else None
+        latest_upload = self.versions[-1].created_at if self.versions else self.created_at
         result = {
             'id': str(self.id), 'nation': self.nation, 'discipline': self.discipline,
             'version': self.version, 'status': self.status,
             'uploadedBy': self.uploaded_by,
-            'uploadedAt': self.created_at.isoformat() + 'Z',
+            'uploadedAt': latest_upload.isoformat() + 'Z',
             'approvedAt': self.approved_at.isoformat() + 'Z' if self.approved_at else None,
             'approvedBy': self.approved_by, 'importedAt': self.imported_at.isoformat() + 'Z' if self.imported_at else None,
             'errorMessage': self.error_message,
             'errors': len((preview or {}).get('errors', [])),
             'warnings': len((preview or {}).get('warnings', [])),
             'approvals': [approval.to_dict() for approval in self.approvals],
+            'versions': [version.to_dict() for version in self.versions],
+            'history': [event.to_dict() for event in self.history],
         }
         if include_preview:
             result['preview'] = preview
         return result
+
+
+class ImportSessionVersion(db.Model):
+    """Immutable result of one pair of files received for a session."""
+    __tablename__ = 'import_session_version'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('import_session.id'), nullable=False, index=True)
+    version = db.Column(db.Integer, nullable=False)
+    preview_token = db.Column(db.String(64))
+    preview_json = db.Column(db.Text)
+    uploaded_by = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    __table_args__ = (db.UniqueConstraint('session_id', 'version', name='uq_import_session_version'),)
+
+    def to_dict(self):
+        preview = json.loads(self.preview_json) if self.preview_json else {}
+        return {'id': str(self.id), 'version': self.version, 'uploadedBy': self.uploaded_by,
+                'uploadedAt': self.created_at.isoformat() + 'Z',
+                'errors': len(preview.get('errors', [])), 'warnings': len(preview.get('warnings', []))}
+
+
+class ImportSessionEvent(db.Model):
+    """Append-only, user-visible workflow history."""
+    __tablename__ = 'import_session_event'
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('import_session.id'), nullable=False, index=True)
+    event_type = db.Column(db.String(50), nullable=False)
+    title = db.Column(db.String(200), nullable=False)
+    description = db.Column(db.Text)
+    username = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {'id': str(self.id), 'type': self.event_type, 'title': self.title,
+                'description': self.description, 'user': self.username,
+                'timestamp': self.created_at.isoformat() + 'Z'}
 
 
 class ImportApproval(db.Model):
