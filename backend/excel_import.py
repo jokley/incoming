@@ -628,9 +628,9 @@ def parse_room_list(df, imported_people):
         if not person1:
             person1 = indexed_people['by_name_no_nation'].get(build_name_key(lastname, firstname, ''))
         if not person1:
-            errors.append({
+            warnings.append({
                 'code': 'ROOM_PERSON_NOT_FOUND',
-                'message': f'Room row {row_number} could not match person1',
+                'message': f'New person detected in room row {row_number}',
                 'details': {'row': row_number, 'lastname': lastname, 'firstname': firstname, 'nationCode': nation_code},
             })
             continue
@@ -668,9 +668,9 @@ def parse_room_list(df, imported_people):
             if not person2:
                 person2 = indexed_people['by_name_no_nation'].get(build_name_key(partner_lastname, partner_firstname, ''))
             if not person2:
-                errors.append({
+                warnings.append({
                     'code': 'ROOM_PARTNER_NOT_FOUND',
-                    'message': f'Room row {row_number} could not match shared partner',
+                    'message': f'New room partner detected in room row {row_number}',
                     'details': {'row': row_number, 'sharedWithName': shared_with_raw_name, 'sharedWithNationcode': shared_with_nation_code},
                 })
 
@@ -941,7 +941,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         if old_arrival != new_arrival or old_departure != new_departure:
             stay = {**base, 'old': {'arrival': old_arrival.isoformat() if old_arrival else None, 'departure': old_departure.isoformat() if old_departure else None},
                     'new': {'arrival': new_arrival.isoformat() if new_arrival else None, 'departure': new_departure.isoformat() if new_departure else None},
-                    'impact': 'Hotelbelegung prüfen'}
+                    'impact': 'Bestehende Disposition betroffen'}
             categories['stayChanged']['records'].append(stay)
             changes.append({'field': 'Aufenthalt', 'old': stay['old'], 'new': stay['new']})
         room = room_by_key.get(person.get('matchKey'))
@@ -949,7 +949,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         old_room_type = _display_room_type(existing.room_type)
         if old_room_type != new_room_type:
             categories['roomRequirementChanged']['records'].append({**base, 'old': old_room_type, 'new': new_room_type,
-                                                                      'impact': 'Single Room notwendig' if new_room_type == 'EZ' else 'Zimmerbelegung prüfen'})
+                                                                      'impact': 'Bestehende Disposition betroffen'})
             changes.append({'field': 'Zimmerbedarf', 'old': old_room_type, 'new': new_room_type})
         if changes:
             categories['updatedAthletes']['records'].append({**base, 'changes': changes})
@@ -993,8 +993,17 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         if not context:
             continue
         reasons = [change['field'] for change in changed_by_id[athlete_id]]
-        disposition = {'personId': str(athlete.id), 'athlete': _person_name(athlete), **{key: context[key] for key in ('assignmentId','hotelId','roomTypeId') if context.get(key)}, 'nation': athlete.nation_code,
-                       'reason': ', '.join(reasons), 'status': 'Disposition prüfen'}
+        disposition = {
+            'personId': str(athlete.id),
+            'athlete': _person_name(athlete),
+            **{key: context[key] for key in ('assignmentId', 'hotelId', 'roomTypeId') if context.get(key)},
+            'nation': athlete.nation_code,
+            'hotel': context.get('hotel'),
+            'roomType': context.get('roomType'),
+            'roommates': [_person_name(partner) for partner in context.get('partners', [])],
+            'reason': ', '.join(reasons),
+            'status': 'Bestehende Disposition betroffen',
+        }
         categories['dispositionAffected']['records'].append(disposition)
         if context.get('hotel'):
             categories['hotelAssignmentAffected']['records'].append({**disposition, 'hotel': context['hotel']})
