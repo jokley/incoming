@@ -57,6 +57,76 @@ class ImportRun(db.Model):
             'finishedAt': self.finished_at.isoformat() if self.finished_at else None,
         }
 
+
+IMPORT_SESSION_STATUSES = (
+    'DRAFT', 'PREVIEW_CREATED', 'READY_FOR_IMPORT', 'NATION_CLARIFICATION',
+    'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'ERROR',
+)
+
+
+class ImportSession(db.Model):
+    """Durable staging/audit record for exactly one nation's upload."""
+    __tablename__ = 'import_session'
+
+    id = db.Column(db.Integer, primary_key=True)
+    nation = db.Column(db.String(10), nullable=False, index=True)
+    discipline = db.Column(db.String(100))
+    version = db.Column(db.Integer, nullable=False)
+    status = db.Column(db.String(30), nullable=False, default='DRAFT', index=True)
+    preview_token = db.Column(db.String(64))
+    preview_json = db.Column(db.Text)
+    uploaded_by = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    approved_at = db.Column(db.DateTime)
+    approved_by = db.Column(db.String(100))
+    imported_at = db.Column(db.DateTime)
+    archived_at = db.Column(db.DateTime)
+    replaced_by_id = db.Column(db.Integer, db.ForeignKey('import_session.id'))
+    error_message = db.Column(db.Text)
+
+    approvals = db.relationship('ImportApproval', backref='session', lazy=True,
+                                cascade='all, delete-orphan')
+    __table_args__ = (db.UniqueConstraint('nation', 'version', name='uq_import_session_nation_version'),)
+
+    def to_dict(self, include_preview=False):
+        preview = json.loads(self.preview_json) if self.preview_json else None
+        result = {
+            'id': str(self.id), 'nation': self.nation, 'discipline': self.discipline,
+            'version': self.version, 'status': self.status,
+            'uploadedBy': self.uploaded_by,
+            'uploadedAt': self.created_at.isoformat() + 'Z',
+            'approvedAt': self.approved_at.isoformat() + 'Z' if self.approved_at else None,
+            'approvedBy': self.approved_by, 'importedAt': self.imported_at.isoformat() + 'Z' if self.imported_at else None,
+            'errorMessage': self.error_message,
+            'errors': len((preview or {}).get('errors', [])),
+            'warnings': len((preview or {}).get('warnings', [])),
+            'approvals': [approval.to_dict() for approval in self.approvals],
+        }
+        if include_preview:
+            result['preview'] = preview
+        return result
+
+
+class ImportApproval(db.Model):
+    """Decision record prepared for quota and other exceptional approvals."""
+    __tablename__ = 'import_approval'
+
+    id = db.Column(db.Integer, primary_key=True)
+    session_id = db.Column(db.Integer, db.ForeignKey('import_session.id'), nullable=False, index=True)
+    nation = db.Column(db.String(10), nullable=False)
+    approval_type = db.Column(db.String(50), nullable=False)
+    description = db.Column(db.Text, nullable=False)
+    decision = db.Column(db.String(30), nullable=False)
+    comment = db.Column(db.Text)
+    username = db.Column(db.String(100), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {'id': str(self.id), 'sessionId': str(self.session_id), 'nation': self.nation,
+                'type': self.approval_type, 'description': self.description,
+                'decision': self.decision, 'comment': self.comment, 'user': self.username,
+                'timestamp': self.created_at.isoformat() + 'Z'}
+
 class RoomType(db.Model):
     """Zimmertyp - definiert MaxPersonen pro Zimmertyp"""
     __tablename__ = 'room_type'
