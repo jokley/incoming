@@ -161,11 +161,14 @@ export function Assignments() {
     }
   };
 
-  const allUnits = planning?.units.unassigned ?? [];
-  const assignedUnits = planning?.units.assigned ?? [];
-  const allUnitsCombined = [...allUnits, ...assignedUnits];
-  const allHotels = planning?.hotels ?? [];
-  const validationByUnit = planning?.validationByUnit ?? {};
+  // Keep collection identities stable while unrelated UI state (saving, dialogs,
+  // drag targets) changes. The profiler showed these short-lived arrays invalidated
+  // every downstream memo on each parent render even though planning was unchanged.
+  const allUnits = useMemo(() => planning?.units.unassigned ?? [], [planning]);
+  const assignedUnits = useMemo(() => planning?.units.assigned ?? [], [planning]);
+  const allUnitsCombined = useMemo(() => [...allUnits, ...assignedUnits], [allUnits, assignedUnits]);
+  const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
+  const validationByUnit = useMemo(() => planning?.validationByUnit ?? {}, [planning]);
 
   const unitById = useMemo(() => {
     const map = new Map<string, RoomBookingUnit>();
