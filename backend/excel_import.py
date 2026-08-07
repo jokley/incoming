@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 
 import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
+from sqlalchemy import func
 
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
@@ -385,10 +386,15 @@ def validate_required_columns(df, required_columns):
 def _build_existing_athlete_maps():
     athletes = Athlete.query.all()
     maps = {
+        'by_fis_code': {},
         'by_competitor_id': {},
         'by_name_key': {},
     }
     for athlete in athletes:
+        if athlete.fis_code:
+            # FIS code is the domain identity.  Keep the oldest productive row as
+            # the canonical target when legacy imports left duplicates behind.
+            maps['by_fis_code'].setdefault(str(athlete.fis_code).strip().upper(), athlete)
         if athlete.competitor_id:
             maps['by_competitor_id'][str(athlete.competitor_id)] = athlete
         maps['by_name_key'][build_name_key(athlete.lastname, athlete.firstname, athlete.nation_code)] = athlete
@@ -396,6 +402,9 @@ def _build_existing_athlete_maps():
 
 
 def _find_existing_athlete(person_record, athlete_maps):
+    fis_code = person_record.get('fisCode')
+    if fis_code:
+        return athlete_maps['by_fis_code'].get(str(fis_code).strip().upper())
     competitor_id = person_record.get('competitorId')
     if competitor_id:
         existing = athlete_maps['by_competitor_id'].get(str(competitor_id))
@@ -490,7 +499,8 @@ def parse_entries_list(df, athlete_maps):
             continue
 
         competitor_id = normalize_whitespace(row.get('Competitorid/Staff ID')) or None
-        unique_key = competitor_id or build_name_key(lastname, firstname, nation_code)
+        fis_code = normalize_whitespace(row.get('Fiscode')) or None
+        unique_key = fis_code or competitor_id or build_name_key(lastname, firstname, nation_code)
         if unique_key in seen_keys:
             errors.append({
                 'code': 'ENTRY_DUPLICATE_PERSON',
@@ -526,7 +536,7 @@ def parse_entries_list(df, athlete_maps):
             'function': normalize_whitespace(row.get('Function')) or None,
             'competitorId': competitor_id,
             'accredId': normalize_whitespace(row.get('Accredid')) or None,
-            'fisCode': normalize_whitespace(row.get('Fiscode')) or None,
+            'fisCode': fis_code,
             'lastname': lastname,
             'firstname': firstname,
             'nationCode': nation_code,
@@ -855,10 +865,19 @@ def _person_name(person):
 
 def _assignment_context(athlete):
     """Return the existing disposition without changing it."""
-    membership = next(iter(athlete.room_booking_memberships), None)
+    # Follow the domain identity, not the particular legacy import row. This
+    # makes an assignment attached to any historical duplicate visible to the
+    # current productive person.
+    identity_rows = [athlete]
+    if athlete.fis_code:
+        identity_rows = Athlete.query.filter(
+            func.upper(func.trim(Athlete.fis_code)) == athlete.fis_code.strip().upper()
+        ).all()
+    membership = next((membership for row in identity_rows for membership in row.room_booking_memberships), None)
     if membership:
         booking = membership.room_booking
-        partners = [item.athlete for item in booking.occupants if item.athlete_id != athlete.id]
+        identity_ids = {row.id for row in identity_rows}
+        partners = [item.athlete for item in booking.occupants if item.athlete_id not in identity_ids]
         return {
             'hotel': booking.hotel.name if booking.hotel else None,
             'roomType': _display_room_type(booking.room_type.name if booking.room_type else None),
@@ -866,9 +885,9 @@ def _assignment_context(athlete):
             'checkInDate': booking.check_in_date,
             'checkOutDate': booking.check_out_date,
         }
-    fis_assignment = next(iter(athlete.fis_room_assignments_as_person1), None)
+    fis_assignment = next((assignment for row in identity_rows for assignment in row.fis_room_assignments_as_person1), None)
     if not fis_assignment:
-        fis_assignment = next(iter(athlete.fis_room_assignments_as_person2), None)
+        fis_assignment = next((assignment for row in identity_rows for assignment in row.fis_room_assignments_as_person2), None)
     if fis_assignment:
         partner = fis_assignment.person2 if fis_assignment.person1_id == athlete.id else fis_assignment.person1
         return {

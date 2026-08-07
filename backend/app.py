@@ -1960,9 +1960,32 @@ def get_athletes():
         if current is None:
             assignment_map[athlete.id] = summary
 
+    # Legacy databases may contain one row per import/event.  The public athlete
+    # resource represents people and is therefore grouped by the existing FIS
+    # identity. Rows without a FIS code remain distinct for backwards
+    # compatibility until their authoritative identifier arrives.
+    people = {}
+    for athlete in athletes:
+        identity = ('fis', athlete.fis_code.strip().upper()) if athlete.fis_code else ('legacy', athlete.id)
+        people.setdefault(identity, []).append(athlete)
+
     result = []
-    for a in athletes:
+    for identity, records in people.items():
+        a = max(records, key=lambda row: (row.updated_at or row.created_at or datetime.min, row.id))
         data = a.to_dict()
+        record_ids = {record.id for record in records}
+        data['id'] = str(min(record_ids))
+        data['sourceRecordIds'] = [str(value) for value in sorted(record_ids)]
+        data['disciplines'] = sorted({record.discipline for record in records if record.discipline})
+        data['stays'] = [
+            {
+                'arrivalDate': record.arrival_date.isoformat() if record.arrival_date else None,
+                'departureDate': record.departure_date.isoformat() if record.departure_date else None,
+                'discipline': record.discipline,
+            }
+            for record in records
+            if record.arrival_date or record.departure_date
+        ]
 
         if latest_athletes_at:
             data['missingFromLatestAthletesImport'] = (
@@ -1986,7 +2009,9 @@ def get_athletes():
         else:
             data['missingFromLatestRoomlistImport'] = False
 
-        data['assignment'] = assignment_map.get(a.id, {
+        assignments = [assignment_map[value] for value in record_ids if value in assignment_map]
+        data['assignments'] = assignments
+        data['assignment'] = assignments[0] if assignments else {
             'hasAssignment': False,
             'hotelName': None,
             'hotelId': None,
@@ -1995,7 +2020,7 @@ def get_athletes():
             'checkInDate': None,
             'checkOutDate': None,
             'bookingId': None,
-        })
+        }
         data['hasPendingRoomlistReview'] = bool(
             a.roomlist_changed_at and (
                 a.roomlist_change_acknowledged_at is None
