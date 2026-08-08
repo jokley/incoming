@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,7 +28,7 @@ class ScenarioDefinition:
 SCENARIOS = (
     ScenarioDefinition('001', 'Neue Nation', 'Erstmeldung einer bislang unbekannten Nation.', ('base',)),
     ScenarioDefinition('002', 'Neue Athleten', 'Eine Folgemeldung ergänzt zwei Athleten.', ('base', 'add-athletes')),
-    ScenarioDefinition('003', 'Athleten entfernt', 'Eine Folgemeldung entfernt einen gemeldeten Athleten.', ('base', 'remove-athlete')),
+    ScenarioDefinition('003', 'Athlet entfernt', 'Eine Folgemeldung entfernt einen gemeldeten Athleten.', ('base', 'remove-athlete')),
     ScenarioDefinition('004', 'Zimmerbedarf geändert', 'Der Bedarf wechselt von Doppel- auf Einzelzimmer.', ('base', 'room-demand')),
     ScenarioDefinition('005', 'Anreise geändert', 'Die Nation meldet eine frühere Anreise.', ('base', 'arrival')),
     ScenarioDefinition('006', 'Abreise geändert', 'Die Nation verlängert den Aufenthalt.', ('base', 'departure')),
@@ -38,13 +39,19 @@ SCENARIOS = (
     ScenarioDefinition('011', 'Disposition betroffen', 'Geänderte Aufenthaltsdaten betreffen eine bestehende Disposition.', ('base', 'arrival')),
     ScenarioDefinition('012', 'Mehrkosten erforderlich', 'Ein zusätzliches Einzelzimmer erzeugt genehmigungspflichtige Mehrkosten.', ('base', 'room-demand')),
     ScenarioDefinition('013', 'Rücksprache Nation', 'Eine Quotenverletzung erfordert dokumentierte Rücksprache.', ('base', 'official-quota')),
-    ScenarioDefinition('014', 'Neue Meldeliste nach Rücksprache', 'Nach Rücksprache folgt eine korrigierte Meldeliste.', ('base', 'official-quota', 'base')),
+    ScenarioDefinition('014', 'Neue Meldeliste nach Ruecksprache', 'Nach Rücksprache folgt eine korrigierte Meldeliste.', ('base', 'official-quota', 'base')),
     ScenarioDefinition('015', 'Organisatorische Freigabe', 'Eine fachlich geprüfte Abweichung wird zur Freigabe vorgelegt.', ('base', 'single-quota')),
-    ScenarioDefinition('016', 'Großer Kompletttest', 'Durchläuft Meldung, Änderungen, Quoten, Rücksprache, Freigabe und Folgewirkungen.',
+    ScenarioDefinition('016', 'Gesamttest', 'Durchläuft Meldung, Änderungen, Quoten, Rücksprache, Freigabe und Folgewirkungen.',
                        ('base', 'add-athletes', 'room-demand', 'official-quota', 'base', 'arrival', 'room-partner')),
 )
 
 SCENARIO_BY_NUMBER = {scenario.number: scenario for scenario in SCENARIOS}
+
+
+def scenario_slug(scenario: ScenarioDefinition) -> str:
+    """Return a filesystem-safe, readable and stable scenario name."""
+    value = scenario.title.replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue').replace('ß', 'ss')
+    return re.sub(r'[^A-Za-z0-9]+', '_', value).strip('_')
 
 
 def _base_people(number: str) -> list[dict]:
@@ -133,16 +140,25 @@ def _expectation(scenario: ScenarioDefinition, version: int, step: str) -> dict:
 def generate_scenario(number: str, output_dir: Path) -> dict:
     scenario = SCENARIO_BY_NUMBER.get(number)
     if not scenario: raise KeyError(number)
-    root = output_dir / f'{scenario.number}-{scenario.title.lower().replace(" ", "-").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")}'
+    slug = scenario_slug(scenario)
+    root = output_dir / f'{scenario.number}_{slug}'
     expectations = {'scenario': scenario.public_dict(), 'nation': f'X{number[-2:]}', 'versions': []}
     base = _base_people(number)
     for version, step in enumerate(scenario.steps, 1):
         entries = _apply(base, step, number)
-        version_dir = root / f'version-{version}'
-        version_dir.mkdir(parents=True, exist_ok=True)
-        write_excel(entries, version_dir / 'entries.xlsx')
-        write_excel(_room_rows(entries), version_dir / 'entries-room-list-detailed.xlsx')
+        root.mkdir(parents=True, exist_ok=True)
+        prefix = f'{scenario.number}_{slug}_V{version}'
+        write_excel(entries, root / f'{prefix}_entries.xlsx')
+        write_excel(_room_rows(entries), root / f'{prefix}_entries-room-list-detailed.xlsx')
         expectations['versions'].append(_expectation(scenario, version, step))
     root.mkdir(parents=True, exist_ok=True)
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return {'root': root, **scenario.public_dict()}
+
+
+def generate_complete_suite(output_dir: Path) -> Path:
+    """Generate all scenarios as a directly usable chronological workspace."""
+    root = output_dir / 'Kompletter_Testordner'
+    for scenario in SCENARIOS:
+        generate_scenario(scenario.number, root)
+    return root

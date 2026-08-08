@@ -137,6 +137,16 @@ class ApiService {
     URL.revokeObjectURL(url);
   }
 
+  async generateCompleteScenarios(): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/admin/scenarios/complete/generate`, { method: 'POST' });
+    if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Kompletter Testordner konnte nicht generiert werden.');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = 'Kompletter_Testordner.zip'; link.click();
+    URL.revokeObjectURL(url);
+  }
+
   // ============================================================================
   // ROOM TYPES
   // ============================================================================

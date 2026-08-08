@@ -20,7 +20,7 @@ from sqlalchemy import text, func, event
 from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
-from scenario_generator import SCENARIOS, generate_scenario
+from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from import_session_migration import migrate_import_sessions
 
 app = Flask(__name__)
@@ -189,6 +189,21 @@ def download_scenario(number):
     memory_file.seek(0)
     return send_file(memory_file, mimetype='application/zip', as_attachment=True,
                      download_name=f'wm-scenario-{number}.zip')
+
+
+@app.route('/api/admin/scenarios/complete/generate', methods=['POST'])
+def download_complete_scenarios():
+    """Build the complete chronological regression workspace."""
+    memory_file = io.BytesIO()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        root = generate_complete_suite(Path(tmp_dir))
+        with zipfile.ZipFile(memory_file, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+            for path in sorted(root.rglob('*')):
+                if path.is_file():
+                    archive.write(path, path.relative_to(root.parent))
+    memory_file.seek(0)
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True,
+                     download_name='Kompletter_Testordner.zip')
 
 
 @app.before_request

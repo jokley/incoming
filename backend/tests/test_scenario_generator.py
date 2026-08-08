@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from scenario_generator import SCENARIOS, generate_scenario
+from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from excel_import import create_fis_import_preview
 
 
@@ -30,9 +30,15 @@ class ScenarioGeneratorTest(unittest.TestCase):
                 expected = json.loads((generated['root'] / 'expected.json').read_text(encoding='utf-8'))
                 self.assertEqual(len(expected['versions']), len(scenario.steps))
                 for version in range(1, len(scenario.steps) + 1):
-                    folder = generated['root'] / f'version-{version}'
-                    preview = create_fis_import_preview(str(folder / 'entries.xlsx'), str(folder / 'entries-room-list-detailed.xlsx'))
+                    prefix = f'{scenario.number}_' + generated['root'].name.split('_', 1)[1] + f'_V{version}'
+                    preview = create_fis_import_preview(str(generated['root'] / f'{prefix}_entries.xlsx'), str(generated['root'] / f'{prefix}_entries-room-list-detailed.xlsx'))
                     self.assertTrue(preview['isValid'], (scenario.number, version, preview['errors']))
+
+    def test_complete_suite_contains_every_scenario_without_nested_archives(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = generate_complete_suite(Path(directory))
+            self.assertEqual(len([path for path in root.iterdir() if path.is_dir()]), 16)
+            self.assertTrue((root / '003_Athlet_entfernt' / '003_Athlet_entfernt_V2_entries.xlsx').is_file())
 
 
 if __name__ == '__main__':

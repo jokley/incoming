@@ -18,7 +18,14 @@ export function AdministrationTestData() {
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
   const [scenarios, setScenarios] = useState<Array<{ number: string; title: string; description: string; versions: number }>>([]);
   const [generating, setGenerating] = useState<string | null>(null);
-  useEffect(() => { api.getScenarios().then(setScenarios).catch(() => setMessage({ tone: 'error', text: 'Szenarien konnten nicht geladen werden.' })); }, []);
+  useEffect(() => {
+    const resetMessage = sessionStorage.getItem('admin-reset-success');
+    if (resetMessage) {
+      sessionStorage.removeItem('admin-reset-success');
+      setMessage({ tone: 'success', text: resetMessage });
+    }
+    api.getScenarios().then(setScenarios).catch(() => setMessage({ tone: 'error', text: 'Szenarien konnten nicht geladen werden.' }));
+  }, []);
 
   const generate = async (number: string) => {
     setGenerating(number); setMessage(null);
@@ -29,14 +36,23 @@ export function AdministrationTestData() {
       setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Generierung fehlgeschlagen.' });
     } finally { setGenerating(null); }
   };
+  const generateComplete = async () => {
+    setGenerating('complete'); setMessage(null);
+    try {
+      await api.generateCompleteScenarios();
+      setMessage({ tone: 'success', text: 'Der komplette Testordner wurde erzeugt und heruntergeladen.' });
+    } catch (error) {
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Generierung fehlgeschlagen.' });
+    } finally { setGenerating(null); }
+  };
   const reset = async () => {
     if (!selected) return;
     setSaving(true); setMessage(null);
     try {
       await api.resetTestData(selected.scope);
       window.dispatchEvent(new CustomEvent('admin:data-reset', { detail: { scope: selected.scope } }));
-      setMessage({ tone: 'success', text: `${selected.title} wurde erfolgreich ausgeführt. Alle abhängigen Listen werden beim nächsten Aufruf neu geladen.` });
-      setSelected(null);
+      sessionStorage.setItem('admin-reset-success', `${selected.title} wurde erfolgreich ausgeführt. Alle Caches und Ansichten wurden neu geladen.`);
+      window.location.reload();
     } catch (error) {
       setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Der Reset ist fehlgeschlagen.' });
     } finally { setSaving(false); }
@@ -55,6 +71,10 @@ export function AdministrationTestData() {
     </ContentCard>
     <ContentCard className="p-5">
       <SectionHeader title="Szenarien" subtitle="Deterministische FIS-Dateipaare mit dokumentiertem Soll-Ergebnis" />
+      <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-[var(--ops-primary)] bg-[var(--ops-surface-elevated)] p-4">
+        <div><h3 className="font-bold">Kompletter Testordner</h3><p className="text-sm text-[var(--ops-text-muted)]">Alle Szenarien und Versionen in chronologischer Reihenfolge.</p></div>
+        <OpsButton disabled={generating !== null} onClick={generateComplete}><Download className="mr-2 h-4 w-4" />Komplett herunterladen</OpsButton>
+      </div>
       <div className="mt-5 overflow-hidden rounded-xl border border-[var(--ops-border)]">
         <div className="hidden grid-cols-[72px_1fr_110px_150px] gap-4 bg-[var(--ops-surface-subtle)] px-4 py-3 text-xs font-bold uppercase tracking-wide text-[var(--ops-text-subtle)] md:grid">
           <span>Nr.</span><span>Szenario</span><span>Versionen</span><span className="sr-only">Aktion</span>
