@@ -123,6 +123,20 @@ class ApiService {
     return this.request('/admin/test-data/reset', { method: 'POST', body: JSON.stringify({ scope }) });
   }
 
+  async getScenarios(): Promise<Array<{ number: string; title: string; description: string; versions: number }>> {
+    return this.request('/admin/scenarios');
+  }
+
+  async generateScenario(number: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/admin/scenarios/${number}/generate`, { method: 'POST' });
+    if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Szenario konnte nicht generiert werden.');
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url; link.download = `wm-scenario-${number}.zip`; link.click();
+    URL.revokeObjectURL(url);
+  }
+
   // ============================================================================
   // ROOM TYPES
   // ============================================================================

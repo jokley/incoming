@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { AlertTriangle, Check, Database, FlaskConical } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, Check, Database, Download, FlaskConical } from 'lucide-react';
 import { Dialog, DialogContent } from './ui/dialog';
-import { ContentCard, DialogFooter, DialogHeader, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, DialogFooter, DialogHeader, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 
 type Scope = 'imports' | 'operations' | 'all';
@@ -16,6 +16,19 @@ export function AdministrationTestData() {
   const [selected, setSelected] = useState<(typeof actions)[number] | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
+  const [scenarios, setScenarios] = useState<Array<{ number: string; title: string; description: string; versions: number }>>([]);
+  const [generating, setGenerating] = useState<string | null>(null);
+  useEffect(() => { api.getScenarios().then(setScenarios).catch(() => setMessage({ tone: 'error', text: 'Szenarien konnten nicht geladen werden.' })); }, []);
+
+  const generate = async (number: string) => {
+    setGenerating(number); setMessage(null);
+    try {
+      await api.generateScenario(number);
+      setMessage({ tone: 'success', text: `Szenario ${number} wurde reproduzierbar erzeugt und heruntergeladen.` });
+    } catch (error) {
+      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Generierung fehlgeschlagen.' });
+    } finally { setGenerating(null); }
+  };
   const reset = async () => {
     if (!selected) return;
     setSaving(true); setMessage(null);
@@ -40,7 +53,24 @@ export function AdministrationTestData() {
         <OpsButton className="mt-5 border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)]" onClick={() => setSelected(action)}>Reset vorbereiten</OpsButton>
       </ContentCard>)}</div>
     </ContentCard>
-    <ContentCard className="p-5"><SectionHeader title="Szenarien" subtitle="Vorbereitung für zukünftige Testwerkzeuge" /><div className="mt-5"><EmptyState title="Szenario-Generator folgt" description="Geplante Szenarien umfassen neue Nationen, Quotenverletzungen, Meldelisten, Dispositionsänderungen und organisatorische Freigaben." action={<FlaskConical className="mx-auto h-6 w-6 text-[var(--ops-text-subtle)]" />} /></div></ContentCard>
+    <ContentCard className="p-5">
+      <SectionHeader title="Szenarien" subtitle="Deterministische FIS-Dateipaare mit dokumentiertem Soll-Ergebnis" />
+      <div className="mt-5 overflow-hidden rounded-xl border border-[var(--ops-border)]">
+        <div className="hidden grid-cols-[72px_1fr_110px_150px] gap-4 bg-[var(--ops-surface-subtle)] px-4 py-3 text-xs font-bold uppercase tracking-wide text-[var(--ops-text-subtle)] md:grid">
+          <span>Nr.</span><span>Szenario</span><span>Versionen</span><span className="sr-only">Aktion</span>
+        </div>
+        {scenarios.map(scenario => <div key={scenario.number} className="grid gap-3 border-t border-[var(--ops-border)] p-4 first:border-t-0 md:grid-cols-[72px_1fr_110px_150px] md:items-center">
+          <span className="font-mono text-sm font-bold text-[var(--ops-primary)]">{scenario.number}</span>
+          <div><h3 className="font-bold text-[var(--ops-text)]">{scenario.title}</h3><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{scenario.description}</p></div>
+          <StatusChip tone="neutral">{scenario.versions} {scenario.versions === 1 ? 'Version' : 'Versionen'}</StatusChip>
+          <OpsButton disabled={generating !== null} onClick={() => generate(scenario.number)}>
+            {generating === scenario.number ? <FlaskConical className="mr-2 h-4 w-4 animate-pulse" /> : <Download className="mr-2 h-4 w-4" />}
+            {generating === scenario.number ? 'Generiert …' : 'Generieren'}
+          </OpsButton>
+        </div>)}
+      </div>
+      <p className="mt-4 text-xs text-[var(--ops-text-subtle)]">Jeder Download enthält pro Version <strong>entries.xlsx</strong> und <strong>entries-room-list-detailed.xlsx</strong> sowie eine <strong>expected.json</strong>.</p>
+    </ContentCard>
     <Dialog open={Boolean(selected)} onOpenChange={open => !open && !saving && setSelected(null)}><DialogContent className="max-w-3xl overflow-hidden p-0">
       {selected && <><DialogHeader title={selected.title} subtitle="Diese Aktion kann nicht rückgängig gemacht werden." /><div className="max-h-[65vh] overflow-y-auto p-5">
         <InfoPanel tone="error" title="Endgültig löschen"><span className="flex gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />Prüfen Sie den Umfang sorgfältig und bestätigen Sie erst danach.</span></InfoPanel>

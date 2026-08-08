@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 import sqlite3
 from pathlib import Path
 from xml.sax.saxutils import escape
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 OUTPUT_DIR = Path(__file__).resolve().parent / 'mock_fis_files'
 DB_PATH = Path(__file__).resolve().parent / 'freestyle_wm_new.db'
@@ -202,12 +202,19 @@ def write_excel(rows: list[dict], path: Path) -> None:
         '</Types>'
     )
 
+    # A fixed ZIP timestamp makes the generated workbook byte-for-byte reproducible.
     with ZipFile(path, 'w', compression=ZIP_DEFLATED) as archive:
-        archive.writestr('[Content_Types].xml', content_types_xml)
-        archive.writestr('_rels/.rels', root_rels_xml)
-        archive.writestr('xl/workbook.xml', workbook_xml)
-        archive.writestr('xl/_rels/workbook.xml.rels', workbook_rels_xml)
-        archive.writestr('xl/worksheets/sheet1.xml', sheet_xml)
+        for name, content in (
+            ('[Content_Types].xml', content_types_xml),
+            ('_rels/.rels', root_rels_xml),
+            ('xl/workbook.xml', workbook_xml),
+            ('xl/_rels/workbook.xml.rels', workbook_rels_xml),
+            ('xl/worksheets/sheet1.xml', sheet_xml),
+        ):
+            info = ZipInfo(name, date_time=(2027, 1, 1, 0, 0, 0))
+            info.compress_type = ZIP_DEFLATED
+            info.external_attr = 0o600 << 16
+            archive.writestr(info, content)
 
 
 def build_entries_rows(discipline: dict, starting_id: int) -> tuple[list[dict], int]:
