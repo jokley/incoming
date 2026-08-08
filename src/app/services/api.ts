@@ -573,16 +573,15 @@ class ApiService {
   }
 
   async assignRoomBookingUnit(data: {
-    unitId: string;
     hotelId: string;
     roomTypeId: string;
     roomNumber?: string;
     checkInDate?: string;
     checkOutDate?: string;
     assignedBookingId?: string;
-    athleteIds?: string[];
+    athleteIds: string[];
   }): Promise<RoomBooking> {
-    return this.request<RoomBooking>(`/assignments/units/${data.unitId}/assign`, {
+    return this.request<RoomBooking>('/assignments/bookings', {
       method: 'POST',
       body: JSON.stringify({
         hotelId: data.hotelId,
@@ -597,14 +596,13 @@ class ApiService {
   }
 
   async moveRoomBookingUnit(data: {
-    unitId: string;
     hotelId: string;
     roomTypeId: string;
     roomNumber?: string;
     checkInDate?: string;
     checkOutDate?: string;
     assignedBookingId: string;
-    athleteIds?: string[];
+    athleteIds: string[];
   }): Promise<RoomBooking> {
     return this.assignRoomBookingUnit(data);
   }
