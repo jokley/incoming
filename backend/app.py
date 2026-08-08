@@ -110,6 +110,8 @@ def _required_permission():
         return None
     if request.path.startswith('/api/audit-events'):
         return 'audit.read'
+    if request.path.startswith('/api/admin/'):
+        return 'admin.reset'
     if request.method in {'GET', 'HEAD', 'OPTIONS'}:
         return 'data.read'
     if request.path.startswith('/api/import/'):
@@ -117,6 +119,44 @@ def _required_permission():
     if request.path.startswith('/api/assignments/') or request.path.startswith('/api/room-assignments'):
         return 'assignments.write'
     return 'data.write'
+
+
+RESET_TARGETS = {
+    'imports': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'),
+    'operations': ('Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Dispositionsstatus'),
+    'all': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen',
+            'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus',
+            'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'),
+}
+
+
+@app.route('/api/admin/test-data/reset', methods=['POST'])
+def reset_test_data():
+    """Remove dynamic test data in one transaction while preserving reference data."""
+    scope = (request.get_json(silent=True) or {}).get('scope')
+    if scope not in RESET_TARGETS:
+        return jsonify({'error': 'INVALID_SCOPE', 'message': 'Unbekannter Reset-Umfang'}), 400
+    counts = {}
+    try:
+        if scope in {'operations', 'all'}:
+            for label, model in (
+                ('Zimmerbelegungen', RoomBookingOccupant), ('Buchungen', RoomBooking),
+                ('Assignments', RoomAssignment), ('FIS Assignments', FisRoomAssignment),
+                ('Athleten', Athlete),
+            ):
+                counts[label] = model.query.delete(synchronize_session=False)
+        if scope in {'imports', 'all'}:
+            counts['Import-Läufe'] = ImportRun.query.delete(synchronize_session=False)
+            counts['Genehmigungen'] = ImportApproval.query.delete(synchronize_session=False)
+            counts['Import Historie'] = ImportSessionEvent.query.delete(synchronize_session=False)
+            counts['Import Versionen'] = ImportSessionVersion.query.delete(synchronize_session=False)
+            counts['Import Sessions'] = ImportSession.query.delete(synchronize_session=False)
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Dynamic data reset failed')
+        return jsonify({'error': 'RESET_FAILED', 'message': 'Reset konnte nicht sicher ausgeführt werden'}), 500
+    return jsonify({'scope': scope, 'deleted': list(RESET_TARGETS[scope]), 'counts': counts})
 
 
 @app.before_request
