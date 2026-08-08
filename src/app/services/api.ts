@@ -452,16 +452,6 @@ class ApiService {
     return this.request<Athlete[]>('/athletes');
   }
 
-  async getNations(): Promise<Array<{ id: string; code: string; name: string }>> {
-    if (USE_MOCK_DATA) {
-      const codes = Array.from(new Set(mockAthletes.map(athlete => athlete.nationCode))).sort();
-      return Promise.resolve(codes.map(code => ({ id: code, code, name: code })));
-    }
-    return this.request<Array<{ id: string; code: string; name: string }>>('/nations', {
-      cache: 'no-store',
-    });
-  }
-
   async createAthlete(data: {
     lastname: string;
     firstname: string;

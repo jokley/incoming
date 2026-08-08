@@ -11,7 +11,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
-from models import Athlete, Event, FisRoomAssignment, ImportRun, Nation, RoomBooking, RoomBookingOccupant, db
+from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
 
 
 PREVIEW_STORE = {}
@@ -1215,23 +1215,6 @@ def confirm_fis_import(preview_token):
     db.session.add(run)
     db.session.flush()
 
-    # Nation master data and imported people are committed atomically.  Creating
-    # it only on confirmation prevents previews and failed imports from leaking
-    # reference data into the operational filters.
-    nation_codes = sorted({
-        person.get('nationCode', '').strip().upper()
-        for person in preview['people'] if person.get('nationCode', '').strip()
-    })
-    existing_nations = {
-        nation.code for nation in Nation.query.filter(Nation.code.in_(nation_codes)).all()
-    } if nation_codes else set()
-    created_nations = []
-    for code in nation_codes:
-        if code not in existing_nations:
-            db.session.add(Nation(code=code, name=code))
-            created_nations.append(code)
-    db.session.flush()
-
     athlete_maps = _build_existing_athlete_maps()
     persisted_people = {}
     created = 0
@@ -1282,7 +1265,6 @@ def confirm_fis_import(preview_token):
             'fisRoomsImported': 0,
             'fisRoomsReplaced': 0,
             'dispositionsChanged': 0,
-            'nationsCreated': created_nations,
         },
         'run': run.to_dict(),
     }

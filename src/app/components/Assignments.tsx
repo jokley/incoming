@@ -92,7 +92,6 @@ export function Assignments() {
   const [queueSearch, setQueueSearch] = useState('');
   const [hotelSearch, setHotelSearch] = useState('');
   const [filterNation, setFilterNation] = useState('');
-  const [nationOptions, setNationOptions] = useState<string[]>([]);
   const [filterDiscipline, setFilterDiscipline] = useState('');
   const [filterGender, setFilterGender] = useState('');
   const [filterStatus, setFilterStatus] = useState<QueueStatus>('pending');
@@ -115,14 +114,12 @@ export function Assignments() {
   const loadInitialData = async () => {
     try {
       setLoading(true);
-      const [planningData, athletesData, nationsData] = await Promise.all([
+      const [planningData, athletesData] = await Promise.all([
         api.getAssignmentPlanningView(),
         api.getAthletes(),
-        api.getNations(),
       ]);
       setPlanning(planningData);
       setAthletes(athletesData);
-      setNationOptions(nationsData.map(nation => nation.code));
       if (requestedAssignmentId) {
         const booking = planningData.hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings)).find(candidate => candidate.bookingId === requestedAssignmentId);
         const unit = [...planningData.units.unassigned, ...planningData.units.assigned].find(candidate => candidate.unitId === requestedAssignmentId);
@@ -218,6 +215,11 @@ export function Assignments() {
     }
     return map;
   }, [allHotels]);
+
+  const nationOptions = useMemo(
+    () => Array.from(new Set(allUnitsCombined.map((unit) => unit.nationCode).filter(Boolean))).sort(),
+    [allUnitsCombined]
+  );
 
   const disciplineOptions = useMemo(() => {
     const values = new Set<string>();
