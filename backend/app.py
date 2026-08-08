@@ -1,6 +1,6 @@
 from flask import Flask, g, request, jsonify, send_from_directory, send_file, has_request_context
 from flask_cors import CORS
-from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
+from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, Nation, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from datetime import datetime
@@ -2092,6 +2092,16 @@ def delete_event_demand(event_id, demand_id):
 
 
 # Athletes
+@app.route('/api/nations', methods=['GET'])
+@app.route('/api/nations/', methods=['GET'])
+def get_nations():
+    """Return the canonical, uncached nation master data for every filter."""
+    nations = Nation.query.order_by(Nation.code).all()
+    response = jsonify([nation.to_dict() for nation in nations])
+    response.headers['Cache-Control'] = 'no-store'
+    return response
+
+
 @app.route('/api/athletes', methods=['GET'])
 @app.route('/api/athletes/', methods=['GET'])
 @app.route('/athletes', methods=['GET'])

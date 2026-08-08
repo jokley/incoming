@@ -9,7 +9,9 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from scenario_generator import SCENARIOS, generate_scenario
-from excel_import import create_fis_import_preview
+from excel_import import create_fis_import_preview, confirm_fis_import
+from models import Nation, db
+from flask import Flask
 
 
 class ScenarioGeneratorTest(unittest.TestCase):
@@ -33,6 +35,39 @@ class ScenarioGeneratorTest(unittest.TestCase):
                     folder = generated['root'] / f'version-{version}'
                     preview = create_fis_import_preview(str(folder / 'entries.xlsx'), str(folder / 'entries-room-list-detailed.xlsx'))
                     self.assertTrue(preview['isValid'], (scenario.number, version, preview['errors']))
+
+    def test_scenario_001_creates_nation_master_data_only_on_successful_import(self):
+        app = Flask(__name__)
+        app.config.update(
+            SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
+            SQLALCHEMY_TRACK_MODIFICATIONS=False,
+        )
+        db.init_app(app)
+        with app.app_context(), tempfile.TemporaryDirectory() as directory:
+            db.create_all()
+            generated = generate_scenario('001', Path(directory))
+            expected = json.loads((generated['root'] / 'expected.json').read_text(encoding='utf-8'))
+            folder = generated['root'] / 'version-1'
+
+            preview = create_fis_import_preview(
+                str(folder / 'entries.xlsx'),
+                str(folder / 'entries-room-list-detailed.xlsx'),
+            )
+            self.assertTrue(preview['isValid'])
+            self.assertIsNone(Nation.query.filter_by(code=expected['nation']).first())
+
+            result = confirm_fis_import(preview['previewToken'])
+
+            self.assertEqual(result['summary']['nationsCreated'], [expected['nation']])
+            self.assertEqual(
+                [nation.code for nation in Nation.query.order_by(Nation.code).all()],
+                [expected['nation']],
+            )
+            self.assertEqual(expected['masterData'], {
+                'createdOnSuccessfulImport': True,
+                'availableInNationFiltersImmediately': True,
+                'notCreatedByPreview': True,
+            })
 
 
 if __name__ == '__main__':

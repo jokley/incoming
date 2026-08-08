@@ -58,6 +58,24 @@ class ImportRun(db.Model):
         }
 
 
+class Nation(db.Model):
+    """Authoritative nation master data shared by all operational modules."""
+    __tablename__ = 'nation'
+
+    id = db.Column(db.Integer, primary_key=True)
+    code = db.Column(db.String(10), nullable=False, unique=True, index=True)
+    name = db.Column(db.String(200))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': str(self.id),
+            'code': self.code,
+            'name': self.name or self.code,
+            'createdAt': self.created_at.isoformat() + 'Z' if self.created_at else None,
+        }
+
+
 IMPORT_SESSION_STATUSES = (
     'DRAFT', 'TECHNICALLY_REVIEWED', 'PROFESSIONALLY_REVIEWED',
     'WAITING_FOR_NATION', 'NEW_LIST_RECEIVED', 'RECHECK_REQUIRED',

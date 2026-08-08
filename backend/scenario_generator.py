@@ -135,6 +135,12 @@ def generate_scenario(number: str, output_dir: Path) -> dict:
     if not scenario: raise KeyError(number)
     root = output_dir / f'{scenario.number}-{scenario.title.lower().replace(" ", "-").replace("ä", "ae").replace("ö", "oe").replace("ü", "ue")}'
     expectations = {'scenario': scenario.public_dict(), 'nation': f'X{number[-2:]}', 'versions': []}
+    if scenario.number == '001':
+        expectations['masterData'] = {
+            'createdOnSuccessfulImport': True,
+            'availableInNationFiltersImmediately': True,
+            'notCreatedByPreview': True,
+        }
     base = _base_people(number)
     for version, step in enumerate(scenario.steps, 1):
         entries = _apply(base, step, number)
