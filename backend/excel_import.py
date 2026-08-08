@@ -11,7 +11,7 @@ from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
-from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomBooking, RoomBookingOccupant, db
+from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 
 
 PREVIEW_STORE = {}
@@ -1202,6 +1202,38 @@ def _snapshot_roomlist_fields(athlete):
     }
 
 
+def _remove_athletes(athletes):
+    """Delete people and every operational reference without orphaning bookings."""
+    removed_names = {f'{athlete.lastname}, {athlete.firstname}'.strip().casefold() for athlete in athletes}
+    ids = [athlete.id for athlete in athletes]
+    if not ids:
+        return 0
+    booking_ids = {row.room_booking_id for row in RoomBookingOccupant.query.filter(RoomBookingOccupant.athlete_id.in_(ids)).all()}
+    RoomBookingOccupant.query.filter(RoomBookingOccupant.athlete_id.in_(ids)).delete(synchronize_session=False)
+    RoomAssignment.query.filter((RoomAssignment.athlete_id.in_(ids)) | (RoomAssignment.shared_with_athlete_id.in_(ids))).delete(synchronize_session=False)
+    FisRoomAssignment.query.filter((FisRoomAssignment.person1_id.in_(ids)) | (FisRoomAssignment.person2_id.in_(ids))).delete(synchronize_session=False)
+    for booking_id in booking_ids:
+        if not RoomBookingOccupant.query.filter_by(room_booking_id=booking_id).first():
+            RoomBooking.query.filter_by(id=booking_id).delete(synchronize_session=False)
+    for partner in Athlete.query.filter(~Athlete.id.in_(ids)).all():
+        if (partner.shared_with_name or '').strip().casefold() in removed_names:
+            partner.shared_with_name = None
+    Athlete.query.filter(Athlete.id.in_(ids)).delete(synchronize_session=False)
+    return len(ids)
+
+
+def _remove_duplicates():
+    """Collapse legacy duplicate identities after each authoritative import."""
+    groups = {}
+    for athlete in Athlete.query.order_by(Athlete.id).all():
+        identifiers = [('fis', athlete.fis_code), ('accred', athlete.accred_id), ('competitor', athlete.competitor_id)]
+        key = next(((kind, value.strip().casefold()) for kind, value in identifiers if value and value.strip()), None)
+        if key:
+            groups.setdefault(key, []).append(athlete)
+    duplicates = [duplicate for records in groups.values() for duplicate in records[1:]]
+    return _remove_athletes(duplicates)
+
+
 def confirm_fis_import(preview_token):
     cleanup_preview_store()
     preview = PREVIEW_STORE.get(preview_token)
@@ -1253,6 +1285,14 @@ def confirm_fis_import(preview_token):
         persisted_people[person['matchKey']] = athlete
         athlete_maps = _build_existing_athlete_maps()
 
+    # A nation list is authoritative: people no longer present disappear from
+    # operations together with their assignments and partner references.
+    imported_nations = {person['nationCode'] for person in preview['people'] if person.get('nationCode')}
+    imported_ids = {athlete.id for athlete in persisted_people.values()}
+    missing = Athlete.query.filter(Athlete.nation_code.in_(imported_nations), ~Athlete.id.in_(imported_ids)).all()
+    removed = _remove_athletes(missing)
+    deduplicated = _remove_duplicates()
+
     run.finished_at = datetime.utcnow()
     db.session.commit()
     PREVIEW_STORE.pop(preview_token, None)
@@ -1262,6 +1302,8 @@ def confirm_fis_import(preview_token):
         'summary': {
             'peopleCreated': created,
             'peopleUpdated': updated,
+            'peopleRemoved': removed,
+            'duplicatesRemoved': deduplicated,
             'fisRoomsImported': 0,
             'fisRoomsReplaced': 0,
             'dispositionsChanged': 0,

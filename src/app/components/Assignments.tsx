@@ -262,15 +262,35 @@ export function Assignments() {
 
   const filteredHotels = useMemo(() => {
     const query = hotelSearch.trim().toLowerCase();
+    const queueQuery = queueSearch.trim().toLowerCase();
+    const matchingUnitIds = new Set(queueUnits.map((unit) => unit.unitId));
     return allHotels.filter((hotel) => {
       const matchesRegion = !regionFilter || hotel.region === regionFilter;
       const haystack = `${hotel.hotelName} ${hotel.location || ''}`.toLowerCase();
       const matchesSearch = !query || haystack.includes(query);
-      return matchesRegion && matchesSearch;
+      if (!matchesRegion || !matchesSearch) return false;
+      if (!queueQuery) return true;
+      const containsMatchingOccupant = hotel.slots.some((slot) => slot.bookings.some((booking) =>
+        booking.occupants.some((occupant) => queueUnits.some((unit) => unit.occupants.some((person) => person.athleteId === occupant.athleteId)))
+      ));
+      const hasAssignableSlot = queueUnits.some((unit) => (validationByUnit[unit.unitId] || []).some((validation) =>
+        validation.status !== 'blocked' && hotel.slots.some((slot) => slot.slotId === validation.slotId)
+      ));
+      return matchingUnitIds.size > 0 && (containsMatchingOccupant || hasAssignableSlot);
     });
-  }, [allHotels, hotelSearch, regionFilter]);
+  }, [allHotels, hotelSearch, queueSearch, queueUnits, regionFilter, validationByUnit]);
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
+
+  useEffect(() => {
+    if (!queueSearch.trim() || queueUnits.length !== 1) return;
+    const athleteIds = new Set(queueUnits[0].occupants.map((occupant) => occupant.athleteId));
+    const assignedHotel = filteredHotels.find((hotel) => hotel.slots.some((slot) => slot.bookings.some((booking) =>
+      booking.occupants.some((occupant) => athleteIds.has(occupant.athleteId))
+    )));
+    const target = assignedHotel ?? filteredHotels[0];
+    if (target && target.hotelId !== activeHotelId) setActiveHotelId(target.hotelId);
+  }, [activeHotelId, filteredHotels, queueSearch, queueUnits]);
 
   const queueProgress = useMemo(() => {
     const total = allUnitsCombined.length;
