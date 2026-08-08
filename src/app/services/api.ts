@@ -119,6 +119,10 @@ class ApiService {
     return this.request(`/audit-events?page=${page}`);
   }
 
+  async resetTestData(scope: 'imports' | 'operations' | 'all'): Promise<{ scope: string; deleted: string[]; counts: Record<string, number> }> {
+    return this.request('/admin/test-data/reset', { method: 'POST', body: JSON.stringify({ scope }) });
+  }
+
   // ============================================================================
   // ROOM TYPES
   // ============================================================================

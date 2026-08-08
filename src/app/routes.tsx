@@ -10,6 +10,8 @@ import { HotelsManagement } from "./components/HotelsManagement";
 import { EventsManagement } from "./components/EventsManagement";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import { AuditLog } from "./components/AuditLog";
+import { AdminRoute } from "./auth/AdminRoute";
+import { AdministrationTestData } from "./components/AdministrationTestData";
 
 export const router = createBrowserRouter([
   {
@@ -26,6 +28,7 @@ export const router = createBrowserRouter([
       { path: "import", Component: DataImport },
       { path: "analytics", Component: RoomAnalytics },
       { path: "audit", Component: AuditLog },
+      { path: "administration/test-data", element: <AdminRoute><AdministrationTestData /></AdminRoute> },
     ],
   },
 ]);
