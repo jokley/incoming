@@ -19,6 +19,7 @@ from sqlalchemy import text, func, event
 from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
+from scenario_generator import SCENARIOS, generate_scenario
 
 app = Flask(__name__)
 if os.environ.get('CORS_ORIGINS'):
@@ -157,6 +158,34 @@ def reset_test_data():
         app.logger.exception('Dynamic data reset failed')
         return jsonify({'error': 'RESET_FAILED', 'message': 'Reset konnte nicht sicher ausgeführt werden'}), 500
     return jsonify({'scope': scope, 'deleted': list(RESET_TARGETS[scope]), 'counts': counts})
+
+
+@app.route('/api/admin/scenarios', methods=['GET'])
+def list_scenarios():
+    """Return immutable scenario metadata; generation happens only on demand."""
+    return jsonify([scenario.public_dict() for scenario in SCENARIOS])
+
+
+@app.route('/api/admin/scenarios/<number>/generate', methods=['POST'])
+def download_scenario(number):
+    """Build one self-contained, deterministic scenario archive in memory."""
+    memory_file = io.BytesIO()
+    try:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            generated = generate_scenario(number, Path(tmp_dir))
+            with zipfile.ZipFile(memory_file, mode='w', compression=zipfile.ZIP_DEFLATED) as archive:
+                for path in sorted(generated['root'].rglob('*')):
+                    if not path.is_file():
+                        continue
+                    info = zipfile.ZipInfo(str(path.relative_to(generated['root'].parent)), (2027, 1, 1, 0, 0, 0))
+                    info.compress_type = zipfile.ZIP_DEFLATED
+                    info.external_attr = 0o600 << 16
+                    archive.writestr(info, path.read_bytes())
+    except KeyError:
+        return jsonify({'error': 'SCENARIO_NOT_FOUND', 'message': 'Unbekanntes Szenario'}), 404
+    memory_file.seek(0)
+    return send_file(memory_file, mimetype='application/zip', as_attachment=True,
+                     download_name=f'wm-scenario-{number}.zip')
 
 
 @app.before_request
