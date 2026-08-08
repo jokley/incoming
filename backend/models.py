@@ -72,14 +72,12 @@ class ImportSession(db.Model):
     __tablename__ = 'import_session'
 
     id = db.Column(db.Integer, primary_key=True)
-    nation = db.Column(db.String(10), nullable=False, index=True)
+    nation = db.Column(db.String(10), nullable=False, unique=True, index=True)
     discipline = db.Column(db.String(100))
-    version = db.Column(db.Integer, nullable=False)
     status = db.Column(db.String(30), nullable=False, default='DRAFT', index=True)
-    preview_token = db.Column(db.String(64))
-    preview_json = db.Column(db.Text)
-    uploaded_by = db.Column(db.String(100), nullable=False)
+    current_version_id = db.Column(db.Integer, db.ForeignKey('import_session_version.id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     approved_at = db.Column(db.DateTime)
     approved_by = db.Column(db.String(100))
     imported_at = db.Column(db.DateTime)
@@ -89,19 +87,29 @@ class ImportSession(db.Model):
 
     approvals = db.relationship('ImportApproval', backref='session', lazy=True,
                                 cascade='all, delete-orphan')
-    versions = db.relationship('ImportSessionVersion', backref='session', lazy=True,
+    versions = db.relationship('ImportSessionVersion', back_populates='session', lazy=True,
+                               foreign_keys='ImportSessionVersion.session_id',
                                cascade='all, delete-orphan', order_by='ImportSessionVersion.version')
+    current_version = db.relationship('ImportSessionVersion', foreign_keys=[current_version_id],
+                                      post_update=True)
     history = db.relationship('ImportSessionEvent', backref='session', lazy=True,
                               cascade='all, delete-orphan', order_by='ImportSessionEvent.created_at')
-    __table_args__ = (db.UniqueConstraint('nation', 'version', name='uq_import_session_nation_version'),)
 
+    def next_version_number(self):
+        latest = (db.session.query(db.func.max(ImportSessionVersion.version))
+                  .filter_by(session_id=self.id).scalar() or 0)
+        return latest + 1
     def to_dict(self, include_preview=False):
-        preview = json.loads(self.preview_json) if self.preview_json else None
-        latest_upload = self.versions[-1].created_at if self.versions else self.created_at
+        current = self.current_version
+        preview = json.loads(current.preview_json) if current and current.preview_json else None
+        latest_upload = current.created_at if current else self.created_at
         result = {
             'id': str(self.id), 'nation': self.nation, 'discipline': self.discipline,
-            'version': self.version, 'status': self.status,
-            'uploadedBy': self.uploaded_by,
+            # Kept as a derived field for API compatibility; it is never stored on the session.
+            'version': current.version if current else 0, 'status': self.status,
+            'currentVersionId': str(current.id) if current else None,
+            'currentVersion': current.to_dict() if current else None,
+            'uploadedBy': current.uploaded_by if current else '',
             'uploadedAt': latest_upload.isoformat() + 'Z',
             'approvedAt': self.approved_at.isoformat() + 'Z' if self.approved_at else None,
             'approvedBy': self.approved_by, 'importedAt': self.imported_at.isoformat() + 'Z' if self.imported_at else None,
@@ -125,13 +133,17 @@ class ImportSessionVersion(db.Model):
     version = db.Column(db.Integer, nullable=False)
     preview_token = db.Column(db.String(64))
     preview_json = db.Column(db.Text)
+    entries_filename = db.Column(db.String(255))
+    room_filename = db.Column(db.String(255))
     uploaded_by = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (db.UniqueConstraint('session_id', 'version', name='uq_import_session_version'),)
+    session = db.relationship('ImportSession', back_populates='versions', foreign_keys=[session_id])
 
     def to_dict(self):
         preview = json.loads(self.preview_json) if self.preview_json else {}
         return {'id': str(self.id), 'version': self.version, 'uploadedBy': self.uploaded_by,
+                'entriesFile': self.entries_filename, 'roomFile': self.room_filename,
                 'uploadedAt': self.created_at.isoformat() + 'Z',
                 'errors': len(preview.get('errors', [])), 'warnings': len(preview.get('warnings', []))}
 
@@ -141,6 +153,7 @@ class ImportSessionEvent(db.Model):
     __tablename__ = 'import_session_event'
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey('import_session.id'), nullable=False, index=True)
+    version_id = db.Column(db.Integer, db.ForeignKey('import_session_version.id'), index=True)
     event_type = db.Column(db.String(50), nullable=False)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text)
@@ -148,7 +161,8 @@ class ImportSessionEvent(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
-        return {'id': str(self.id), 'type': self.event_type, 'title': self.title,
+        return {'id': str(self.id), 'versionId': str(self.version_id) if self.version_id else None,
+                'type': self.event_type, 'title': self.title,
                 'description': self.description, 'user': self.username,
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
@@ -159,6 +173,7 @@ class ImportApproval(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey('import_session.id'), nullable=False, index=True)
+    version_id = db.Column(db.Integer, db.ForeignKey('import_session_version.id'), index=True)
     nation = db.Column(db.String(10), nullable=False)
     approval_type = db.Column(db.String(50), nullable=False)
     description = db.Column(db.Text, nullable=False)
