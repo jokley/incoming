@@ -353,7 +353,6 @@ export function Assignments() {
       setSaving(true);
       setError(null);
       await api.assignRoomBookingUnit({
-        unitId,
         hotelId: slot.hotelId,
         roomTypeId: slot.roomTypeId,
         roomNumber: slot.roomNumber || undefined,
@@ -467,7 +466,6 @@ export function Assignments() {
       setSaving(true);
       setError(null);
       await api.assignRoomBookingUnit({
-        unitId,
         hotelId: booking.hotelId,
         roomTypeId: booking.roomTypeId,
         roomNumber: booking.roomNumber || undefined,

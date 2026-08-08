@@ -4,6 +4,7 @@ from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, E
 from auth import load_user_from_request, current_user
 from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
 from datetime import datetime
+import hashlib
 import os
 import csv
 import io
@@ -647,10 +648,15 @@ def _build_partial_unit_variant(unit, occupant):
 
 
 def _build_room_booking_units():
-    fis_assignments = FisRoomAssignment.query.options(
-        db.joinedload(FisRoomAssignment.person1),
-        db.joinedload(FisRoomAssignment.person2),
-    ).order_by(FisRoomAssignment.check_in_date.asc().nullslast(), FisRoomAssignment.id.asc()).all()
+    athletes = Athlete.query.order_by(
+        Athlete.nation_code,
+        Athlete.discipline,
+        Athlete.gender,
+        Athlete.room_type,
+        Athlete.lastname,
+        Athlete.firstname,
+        Athlete.id,
+    ).all()
     bookings = RoomBooking.query.options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     booking_index = {}
     athlete_booking_index = {}
@@ -659,18 +665,61 @@ def _build_room_booking_units():
         for occupant in booking.occupants or []:
             athlete_booking_index.setdefault(occupant.athlete_id, []).append(booking)
 
+    def normalized_name(value):
+        return ' '.join((value or '').replace(',', ' ').strip().lower().split())
+
+    def athlete_name_keys(athlete):
+        return {
+            normalized_name(f'{athlete.firstname} {athlete.lastname}'),
+            normalized_name(f'{athlete.lastname} {athlete.firstname}'),
+        }
+
+    athletes_by_name_and_nation = {}
+    athletes_by_name = {}
+    for athlete in athletes:
+        for name_key in athlete_name_keys(athlete):
+            athletes_by_name_and_nation.setdefault((name_key, athlete.nation_code or ''), []).append(athlete)
+            athletes_by_name.setdefault(name_key, []).append(athlete)
+
+    def find_requested_partner(athlete):
+        requested_name = normalized_name(athlete.shared_with_name)
+        if not requested_name:
+            return None
+        same_nation = athletes_by_name_and_nation.get((requested_name, athlete.nation_code or ''), [])
+        candidates = same_nation or athletes_by_name.get(requested_name, [])
+        candidates = [candidate for candidate in candidates if candidate.id != athlete.id]
+        return candidates[0] if len(candidates) == 1 else None
+
+    consumed_ids = set()
+    projected_groups = []
+    for athlete in athletes:
+        if athlete.id in consumed_ids:
+            continue
+        occupants = [athlete]
+        partner = find_requested_partner(athlete)
+        if partner and partner.id not in consumed_ids:
+            occupants.append(partner)
+            consumed_ids.add(partner.id)
+        consumed_ids.add(athlete.id)
+        projected_groups.append(occupants)
+
     units = []
-    for assignment in fis_assignments:
-        athletes = [assignment.person1]
-        if assignment.person2:
-            athletes.append(assignment.person2)
-        athlete_ids = sorted([athlete.id for athlete in athletes if athlete])
+    for unit_athletes in projected_groups:
+        athlete_ids = sorted(athlete.id for athlete in unit_athletes)
+        room_type = next((athlete.room_type for athlete in unit_athletes if athlete.room_type), 'unknown')
+        check_in_date = min((athlete.arrival_date for athlete in unit_athletes if athlete.arrival_date), default=None)
+        check_out_date = max((athlete.departure_date for athlete in unit_athletes if athlete.departure_date), default=None)
+        identity = '|'.join([
+            ','.join(str(athlete_id) for athlete_id in athlete_ids),
+            _room_type_label(room_type),
+            check_in_date.isoformat() if check_in_date else '',
+            check_out_date.isoformat() if check_out_date else '',
+        ])
+        unit_id = f'athlete-unit-{hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]}'
         linked_booking = booking_index.get(tuple(athlete_ids))
         occupants = []
         athlete_level_bookings = []
-        for athlete in athletes:
-            if not athlete:
-                continue
+        for athlete in unit_athletes:
             pending_review = _has_pending_roomlist_review(athlete)
             athlete_booking = _find_booking_for_athlete(athlete_booking_index, athlete.id)
             # athlete_booking was populated from the eagerly loaded booking set above;
@@ -703,21 +752,21 @@ def _build_room_booking_units():
                 'assignedRoomNumber': athlete_booking.room_number if athlete_booking else None,
             })
 
-        warnings = _derive_assignment_warnings(athletes, assignment.room_type)
+        warnings = _derive_assignment_warnings(unit_athletes, room_type)
         shared_booking = linked_booking or _same_booking_for_all(athlete_level_bookings)
         has_any_assigned = any(booking is not None for booking in athlete_level_bookings)
         is_fully_assigned = all(booking is not None for booking in athlete_level_bookings) if athlete_level_bookings else False
         units.append({
-            'unitId': str(assignment.id),
-            'sourceRowKey': assignment.source_row_key,
-            'nationCode': athletes[0].nation_code if athletes and athletes[0] else '',
+            'unitId': unit_id,
+            'sourceRowKey': unit_id,
+            'nationCode': unit_athletes[0].nation_code if unit_athletes else '',
             'occupants': occupants,
-            'roomType': assignment.room_type,
-            'roomTypeLabel': _room_type_label(assignment.room_type),
-            'roomCategoryLabel': _room_category_label(assignment.room_type),
+            'roomType': room_type,
+            'roomTypeLabel': _room_type_label(room_type),
+            'roomCategoryLabel': _room_category_label(room_type),
             'occupantCount': len(occupants),
-            'checkInDate': assignment.check_in_date.isoformat() if assignment.check_in_date else None,
-            'checkOutDate': assignment.check_out_date.isoformat() if assignment.check_out_date else None,
+            'checkInDate': check_in_date.isoformat() if check_in_date else None,
+            'checkOutDate': check_out_date.isoformat() if check_out_date else None,
             'specialMealFlags': [occ['specialMeal'] for occ in occupants if occ.get('specialMeal')],
             'statusBadges': sorted({badge for occ in occupants for badge in occ.get('statusBadges', [])}),
             'assignmentWarnings': warnings,
@@ -727,7 +776,7 @@ def _build_room_booking_units():
             'assignedRoomNumber': shared_booking.room_number if shared_booking and is_fully_assigned else None,
             'hasAnyAssigned': has_any_assigned,
             'isFullyAssigned': is_fully_assigned,
-            'allowedRoomTypeLabels': ['single', 'double'] if len(occupants) == 1 else [_room_type_label(assignment.room_type)],
+            'allowedRoomTypeLabels': ['single', 'double'] if len(occupants) == 1 else [_room_type_label(room_type)],
         })
     return units, bookings
 
@@ -891,10 +940,9 @@ def _validate_booking_payload(data, existing_booking=None):
     if len(unique_athlete_ids) > room_type.max_persons:
         return None, None, _booking_error('CAPACITY_EXCEEDED', f'Room type max occupancy is {room_type.max_persons}')
 
-    if len(unique_athlete_ids) == 2:
-        athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
-        if len(athletes) != 2:
-            return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
+    existing_athlete_count = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).count()
+    if existing_athlete_count != len(unique_athlete_ids):
+        return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
 
     check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
     check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
@@ -992,37 +1040,6 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
             remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
             if remaining == 0:
                 db.session.delete(booking)
-    db.session.commit()
-
-
-def _refresh_fis_assignment_links():
-    booking_memberships = RoomBookingOccupant.query.options(db.joinedload(RoomBookingOccupant.room_booking)).all()
-    athlete_booking_map = {}
-    for membership in booking_memberships:
-        if membership.room_booking:
-            athlete_booking_map.setdefault(membership.athlete_id, []).append(membership.room_booking)
-
-    assignments = FisRoomAssignment.query.all()
-    for assignment in assignments:
-        person1_bookings = athlete_booking_map.get(assignment.person1_id, [])
-        if assignment.person2_id:
-            person2_bookings = athlete_booking_map.get(assignment.person2_id, [])
-            shared_booking = None
-            for first_booking in person1_bookings:
-                if any(second_booking.id == first_booking.id for second_booking in person2_bookings):
-                    shared_booking = first_booking
-                    break
-            if shared_booking:
-                assignment.hotel_id = shared_booking.hotel_id
-                assignment.room_number = shared_booking.room_number
-            else:
-                assignment.hotel_id = None
-                assignment.room_number = None
-        else:
-            booking = person1_bookings[0] if person1_bookings else None
-            assignment.hotel_id = booking.hotel_id if booking else None
-            assignment.room_number = booking.room_number if booking else None
-        db.session.add(assignment)
     db.session.commit()
 
 
@@ -2289,35 +2306,26 @@ def get_assignments_planning_view():
     return _assignment_jsonify(_build_assignment_planning_view())
 
 
-@app.route('/api/assignments/units/<int:unit_id>/assign', methods=['POST'])
-@app.route('/api/assignments/units/<int:unit_id>/assign/', methods=['POST'])
+@app.route('/api/assignments/bookings', methods=['POST'])
+@app.route('/api/assignments/bookings/', methods=['POST'])
 @_measure_assignment_logic
-def assign_room_booking_unit(unit_id):
-    assignment = FisRoomAssignment.query.get_or_404(unit_id)
+def create_room_booking():
     data = request.json or {}
-    allowed_athlete_ids = [assignment.person1_id]
-    if assignment.person2_id:
-        allowed_athlete_ids.append(assignment.person2_id)
-    raw_athlete_ids = data.get('athleteIds') or [str(athlete_id) for athlete_id in allowed_athlete_ids]
-    athlete_ids = sorted({int(athlete_id) for athlete_id in raw_athlete_ids})
-    if not athlete_ids or any(athlete_id not in allowed_athlete_ids for athlete_id in athlete_ids):
-        return _booking_error('INVALID_OCCUPANTS', 'athleteIds must belong to the selected FIS room unit')
-
     payload_data = {
-        'athleteIds': [str(athlete_id) for athlete_id in athlete_ids],
+        'athleteIds': data.get('athleteIds') or [],
         'hotelId': data.get('hotelId'),
         'roomTypeId': data.get('roomTypeId'),
         'roomNumber': data.get('roomNumber'),
-        'checkInDate': data.get('checkInDate') or (assignment.check_in_date.isoformat() if assignment.check_in_date else None),
-        'checkOutDate': data.get('checkOutDate') or (assignment.check_out_date.isoformat() if assignment.check_out_date else None),
+        'checkInDate': data.get('checkInDate'),
+        'checkOutDate': data.get('checkOutDate'),
         'countsAsSingle': data.get('countsAsSingle', False),
     }
 
     existing_booking = None
     if data.get('assignedBookingId'):
-        existing_booking = RoomBooking.query.get(int(data['assignedBookingId']))
+        existing_booking = RoomBooking.query.get_or_404(int(data['assignedBookingId']))
     else:
-        athlete_id_tuple = tuple(sorted(athlete_ids))
+        athlete_id_tuple = tuple(sorted(int(athlete_id) for athlete_id in payload_data['athleteIds']))
         for booking in RoomBooking.query.options(db.joinedload(RoomBooking.occupants)).all():
             if tuple(_collect_booking_athlete_ids(booking)) == athlete_id_tuple:
                 existing_booking = booking
@@ -2328,7 +2336,6 @@ def assign_room_booking_unit(unit_id):
         return error
     _detach_athletes_from_existing_bookings(payload['athlete_ids'], exclude_booking_id=existing_booking.id if existing_booking else None)
     booking = _save_booking_from_payload(payload, existing_booking=existing_booking)
-    _refresh_fis_assignment_links()
     return _assignment_jsonify(booking.to_dict()), 200 if existing_booking else 201
 
 
@@ -2352,7 +2359,6 @@ def update_assigned_unit(booking_id):
         return error
     _detach_athletes_from_existing_bookings(payload['athlete_ids'], exclude_booking_id=booking.id)
     booking = _save_booking_from_payload(payload, existing_booking=booking)
-    _refresh_fis_assignment_links()
     return jsonify(booking.to_dict())
 
 
@@ -2363,7 +2369,6 @@ def unassign_room_booking_unit(booking_id):
     booking = RoomBooking.query.get_or_404(booking_id)
     db.session.delete(booking)
     db.session.commit()
-    _refresh_fis_assignment_links()
     return jsonify({'success': True, 'bookingId': str(booking_id)})
 
 
@@ -2382,7 +2387,6 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     if remaining == 0:
         db.session.delete(booking)
     db.session.commit()
-    _refresh_fis_assignment_links()
     return jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
 
 
