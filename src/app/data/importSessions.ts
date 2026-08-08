@@ -17,6 +17,8 @@ export interface ImportApproval { id: string; sessionId: string; nation: string;
 export interface ImportSession {
   id: string; nation: string; discipline?: string; uploadedAt: string; uploadedBy: string;
   status: ImportSessionStatus; warnings: number; errors: number; version: number;
+  currentVersionId?: string | null;
+  currentVersion: {id:string;version:number;uploadedBy:string;uploadedAt:string;errors:number;warnings:number;entriesFile?:string|null;roomFile?:string|null} | null;
   approvedAt?: string | null; approvals: ImportApproval[]; preview?: FisImportPreview | null;
   versions: Array<{id:string;version:number;uploadedBy:string;uploadedAt:string;errors:number;warnings:number}>;
   history: Array<{id:string;type:string;title:string;description?:string;user:string;timestamp:string}>;

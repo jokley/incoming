@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_scenario
+from import_session_migration import migrate_import_sessions
 
 app = Flask(__name__)
 if os.environ.get('CORS_ORIGINS'):
@@ -34,6 +35,7 @@ database_path = os.environ.get('DATABASE_PATH', os.path.join(data_dir, 'freestyl
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + database_path
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+migrate_import_sessions(database_path)
 db.init_app(app)
 
 
@@ -1292,6 +1294,7 @@ def preview_fis_import():
     temp_files = []
     try:
         detected = {'entries': None, 'roomlist': None}
+        detected_names = {'entries': None, 'roomlist': None}
         seen_names = set()
         for field_name, file_storage in uploaded_files:
             if not file_storage or file_storage.filename == '':
@@ -1305,9 +1308,11 @@ def preview_fis_import():
             temp_files.append(tmp_path)
             if field_name == 'entriesList':
                 detected['entries'] = tmp_path
+                detected_names['entries'] = file_storage.filename
                 continue
             if field_name == 'roomListDetailed':
                 detected['roomlist'] = tmp_path
+                detected_names['roomlist'] = file_storage.filename
                 continue
 
             try:
@@ -1322,8 +1327,10 @@ def preview_fis_import():
                 }), 400
             if file_type == 'entries' and detected['entries'] is None:
                 detected['entries'] = tmp_path
+                detected_names['entries'] = file_storage.filename
             elif file_type == 'roomlist' and detected['roomlist'] is None:
                 detected['roomlist'] = tmp_path
+                detected_names['roomlist'] = file_storage.filename
 
         if not detected['entries'] or not detected['roomlist']:
             return jsonify({
@@ -1345,42 +1352,42 @@ def preview_fis_import():
             session = ImportSession.query.get(int(session_id)) if session_id else None
             if session and session.nation != nation:
                 return jsonify({'error': 'Eine Version kann nur zur Session derselben Nation hinzugefügt werden.'}), 409
-            if session and session.status == 'IMPORTED':
-                return jsonify({'error': 'Eine importierte Session kann keine neue Version erhalten.'}), 409
             if not session:
-                # Reuse the nation's active workflow rather than creating parallel imports.
-                session = ImportSession.query.filter_by(nation=nation).filter(
-                    ImportSession.status.notin_(['IMPORTED', 'ARCHIVED', 'REPLACED'])).order_by(ImportSession.created_at.desc()).first()
+                # There is exactly one durable workflow per nation, including completed workflows.
+                session = ImportSession.query.filter_by(nation=nation).first()
             is_new = session is None
             if is_new:
-                session = ImportSession(nation=nation, discipline=result.get('detectedDiscipline'), version=0,
-                    status='DRAFT', uploaded_by=user.username)
+                session = ImportSession(nation=nation, discipline=result.get('detectedDiscipline'),
+                    status='DRAFT')
                 db.session.add(session)
                 db.session.flush()
-            session.version += 1
+            next_version = session.next_version_number()
             session.discipline = result.get('detectedDiscipline')
             session.status = status if is_new else ('DRAFT' if result['errors'] else 'NEW_LIST_RECEIVED')
-            session.preview_token, session.preview_json = result['previewToken'], json.dumps(result, ensure_ascii=False)
-            session.uploaded_by = user.username
             session.approved_at = session.approved_by = None
             session.approvals.clear()
-            db.session.add(ImportSessionVersion(session_id=session.id, version=session.version,
-                preview_token=result['previewToken'], preview_json=session.preview_json, uploaded_by=user.username))
-            db.session.add(ImportSessionEvent(session_id=session.id, event_type='VERSION_RECEIVED',
-                title=f'Version {session.version} erhalten',
+            version = ImportSessionVersion(session_id=session.id, version=next_version,
+                preview_token=result['previewToken'], preview_json=json.dumps(result, ensure_ascii=False),
+                entries_filename=detected_names['entries'], room_filename=detected_names['roomlist'],
+                uploaded_by=user.username)
+            db.session.add(version)
+            db.session.flush()
+            session.current_version = version
+            db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id,
+                event_type='VERSION_RECEIVED', title=f'Version {next_version} erhalten',
                 description='Neue Meldeliste gespeichert; technische Prüfung abgeschlossen.' if not result['errors'] else 'Neue Meldeliste gespeichert; technische Fehler gefunden.',
                 username=user.username))
             for issue in quota_issues:
                 details = issue.get('details') or {}
                 combination = ' • '.join(filter(None, [details.get('nationCode'), details.get('discipline'), details.get('gender')]))
-                db.session.add(ImportApproval(session_id=session.id, nation=nation,
+                db.session.add(ImportApproval(session_id=session.id, version_id=version.id, nation=nation,
                     approval_type=issue.get('code', 'QUOTA'), description=issue.get('message', ''),
                     decision='PENDING', username=user.username))
-                db.session.add(ImportSessionEvent(session_id=session.id, event_type='QUOTA_VIOLATION',
+                db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='QUOTA_VIOLATION',
                     title='Single Room Quote verletzt' if issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED' else 'Official Quote verletzt',
                     description=combination, username=user.username))
             if not quota_issues and not result['errors']:
-                db.session.add(ImportSessionEvent(session_id=session.id, event_type='QUOTA_PASSED',
+                db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='QUOTA_PASSED',
                     title='Quote erfüllt', description='Alle Kombinationen aus Nation, Disziplin und Gender sind erfüllt.',
                     username=user.username))
             db.session.commit()
@@ -1457,15 +1464,15 @@ def decide_import_approval(session_id, approval_id):
     approval.username = current_user().username
     approval.created_at = datetime.utcnow()
     session.status = 'EXCEPTION_APPROVED' if all(a.decision == 'APPROVED' for a in session.approvals) else 'WAITING_FOR_NATION'
-    db.session.add(ImportSessionEvent(session_id=session.id, event_type='NATION_CONTACT',
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='NATION_CONTACT',
         title=f'Rückfrage an Nation per {"E-Mail" if method == "EMAIL" else "Telefon"}',
         description=f'{approval_by}' + (f' · {data.get("contactSubject")}' if data.get('contactSubject') else ''),
         username=current_user().username))
     result_title = ('Neue Meldeliste angekündigt' if decision == 'NEW_LIST_ANNOUNCED' else
                     ('Organisatorische Freigabe' if approval_type == 'ORGANIZER_APPROVED' else 'Ausnahme durch Nation genehmigt'))
-    db.session.add(ImportSessionEvent(session_id=session.id, event_type='QUOTA_DECISION',
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='QUOTA_DECISION',
         title=result_title, description=data.get('comment'), username=current_user().username))
-    db.session.add(ImportSessionEvent(session_id=session.id, event_type='STATUS_CHANGED',
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='STATUS_CHANGED',
         title='Status', description='Warten auf Nation' if decision == 'NEW_LIST_ANNOUNCED' else 'Ausnahme genehmigt',
         username=current_user().username))
     db.session.commit()
@@ -1475,7 +1482,7 @@ def decide_import_approval(session_id, approval_id):
 @app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
 def approve_import_session(session_id):
     session = ImportSession.query.get_or_404(session_id)
-    preview = json.loads(session.preview_json or '{}')
+    preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
     if preview.get('errors'):
         return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.'}), 409
     if any(approval.decision != 'APPROVED' for approval in session.approvals):
@@ -1484,7 +1491,7 @@ def approve_import_session(session_id):
         return jsonify({'error': 'Diese Session kann nicht mehr freigegeben werden.'}), 409
     session.status, session.approved_at = 'APPROVED', datetime.utcnow()
     session.approved_by = current_user().username
-    db.session.add(ImportSessionEvent(session_id=session.id, event_type='APPROVED',
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='APPROVED',
         title='Import freigegeben', description='Technische und fachliche Prüfung abgeschlossen.',
         username=current_user().username))
     db.session.commit()
@@ -1497,11 +1504,14 @@ def import_approved_session(session_id):
     if session.status != 'APPROVED' or not session.approved_at:
         return jsonify({'error': 'Die Session muss vor dem Import explizit freigegeben werden.'}), 409
     try:
-        result = confirm_fis_import(session.preview_token)
+        if not session.current_version:
+            return jsonify({'error': 'Die Session besitzt keine aktuelle Version.'}), 409
+        result = confirm_fis_import(session.current_version.preview_token)
         now = datetime.utcnow()
         session.status, session.imported_at = 'IMPORTED', now
         db.session.add(ImportSessionEvent(session_id=session.id, event_type='IMPORTED',
-            title=f'Version {session.version} importiert',
+            version_id=session.current_version.id,
+            title=f'Version {session.current_version.version} importiert',
             description='Operative Dispositionen wurden nicht verändert.', username=current_user().username))
         db.session.commit()
         result['session'] = session.to_dict()
@@ -1530,7 +1540,8 @@ def add_import_session_history(session_id):
     description = str(data.get('description') or '').strip()
     if not description:
         return jsonify({'error': 'description is required'}), 400
-    event = ImportSessionEvent(session_id=session.id, event_type='NOTE',
+    event = ImportSessionEvent(session_id=session.id,
+        version_id=session.current_version.id if session.current_version else None, event_type='NOTE',
         title=str(data.get('title') or 'Rücksprache dokumentiert'), description=description,
         username=current_user().username)
     db.session.add(event)
