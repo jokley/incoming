@@ -17,6 +17,10 @@ export type OperationsTask = {
   quota?: { current: number; allowed: number; label: string };
 };
 
+export function quotaViolationLabel(label: string, current: number, allowed: number) {
+  return `${label} überschritten (${current} / ${allowed})`;
+}
+
 export function buildOperationsTask(session: ImportSession, approval: ImportApproval): OperationsTask {
   const quotaRecord = session.preview?.dispositionAnalysis?.categories.quotaAffected.records.find(record =>
     String(record.nation ?? '') === approval.nation,
@@ -38,6 +42,10 @@ export function buildOperationsTask(session: ImportSession, approval: ImportAppr
   };
 }
 
+function taskTitle(task: OperationsTask) {
+  return task.quota ? quotaViolationLabel(task.quota.label, task.quota.current, task.quota.allowed) : task.approval.description;
+}
+
 export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   task: OperationsTask | null;
   saving: boolean;
@@ -54,11 +62,11 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
 
   return <Dialog open={Boolean(task)} onClose={saving ? undefined : onClose} fullWidth maxWidth="md">
     {task && <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]">
-      <DialogHeader title={task.approval.description || 'Aufgabe entscheiden'} subtitle="Eine Entscheidung nach der anderen · nach dem Speichern geht es automatisch weiter" />
+      <DialogHeader title={taskTitle(task) || 'Aufgabe entscheiden'} subtitle="Eine Entscheidung nach der anderen · nach dem Speichern geht es automatisch weiter" />
       <DialogContent dividers className="space-y-6">
         <section><SectionHeader title="Zusammenfassung" subtitle="Das ist jetzt zu klären" />
           <div className="mt-3 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-4">
-            <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><p className="text-lg font-extrabold">{task.approval.description}</p></div>
+            <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><p className="text-lg font-extrabold">{taskTitle(task)}</p></div>
             <div className="mt-4 grid grid-cols-3 gap-3"><DecisionFact label="Nation" value={task.nation}/><DecisionFact label="Disziplin" value={task.discipline || '—'}/><DecisionFact label="Gender" value={task.gender}/></div>
             {task.quota&&<div className="mt-4 grid grid-cols-2 gap-3"><QuotaFact label="Aktuell" value={task.quota.current} unit={task.quota.label}/><QuotaFact label="Erlaubt" value={task.quota.allowed} unit={task.quota.label}/></div>}
           </div>
@@ -97,7 +105,7 @@ export function OperationsTaskRow({ task, onOpen }: { task: OperationsTask; onOp
   const done = task.approval.decision !== 'PENDING';
   const singleRoom = /single|einzel|\bsr\b/i.test(`${task.approval.type} ${task.approval.description}`);
   return <button type="button" onClick={onOpen} className={`w-full rounded-xl border p-4 text-left transition hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)] ${done?'border-[var(--ops-border)] bg-[var(--ops-surface)] opacity-80':'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]'}`}>
-    <span className="flex items-start justify-between gap-3"><span className="flex items-center gap-2">{singleRoom?<BedDouble className="h-5 w-5 text-orange-400"/>:<ClipboardCheck className="h-5 w-5 text-yellow-400"/>}<strong>{task.approval.description}</strong></span><StatusChip tone={done?'success':'warning'}>{done?'Erledigt':'Offen'}</StatusChip></span>
+    <span className="flex items-start justify-between gap-3"><span className="flex items-center gap-2">{singleRoom?<BedDouble className="h-5 w-5 text-orange-400"/>:<ClipboardCheck className="h-5 w-5 text-yellow-400"/>}<strong>{taskTitle(task)}</strong></span><StatusChip tone={done?'success':'warning'}>{done?'Erledigt':'Offen'}</StatusChip></span>
     <span className="mt-3 block text-sm font-semibold">{task.nation}</span>
     <span className="block text-sm text-[var(--ops-text-muted)]">{task.discipline || '—'} {task.gender !== '—' ? `· ${task.gender}` : ''}</span>
     <span className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-3"><span><span className="block text-[11px] font-bold uppercase text-[var(--ops-text-subtle)]">Empfohlene Aktion</span><strong className="text-sm">{task.recommendation}</strong></span><span className="shrink-0 rounded-lg bg-[var(--ops-primary)] px-3 py-2 text-xs font-extrabold text-white">{done?'Entscheidung ansehen':'Entscheidung öffnen'}</span></span>
