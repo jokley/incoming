@@ -14,12 +14,16 @@ from excel_import import create_fis_import_preview
 
 class ScenarioGeneratorTest(unittest.TestCase):
     def test_catalog_is_complete_and_stably_numbered(self):
-        self.assertEqual([item.number for item in SCENARIOS], [f'{number:03d}' for number in range(1, 17)])
+        self.assertEqual([item.number for item in SCENARIOS], [f'{number:03d}' for number in range(1, 11)])
+        self.assertEqual([item.title for item in SCENARIOS], ['Nation importieren', 'Athleten zuweisen', 'Neue Athleten',
+            'Athlet entfernt', 'Aufenthaltsdaten geändert', 'Zimmerpartner geändert', 'Official-Quote verletzt',
+            'Single-Room-Quote verletzt', 'Neue Meldeliste erhalten', 'Import freigeben'])
+        self.assertEqual([len(item.steps) for item in SCENARIOS], [1, 2, 2, 2, 2, 2, 2, 2, 3, 3])
 
     def test_generation_is_byte_for_byte_reproducible(self):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            one = generate_scenario('016', Path(first))['root']
-            two = generate_scenario('016', Path(second))['root']
+            one = generate_scenario('010', Path(first))['root']
+            two = generate_scenario('010', Path(second))['root']
             hashes = lambda root: [(str(path.relative_to(root)), hashlib.sha256(path.read_bytes()).hexdigest()) for path in sorted(root.rglob('*')) if path.is_file()]
             self.assertEqual(hashes(one), hashes(two))
 
@@ -37,8 +41,8 @@ class ScenarioGeneratorTest(unittest.TestCase):
     def test_complete_suite_contains_every_scenario_without_nested_archives(self):
         with tempfile.TemporaryDirectory() as directory:
             root = generate_complete_suite(Path(directory))
-            self.assertEqual(len([path for path in root.iterdir() if path.is_dir()]), 16)
-            self.assertTrue((root / '003_Athlet_entfernt' / '003_Athlet_entfernt_V2_entries.xlsx').is_file())
+            self.assertEqual(len([path for path in root.iterdir() if path.is_dir()]), 10)
+            self.assertTrue((root / '004_Athlet_entfernt' / '004_Athlet_entfernt_V2_entries.xlsx').is_file())
 
 
 if __name__ == '__main__':
