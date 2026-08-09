@@ -68,11 +68,9 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
           <div className="mt-3 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-4">
             <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><p className="text-lg font-extrabold">{taskTitle(task)}</p></div>
             <div className="mt-4 grid grid-cols-3 gap-3"><DecisionFact label="Nation" value={task.nation}/><DecisionFact label="Disziplin" value={task.discipline || '—'}/><DecisionFact label="Gender" value={task.gender}/></div>
-            {task.quota&&<div className="mt-4 grid grid-cols-2 gap-3"><QuotaFact label="Aktuell" value={task.quota.current} unit={task.quota.label}/><QuotaFact label="Erlaubt" value={task.quota.allowed} unit={task.quota.label}/></div>}
           </div>
         </section>
 
-        <InfoPanel tone="warning" title="Warum?">{task.rule}</InfoPanel>
         <InfoPanel tone="info" title="Empfehlung"><strong>{task.recommendation}</strong><span className="mt-1 block text-sm">Folgen Sie dieser Aktion oder dokumentieren Sie unten eine abweichende Entscheidung.</span></InfoPanel>
 
         <section><SectionHeader title="Rücksprache dokumentieren" subtitle="Wer wurde wann und auf welchem Weg kontaktiert?"/><div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -99,8 +97,6 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
 function Field({label,children}:{label:string;children:ReactNode}) { return <label className="block text-sm font-bold">{label}<span className="mt-1 block [&_.field]:w-full [&_.field]:rounded-lg [&_.field]:border [&_.field]:border-[var(--ops-border)] [&_.field]:bg-[var(--ops-background)] [&_.field]:p-2.5 [&_.field]:text-[var(--ops-text)]">{children}</span></label>; }
 
 function DecisionFact({label,value}:{label:string;value:string}) { return <div><div className="text-[11px] font-extrabold uppercase tracking-wide text-[var(--ops-text-subtle)]">{label}</div><div className="mt-1 text-sm font-bold">{value}</div></div>; }
-function QuotaFact({label,value,unit}:{label:string;value:number;unit:string}) { return <div className="rounded-lg bg-[var(--ops-background)] p-3"><div className="text-[11px] font-extrabold uppercase tracking-wide text-[var(--ops-text-subtle)]">{label}</div><div className="mt-1 text-xl font-extrabold">{value} <span className="text-sm">{unit}</span></div></div>; }
-
 export function OperationsTaskRow({ task, onOpen }: { task: OperationsTask; onOpen: () => void }) {
   const done = task.approval.decision !== 'PENDING';
   const singleRoom = /single|einzel|\bsr\b/i.test(`${task.approval.type} ${task.approval.description}`);
