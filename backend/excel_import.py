@@ -797,7 +797,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
         if imported_officials > official_quota:
             warnings.append({
                 'code': 'QUOTA_OFFICIALS_EXCEEDED',
-                'message': f'Imported officials exceed quota for {nation_code} {discipline} {gender}'.strip(),
+                'message': f'Officials überschritten ({imported_officials} / {official_quota})',
                 'details': {
                     'nationCode': nation_code,
                     'discipline': discipline,
@@ -812,7 +812,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
         if imported_single_rooms > single_room_entitlement:
             warnings.append({
                 'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
-                'message': f'Imported official single rooms exceed entitlement for {nation_code} {discipline} {gender}'.strip(),
+                'message': f'Single Rooms überschritten ({imported_single_rooms} / {single_room_entitlement})',
                 'details': {
                     'nationCode': nation_code,
                     'discipline': discipline,

@@ -1366,11 +1366,15 @@ def preview_fis_import():
             for issue in quota_issues:
                 details = issue.get('details') or {}
                 combination = ' • '.join(filter(None, [details.get('nationCode'), details.get('discipline'), details.get('gender')]))
+                is_single_room = issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+                current = details.get('importedSingleRooms') if is_single_room else details.get('importedOfficials')
+                allowed = details.get('singleRoomsAllowed') if is_single_room else details.get('officialQuota')
+                quota_title = f"{'Single Rooms' if is_single_room else 'Officials'} überschritten ({current} / {allowed})"
                 db.session.add(ImportApproval(session_id=session.id, version_id=version.id, nation=nation,
-                    approval_type=issue.get('code', 'QUOTA'), description=issue.get('message', ''),
+                    approval_type=issue.get('code', 'QUOTA'), description=quota_title,
                     decision='PENDING', username=user.username))
                 db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='QUOTA_VIOLATION',
-                    title='Single Room Quote verletzt' if issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED' else 'Official Quote verletzt',
+                    title=quota_title,
                     description=combination, username=user.username))
             if not quota_issues and not result['errors']:
                 db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='QUOTA_PASSED',
