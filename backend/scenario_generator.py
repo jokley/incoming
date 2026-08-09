@@ -26,23 +26,16 @@ class ScenarioDefinition:
 
 
 SCENARIOS = (
-    ScenarioDefinition('001', 'Neue Nation', 'Erstmeldung einer bislang unbekannten Nation.', ('base',)),
-    ScenarioDefinition('002', 'Neue Athleten', 'Eine Folgemeldung ergänzt zwei Athleten.', ('base', 'add-athletes')),
-    ScenarioDefinition('003', 'Athlet entfernt', 'Eine Folgemeldung entfernt einen gemeldeten Athleten.', ('base', 'remove-athlete')),
-    ScenarioDefinition('004', 'Zimmerbedarf geändert', 'Der Bedarf wechselt von Doppel- auf Einzelzimmer.', ('base', 'room-demand')),
-    ScenarioDefinition('005', 'Anreise geändert', 'Die Nation meldet eine frühere Anreise.', ('base', 'arrival')),
-    ScenarioDefinition('006', 'Abreise geändert', 'Die Nation verlängert den Aufenthalt.', ('base', 'departure')),
-    ScenarioDefinition('007', 'Official-Quote verletzt', 'Zusätzliche Officials überschreiten die zulässige Quote.', ('base', 'official-quota')),
-    ScenarioDefinition('008', 'Single-Room-Quote verletzt', 'Zu viele Einzelzimmer werden für Officials angefordert.', ('base', 'single-quota')),
-    ScenarioDefinition('009', 'Quoten nach neuer Meldeliste wieder erfüllt', 'Eine korrigierte Meldeliste stellt beide Quoten wieder her.', ('base', 'official-quota', 'base')),
-    ScenarioDefinition('010', 'Zimmerpartner betroffen', 'Ein bestehender Zimmerpartner wird ausgetauscht.', ('base', 'room-partner')),
-    ScenarioDefinition('011', 'Disposition betroffen', 'Geänderte Aufenthaltsdaten betreffen eine bestehende Disposition.', ('base', 'arrival')),
-    ScenarioDefinition('012', 'Mehrkosten erforderlich', 'Ein zusätzliches Einzelzimmer erzeugt genehmigungspflichtige Mehrkosten.', ('base', 'room-demand')),
-    ScenarioDefinition('013', 'Rücksprache Nation', 'Eine Quotenverletzung erfordert dokumentierte Rücksprache.', ('base', 'official-quota')),
-    ScenarioDefinition('014', 'Neue Meldeliste nach Ruecksprache', 'Nach Rücksprache folgt eine korrigierte Meldeliste.', ('base', 'official-quota', 'base')),
-    ScenarioDefinition('015', 'Organisatorische Freigabe', 'Eine fachlich geprüfte Abweichung wird zur Freigabe vorgelegt.', ('base', 'single-quota')),
-    ScenarioDefinition('016', 'Gesamttest', 'Durchläuft Meldung, Änderungen, Quoten, Rücksprache, Freigabe und Folgewirkungen.',
-                       ('base', 'add-athletes', 'room-demand', 'official-quota', 'base', 'arrival', 'room-partner')),
+    ScenarioDefinition('001', 'Nation importieren', 'Erstimport einer Nation.', ('base',)),
+    ScenarioDefinition('002', 'Athleten zuweisen', 'Athleten werden Zimmern zugewiesen.', ('athletes-unassigned', 'base')),
+    ScenarioDefinition('003', 'Neue Athleten', 'Neue Athleten werden gemeldet.', ('base', 'add-athletes')),
+    ScenarioDefinition('004', 'Athlet entfernt', 'Ein gemeldeter Athlet entfällt.', ('base', 'remove-athlete')),
+    ScenarioDefinition('005', 'Aufenthaltsdaten geändert', 'An- oder Abreise wurde geändert.', ('base', 'stay-dates')),
+    ScenarioDefinition('006', 'Zimmerpartner geändert', 'Zimmerpartner ändern.', ('base', 'room-partner')),
+    ScenarioDefinition('007', 'Official-Quote verletzt', 'Official-Quote wird überschritten.', ('base', 'official-quota')),
+    ScenarioDefinition('008', 'Single-Room-Quote verletzt', 'Single-Room-Quote wird überschritten.', ('base', 'single-quota')),
+    ScenarioDefinition('009', 'Neue Meldeliste erhalten', 'Die Nation liefert eine korrigierte Meldeliste. Quoten werden wieder eingehalten.', ('base', 'official-quota', 'corrected')),
+    ScenarioDefinition('010', 'Import freigeben', 'Alle Entscheidungen abgeschlossen. Import kann durchgeführt werden.', ('base', 'official-quota', 'final-ready')),
 )
 
 SCENARIO_BY_NUMBER = {scenario.number: scenario for scenario in SCENARIOS}
@@ -80,7 +73,9 @@ def _base_people(number: str) -> list[dict]:
 def _apply(rows: list[dict], step: str, number: str) -> list[dict]:
     rows = deepcopy(rows)
     athletes = [row for row in rows if row['Function'] == 'Athlete']
-    if step == 'add-athletes':
+    if step == 'athletes-unassigned':
+        for row in athletes: row.update({'Room_type': '', 'Shared with Name': ''})
+    elif step == 'add-athletes':
         seed = _base_people(number)[0]
         for index, (last, first, gender) in enumerate((('SUTER', 'Nora', 'F'), ('WYSS', 'Jonas', 'M')), 20):
             row = deepcopy(seed); row.update({'Lastname': last, 'Firstname': first, 'Gender': gender,
@@ -89,10 +84,8 @@ def _apply(rows: list[dict], step: str, number: str) -> list[dict]:
             rows.append(row)
     elif step == 'remove-athlete': rows.remove(athletes[-1])
     elif step == 'room-demand': athletes[0].update({'Room_type': 'Single', 'Shared with Name': ''})
-    elif step == 'arrival':
-        for row in rows: row.update({'Arrival_date': '2027-03-10', 'First_meal': '2027-03-10'})
-    elif step == 'departure':
-        for row in rows: row.update({'Departure_date': '2027-03-23', 'Last_meal': '2027-03-23'})
+    elif step == 'stay-dates':
+        for row in rows: row.update({'Arrival_date': '2027-03-10', 'First_meal': '2027-03-10', 'Departure_date': '2027-03-23', 'Last_meal': '2027-03-23'})
     elif step == 'official-quota':
         seed = next(row for row in rows if row['Function'] != 'Athlete')
         for index in range(4):
@@ -111,7 +104,8 @@ def _room_rows(entries: list[dict]) -> list[dict]:
     rows = []
     for person in entries:
         flags = {'Single': 0, 'Double_shared': 0, 'Double_single': 0, 'Appartment': 0}
-        flags['Single' if person['Room_type'] == 'Single' else 'Double_shared'] = 1
+        if person['Room_type']:
+            flags['Single' if person['Room_type'] == 'Single' else 'Double_shared'] = 1
         row = {key: person.get(key, '') for key in ('Lastname', 'Firstname', 'Nationcode', 'Function', 'Arrival_date', 'Departure_date', 'Shared with Name', 'Room_type', 'First_meal', 'Last_meal')}
         row['Shared with Nationcode'] = person['Nationcode'] if person.get('Shared with Name') else ''
         row.update(flags)
@@ -129,11 +123,11 @@ def _expectation(scenario: ScenarioDefinition, version: int, step: str) -> dict:
         'importStatus': 'READY_FOR_REVIEW',
         'expectedTasks': ['Fachliche Prüfung'] if special else [],
         'expectedHistory': [f'Version {version} hochgeladen', 'Technische Prüfung abgeschlossen'],
-        'expectedDispositionChanges': step in {'arrival', 'departure', 'room-demand'},
+        'expectedDispositionChanges': step == 'stay-dates',
         'expectedRoommateChanges': step in {'room-partner', 'remove-athlete'},
-        'expectedApprovals': ['Organisatorische Freigabe'] if scenario.number in {'012', '015', '016'} and special else [],
+        'expectedApprovals': [],
         'expectedConsultation': step == 'official-quota',
-        'expectedFinalStatus': 'WAITING_FOR_NATION' if step == 'official-quota' else 'READY_FOR_APPROVAL',
+        'expectedFinalStatus': 'READY_FOR_IMPORT' if step == 'final-ready' else ('WAITING_FOR_NATION' if step == 'official-quota' else 'READY_FOR_APPROVAL'),
     }
 
 
