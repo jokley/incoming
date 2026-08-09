@@ -92,11 +92,11 @@ export function AdministrationTestData() {
       </div>
       <p className="mt-4 text-xs text-[var(--ops-text-subtle)]">Jeder Download enthält pro Version <strong>entries.xlsx</strong> und <strong>entries-room-list-detailed.xlsx</strong> sowie eine <strong>expected.json</strong>.</p>
     </ContentCard>
-    <Dialog open={Boolean(selected)} onOpenChange={open => !open && !saving && setSelected(null)}><DialogContent className="max-w-3xl overflow-hidden p-0">
+    <Dialog open={Boolean(selected)} onOpenChange={open => !open && !saving && setSelected(null)}><DialogContent className="max-w-3xl overflow-hidden border-[var(--ops-border-strong)] bg-[var(--ops-surface-raised)] p-0 text-[var(--ops-text)] shadow-2xl">
       {selected && <><DialogHeader title={selected.title} subtitle="Diese Aktion kann nicht rückgängig gemacht werden." /><div className="max-h-[65vh] overflow-y-auto p-5">
         <InfoPanel tone="error" title="Endgültig löschen"><span className="flex gap-2"><AlertTriangle className="h-4 w-4 shrink-0" />Prüfen Sie den Umfang sorgfältig und bestätigen Sie erst danach.</span></InfoPanel>
         <div className="mt-5 grid gap-5 md:grid-cols-2"><DataList title="Folgende Daten werden gelöscht:" items={selected.deletes} /><DataList title="Folgende Daten bleiben erhalten:" items={preserved} /></div>
-      </div><DialogFooter><OpsButton disabled={saving} onClick={() => setSelected(null)}>Abbrechen</OpsButton><OpsButton disabled={saving} className="border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)]" onClick={reset}>{saving ? 'Reset wird ausgeführt …' : 'Endgültig zurücksetzen'}</OpsButton></DialogFooter></>}
+      </div><DialogFooter><OpsButton disabled={saving} onClick={() => setSelected(null)}>Abbrechen</OpsButton><OpsButton disabled={saving} className="border-red-400 bg-red-700 font-extrabold text-white hover:bg-red-600" onClick={reset}>{saving ? 'Reset wird ausgeführt …' : 'Endgültig zurücksetzen'}</OpsButton></DialogFooter></>}
     </DialogContent></Dialog>
   </PageLayout>;
 }
