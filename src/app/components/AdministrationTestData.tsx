@@ -4,12 +4,13 @@ import { Dialog, DialogContent } from './ui/dialog';
 import { ContentCard, DialogFooter, DialogHeader, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 
-type Scope = 'imports' | 'operations' | 'all';
+type Scope = 'imports' | 'athletes' | 'assignments' | 'all';
 const preserved = ['Hotels', 'Hotelkontingente', 'Zimmertypen', 'Events', 'Nationen', 'Benutzer', 'Rollen', 'Systemeinstellungen'];
 const actions: Array<{ scope: Scope; title: string; description: string; deletes: string[] }> = [
-  { scope: 'imports', title: 'Importdaten zurücksetzen', description: 'Entfernt den vollständigen Importverlauf und alle Entscheidungen.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'] },
-  { scope: 'operations', title: 'Athleten & Disposition zurücksetzen', description: 'Leert operative Personen- und Belegungsdaten.', deletes: ['Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Dispositionsstatus'] },
-  { scope: 'all', title: 'Alle dynamischen Daten zurücksetzen', description: 'Stellt den Ausgangszustand her, ohne Stammdaten anzutasten.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen', 'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus', 'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'] },
+  { scope: 'imports', title: 'Imports', description: 'Entfernt alle Imports und deren Verlauf.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'] },
+  { scope: 'athletes', title: 'Athleten', description: 'Entfernt alle importierten Athleten und Officials.', deletes: ['Athleten', 'Zimmerpartner', 'Prüfmarkierungen', 'Zimmerbelegungen'] },
+  { scope: 'assignments', title: 'Zuweisungen', description: 'Entfernt alle Zimmerzuweisungen.', deletes: ['Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'] },
+  { scope: 'all', title: 'Alles zurücksetzen', description: 'Stellt den Ausgangszustand für alle Testdaten wieder her.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen', 'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus', 'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'] },
 ];
 
 export function AdministrationTestData() {
@@ -63,10 +64,10 @@ export function AdministrationTestData() {
     {message && <InfoPanel tone={message.tone} title={message.tone === 'success' ? 'Reset abgeschlossen' : 'Reset fehlgeschlagen'}>{message.text}</InfoPanel>}
     <ContentCard className="p-5">
       <SectionHeader title="Daten zurücksetzen" subtitle="Stammdaten bleiben bei jeder Aktion vollständig erhalten." />
-      <div className="mt-5 grid gap-4 lg:grid-cols-3">{actions.map(action => <ContentCard key={action.scope} surface="elevated" elevation="none" className="flex flex-col p-4">
+      <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-4">{actions.map(action => <ContentCard key={action.scope} surface="elevated" elevation="none" className={`flex flex-col p-5 ${action.scope === 'all' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)]' : ''}`}>
         <div className="flex items-start justify-between gap-3"><Database className="h-5 w-5 text-[var(--ops-text-subtle)]" /><StatusChip tone={action.scope === 'all' ? 'error' : 'warning'}>{action.deletes.length} Datenbereiche</StatusChip></div>
         <h3 className="mt-4 font-bold text-[var(--ops-text)]">{action.title}</h3><p className="mt-2 flex-1 text-sm text-[var(--ops-text-muted)]">{action.description}</p>
-        <OpsButton className="mt-5 border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)]" onClick={() => setSelected(action)}>Reset vorbereiten</OpsButton>
+        <OpsButton className={`mt-5 font-bold text-white shadow-md ${action.scope === 'all' ? 'border-red-400 bg-red-700 hover:bg-red-600' : 'border-[var(--ops-primary)] bg-[var(--ops-primary)] hover:brightness-110'}`} onClick={() => setSelected(action)}>{action.title}</OpsButton>
       </ContentCard>)}</div>
     </ContentCard>
     <ContentCard className="p-5">

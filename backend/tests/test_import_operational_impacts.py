@@ -1,0 +1,94 @@
+import os
+import sys
+import tempfile
+import unittest
+from datetime import date
+
+
+DB_FILE = tempfile.NamedTemporaryFile(suffix='.db', delete=False).name
+os.environ['DATABASE_PATH'] = DB_FILE
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from app import app  # noqa: E402
+from excel_import import _remove_athletes, build_disposition_analysis, build_quota_warnings  # noqa: E402
+from models import Athlete, Hotel, RoomBooking, RoomBookingOccupant, RoomType, db  # noqa: E402
+
+
+class ImportOperationalImpactsTest(unittest.TestCase):
+    def setUp(self):
+        app.config['TESTING'] = True
+        with app.app_context():
+            db.drop_all()
+            db.create_all()
+            db.session.add_all([Hotel(name='Test Hotel'), RoomType(name='Single', max_persons=1)])
+            db.session.commit()
+
+    def person(self, athlete, function=None, arrival=None, departure=None):
+        return {
+            'matchKey': athlete.fis_code, 'fisCode': athlete.fis_code,
+            'firstname': athlete.firstname, 'lastname': athlete.lastname,
+            'nationCode': athlete.nation_code, 'industryName': athlete.discipline,
+            'gender': athlete.gender, 'forGender': athlete.for_gender,
+            'function': function or athlete.function, 'roomType': athlete.room_type,
+            'arrivalDate': arrival if arrival is not None else athlete.arrival_date,
+            'departureDate': departure if departure is not None else athlete.departure_date,
+        }
+
+    def test_import_and_disposition_share_existing_quota_violation(self):
+        with app.app_context():
+            roster = [Athlete(fis_code='A1', firstname='A', lastname='One', nation_code='AUT',
+                discipline='Big Air', gender='F', function='Athlete')]
+            roster += [Athlete(fis_code=f'O{i}', firstname='O', lastname=str(i), nation_code='AUT',
+                discipline='Big Air', gender='F', function='Official') for i in range(4)]
+            db.session.add_all(roster)
+            db.session.flush()
+            hotel, room_type = Hotel.query.one(), RoomType.query.one()
+            for official in roster[1:]:
+                booking = RoomBooking(hotel_id=hotel.id, room_type_id=room_type.id)
+                db.session.add(booking)
+                db.session.flush()
+                db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=official.id))
+            db.session.commit()
+
+            warnings = build_quota_warnings([self.person(person) for person in roster], [])
+            self.assertEqual({warning['code'] for warning in warnings}, {
+                'QUOTA_OFFICIALS_EXCEEDED', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
+            live = app.test_client().get('/api/fis/official-quotas').get_json()[0]
+            self.assertEqual((live['assignedOfficials'], live['officialQuota']), (4, 3))
+            self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (4, 1))
+
+    def test_changed_stay_reports_existing_booking_hotel_and_partner(self):
+        with app.app_context():
+            first = Athlete(fis_code='A1', firstname='Anna', lastname='One', nation_code='AUT', discipline='Big Air',
+                gender='F', function='Athlete', arrival_date=date(2027, 3, 10), departure_date=date(2027, 3, 12))
+            partner = Athlete(fis_code='A2', firstname='Bea', lastname='Two', nation_code='AUT', discipline='Big Air',
+                gender='F', function='Athlete', arrival_date=date(2027, 3, 10), departure_date=date(2027, 3, 12))
+            db.session.add_all([first, partner]); db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+            db.session.add(booking); db.session.flush()
+            db.session.add_all([RoomBookingOccupant(room_booking_id=booking.id, athlete_id=first.id),
+                                RoomBookingOccupant(room_booking_id=booking.id, athlete_id=partner.id)])
+            db.session.commit()
+            result = build_disposition_analysis([
+                self.person(first, arrival=date(2027, 3, 9)), self.person(partner)], [], [])['categories']
+            self.assertEqual(result['stayChanged']['count'], 1)
+            self.assertEqual(result['hotelAssignmentAffected']['count'], 1)
+            self.assertIn('Bea Two', result['dispositionAffected']['records'][0]['roommates'])
+
+    def test_removed_athlete_releases_empty_booking_without_orphans(self):
+        with app.app_context():
+            athlete = Athlete(firstname='Anna', lastname='One', nation_code='AUT')
+            db.session.add(athlete); db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+            db.session.add(booking); db.session.flush()
+            db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete.id))
+            db.session.commit()
+            self.assertEqual(_remove_athletes([athlete]), 1)
+            db.session.commit()
+            self.assertEqual(RoomBooking.query.count(), 0)
+            self.assertEqual(RoomBookingOccupant.query.count(), 0)
+            self.assertEqual(Athlete.query.count(), 0)
+
+
+if __name__ == '__main__':
+    unittest.main()
