@@ -10,7 +10,7 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
-from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
+from quota_service import evaluate_quota_usage
 from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 
 
@@ -455,24 +455,6 @@ def _daterange_nights(check_in_date, check_out_date):
     return nights
 
 
-def _count_existing_official_usage():
-    grouped = {}
-    single_grouped = {}
-    bookings = RoomBooking.query.all()
-    for booking in bookings:
-        occupants = booking.occupants or []
-        for occupant in occupants:
-            athlete = occupant.athlete
-            if not athlete or normalize_string(athlete.function) == 'athlete':
-                continue
-            gender = (athlete.gender or athlete.for_gender or '').strip().upper()
-            key = (athlete.nation_code or '', athlete.discipline or '', gender)
-            grouped[key] = grouped.get(key, 0) + 1
-            if booking.room_type and booking.room_type.max_persons == 1:
-                single_grouped[key] = single_grouped.get(key, 0) + 1
-    return grouped, single_grouped
-
-
 def parse_entries_list(df, athlete_maps):
     errors = []
     warnings = []
@@ -752,40 +734,58 @@ def parse_room_list(df, imported_people):
 
 
 def build_quota_warnings(people, rooms, quota_checks=None):
-    athlete_counts = {}
-    official_counts = {}
-    single_official_counts = {}
-
     room_by_person = {}
     for room in rooms:
         room_by_person[room['person1Key']] = room
         if room.get('person2Key'):
             room_by_person[room['person2Key']] = room
 
-    for person in people:
-        discipline = person.get('industryName') or ''
-        gender = (person.get('gender') or person.get('forGender') or '').upper()
-        key = (person.get('nationCode') or '', discipline, gender)
-        if normalize_string(person.get('function')) == 'athlete':
-            athlete_counts[key] = athlete_counts.get(key, 0) + 1
-        else:
-            official_counts[key] = official_counts.get(key, 0) + 1
-            room = room_by_person.get(person['matchKey'])
-            if room and normalize_string(room.get('roomType')) == 'single':
-                single_official_counts[key] = single_official_counts.get(key, 0) + 1
+    roster = [{**person, 'discipline': person.get('industryName')} for person in people]
+    requested = []
+    projected = []
+    imported_by_existing_id = {}
+    athlete_maps = _build_existing_athlete_maps()
+    for person in roster:
+        room = room_by_person.get(person.get('matchKey'))
+        requested.append({**person, 'countsAsSingle': bool(
+            room and normalize_string(room.get('roomType')) == 'single')})
+        existing = _find_existing_athlete(person, athlete_maps)
+        if existing:
+            imported_by_existing_id[existing.id] = person
 
-    live_usage, live_single_usage = _count_existing_official_usage()
-    warnings = []
-    all_keys = set(athlete_counts) | set(official_counts)
-    for key in sorted(all_keys):
-        nation_code, discipline, gender = key
-        athletes_entered = athlete_counts.get(key, 0)
-        if not is_supported_discipline(discipline) and discipline:
+    # Project persisted bookings through the incoming authoritative roster.
+    # Removed people disappear; retained people use their incoming quota group.
+    for membership in RoomBookingOccupant.query.options(
+            db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type)).all():
+        person = imported_by_existing_id.get(membership.athlete_id)
+        if not person or normalize_string(person.get('function')) == 'athlete':
             continue
-        official_quota = compute_official_quota(athletes_entered)
-        imported_officials = official_counts.get(key, 0)
-        imported_single_rooms = single_official_counts.get(key, 0)
-        single_room_entitlement = compute_single_room_entitlement(imported_officials)
+        booking = membership.room_booking
+        projected.append({**person, 'countsAsSingle': bool(
+            booking and (booking.counts_as_single or (booking.room_type and booking.room_type.max_persons == 1)))})
+
+    requested_rows = evaluate_quota_usage(roster, requested)
+    projected_rows = evaluate_quota_usage(roster, projected)
+    rows_by_key = {}
+    for source, rows in (('existing', projected_rows), ('requested', requested_rows)):
+        for row in rows:
+            key = (row['nationCode'], row['discipline'], row['gender'])
+            current = rows_by_key.setdefault(key, {**row, 'sources': set()})
+            current['sources'].add(source)
+            # Report the more restrictive visible usage while retaining one task
+            # per rule and quota group.
+            if row['assignedOfficials'] > current['assignedOfficials']:
+                current['assignedOfficials'] = row['assignedOfficials']
+            if row['singleRoomsUsed'] > current['singleRoomsUsed']:
+                current['singleRoomsUsed'] = row['singleRoomsUsed']
+
+    warnings = []
+    for (nation_code, discipline, gender), row in sorted(rows_by_key.items()):
+        athletes_entered = row['athletesEntered']
+        official_quota = row['officialQuota']
+        imported_officials = row['assignedOfficials']
+        imported_single_rooms = row['singleRoomsUsed']
+        single_room_entitlement = row['singleRoomsAllowed']
         if quota_checks is not None:
             quota_checks.append({
                 'nationCode': nation_code, 'discipline': discipline, 'gender': gender,
@@ -805,7 +805,8 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                     'athletesEntered': athletes_entered,
                     'officialQuota': official_quota,
                     'importedOfficials': imported_officials,
-                    'existingAssignedOfficials': live_usage.get(key, 0),
+                    'existingAssignedOfficials': next((r['assignedOfficials'] for r in projected_rows if (r['nationCode'], r['discipline'], r['gender']) == (nation_code, discipline, gender)), 0),
+                    'violationSources': sorted(row['sources']),
                 },
             })
         if imported_single_rooms > single_room_entitlement:
@@ -819,7 +820,8 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                     'importedOfficials': imported_officials,
                     'singleRoomsAllowed': single_room_entitlement,
                     'importedSingleRooms': imported_single_rooms,
-                    'existingSingleRoomsUsed': live_single_usage.get(key, 0),
+                    'existingSingleRoomsUsed': next((r['singleRoomsUsed'] for r in projected_rows if (r['nationCode'], r['discipline'], r['gender']) == (nation_code, discipline, gender)), 0),
+                    'violationSources': sorted(row['sources']),
                 },
             })
     return warnings

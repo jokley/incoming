@@ -2,7 +2,7 @@ from flask import Flask, g, request, jsonify, send_from_directory, send_file, ha
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
-from fis_rules import compute_official_quota, compute_single_room_entitlement, is_supported_discipline
+from quota_service import evaluate_quota_usage
 from datetime import datetime
 import hashlib
 import os
@@ -127,7 +127,8 @@ def _required_permission():
 
 RESET_TARGETS = {
     'imports': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'),
-    'operations': ('Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Dispositionsstatus'),
+    'athletes': ('Athleten', 'Zimmerpartner', 'Prüfmarkierungen'),
+    'assignments': ('Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'),
     'all': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen',
             'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus',
             'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'),
@@ -142,12 +143,15 @@ def reset_test_data():
         return jsonify({'error': 'INVALID_SCOPE', 'message': 'Unbekannter Reset-Umfang'}), 400
     counts = {}
     try:
-        if scope in {'operations', 'all'}:
-            for label, model in (
+        if scope in {'assignments', 'athletes', 'all'}:
+            # Athlete deletion also has to detach all dependent assignments.
+            models = (
                 ('Zimmerbelegungen', RoomBookingOccupant), ('Buchungen', RoomBooking),
                 ('Assignments', RoomAssignment), ('FIS Assignments', FisRoomAssignment),
-                ('Athleten', Athlete),
-            ):
+            )
+            if scope in {'athletes', 'all'}:
+                models += (('Athleten', Athlete),)
+            for label, model in models:
                 counts[label] = model.query.delete(synchronize_session=False)
         if scope in {'imports', 'all'}:
             counts['Import-Läufe'] = ImportRun.query.delete(synchronize_session=False)
@@ -1059,7 +1063,6 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
 
 
 def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
-    rows = []
     athletes = Athlete.query
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
@@ -1067,30 +1070,9 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         athletes = athletes.filter(Athlete.discipline == discipline)
 
     athletes = athletes.all()
-    grouped = {}
-    for athlete in athletes:
-        if (athlete.function or '').strip().lower() != 'athlete':
-            continue
-        athlete_gender = (athlete.gender or athlete.for_gender or '').strip()
-        if not athlete_gender:
-            continue
-        g = athlete_gender.lower()
-        if g.startswith('m'):
-            normalized_gender = 'M'
-        elif g.startswith('f'):
-            normalized_gender = 'F'
-        else:
-            normalized_gender = athlete_gender
-
-        if gender and normalized_gender.lower() != gender.lower():
-            continue
-
-        key = (athlete.nation_code, athlete.discipline or '', normalized_gender)
-        grouped[key] = grouped.get(key, 0) + 1
-
-    # Build live usage from room bookings: booked non-athletes and their single-room usage
-    usage_grouped = {}
-    single_used_grouped = {}
+    roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
+               'forGender': a.for_gender, 'function': a.function} for a in athletes]
+    assigned = []
 
     bookings = RoomBooking.query.options(
         db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete),
@@ -1109,39 +1091,11 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             if (a.function or '').strip().lower() == 'athlete':
                 continue
 
-            g = _normalize_gender(a)
-            if g == 'male':
-                normalized_gender = 'M'
-            elif g == 'female':
-                normalized_gender = 'F'
-            else:
-                normalized_gender = (a.gender or a.for_gender or '').strip() or ''
-            if not normalized_gender:
-                continue
-            if gender and normalized_gender.lower() != gender.lower():
-                continue
-
-            key = (a.nation_code, a.discipline or '', normalized_gender)
-            usage_grouped[key] = usage_grouped.get(key, 0) + 1
-            if booking.room_type and (booking.room_type.max_persons == 1 or booking.counts_as_single):
-                single_used_grouped[key] = single_used_grouped.get(key, 0) + 1
-
-    for (n_code, disc, g), count in grouped.items():
-        quota = compute_official_quota(count)
-        single_allowed = compute_single_room_entitlement(quota)
-        key = (n_code, disc, g)
-        rows.append({
-            'nationCode': n_code,
-            'discipline': disc,
-            'gender': g,
-            'athletesEntered': count,
-            'officialQuota': quota,
-            'singleRoomsAllowed': single_allowed,
-            'assignedOfficials': usage_grouped.get(key, 0),
-            'singleRoomsUsed': single_used_grouped.get(key, 0),
-        })
-
-    return sorted(rows, key=lambda row: (row['nationCode'], row['discipline'], row['gender']))
+            assigned.append({'nationCode': a.nation_code, 'discipline': a.discipline,
+                'gender': a.gender, 'forGender': a.for_gender, 'function': a.function,
+                'countsAsSingle': bool(booking.counts_as_single or (booking.room_type and booking.room_type.max_persons == 1))})
+    rows = evaluate_quota_usage(roster, assigned)
+    return [row for row in rows if not gender or row['gender'].lower() == gender.lower()]
 
 
 def _get_grouped_room_bookings_response():
