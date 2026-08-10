@@ -184,6 +184,8 @@ class ImportApproval(db.Model):
     approval_date = db.Column(db.DateTime)
     contact_subject = db.Column(db.String(300))
     deadline_at = db.Column(db.DateTime)
+    approved_person_keys_json = db.Column(db.Text)
+    quota_details_json = db.Column(db.Text)
     username = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
@@ -196,6 +198,8 @@ class ImportApproval(db.Model):
                 'approvalDate': self.approval_date.isoformat() + 'Z' if self.approval_date else None,
                 'contactSubject': self.contact_subject,
                 'deadlineAt': self.deadline_at.isoformat() + 'Z' if self.deadline_at else None,
+                'approvedPersonKeys': json.loads(self.approved_person_keys_json or '[]'),
+                'quotaDetails': json.loads(self.quota_details_json or '{}'),
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
 class RoomType(db.Model):
@@ -359,6 +363,8 @@ class Athlete(db.Model):
 
     # Accommodation
     room_type = db.Column(db.String(50))  # Single, Double shared, etc.
+    # Fachliches Importergebnis; die Disposition wählt danach nur noch das Bett.
+    single_room_entitlement = db.Column(db.String(30))  # IN_QUOTA | APPROVED_EXTRA
     shared_with_name = db.Column(db.String(200))
     late_checkout = db.Column(db.Boolean, default=False)
 
@@ -407,6 +413,7 @@ class Athlete(db.Model):
             'phone': self.phone,
             'email': self.email,
             'present': self.present,
+            'singleRoomEntitlement': self.single_room_entitlement,
             'arrivalDate': self.arrival_date.isoformat() if self.arrival_date else None,
             'arrivalTime': self.arrival_time,
             'arrivalBy': self.arrival_by,

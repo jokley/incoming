@@ -15,6 +15,8 @@ export type OperationsTask = {
   recommendation: string;
   gender: string;
   quota?: { current: number; allowed: number; label: string };
+  singleRoomCandidates: Array<{ personKey: string; name: string; function?: string }>;
+  excessCount: number;
 };
 
 export function quotaViolationLabel(label: string, current: number, allowed: number) {
@@ -29,6 +31,7 @@ export function buildOperationsTask(session: ImportSession, approval: ImportAppr
     .filter((value): value is string => typeof value === 'string' && Boolean(value));
   const isSingleRoom = /single|einzel|\bsr\b/i.test(`${approval.type} ${approval.description}`);
   const quotaCheck = session.preview?.quotaChecks?.find(check => check.nationCode === approval.nation && (!session.discipline || check.discipline === session.discipline));
+  const singleRoomCandidates = approval.quotaDetails?.singleRoomCandidates ?? [];
   return {
     approval,
     nation: session.nation,
@@ -37,8 +40,10 @@ export function buildOperationsTask(session: ImportSession, approval: ImportAppr
     rule: isSingleRoom ? 'Die gemeldeten Einzelzimmer überschreiten die aktuell verfügbare Quote.' : 'Die aktuell gültige Nationenquote wird durch die Meldung überschritten.',
     impact: 'Die bestehende Planung muss fachlich geprüft werden. Hotel- und Zimmerzuweisungen bleiben unverändert.',
     recommendation: isSingleRoom ? 'Mehrkosten abstimmen' : 'Neue Meldeliste anfordern',
-    gender: quotaCheck?.gender || '—',
-    quota: quotaCheck ? { current: isSingleRoom ? quotaCheck.singleRooms : quotaCheck.officials, allowed: isSingleRoom ? quotaCheck.singleRoomsAllowed : quotaCheck.officialQuota, label: isSingleRoom ? 'Single Rooms' : 'Officials' } : undefined,
+    gender: approval.quotaDetails?.gender || quotaCheck?.gender || '—',
+    quota: quotaCheck ? { current: Number(isSingleRoom ? approval.quotaDetails?.importedSingleRooms ?? quotaCheck.singleRooms : approval.quotaDetails?.importedOfficials ?? quotaCheck.officials), allowed: Number(isSingleRoom ? approval.quotaDetails?.singleRoomsAllowed ?? quotaCheck.singleRoomsAllowed : approval.quotaDetails?.officialQuota ?? quotaCheck.officialQuota), label: isSingleRoom ? 'Single Rooms' : 'Officials' } : undefined,
+    singleRoomCandidates,
+    excessCount: Number(approval.quotaDetails?.excessCount ?? 0),
   };
 }
 
@@ -50,7 +55,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   task: OperationsTask | null;
   saving: boolean;
   onClose: () => void;
-  onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; deadlineAt?:string}) => void;
+  onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => void;
 }) {
   const now = () => new Date().toISOString().slice(0,16);
   const [decision, setDecision] = useState<'nation' | 'newList'>('nation');
@@ -58,7 +63,8 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   const [comment, setComment] = useState('');
   const [contact, setContact] = useState(''); const [method,setMethod]=useState<'EMAIL'|'PHONE'>('EMAIL');
   const [date,setDate]=useState(now); const [subject,setSubject]=useState(''); const [deadline,setDeadline]=useState('');
-  useEffect(() => { setDecision('nation'); setOrganizerApproval(false); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); }, [task]);
+  const [approvedPersonKeys,setApprovedPersonKeys]=useState<string[]>([]);
+  useEffect(() => { setDecision('nation'); setOrganizerApproval(false); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); setApprovedPersonKeys(task?.approval.approvedPersonKeys??[]); }, [task]);
 
   return <Dialog open={Boolean(task)} onClose={saving ? undefined : onClose} fullWidth maxWidth="md">
     {task && <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]">
@@ -83,13 +89,15 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
           {([['nation','Ausnahme durch Nation genehmigt'],['newList','Neue Meldeliste angekündigt']] as const).map(([value,label])=><label key={value} className={`rounded-xl border p-3 ${decision===value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)]'}`}><input type="radio" className="mr-3" checked={decision===value} onChange={()=>setDecision(value)}/><strong>{label}</strong></label>)}
         </div><div className="mt-5 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3"><label className="font-bold"><input type="checkbox" className="mr-3" checked={organizerApproval} onChange={e=>{setOrganizerApproval(e.target.checked);if(e.target.checked)setDecision('nation')}}/>Organisatorische Freigabe (keine Reaktion innerhalb der Frist)</label>{organizerApproval&&<div className="mt-3"><Field label="Frist gesetzt bis"><input type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)} className="field"/></Field><div className="mt-2"><InfoPanel tone="warning" title="Ausnahme">Diese Freigabe wird ausdrücklich als organisatorische Entscheidung protokolliert.</InfoPanel></div></div>}</div></section>
 
+        {task.singleRoomCandidates.length > 0 && decision === 'nation' && <section><SectionHeader title="Genehmigte Einzelzimmeransprüche" subtitle={`Genau ${task.excessCount} Person(en) außerhalb der Quote auswählen.`}/><div className="mt-3 grid gap-2">{task.singleRoomCandidates.map(person=><label key={person.personKey} className="flex items-center gap-3 rounded-xl border border-[var(--ops-border)] p-3"><input type="checkbox" checked={approvedPersonKeys.includes(person.personKey)} onChange={event=>setApprovedPersonKeys(current=>event.target.checked?[...current,person.personKey]:current.filter(key=>key!==person.personKey))}/><span><strong className="block">{person.name}</strong><span className="text-sm text-[var(--ops-text-muted)]">{person.function || 'Official'} · Einzelzimmer</span></span></label>)}</div><p className="mt-2 text-xs text-[var(--ops-text-muted)]">{approvedPersonKeys.length} von {task.excessCount} ausgewählt. Diese Auswahl bestimmt Anspruch und Mehrkosten unabhängig vom später zugewiesenen Zimmertyp.</p></section>}
+
         <section><label htmlFor="decision-comment" className="block"><SectionHeader title="Bemerkung" subtitle="Optional: Telefonnotiz, Mail oder ergänzende Information" /></label><textarea id="decision-comment" value={comment} onChange={event=>setComment(event.target.value)} rows={4} placeholder="Bemerkung zur Entscheidung …" className="mt-3 w-full resize-y rounded-xl border border-[var(--ops-border)] bg-[var(--ops-background)] p-3 text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-subtle)] focus:border-[var(--ops-primary)]" /></section>
         <details className="group rounded-xl border border-[var(--ops-border)]">
           <summary className="flex cursor-pointer list-none items-center justify-between p-4 text-sm font-bold text-[var(--ops-text-muted)]">Technische Details <ChevronDown className="h-4 w-4 transition group-open:rotate-180"/></summary>
           <div className="grid gap-3 border-t border-[var(--ops-divider)] p-4 text-sm sm:grid-cols-2"><DecisionFact label="Entscheidungs-ID" value={task.approval.id}/><DecisionFact label="Session-ID" value={task.approval.sessionId}/><DecisionFact label="Regeltyp" value={task.approval.type}/><DecisionFact label="Version" value="Aktuelle Importversion"/></div>
         </details>
       </DialogContent>
-      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||!contact||!date||(organizerApproval&&!deadline)} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
+      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&approvedPersonKeys.length!==task.excessCount)} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[]})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
     </div>}
   </Dialog>;
 }

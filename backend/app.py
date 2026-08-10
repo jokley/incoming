@@ -772,6 +772,7 @@ def _build_room_booking_units():
                     'special_meal': athlete.special_meal,
                     'room_type': athlete.room_type,
                 })()),
+                'singleRoomEntitlement': athlete.single_room_entitlement,
                 'hasPendingReview': pending_review,
                 'changeTouchesAssignment': assigned_change,
                 'isAssigned': bool(athlete_booking),
@@ -1083,29 +1084,26 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     athletes = athletes.all()
     roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
                'forGender': a.for_gender, 'function': a.function} for a in athletes]
-    assigned = []
-
-    bookings = RoomBooking.query.options(
-        db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete),
-        db.joinedload(RoomBooking.room_type),
-    ).all()
-    for booking in bookings:
-        for occupant in booking.occupants or []:
-            a = occupant.athlete
-            if not a:
-                continue
-            if nation_code and a.nation_code != nation_code:
-                continue
-            if discipline and (a.discipline or '') != discipline:
-                continue
-
-            if (a.function or '').strip().lower() == 'athlete':
-                continue
-
-            assigned.append({'nationCode': a.nation_code, 'discipline': a.discipline,
-                'gender': a.gender, 'forGender': a.for_gender, 'function': a.function,
-                'countsAsSingle': bool(booking.counts_as_single or (booking.room_type and booking.room_type.max_persons == 1))})
+    # The professional import result is authoritative. The eventual room type
+    # selected by disposition cannot create quota usage or additional costs.
+    assigned = [{'nationCode': a.nation_code, 'discipline': a.discipline,
+        'gender': a.gender, 'forGender': a.for_gender, 'function': a.function,
+        'countsAsSingle': bool(a.single_room_entitlement)} for a in athletes
+        if (a.function or '').strip().lower() != 'athlete']
     rows = evaluate_quota_usage(roster, assigned)
+    approved_by_key = {}
+    for athlete in athletes:
+        if athlete.single_room_entitlement == 'APPROVED_EXTRA':
+            key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
+            approved_by_key[key] = approved_by_key.get(key, 0) + 1
+    approved_sessions = {(session.nation, session.discipline or '') for session in ImportSession.query.all()
+        if session.approvals and all(item.decision == 'APPROVED' for item in session.approvals)}
+    for row in rows:
+        key = (row['nationCode'], row['discipline'], row['gender'])
+        row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
+        violated = row['assignedOfficials'] > row['officialQuota'] or row['singleRoomsUsed'] > row['singleRoomsAllowed']
+        row['quotaStatus'] = ('EXCEPTION_APPROVED' if violated and (row['nationCode'], row['discipline']) in approved_sessions
+            else 'DECISION_REQUIRED' if violated else 'FULFILLED')
     return [row for row in rows if not gender or row['gender'].lower() == gender.lower()]
 
 
@@ -1135,6 +1133,8 @@ with app.app_context():
     def ensure_athlete_columns():
         cols = db.session.execute(text("PRAGMA table_info(athlete)")).fetchall()
         existing = {c[1] for c in cols}  # (cid, name, type, notnull, dflt, pk)
+        if "single_room_entitlement" not in existing:
+            db.session.execute(text("ALTER TABLE athlete ADD COLUMN single_room_entitlement VARCHAR(30)"))
 
         needed = {
             "athletes_last_seen_at": "DATETIME",
@@ -1181,6 +1181,8 @@ with app.app_context():
             "approval_method": "VARCHAR(20)", "approval_by": "VARCHAR(200)",
             "approval_date": "DATETIME", "contact_subject": "VARCHAR(300)",
             "deadline_at": "DATETIME",
+            "approved_person_keys_json": "TEXT",
+            "quota_details_json": "TEXT",
         }
         for name, sql_type in needed.items():
             if name not in existing:
@@ -1384,7 +1386,7 @@ def preview_fis_import():
                 quota_title = f"{'Single Rooms' if is_single_room else 'Officials'} überschritten ({current} / {allowed})"
                 db.session.add(ImportApproval(session_id=session.id, version_id=version.id, nation=nation,
                     approval_type=issue.get('code', 'QUOTA'), description=quota_title,
-                    decision='PENDING', username=user.username))
+                    quota_details_json=json.dumps(details, ensure_ascii=False), decision='PENDING', username=user.username))
                 db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='QUOTA_VIOLATION',
                     title=quota_title,
                     description=combination, username=user.username))
@@ -1455,6 +1457,13 @@ def decide_import_approval(session_id, approval_id):
         return jsonify({'error': 'approvalDate or deadlineAt is invalid'}), 400
     if approval_type == 'ORGANIZER_APPROVED' and not deadline_at:
         return jsonify({'error': 'deadlineAt is required for organizer approval'}), 400
+    approved_person_keys = data.get('approvedPersonKeys') or []
+    details = json.loads(approval.quota_details_json or '{}')
+    is_single_room_approval = bool(details.get('singleRoomCandidates')) or 'Single Rooms' in approval.description
+    if is_single_room_approval and decision == 'APPROVED':
+        valid_keys = {person.get('personKey') for person in details.get('singleRoomCandidates', [])}
+        if len(set(approved_person_keys)) != details.get('excessCount') or not set(approved_person_keys) <= valid_keys:
+            return jsonify({'error': 'Exactly the affected extra single-room persons must be selected'}), 400
     approval.decision = decision
     approval.approval_type = approval_type or approval.approval_type
     approval.approval_method = method
@@ -1462,6 +1471,7 @@ def decide_import_approval(session_id, approval_id):
     approval.approval_date = approval_date
     approval.contact_subject = str(data.get('contactSubject') or '').strip() or None
     approval.deadline_at = deadline_at
+    approval.approved_person_keys_json = json.dumps(approved_person_keys)
     approval.comment = data.get('comment')
     approval.username = current_user().username
     approval.created_at = datetime.utcnow()
@@ -1508,7 +1518,12 @@ def import_approved_session(session_id):
     try:
         if not session.current_version:
             return jsonify({'error': 'Die Session besitzt keine aktuelle Version.'}), 409
-        result = confirm_fis_import(session.current_version.preview_token)
+        approved_extra_keys = {
+            key for approval in session.approvals
+            if approval.decision == 'APPROVED' and approval.approval_type in {'NATION_APPROVED', 'ORGANIZER_APPROVED'}
+            for key in json.loads(approval.approved_person_keys_json or '[]')
+        }
+        result = confirm_fis_import(session.current_version.preview_token, approved_extra_keys)
         now = datetime.utcnow()
         session.status, session.imported_at = 'IMPORTED', now
         db.session.add(ImportSessionEvent(session_id=session.id, event_type='IMPORTED',

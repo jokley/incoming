@@ -34,12 +34,14 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             'departureDate': departure if departure is not None else athlete.departure_date,
         }
 
-    def test_import_and_disposition_share_existing_quota_violation(self):
+    def test_live_quota_uses_import_entitlements_not_assigned_room_types(self):
         with app.app_context():
             roster = [Athlete(fis_code='A1', firstname='A', lastname='One', nation_code='AUT',
                 discipline='Big Air', gender='F', function='Athlete')]
             roster += [Athlete(fis_code=f'O{i}', firstname='O', lastname=str(i), nation_code='AUT',
                 discipline='Big Air', gender='F', function='Official') for i in range(4)]
+            roster[1].single_room_entitlement = 'IN_QUOTA'
+            roster[2].single_room_entitlement = 'APPROVED_EXTRA'
             db.session.add_all(roster)
             db.session.flush()
             hotel, room_type = Hotel.query.one(), RoomType.query.one()
@@ -55,7 +57,8 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 'QUOTA_OFFICIALS_EXCEEDED', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
             live = app.test_client().get('/api/fis/official-quotas').get_json()[0]
             self.assertEqual((live['assignedOfficials'], live['officialQuota']), (4, 3))
-            self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (4, 1))
+            self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (2, 1))
+            self.assertEqual(live['approvedExtraSingleRooms'], 1)
 
     def test_changed_stay_reports_existing_booking_hotel_and_partner(self):
         with app.app_context():
