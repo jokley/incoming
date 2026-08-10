@@ -13,7 +13,7 @@ export const IMPORT_SESSION_STATUS = {
 export type ImportSessionStatus = keyof typeof IMPORT_SESSION_STATUS;
 export type ApprovalType = 'NATION_APPROVED'|'ORGANIZER_APPROVED';
 export type ApprovalMethod = 'EMAIL'|'PHONE';
-export interface ImportApproval { id: string; sessionId: string; nation: string; type: string; description: string; decision: 'PENDING'|'APPROVED'|'NEW_LIST_ANNOUNCED'; comment?: string; user: string; timestamp: string; approvalType?: ApprovalType|null; approvalMethod?: ApprovalMethod|null; approvalBy?: string|null; approvalDate?: string|null; contactSubject?: string|null; deadlineAt?: string|null; }
+export interface ImportApproval { id: string; sessionId: string; nation: string; type: string; description: string; decision: 'PENDING'|'APPROVED'|'NEW_LIST_ANNOUNCED'; comment?: string; user: string; timestamp: string; approvalType?: ApprovalType|null; approvalMethod?: ApprovalMethod|null; approvalBy?: string|null; approvalDate?: string|null; contactSubject?: string|null; deadlineAt?: string|null; approvedPersonKeys?: string[]; quotaDetails?: { gender?: string; excessCount?: number; importedSingleRooms?: number; singleRoomsAllowed?: number; importedOfficials?: number; officialQuota?: number; singleRoomCandidates?: Array<{personKey:string;name:string;function?:string}> }; }
 export interface ImportSession {
   id: string; nation: string; discipline?: string; uploadedAt: string; uploadedBy: string;
   status: ImportSessionStatus; warnings: number; errors: number; version: number;

@@ -799,7 +799,7 @@ class ApiService {
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
-  async decideImportTask(sessionId: string, taskId: string, payload: { decision: Exclude<ImportApproval['decision'],'PENDING'>; comment: string; approvalType?: 'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod: 'EMAIL'|'PHONE'; approvalBy: string; approvalDate: string; contactSubject?: string; deadlineAt?: string }): Promise<ImportSession> {
+  async decideImportTask(sessionId: string, taskId: string, payload: { decision: Exclude<ImportApproval['decision'],'PENDING'>; comment: string; approvalType?: 'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod: 'EMAIL'|'PHONE'; approvalBy: string; approvalDate: string; contactSubject?: string; deadlineAt?: string; approvedPersonKeys?: string[] }): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/approvals/${taskId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),

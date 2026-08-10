@@ -181,6 +181,7 @@ export interface RoomBookingUnitOccupant {
   specialMeal?: string | null;
   roomType?: string | null;
   statusBadges: string[];
+  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | null;
   hasPendingReview: boolean;
   importChangeTypes: ImportChangeType[];
   changeTouchesAssignment: boolean;
@@ -425,3 +426,4 @@ export interface FisImportConfirmResult {
     finishedAt: string | null;
   };
 }
+  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | null;

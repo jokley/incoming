@@ -10,7 +10,7 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
-from quota_service import evaluate_quota_usage
+from quota_service import evaluate_quota_usage, quota_key
 from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 
 
@@ -810,6 +810,16 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                 },
             })
         if imported_single_rooms > single_room_entitlement:
+            single_room_people = [person for person in requested
+                if person.get('countsAsSingle')
+                and (person.get('function') or '').strip().lower() != 'athlete'
+                and quota_key(person) == (nation_code, discipline, gender)]
+            excess_count = imported_single_rooms - single_room_entitlement
+            candidates = [{
+                'personKey': person.get('matchKey'),
+                'name': f"{person.get('firstname', '')} {person.get('lastname', '')}".strip(),
+                'function': person.get('function'),
+            } for person in single_room_people]
             warnings.append({
                 'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
                 'message': f'Single Rooms überschritten ({imported_single_rooms} / {single_room_entitlement})',
@@ -822,6 +832,8 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                     'importedSingleRooms': imported_single_rooms,
                     'existingSingleRoomsUsed': next((r['singleRoomsUsed'] for r in projected_rows if (r['nationCode'], r['discipline'], r['gender']) == (nation_code, discipline, gender)), 0),
                     'violationSources': sorted(row['sources']),
+                    'excessCount': excess_count,
+                    'singleRoomCandidates': candidates,
                 },
             })
     return warnings
@@ -1254,7 +1266,7 @@ def _remove_duplicates():
     return _remove_athletes(duplicates)
 
 
-def confirm_fis_import(preview_token):
+def confirm_fis_import(preview_token, approved_extra_single_room_keys=()):
     cleanup_preview_store()
     preview = PREVIEW_STORE.get(preview_token)
     if not preview:
@@ -1272,6 +1284,18 @@ def confirm_fis_import(preview_token):
     created = 0
     updated = 0
 
+    approved_extra_single_room_keys = set(approved_extra_single_room_keys)
+    room_by_person = {}
+    for room in preview.get('rooms', []):
+        room_by_person[room.get('person1Key')] = room
+        if room.get('person2Key'):
+            room_by_person[room.get('person2Key')] = room
+    single_room_allowances = {}
+    for check in preview.get('quotaChecks', []):
+        key = (check.get('nationCode'), check.get('discipline'), check.get('gender'))
+        single_room_allowances[key] = check.get('singleRoomsAllowed', 0)
+    allocated_in_quota = {}
+
     for person in preview['people']:
         athlete = _find_existing_athlete(person, athlete_maps)
         existing_before = _snapshot_roomlist_fields(athlete) if athlete else None
@@ -1288,6 +1312,20 @@ def confirm_fis_import(preview_token):
             updated += 1
 
         _apply_person_record(athlete, person, now)
+        room = room_by_person.get(person.get('matchKey'))
+        requests_single = bool(room and normalize_string(room.get('roomType')) == 'single')
+        group = quota_key({**person, 'discipline': person.get('industryName')})
+        used = allocated_in_quota.get(group, 0)
+        if requests_single and (person.get('function') or '').strip().lower() != 'athlete':
+            if person.get('matchKey') in approved_extra_single_room_keys:
+                athlete.single_room_entitlement = 'APPROVED_EXTRA'
+            elif used < single_room_allowances.get(group, 0):
+                athlete.single_room_entitlement = 'IN_QUOTA'
+                allocated_in_quota[group] = used + 1
+            else:
+                athlete.single_room_entitlement = None
+        else:
+            athlete.single_room_entitlement = None
         if existing_before is None:
             athlete.roomlist_changed_at = now
             athlete.roomlist_change_summary = 'Neuer Athlet'

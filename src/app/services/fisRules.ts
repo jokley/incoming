@@ -9,6 +9,8 @@ export interface OfficialQuotaUsage {
   singleRoomsAllowed: number;
   assignedOfficials: number;
   singleRoomsUsed: number;
+  approvedExtraSingleRooms: number;
+  quotaStatus: 'FULFILLED' | 'DECISION_REQUIRED' | 'EXCEPTION_APPROVED';
 }
 
 export function getComplianceStatus(assigned: number, quota: number): ComplianceStatus {
