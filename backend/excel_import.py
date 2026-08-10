@@ -1204,6 +1204,24 @@ def _snapshot_roomlist_fields(athlete):
     }
 
 
+IMPORT_CHANGE_FIELDS = {
+    'arrivalDate': 'DATE_CHANGED',
+    'departureDate': 'DATE_CHANGED',
+    'firstMeal': 'DATE_CHANGED',
+    'lastMeal': 'DATE_CHANGED',
+    'sharedWithName': 'ROOMMATE_CHANGED',
+    'roomType': 'ROOM_DEMAND_CHANGED',
+    'specialMeal': 'ROOM_DEMAND_CHANGED',
+}
+
+
+def _typed_import_changes(changed_keys):
+    """Return stable, de-duplicated operational change reasons."""
+    return list(dict.fromkeys(
+        IMPORT_CHANGE_FIELDS[key] for key in changed_keys if key in IMPORT_CHANGE_FIELDS
+    ))
+
+
 def _remove_athletes(athletes):
     """Delete people and every operational reference without orphaning bookings."""
     removed_names = {f'{athlete.lastname}, {athlete.firstname}'.strip().casefold() for athlete in athletes}
@@ -1271,16 +1289,19 @@ def confirm_fis_import(preview_token):
 
         _apply_person_record(athlete, person, now)
         if existing_before is None:
-            athlete.roomlist_changed_at = None
-            athlete.roomlist_change_summary = None
+            athlete.roomlist_changed_at = now
+            athlete.roomlist_change_summary = 'Neuer Athlet'
+            athlete.import_change_types_json = json.dumps(['NEW_ATHLETE'])
             athlete.roomlist_change_acknowledged_at = None
             athlete.roomlist_change_acknowledged_summary = None
         else:
             existing_after = _snapshot_roomlist_fields(athlete)
             changed_keys = [key for key, value in existing_after.items() if existing_before.get(key) != value]
             if changed_keys:
+                change_types = _typed_import_changes(changed_keys)
                 athlete.roomlist_changed_at = now
                 athlete.roomlist_change_summary = 'changed: ' + ', '.join(changed_keys)
+                athlete.import_change_types_json = json.dumps(change_types)
                 athlete.roomlist_change_acknowledged_at = None
                 athlete.roomlist_change_acknowledged_summary = None
         db.session.flush()

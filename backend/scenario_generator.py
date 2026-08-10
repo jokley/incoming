@@ -58,8 +58,8 @@ BASE_PEOPLE = (
     ('Athlete', 'WYSS', 'Lea', 'F', '100004', '200004', '300004', 'Double shared', 'SUTER, Nora'),
     ('Athlete', 'KELLER', 'Noah', 'M', '100005', '200005', '300005', 'Double shared', 'VOGT, Elias'),
     ('Athlete', 'VOGT', 'Elias', 'M', '100006', '200006', '300006', 'Double shared', 'KELLER, Noah'),
-    ('Coach', 'BAUMANN', 'Reto', 'M', '110001', '210001', '', 'Double shared', 'MEIER, Nils'),
-    ('Team Captain', 'MEIER', 'Nils', 'M', '110002', '210002', '', 'Double shared', 'BAUMANN, Reto'),
+    ('Coach', 'BAUMANN', 'Reto', 'F', '110001', '210001', '', 'Double shared', 'MEIER, Nils'),
+    ('Team Captain', 'MEIER', 'Nils', 'F', '110002', '210002', '', 'Double shared', 'BAUMANN, Reto'),
     ('Physio', 'AMREIN', 'Sara', 'F', '110003', '210003', '', 'Single', ''),
 )
 
@@ -71,8 +71,8 @@ ADDED_ATHLETES = (
 ADDED_OFFICIALS = (
     ('Doctor', 'IMHOF', 'Claudia', 'F', '110004', '210004', '', 'Double shared', 'KUNZ, Anna'),
     ('Service', 'KUNZ', 'Anna', 'F', '110005', '210005', '', 'Double shared', 'IMHOF, Claudia'),
-    ('Service', 'SCHMID', 'David', 'M', '110006', '210006', '', 'Double shared', 'HUBER, Simon'),
-    ('Official', 'HUBER', 'Simon', 'M', '110007', '210007', '', 'Double shared', 'SCHMID, David'),
+    ('Service', 'SCHMID', 'David', 'F', '110006', '210006', '', 'Double shared', 'HUBER, Simon'),
+    ('Official', 'HUBER', 'Simon', 'F', '110007', '210007', '', 'Double shared', 'SCHMID, David'),
 )
 
 
