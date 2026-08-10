@@ -39,6 +39,7 @@ import type {
   AssignmentValidationResult,
   Athlete,
   RoomBookingUnit,
+  ImportChangeType,
 } from '../types';
 
 type AppView = 'dispatch' | 'quotas';
@@ -69,6 +70,13 @@ const REGION_COLORS: Record<string, string> = {
   Feldkirch: '#8B5CF6',
 };
 
+const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
+  NEW_ATHLETE: 'Neuer Athlet',
+  DATE_CHANGED: 'Aufenthaltsdatum geändert',
+  ROOMMATE_CHANGED: 'Zimmerpartner geändert',
+  ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert',
+};
+
 export function Assignments() {
   const permissions = usePermissions();
   const location = useLocation();
@@ -96,6 +104,7 @@ export function Assignments() {
   const [filterGender, setFilterGender] = useState('');
   const [filterStatus, setFilterStatus] = useState<QueueStatus>('pending');
   const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
+  const [filterImportReview, setFilterImportReview] = useState(false);
   const [regionFilter, setRegionFilter] = useState('');
 
   const [dragging, setDragging] = useState<DragState | null>(null);
@@ -254,11 +263,12 @@ export function Assignments() {
       const matchesDiscipline = !filterDiscipline || unit.occupants.some((occ) => occ.discipline === filterDiscipline);
       const matchesGender = !filterGender || unit.occupants.some((occ) => normalizeGender(occ.gender) === filterGender);
       const matchesRoomCategory = !filterRoomCategory || getUnitRoomCategory(unit) === filterRoomCategory;
+      const matchesImportReview = !filterImportReview || unit.occupants.some((occ) => occ.hasPendingReview);
       const haystack = `${unit.nationCode} ${unit.roomTypeLabel} ${unit.occupants.map((o) => `${o.firstname} ${o.lastname}`).join(' ')}`.toLowerCase();
       const matchesSearch = !query || haystack.includes(query);
-      return matchesNation && matchesDiscipline && matchesGender && matchesRoomCategory && matchesSearch;
+      return matchesNation && matchesDiscipline && matchesGender && matchesRoomCategory && matchesImportReview && matchesSearch;
     });
-  }, [allUnits, allUnitsCombined, assignedUnits, filterDiscipline, filterGender, filterNation, filterRoomCategory, filterStatus, queueSearch]);
+  }, [allUnits, allUnitsCombined, assignedUnits, filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
 
   const filteredHotels = useMemo(() => {
     const query = hotelSearch.trim().toLowerCase();
@@ -517,6 +527,19 @@ export function Assignments() {
     ]);
   };
 
+  const handleAcknowledgeImportChanges = async (unit: RoomBookingUnit) => {
+    try {
+      setSaving(true);
+      await Promise.all(unit.occupants.filter((occ) => occ.hasPendingReview).map((occ) => api.acknowledgeAthleteRoomlistChange(occ.athleteId)));
+      setSelected(null);
+      await refreshPlanningData();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Prüfung konnte nicht gespeichert werden'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const onProfileRender = useCallback((id: string, _phase: string, actualDuration: number) => {
     recordAssignmentRender(id, actualDuration);
   }, []);
@@ -575,6 +598,8 @@ export function Assignments() {
               onFilterStatus={setFilterStatus}
               filterRoomCategory={filterRoomCategory}
               onFilterRoomCategory={setFilterRoomCategory}
+              filterImportReview={filterImportReview}
+              onFilterImportReview={setFilterImportReview}
               search={queueSearch}
               onSearch={setQueueSearch}
               nationOptions={nationOptions}
@@ -673,6 +698,7 @@ export function Assignments() {
               onUnassignOccupant={handleUnassignOccupant}
               onMarkBookingAsSingle={handleMarkBookingAsSingle}
               pendingAction={pendingAction}
+              onAcknowledgeImportChanges={handleAcknowledgeImportChanges}
             />
           </AssignmentDialog>
         )}
@@ -886,6 +912,8 @@ function QueueSidebar({
   onFilterStatus,
   filterRoomCategory,
   onFilterRoomCategory,
+  filterImportReview,
+  onFilterImportReview,
   search,
   onSearch,
   nationOptions,
@@ -915,6 +943,8 @@ function QueueSidebar({
   onFilterStatus: (value: QueueStatus) => void;
   filterRoomCategory: RoomCategoryFilter;
   onFilterRoomCategory: (value: RoomCategoryFilter) => void;
+  filterImportReview: boolean;
+  onFilterImportReview: (value: boolean) => void;
   search: string;
   onSearch: (value: string) => void;
   nationOptions: string[];
@@ -952,6 +982,12 @@ function QueueSidebar({
         </div>
 
         <div className="mt-3 flex flex-wrap gap-1.5">
+          <button
+            onClick={() => onFilterImportReview(!filterImportReview)}
+            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${filterImportReview ? 'bg-amber-500 text-slate-950' : 'bg-[var(--ops-surface-elevated)] text-amber-200'}`}
+          >
+            Disposition prüfen
+          </button>
           {[
             { id: 'pending', label: 'Offen' },
             { id: 'done', label: 'Erledigt' },
@@ -1104,6 +1140,7 @@ function QueueUnitCard({
       className={`relative w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging || pending ? 'opacity-60' : ''}`}
     >
       {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[#122033] px-2 py-1 text-[9px] font-semibold text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
+      {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">Disposition prüfen</span>}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
@@ -2170,6 +2207,7 @@ function DetailPanel({
   onUnassignOccupant,
   onMarkBookingAsSingle,
   pendingAction,
+  onAcknowledgeImportChanges,
 }: {
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
@@ -2178,6 +2216,7 @@ function DetailPanel({
   onUnassignOccupant: (bookingId: string, athleteId: string) => void;
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
   pendingAction: PendingAssignmentAction | null;
+  onAcknowledgeImportChanges: (unit: RoomBookingUnit) => void;
 }) {
   if (!selectedUnit && !selectedBookingContext) {
     return (
@@ -2293,8 +2332,17 @@ function DetailPanel({
 
   if (!selectedUnit) return null;
 
+  const pendingChanges = Array.from(new Set(selectedUnit.occupants.filter((occ) => occ.hasPendingReview).flatMap((occ) => occ.importChangeTypes)));
+
   return (
     <div className="flex h-full flex-col overflow-y-auto">
+      {pendingChanges.length > 0 && (
+        <div className="m-4 mb-0 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-100">
+          <div className="text-xs font-bold">Importänderungen</div>
+          <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map((change) => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>
+          <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
+        </div>
+      )}
       <div className="border-b border-[#334766] px-4 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-blue-200">

@@ -473,6 +473,15 @@ def _has_pending_roomlist_review(athlete):
     )
 
 
+def _acknowledge_import_changes(athlete_ids):
+    """Mark imported changes reviewed as part of an assignment save."""
+    now = datetime.utcnow()
+    for athlete in Athlete.query.filter(Athlete.id.in_(set(athlete_ids))).all():
+        if _has_pending_roomlist_review(athlete):
+            athlete.roomlist_change_acknowledged_at = now
+            athlete.roomlist_change_acknowledged_summary = athlete.roomlist_change_summary
+
+
 def _change_touches_assignment_for_athlete(athlete):
     return bool(_has_pending_roomlist_review(athlete) and RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first())
 
@@ -756,6 +765,7 @@ def _build_room_booking_units():
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
                 'roomType': athlete.room_type,
+                'importChangeTypes': json.loads(athlete.import_change_types_json) if athlete.import_change_types_json else [],
                 'statusBadges': _status_badges_for_athlete(type('A', (), {
                     'hasPendingRoomlistReview': pending_review,
                     'changeTouchesAssignment': assigned_change,
@@ -1041,6 +1051,7 @@ def _save_booking_from_payload(payload, existing_booking=None):
 
     for athlete_id in payload['athlete_ids']:
         db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
+    _acknowledge_import_changes(payload['athlete_ids'])
     db.session.commit()
     return booking
 
@@ -1130,6 +1141,7 @@ with app.app_context():
             "roomlist_last_seen_at": "DATETIME",
             "roomlist_changed_at": "DATETIME",
             "roomlist_change_summary": "VARCHAR(500)",
+            "import_change_types_json": "TEXT",
             "roomlist_change_acknowledged_at": "DATETIME",
             "roomlist_change_acknowledged_summary": "VARCHAR(500)",
             "present": "BOOLEAN",
@@ -2340,6 +2352,7 @@ def update_assigned_unit(booking_id):
 @_measure_assignment_logic
 def unassign_room_booking_unit(booking_id):
     booking = RoomBooking.query.get_or_404(booking_id)
+    _acknowledge_import_changes(_collect_booking_athlete_ids(booking))
     db.session.delete(booking)
     db.session.commit()
     return jsonify({'success': True, 'bookingId': str(booking_id)})
@@ -2354,6 +2367,7 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     if not membership:
         return jsonify({'error': 'Not found', 'message': 'Occupant is not part of the booking'}), 404
 
+    _acknowledge_import_changes([athlete_id])
     db.session.delete(membership)
     db.session.flush()
     remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()

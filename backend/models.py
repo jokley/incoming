@@ -385,6 +385,9 @@ class Athlete(db.Model):
 
     roomlist_changed_at = db.Column(db.DateTime)
     roomlist_change_summary = db.Column(db.String(500))
+    # Machine-readable reasons are deliberately stored separately from the
+    # translated summary so disposition filters never depend on UI copy.
+    import_change_types_json = db.Column(db.Text)
     roomlist_change_acknowledged_at = db.Column(db.DateTime)
     roomlist_change_acknowledged_summary = db.Column(db.String(500))
 
@@ -435,6 +438,7 @@ class Athlete(db.Model):
             'roomlistLastSeenAt': self.roomlist_last_seen_at.isoformat() if self.roomlist_last_seen_at else None,
             'roomlistChangedAt': self.roomlist_changed_at.isoformat() if self.roomlist_changed_at else None,
             'roomlistChangeSummary': self.roomlist_change_summary,
+            'importChangeTypes': json.loads(self.import_change_types_json) if self.import_change_types_json else [],
             'roomlistChangeAcknowledgedAt': self.roomlist_change_acknowledged_at.isoformat() if self.roomlist_change_acknowledged_at else None,
             'roomlistChangeAcknowledgedSummary': self.roomlist_change_acknowledged_summary,
         }

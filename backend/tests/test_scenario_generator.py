@@ -86,6 +86,23 @@ class ScenarioGeneratorTest(unittest.TestCase):
                     prefix = f'{scenario.number}_' + generated['root'].name.split('_', 1)[1] + f'_V{version}'
                     preview = create_fis_import_preview(str(generated['root'] / f'{prefix}_entries.xlsx'), str(generated['root'] / f'{prefix}_entries-room-list-detailed.xlsx'))
                     self.assertTrue(preview['isValid'], (scenario.number, version, preview['errors']))
+                    expected_version = expected['versions'][version - 1]
+                    quota_warnings = [warning for warning in preview['warnings'] if warning['code'].startswith('QUOTA_')]
+                    self.assertEqual(bool(quota_warnings), expected_version['quotas'] == 'violated',
+                                     (scenario.number, version, preview['quotaChecks']))
+
+    def test_quota_scenarios_violate_the_named_rule_only(self):
+        expected_code = {
+            'official-quota': 'QUOTA_OFFICIALS_EXCEEDED',
+            'single-quota': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            for number, step in (('007', 'official-quota'), ('008', 'single-quota')):
+                generated = generate_scenario(number, Path(directory))['root']
+                prefix = next(generated.glob('*_V2_entries.xlsx')).name.removesuffix('_entries.xlsx')
+                preview = create_fis_import_preview(str(generated / f'{prefix}_entries.xlsx'), str(generated / f'{prefix}_entries-room-list-detailed.xlsx'))
+                codes = {warning['code'] for warning in preview['warnings'] if warning['code'].startswith('QUOTA_')}
+                self.assertEqual(codes, {expected_code[step]})
 
     def test_complete_suite_contains_every_scenario_without_nested_archives(self):
         with tempfile.TemporaryDirectory() as directory:

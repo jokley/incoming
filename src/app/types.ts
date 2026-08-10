@@ -113,6 +113,7 @@ export interface Athlete {
   roomlistLastSeenAt?: string | null; // ISO datetime
   roomlistChangedAt?: string | null; // ISO datetime
   roomlistChangeSummary?: string | null;
+  importChangeTypes?: ImportChangeType[];
   roomlistChangeAcknowledgedAt?: string | null;
   roomlistChangeAcknowledgedSummary?: string | null;
 
@@ -132,6 +133,12 @@ export interface Athlete {
   };
   assignments?: NonNullable<Athlete['assignment']>[];
 }
+
+export type ImportChangeType =
+  | 'NEW_ATHLETE'
+  | 'DATE_CHANGED'
+  | 'ROOMMATE_CHANGED'
+  | 'ROOM_DEMAND_CHANGED';
 
 export interface RoomAssignment {
   id: string;
@@ -175,6 +182,7 @@ export interface RoomBookingUnitOccupant {
   roomType?: string | null;
   statusBadges: string[];
   hasPendingReview: boolean;
+  importChangeTypes: ImportChangeType[];
   changeTouchesAssignment: boolean;
   isAssigned?: boolean;
   assignedBookingId?: string | null;
