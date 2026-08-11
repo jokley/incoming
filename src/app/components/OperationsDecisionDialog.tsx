@@ -55,7 +55,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   task: OperationsTask | null;
   saving: boolean;
   onClose: () => void;
-  onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => void;
+  onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => void;
 }) {
   const now = () => new Date().toISOString().slice(0,16);
   const [decision, setDecision] = useState<'nation' | 'newList'>('nation');
@@ -63,8 +63,9 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   const [comment, setComment] = useState('');
   const [contact, setContact] = useState(''); const [method,setMethod]=useState<'EMAIL'|'PHONE'>('EMAIL');
   const [date,setDate]=useState(now); const [subject,setSubject]=useState(''); const [deadline,setDeadline]=useState('');
+  const [costCoverage,setCostCoverage]=useState('');
   const [approvedPersonKeys,setApprovedPersonKeys]=useState<string[]>([]);
-  useEffect(() => { setDecision('nation'); setOrganizerApproval(false); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); setApprovedPersonKeys(task?.approval.approvedPersonKeys??[]); }, [task]);
+  useEffect(() => { setDecision('nation'); setOrganizerApproval(false); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setCostCoverage(task?.approval.costCoverage??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); setApprovedPersonKeys(task?.approval.approvedPersonKeys??[]); }, [task]);
 
   return <Dialog open={Boolean(task)} onClose={saving ? undefined : onClose} fullWidth maxWidth="md">
     {task && <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]">
@@ -84,6 +85,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
           <Field label="Medium"><select value={method} onChange={e=>setMethod(e.target.value as 'EMAIL'|'PHONE')} className="field"><option value="EMAIL">E-Mail</option><option value="PHONE">Telefon</option></select></Field>
           <Field label="Datum und Uhrzeit"><input type="datetime-local" value={date} onChange={e=>setDate(e.target.value)} className="field"/></Field>
           <Field label="Betreff der E-Mail (optional)"><input value={subject} onChange={e=>setSubject(e.target.value)} className="field"/></Field>
+          <Field label="Kostenübernahme (optional)"><input value={costCoverage} onChange={e=>setCostCoverage(e.target.value)} className="field"/></Field>
         </div></section>
         <section><SectionHeader title="Entscheidung" subtitle="Wie soll mit der Quotenverletzung weitergearbeitet werden?"/><div className="mt-3 grid gap-2">
           {([['nation','Ausnahme durch Nation genehmigt'],['newList','Neue Meldeliste angekündigt']] as const).map(([value,label])=><label key={value} className={`rounded-xl border p-3 ${decision===value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)]'}`}><input type="radio" className="mr-3" checked={decision===value} onChange={()=>setDecision(value)}/><strong>{label}</strong></label>)}
@@ -97,7 +99,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
           <div className="grid gap-3 border-t border-[var(--ops-divider)] p-4 text-sm sm:grid-cols-2"><DecisionFact label="Entscheidungs-ID" value={task.approval.id}/><DecisionFact label="Session-ID" value={task.approval.sessionId}/><DecisionFact label="Regeltyp" value={task.approval.type}/><DecisionFact label="Version" value="Aktuelle Importversion"/></div>
         </details>
       </DialogContent>
-      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&approvedPersonKeys.length!==task.excessCount)} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[]})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
+      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&approvedPersonKeys.length!==task.excessCount)} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,costCoverage:costCoverage||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[]})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
     </div>}
   </Dialog>;
 }

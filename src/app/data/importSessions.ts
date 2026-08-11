@@ -13,7 +13,8 @@ export const IMPORT_SESSION_STATUS = {
 export type ImportSessionStatus = keyof typeof IMPORT_SESSION_STATUS;
 export type ApprovalType = 'NATION_APPROVED'|'ORGANIZER_APPROVED';
 export type ApprovalMethod = 'EMAIL'|'PHONE';
-export interface ImportApproval { id: string; sessionId: string; nation: string; type: string; description: string; decision: 'PENDING'|'APPROVED'|'NEW_LIST_ANNOUNCED'; comment?: string; user: string; timestamp: string; approvalType?: ApprovalType|null; approvalMethod?: ApprovalMethod|null; approvalBy?: string|null; approvalDate?: string|null; contactSubject?: string|null; deadlineAt?: string|null; approvedPersonKeys?: string[]; quotaDetails?: { gender?: string; excessCount?: number; importedSingleRooms?: number; singleRoomsAllowed?: number; importedOfficials?: number; officialQuota?: number; singleRoomCandidates?: Array<{personKey:string;name:string;function?:string}> }; }
+export interface ImportApproval { id: string; sessionId: string; nation: string; type: string; description: string; decision: 'PENDING'|'APPROVED'|'NEW_LIST_ANNOUNCED'; comment?: string; user: string; timestamp: string; approvalType?: ApprovalType|null; approvalMethod?: ApprovalMethod|null; approvalBy?: string|null; approvalDate?: string|null; contactSubject?: string|null; costCoverage?: string|null; deadlineAt?: string|null; approvedPersonKeys?: string[]; quotaDetails?: { gender?: string; excessCount?: number; importedSingleRooms?: number; singleRoomsAllowed?: number; importedOfficials?: number; officialQuota?: number; singleRoomCandidates?: Array<{personKey:string;name:string;function?:string}> }; }
+export interface ImportDecision extends ImportApproval { discipline?: string|null; gender?: string|null; importVersion?: number|null; importSession:{id:string;nation:string}; people:Array<{id:string;name:string;nation:string;singleRoomStatus:string}>; }
 export interface ImportSession {
   id: string; nation: string; discipline?: string; uploadedAt: string; uploadedBy: string;
   status: ImportSessionStatus; warnings: number; errors: number; version: number;
@@ -21,7 +22,7 @@ export interface ImportSession {
   currentVersion: {id:string;version:number;uploadedBy:string;uploadedAt:string;errors:number;warnings:number;entriesFile?:string|null;roomFile?:string|null} | null;
   approvedAt?: string | null; approvals: ImportApproval[]; preview?: FisImportPreview | null;
   versions: Array<{id:string;version:number;uploadedBy:string;uploadedAt:string;errors:number;warnings:number}>;
-  history: Array<{id:string;type:string;title:string;description?:string;user:string;timestamp:string}>;
+  history: Array<{id:string;type:string;title:string;description?:string;user:string;timestamp:string;decisionId?:string|null}>;
 }
 
 export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED', 'REPLACED', 'ARCHIVED']);

@@ -1207,6 +1207,7 @@ with app.app_context():
             "deadline_at": "DATETIME",
             "approved_person_keys_json": "TEXT",
             "quota_details_json": "TEXT",
+            "cost_coverage": "VARCHAR(300)",
         }
         for name, sql_type in needed.items():
             if name not in existing:
@@ -1214,6 +1215,14 @@ with app.app_context():
         db.session.commit()
 
     ensure_import_approval_columns()
+
+    def ensure_import_history_columns():
+        cols = db.session.execute(text("PRAGMA table_info(import_session_event)")).fetchall()
+        if "approval_id" not in {c[1] for c in cols}:
+            db.session.execute(text("ALTER TABLE import_session_event ADD COLUMN approval_id INTEGER"))
+            db.session.commit()
+
+    ensure_import_history_columns()
 
     def ensure_event_planning_columns():
         """Keep existing SQLite installations compatible with person-based planning."""
@@ -1457,6 +1466,32 @@ def get_import_session(session_id):
     return jsonify(ImportSession.query.get_or_404(session_id).to_dict(include_preview=True))
 
 
+@app.route('/api/import/approvals/<int:approval_id>', methods=['GET'])
+def get_import_approval(approval_id):
+    """Return the canonical, read-only projection of one business decision."""
+    approval = ImportApproval.query.get_or_404(approval_id)
+    session = approval.session
+    version = next((item for item in session.versions if item.id == approval.version_id), None)
+    candidates = (json.loads(approval.quota_details_json or '{}').get('singleRoomCandidates') or [])
+    linked = Athlete.query.filter_by(single_room_decision_id=approval.id).all()
+    people = [{
+        'id': athlete.id, 'name': f'{athlete.firstname} {athlete.lastname}'.strip(),
+        'nation': athlete.nation_code, 'singleRoomStatus': athlete.single_room_status or 'NONE',
+    } for athlete in linked]
+    linked_names = {person['name'] for person in people}
+    approved_keys = set(json.loads(approval.approved_person_keys_json or '[]'))
+    for candidate in candidates:
+        if candidate.get('name') not in linked_names and candidate.get('personKey') in approved_keys:
+            people.append({'id': candidate.get('personKey'), 'name': candidate.get('name') or '—',
+                           'nation': approval.nation, 'singleRoomStatus': 'APPROVED_EXTRA'})
+    payload = approval.to_dict()
+    payload.update({'discipline': session.discipline, 'gender': payload['quotaDetails'].get('gender'),
+                    'importVersion': version.version if version else None,
+                    'importSession': {'id': str(session.id), 'nation': session.nation},
+                    'people': people})
+    return jsonify(payload)
+
+
 @app.route('/api/import/sessions/<int:session_id>/approvals/<int:approval_id>', methods=['PATCH'])
 def decide_import_approval(session_id, approval_id):
     session = ImportSession.query.get_or_404(session_id)
@@ -1494,6 +1529,7 @@ def decide_import_approval(session_id, approval_id):
     approval.approval_by = approval_by
     approval.approval_date = approval_date
     approval.contact_subject = str(data.get('contactSubject') or '').strip() or None
+    approval.cost_coverage = str(data.get('costCoverage') or '').strip() or None
     approval.deadline_at = deadline_at
     approval.approved_person_keys_json = json.dumps(approved_person_keys)
     approval.comment = data.get('comment')
@@ -1506,8 +1542,11 @@ def decide_import_approval(session_id, approval_id):
         username=current_user().username))
     result_title = ('Neue Meldeliste angekündigt' if decision == 'NEW_LIST_ANNOUNCED' else
                     ('Organisatorische Freigabe' if approval_type == 'ORGANIZER_APPROVED' else 'Ausnahme durch Nation genehmigt'))
-    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='QUOTA_DECISION',
-        title=result_title, description=data.get('comment'), username=current_user().username))
+    person_count = len(approved_person_keys)
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id,
+        approval_id=approval.id, event_type='QUOTA_DECISION', title=result_title,
+        description=f'{person_count} betroffene {"Person" if person_count == 1 else "Personen"}',
+        username=current_user().username))
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='STATUS_CHANGED',
         title='Status', description='Warten auf Nation' if decision == 'NEW_LIST_ANNOUNCED' else 'Ausnahme genehmigt',
         username=current_user().username))

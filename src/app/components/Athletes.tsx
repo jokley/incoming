@@ -21,6 +21,7 @@ import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, 
 import { api } from '../services/api';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
+import { ImportDecisionDialog } from './ImportDecisionDialog';
 import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 
@@ -73,9 +74,8 @@ function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: s
   </section>;
 }
 
-function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; open: boolean; onClose: () => void }) {
+function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
-  const navigate = useNavigate();
   const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
 
   useEffect(() => {
@@ -147,7 +147,7 @@ function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; op
             <ReadonlyField label="Importstatus" value={athlete ? importLabel(athlete) : undefined} />
             <ReadonlyField label="Quelle" value="FIS-Import" />
             <Box><Typography variant="caption" color="text.secondary">Einzelzimmerstatus</Typography><Box sx={{ mt: 0.75 }}><SingleRoomStatusBadge status={athlete?.single_room_status} /></Box></Box>
-            {athlete?.single_room_decision_id && <Box sx={{ display: 'flex', alignItems: 'end' }}><Button size="small" variant="text" onClick={() => { onClose(); void navigate(`/import?decisionId=${athlete.single_room_decision_id}`); }}>Importentscheidung öffnen</Button></Box>}
+            {athlete?.single_room_decision_id && <Box sx={{ display: 'flex', alignItems: 'end' }}><Button size="small" variant="text" onClick={() => { onClose(); onShowDecision(String(athlete.single_room_decision_id)); }}>Entscheidung anzeigen</Button></Box>}
           </FieldGrid>
         </DialogSection>
 
@@ -194,6 +194,7 @@ export function Athletes() {
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [search, setSearch] = useState('');
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
+  const [decisionId, setDecisionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -305,7 +306,8 @@ export function Athletes() {
         </div>
       </ContentCard>
     </div>
-    <AthleteDialog athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} />
+    <AthleteDialog athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} onShowDecision={setDecisionId} />
+    <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
   </PageLayout>;
 }
 
