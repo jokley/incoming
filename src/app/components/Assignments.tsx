@@ -1,5 +1,5 @@
 import { Profiler, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
-import { useLocation } from 'react-router';
+import { useLocation, useNavigate } from 'react-router';
 import {
   AlertCircle,
   AlertTriangle,
@@ -27,6 +27,7 @@ import {
 
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
+import { ImportDecisionDialog } from './ImportDecisionDialog';
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
@@ -81,6 +82,7 @@ const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
 export function Assignments() {
   const permissions = usePermissions();
   const location = useLocation();
+  const navigate = useNavigate();
   const routeState = location.state as ({ athleteId?: string; assignmentId?: string; view?: AppView; quotaKey?: string } & OperationsLocationState) | null;
   const requestedAthleteId = routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
@@ -91,6 +93,7 @@ export function Assignments() {
   const [pendingAction, setPendingAction] = useState<PendingAssignmentAction | null>(null);
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [decisionId, setDecisionId] = useState<string | null>(null);
 
   const [view, setView] = useState<AppView>(routeState?.view || (routeState?.operationsContext?.quotaKey ? 'quotas' : 'dispatch'));
   const [selected, setSelected] = useState<SelectedState>(null);
@@ -554,6 +557,7 @@ export function Assignments() {
   }
 
   return (
+    <>
     <Profiler id="Assignments" onRender={onProfileRender}>
     <div className="relative" aria-busy={saving}>
       {saving && (
@@ -691,7 +695,7 @@ export function Assignments() {
 
         {selected && (
           <AssignmentDialog onClose={() => setSelected(null)}>
-            <DetailPanel
+          <DetailPanel
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
               selectedAssignedUnit={selectedAssignedUnit}
@@ -699,8 +703,9 @@ export function Assignments() {
               onUnassignOccupant={handleUnassignOccupant}
               onMarkBookingAsSingle={handleMarkBookingAsSingle}
               pendingAction={pendingAction}
-              onAcknowledgeImportChanges={handleAcknowledgeImportChanges}
-            />
+            onAcknowledgeImportChanges={handleAcknowledgeImportChanges}
+            onShowDecision={setDecisionId}
+          />
           </AssignmentDialog>
         )}
 
@@ -716,10 +721,12 @@ export function Assignments() {
         )}
 
         {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
-      </div>
+    </div>
     </div>
     </div>
     </Profiler>
+    <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
+    </>
   );
 }
 
@@ -2235,6 +2242,7 @@ function DetailPanel({
   onMarkBookingAsSingle,
   pendingAction,
   onAcknowledgeImportChanges,
+  onShowDecision,
 }: {
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
@@ -2244,6 +2252,7 @@ function DetailPanel({
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
   pendingAction: PendingAssignmentAction | null;
   onAcknowledgeImportChanges: (unit: RoomBookingUnit) => void;
+  onShowDecision: (decisionId: string) => void;
 }) {
   if (!selectedUnit && !selectedBookingContext) {
     return (
@@ -2294,6 +2303,9 @@ function DetailPanel({
                     </button>
                   )}
                 </div>
+                {occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && (
+                  <SingleRoomDecisionCard decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
+                )}
               </div>
             ))}
           </div>
@@ -2331,6 +2343,11 @@ function DetailPanel({
               </div>
             </div>
           </div>
+          {(booking.capacity || 0) === 2 && (
+            <div className="mt-3 rounded-xl border border-[#39506f] bg-[#243650] p-3 text-xs font-semibold text-slate-200">
+              {booking.countsAsSingle ? 'DZ wird aktuell exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}
+            </div>
+          )}
           {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
             <button
               disabled={pendingAction?.bookingId === booking.bookingId}
@@ -2405,6 +2422,9 @@ function DetailPanel({
                   {occupant.isAssigned ? 'zugewiesen' : 'offen'}
                 </span>
               </div>
+              {occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && (
+                <SingleRoomDecisionCard decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
+              )}
             </div>
           ))}
         </div>
@@ -2469,6 +2489,16 @@ function DetailPanel({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+function SingleRoomDecisionCard({ decisionId, onShowDecision }: { decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
+  return (
+    <div className="mt-2 border-t border-[#425a79] pt-2 text-xs text-slate-300">
+      <div className="font-bold text-slate-100">Einzelzimmerstatus</div>
+      <div className="mt-1">Importentscheidung: <span className="font-semibold text-emerald-300">Genehmigt</span></div>
+      {decisionId && <button onClick={() => onShowDecision(decisionId)} className="mt-1.5 font-semibold text-blue-300 hover:text-blue-200">Entscheidung anzeigen</button>}
     </div>
   );
 }

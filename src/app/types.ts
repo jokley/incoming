@@ -184,6 +184,7 @@ export interface RoomBookingUnitOccupant {
   roomType?: string | null;
   statusBadges: string[];
   single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+  single_room_decision_id?: string | null;
   hasPendingReview: boolean;
   importChangeTypes: ImportChangeType[];
   changeTouchesAssignment: boolean;
@@ -242,6 +243,7 @@ export interface AssignmentGridBooking {
     name: string;
     nationCode: string;
     single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+    single_room_decision_id?: string | null;
   }>;
 }
 
