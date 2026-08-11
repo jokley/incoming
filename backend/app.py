@@ -22,6 +22,7 @@ from excel_import import InvalidExcelFileError, create_fis_import_preview, confi
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from import_session_migration import migrate_import_sessions
+from single_room_status_migration import migrate_single_room_status
 
 app = Flask(__name__)
 if os.environ.get('CORS_ORIGINS'):
@@ -1181,6 +1182,7 @@ with app.app_context():
         db.session.commit()
 
     ensure_athlete_columns()
+    migrate_single_room_status(db)
 
     def ensure_room_booking_columns():
         cols = db.session.execute(text("PRAGMA table_info(room_booking)")).fetchall()
@@ -1539,12 +1541,12 @@ def import_approved_session(session_id):
     try:
         if not session.current_version:
             return jsonify({'error': 'Die Session besitzt keine aktuelle Version.'}), 409
-        approved_extra_keys = {
-            key for approval in session.approvals
+        approved_extra_decisions = {
+            key: approval.id for approval in session.approvals
             if approval.decision == 'APPROVED' and approval.approval_type in {'NATION_APPROVED', 'ORGANIZER_APPROVED'}
             for key in json.loads(approval.approved_person_keys_json or '[]')
         }
-        result = confirm_fis_import(session.current_version.preview_token, approved_extra_keys)
+        result = confirm_fis_import(session.current_version.preview_token, approved_extra_decisions)
         now = datetime.utcnow()
         session.status, session.imported_at = 'IMPORTED', now
         db.session.add(ImportSessionEvent(session_id=session.id, event_type='IMPORTED',

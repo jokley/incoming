@@ -1300,7 +1300,7 @@ def _remove_duplicates():
     return _remove_athletes(duplicates)
 
 
-def confirm_fis_import(preview_token, approved_extra_single_room_keys=()):
+def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None):
     cleanup_preview_store()
     preview = PREVIEW_STORE.get(preview_token)
     if not preview:
@@ -1318,7 +1318,14 @@ def confirm_fis_import(preview_token, approved_extra_single_room_keys=()):
     created = 0
     updated = 0
 
-    approved_extra_single_room_keys = set(approved_extra_single_room_keys)
+    # Mapping person key -> ImportApproval id. Iterables remain accepted for
+    # backwards compatibility with internal callers from earlier releases.
+    if approved_extra_single_room_decisions is None:
+        approved_extra_single_room_decisions = {}
+    elif not hasattr(approved_extra_single_room_decisions, 'get'):
+        approved_extra_single_room_decisions = {
+            key: None for key in approved_extra_single_room_decisions
+        }
     room_by_person = {}
     for room in preview.get('rooms', []):
         room_by_person[room.get('person1Key')] = room
@@ -1351,15 +1358,23 @@ def confirm_fis_import(preview_token, approved_extra_single_room_keys=()):
         group = quota_key({**person, 'discipline': person.get('industryName')})
         used = allocated_in_quota.get(group, 0)
         if requests_single and (person.get('function') or '').strip().lower() != 'athlete':
-            if person.get('matchKey') in approved_extra_single_room_keys:
+            if person.get('matchKey') in approved_extra_single_room_decisions:
                 athlete.single_room_entitlement = 'APPROVED_EXTRA'
+                athlete.single_room_status = 'APPROVED_EXTRA'
+                athlete.single_room_decision_id = approved_extra_single_room_decisions.get(person.get('matchKey'))
             elif used < single_room_allowances.get(group, 0):
                 athlete.single_room_entitlement = 'IN_QUOTA'
+                athlete.single_room_status = 'IN_QUOTA'
+                athlete.single_room_decision_id = None
                 allocated_in_quota[group] = used + 1
             else:
                 athlete.single_room_entitlement = None
+                athlete.single_room_status = 'PENDING_APPROVAL'
+                athlete.single_room_decision_id = None
         else:
             athlete.single_room_entitlement = None
+            athlete.single_room_status = 'NONE'
+            athlete.single_room_decision_id = None
         if existing_before is None:
             athlete.roomlist_changed_at = now
             athlete.roomlist_change_summary = 'Neuer Athlet'
