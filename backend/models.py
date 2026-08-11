@@ -156,6 +156,7 @@ class ImportSessionEvent(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     session_id = db.Column(db.Integer, db.ForeignKey('import_session.id'), nullable=False, index=True)
     version_id = db.Column(db.Integer, db.ForeignKey('import_session_version.id'), index=True)
+    approval_id = db.Column(db.Integer, db.ForeignKey('import_approval.id'), index=True)
     event_type = db.Column(db.String(50), nullable=False)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text)
@@ -164,6 +165,7 @@ class ImportSessionEvent(db.Model):
 
     def to_dict(self):
         return {'id': str(self.id), 'versionId': str(self.version_id) if self.version_id else None,
+                'decisionId': str(self.approval_id) if self.approval_id else None,
                 'type': self.event_type, 'title': self.title,
                 'description': self.description, 'user': self.username,
                 'timestamp': self.created_at.isoformat() + 'Z'}
@@ -185,6 +187,7 @@ class ImportApproval(db.Model):
     approval_by = db.Column(db.String(200))
     approval_date = db.Column(db.DateTime)
     contact_subject = db.Column(db.String(300))
+    cost_coverage = db.Column(db.String(300))
     deadline_at = db.Column(db.DateTime)
     approved_person_keys_json = db.Column(db.Text)
     quota_details_json = db.Column(db.Text)
@@ -199,6 +202,7 @@ class ImportApproval(db.Model):
                 'approvalMethod': self.approval_method, 'approvalBy': self.approval_by,
                 'approvalDate': self.approval_date.isoformat() + 'Z' if self.approval_date else None,
                 'contactSubject': self.contact_subject,
+                'costCoverage': self.cost_coverage,
                 'deadlineAt': self.deadline_at.isoformat() + 'Z' if self.deadline_at else None,
                 'approvedPersonKeys': json.loads(self.approved_person_keys_json or '[]'),
                 'quotaDetails': json.loads(self.quota_details_json or '{}'),
