@@ -2248,9 +2248,11 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
       </DetailSection>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="overflow-hidden rounded-xl border border-[var(--ops-border)]">
-          {controlPeople.map((person) => <div key={person.athleteId} className="grid items-center gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3 last:border-0 md:grid-cols-[minmax(150px,1fr)_minmax(210px,auto)_minmax(170px,auto)_auto]">
-            <strong className="text-sm text-white">{person.name}</strong>
-            <SingleRoomStatusBadge status={person.status} />
+          {controlPeople.map((person) => <div key={person.athleteId} className="grid items-center gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3 last:border-0 md:grid-cols-[minmax(150px,1fr)_minmax(170px,auto)_auto]">
+            <div>
+              <strong className="block text-sm text-white">{person.name}</strong>
+              <div className="mt-1.5"><SingleRoomStatusBadge status={person.status} /></div>
+            </div>
             <span className={`flex items-center gap-1.5 text-sm font-semibold ${person.operationalWarning ? 'text-[var(--ops-tone-warning-text)]' : 'text-[var(--ops-tone-success-text)]'}`}>
               {person.operationalWarning && <AlertTriangle className="h-4 w-4 shrink-0" />}{person.operationalLabel}
             </span>
