@@ -10,6 +10,11 @@ export interface OfficialQuotaUsage {
   assignedOfficials: number;
   singleRoomsUsed: number;
   approvedExtraSingleRooms: number;
+  requiredSingleRooms: number;
+  implementedSingleRooms: number;
+  remainingSingleRooms: number;
+  openApprovals: number;
+  approvedExceptions: number;
   quotaStatus: 'FULFILLED' | 'DECISION_REQUIRED' | 'EXCEPTION_APPROVED';
 }
 

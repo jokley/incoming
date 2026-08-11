@@ -61,7 +61,14 @@ export function DataImport() {
   };
 
   const openIssues = (title: string, issues: FisImportIssue[]) => setDetail({ title, subtitle: `${issues.length} betroffene Prüfhinweise`, issues });
-  const peopleRows = preview?.people.map(p => [`${p.firstname} ${p.lastname}`, p.nationCode, p.discipline || '—', p.function || '—', p.operation]) ?? [];
+  const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
+  const peopleRows = preview?.people.map(p => {
+    const entitlement = approvedPersonKeys.has((p as FisImportPreviewPersonWithKey).matchKey)
+      ? 'Einzelzimmer außerhalb Quote (Mehrpreis)'
+      : p.singleRoomEntitlement === 'IN_QUOTA' ? 'Einzelzimmer innerhalb Quote'
+        : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'Einzelzimmer außerhalb Quote (Genehmigung offen)' : '—';
+    return [`${p.firstname} ${p.lastname}`, p.nationCode, p.discipline || '—', p.function || '—', entitlement, p.operation];
+  }) ?? [];
   const roomRows = preview?.rooms.map(r => [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—']) ?? [];
 
   return <div style={theme} className="-m-6 h-[calc(100vh-0px)] min-h-[720px] bg-[var(--ops-background)] p-6 text-[var(--ops-text)]">
@@ -117,7 +124,8 @@ function ProblemList({preview,fallback,quota,others,onOpen}:{preview:FisImportPr
   </div></ContentCard>;
 }
 function TaskList({session,onOpen}:{session:ImportSession;onOpen:(task:OperationsTask)=>void}) { const pending=session.approvals.map(approval=>buildOperationsTask(session,approval)).filter(task=>task.approval.decision==='PENDING'); if(!pending.length)return null; return <ContentCard surface="elevated" className="p-4"><SectionHeader title={`${pending.length} ${pending.length===1?'Entscheidung':'Entscheidungen'} erforderlich`} subtitle="Arbeiten Sie die Entscheidungen Schritt für Schritt ab." actions={<StatusChip tone="warning">Offen</StatusChip>}/><div className="mt-4 space-y-2">{pending.map(task=><OperationsTaskRow key={task.approval.id} task={task} onOpen={()=>onOpen(task)}/>)}</div></ContentCard>; }
-function PreviewCard({peopleRows,roomRows,onOpen}:{peopleRows:string[][];roomRows:string[][];onOpen:(detail:Detail)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Preview" subtitle="Die vollständigen Inhalte der beiden Excel-Dateien prüfen"/><div className="mt-4 grid gap-3 sm:grid-cols-2"><SummaryRow label="Personen-Vorschau" count={peopleRows.length} onClick={()=>onOpen({title:'Personen-Vorschau',subtitle:`${peopleRows.length} Personen`,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Aktion']})}/><SummaryRow label="Zimmer-Vorschau" count={roomRows.length} onClick={()=>onOpen({title:'Zimmer-Vorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt']})}/></div></ContentCard>; }
+type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
+function PreviewCard({peopleRows,roomRows,onOpen}:{peopleRows:string[][];roomRows:string[][];onOpen:(detail:Detail)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Preview" subtitle="Die vollständigen Inhalte der beiden Excel-Dateien prüfen"/><div className="mt-4 grid gap-3 sm:grid-cols-2"><SummaryRow label="Personen-Vorschau" count={peopleRows.length} onClick={()=>onOpen({title:'Personen-Vorschau',subtitle:`${peopleRows.length} Personen`,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmeranspruch','Aktion']})}/><SummaryRow label="Zimmer-Vorschau" count={roomRows.length} onClick={()=>onOpen({title:'Zimmer-Vorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt']})}/></div></ContentCard>; }
 function SummaryRow({label,count,tone='neutral',disabled,onClick}:{label:string;count:number;tone?:'neutral'|'success'|'warning'|'error';disabled?:boolean;onClick:()=>void}) { return <button type="button" disabled={disabled} onClick={onClick} className="flex w-full items-center justify-between rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2.5 text-left transition hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)] disabled:cursor-default disabled:opacity-70"><span className="flex items-center gap-2 text-sm font-bold">{tone==='error'?<AlertTriangle className="h-4 w-4 text-[var(--ops-error)]"/>:tone==='success'?<CheckCircle className="h-4 w-4 text-[var(--ops-success)]"/>:<Users className="h-4 w-4 text-[var(--ops-text-subtle)]"/>}{label}</span><span className="flex items-center gap-2"><StatusChip tone={tone}>{count}</StatusChip><ChevronRight className="h-4 w-4 text-[var(--ops-text-subtle)]"/></span></button>; }
 const issueCopy:Record<string,{message:string;causes?:string[];action:string}>={
   ROOM_PERSON_NOT_FOUND:{message:'Neue Person erkannt.',action:'Die Person wird beim Import neu angelegt.'},

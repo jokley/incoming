@@ -36,7 +36,7 @@ SCENARIOS = (
     ScenarioDefinition('004', 'Athlet entfernt', 'Nur ein bestehender Athlet entfällt.', ('base', 'remove-athlete')),
     ScenarioDefinition('005', 'Aufenthaltsdaten geändert', 'Nur die Aufenthaltsdaten eines Athleten ändern sich.', ('base', 'stay-dates')),
     ScenarioDefinition('006', 'Zimmerpartner geändert', 'Nur die Zimmerpartner bestehender Athletinnen ändern sich.', ('base', 'room-partner')),
-    ScenarioDefinition('007', 'Official-Quote verletzt', 'Nur zusätzliche Officials verletzen die Quote.', ('base', 'official-quota')),
+    ScenarioDefinition('007', 'Genehmigtes Einzelzimmer außerhalb Quote', 'Eine zusätzliche Person benötigt einen genehmigten Einzelzimmeranspruch.', ('single-quota-base', 'single-quota-extra')),
     ScenarioDefinition('008', 'Single-Room-Quote verletzt', 'Nur Einzelzimmeranforderungen verletzen die Quote.', ('base', 'single-quota')),
     ScenarioDefinition('009', 'Korrigierte Meldeliste', 'Die verletzte Official-Quote wird wieder eingehalten.', ('official-quota', 'base')),
     ScenarioDefinition('010', 'Import abschließen', 'Unveränderte Meldeliste ohne offene Entscheidungen.', ('base',)),
@@ -74,6 +74,7 @@ ADDED_OFFICIALS = (
     ('Service', 'SCHMID', 'David', 'F', '110006', '210006', '', 'Double shared', 'HUBER, Simon'),
     ('Official', 'HUBER', 'Simon', 'F', '110007', '210007', '', 'Double shared', 'SCHMID, David'),
 )
+EXTRA_SINGLE_OFFICIAL = ('Official', 'GEIGER', 'Tina', 'F', '110008', '210008', '', 'Single', '')
 
 
 def _person(record: tuple[str, ...]) -> dict:
@@ -97,6 +98,12 @@ def _apply(rows: list[dict], step: str) -> list[dict]:
     rows = deepcopy(rows)
     if step == 'base':
         return rows
+    if step == 'single-quota-base':
+        rows = [row for row in rows if row['Competitorid/Staff ID'] not in {'100005', '100006'}]
+        for row in rows:
+            if row['Competitorid/Staff ID'] in {'110001', '110002', '110003'}:
+                row.update({'Room_type': 'Single', 'Shared with Name': ''})
+        return rows
     if step == 'add-athletes':
         rows.extend(_person(record) for record in ADDED_ATHLETES)
     elif step == 'remove-athlete':
@@ -115,6 +122,9 @@ def _apply(rows: list[dict], step: str) -> list[dict]:
         for person_id in ('110001', '110002'):
             official = next(row for row in rows if row['Competitorid/Staff ID'] == person_id)
             official.update({'Room_type': 'Single', 'Shared with Name': ''})
+    elif step == 'single-quota-extra':
+        rows = _apply(rows, 'single-quota-base')
+        rows.append(_person(EXTRA_SINGLE_OFFICIAL))
     else:
         raise ValueError(f'Unknown scenario step: {step}')
     return rows
@@ -136,7 +146,7 @@ def _room_rows(entries: list[dict]) -> list[dict]:
 
 def _expectation(version: int, step: str) -> dict:
     changed = step != 'base'
-    quota_violation = step in {'official-quota', 'single-quota'}
+    quota_violation = step in {'official-quota', 'single-quota', 'single-quota-extra'}
     return {
         'version': version, 'change': step, 'technicalCheck': 'valid',
         'functionalCheck': 'review-required' if changed else 'valid',

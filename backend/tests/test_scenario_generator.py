@@ -18,7 +18,7 @@ class ScenarioGeneratorTest(unittest.TestCase):
     def test_catalog_is_complete_and_stably_numbered(self):
         self.assertEqual([item.number for item in SCENARIOS], [f'{number:03d}' for number in range(1, 11)])
         self.assertEqual([item.title for item in SCENARIOS], ['Erstimport', 'Unveränderte Meldeliste', 'Neue Athleten',
-            'Athlet entfernt', 'Aufenthaltsdaten geändert', 'Zimmerpartner geändert', 'Official-Quote verletzt',
+            'Athlet entfernt', 'Aufenthaltsdaten geändert', 'Zimmerpartner geändert', 'Genehmigtes Einzelzimmer außerhalb Quote',
             'Single-Room-Quote verletzt', 'Korrigierte Meldeliste', 'Import abschließen'])
         self.assertEqual([len(item.steps) for item in SCENARIOS], [1, 2, 2, 2, 2, 2, 2, 2, 2, 1])
 
@@ -95,9 +95,10 @@ class ScenarioGeneratorTest(unittest.TestCase):
         expected_code = {
             'official-quota': 'QUOTA_OFFICIALS_EXCEEDED',
             'single-quota': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
+            'single-quota-extra': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
         }
         with tempfile.TemporaryDirectory() as directory:
-            for number, step in (('007', 'official-quota'), ('008', 'single-quota')):
+            for number, step in (('007', 'single-quota-extra'), ('008', 'single-quota')):
                 generated = generate_scenario(number, Path(directory))['root']
                 prefix = next(generated.glob('*_V2_entries.xlsx')).name.removesuffix('_entries.xlsx')
                 preview = create_fis_import_preview(str(generated / f'{prefix}_entries.xlsx'), str(generated / f'{prefix}_entries-room-list-detailed.xlsx'))

@@ -1844,10 +1844,9 @@ function HotelDetailView({
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              <span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-emerald-700/50 bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
+                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-amber-600/50 bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-200">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-emerald-700/50 bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
-                              </span>
-                              {entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-emerald-300">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}
+                              </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-emerald-300">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
                               {canAddPartner && (
                                 <span className={`${isBookingDropTarget ? 'text-blue-200' : 'text-slate-400'}`}>
                                   Partner hinzufügen
@@ -1979,6 +1978,11 @@ type QuotaCard = {
   singleRoomsAllowed: number;
   singleRoomsUsed: number;
   approvedExtraSingleRooms: number;
+  requiredSingleRooms: number;
+  implementedSingleRooms: number;
+  remainingSingleRooms: number;
+  openApprovals: number;
+  approvedExceptions: number;
   quotaStatus: OfficialQuotaUsage['quotaStatus'];
   peopleTotal: number;
   peopleAssigned: number;
@@ -1999,6 +2003,11 @@ function buildQuotaCards(rows: OfficialQuotaUsage[], allUnits: RoomBookingUnit[]
       singleRoomsAllowed: 0,
       singleRoomsUsed: 0,
       approvedExtraSingleRooms: 0,
+      requiredSingleRooms: 0,
+      implementedSingleRooms: 0,
+      remainingSingleRooms: 0,
+      openApprovals: 0,
+      approvedExceptions: 0,
       quotaStatus: 'FULFILLED',
       peopleTotal: 0,
       peopleAssigned: 0,
@@ -2009,6 +2018,11 @@ function buildQuotaCards(rows: OfficialQuotaUsage[], allUnits: RoomBookingUnit[]
     current.singleRoomsAllowed += row.singleRoomsAllowed;
     current.singleRoomsUsed += row.singleRoomsUsed;
     current.approvedExtraSingleRooms += row.approvedExtraSingleRooms || 0;
+    current.requiredSingleRooms += row.requiredSingleRooms || 0;
+    current.implementedSingleRooms += row.implementedSingleRooms || 0;
+    current.remainingSingleRooms += row.remainingSingleRooms || 0;
+    current.openApprovals += row.openApprovals || 0;
+    current.approvedExceptions += row.approvedExceptions || 0;
     if (row.quotaStatus === 'DECISION_REQUIRED' || (row.quotaStatus === 'EXCEPTION_APPROVED' && current.quotaStatus === 'FULFILLED')) current.quotaStatus = row.quotaStatus;
     cards.set(key, current);
   }
@@ -2113,8 +2127,8 @@ function QuotasPanel({
                 </div>
 
                 <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
-                  <ApprovalInfo label="Offene Genehmigungen" value={card.quotaStatus === 'DECISION_REQUIRED' ? String(Number(officialsOver) + Number(singlesOver)) : '0'} warning={card.quotaStatus === 'DECISION_REQUIRED'} />
-                  <ApprovalInfo label="Genehmigte Ausnahmen" value={card.quotaStatus === 'EXCEPTION_APPROVED' ? '1' : '0'} />
+                  <ApprovalInfo label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
+                  <ApprovalInfo label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
                   <ApprovalInfo label="Mehrpreis genehmigt" value={String(card.approvedExtraSingleRooms)} />
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{dispatchPct}% disponiert</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
@@ -2189,14 +2203,20 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits }: {
         {card.quotaStatus === 'EXCEPTION_APPROVED' ? <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><FileCheck2 className="h-4 w-4 text-[var(--ops-success)]" />Quote verletzt; Ausnahme ist dokumentiert und genehmigt.</div> : reasons.length ? <div className="space-y-2">{reasons.map((reason) => <div key={String(reason)} className="flex gap-2 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3 text-sm text-[var(--ops-tone-warning-text)]"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{reason}</div>)}<p className="text-xs text-[var(--ops-text-muted)]">Entscheidung erforderlich. Regeln können hier nicht verändert werden.</p></div> : <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><CheckCircle2 className="h-4 w-4 text-[var(--ops-success)]" />Keine Genehmigung erforderlich.</div>}
       </DetailSection>
       <div className="grid grid-cols-3 gap-3">
-        <KpiBlock label="Offene Genehmigungen" value={reasons.length.toString()} warning={reasons.length > 0} />
-        <KpiBlock label="Genehmigte Ausnahmen" value={card.quotaStatus === 'EXCEPTION_APPROVED' ? '1' : '0'} />
+        <KpiBlock label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
+        <KpiBlock label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
         <KpiBlock label="Mehrpreis genehmigt" value={String(card.approvedExtraSingleRooms)} />
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         <DetailSection icon={<BadgeEuro className="h-4 w-4" />} title="Mehrkosten"><p className="font-mono text-lg font-bold text-white">{card.approvedExtraSingleRooms} Einzelzimmeranspruch/-ansprüche</p><p className="mt-1 text-xs text-[var(--ops-text-muted)]">Abrechnung nach genehmigtem Anspruch – unabhängig von Einzelzimmer oder Doppelzimmer zur Einzelnutzung.</p></DetailSection>
         <DetailSection icon={<History className="h-4 w-4" />} title="Audit"><p className="text-sm text-[var(--ops-text-muted)]">Keine Genehmigungsaktivität vorhanden.</p></DetailSection>
       </div>
+      <DetailSection icon={<Bed className="h-4 w-4" />} title="Operativer Status (Disposition)">
+        {card.remainingSingleRooms === 0 && card.requiredSingleRooms > 0
+          ? <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><CheckCircle2 className="h-4 w-4 text-[var(--ops-success)]" />Alle genehmigten Einzelzimmer umgesetzt</div>
+          : <div className="grid grid-cols-3 gap-3"><KpiBlock label="Benötigt" value={String(card.requiredSingleRooms)} /><KpiBlock label="Umgesetzt" value={String(card.implementedSingleRooms)} /><KpiBlock label="Noch umzusetzen" value={String(card.remainingSingleRooms)} warning={card.remainingSingleRooms > 0} /></div>}
+        <p className="mt-3 text-xs text-[var(--ops-text-muted)]">Der Umsetzungsgrad verändert den fachlichen Importstatus nicht.</p>
+      </DetailSection>
     </div>
   </div>;
 }
