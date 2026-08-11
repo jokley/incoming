@@ -344,6 +344,7 @@ export interface FisImportPreviewPerson {
   operation: 'create' | 'update';
   roomType?: string | null;
   sharedWithName?: string | null;
+  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | 'APPROVAL_REQUIRED' | null;
 }
 
 export interface FisImportPreviewRoom {

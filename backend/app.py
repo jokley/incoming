@@ -1092,18 +1092,39 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         if (a.function or '').strip().lower() != 'athlete']
     rows = evaluate_quota_usage(roster, assigned)
     approved_by_key = {}
+    implemented_by_key = {}
     for athlete in athletes:
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
             key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
             approved_by_key[key] = approved_by_key.get(key, 0) + 1
-    approved_sessions = {(session.nation, session.discipline or '') for session in ImportSession.query.all()
-        if session.approvals and all(item.decision == 'APPROVED' for item in session.approvals)}
+        if athlete.single_room_entitlement:
+            membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
+            booking = membership.room_booking if membership else None
+            if (booking and len(booking.occupants) == 1
+                    and (booking.counts_as_single
+                         or (booking.room_type and booking.room_type.max_persons == 1))):
+                key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
+                implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
+    approval_state = {}
+    for session in ImportSession.query.all():
+        for approval in session.approvals:
+            details = json.loads(approval.quota_details_json or '{}')
+            key = (details.get('nationCode') or session.nation or '',
+                   details.get('discipline') or session.discipline or '',
+                   details.get('gender') or '')
+            state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
+            state['approved' if approval.decision == 'APPROVED' else 'pending'] += 1
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
         row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
-        violated = row['assignedOfficials'] > row['officialQuota'] or row['singleRoomsUsed'] > row['singleRoomsAllowed']
-        row['quotaStatus'] = ('EXCEPTION_APPROVED' if violated and (row['nationCode'], row['discipline']) in approved_sessions
-            else 'DECISION_REQUIRED' if violated else 'FULFILLED')
+        row['requiredSingleRooms'] = row['singleRoomsUsed']
+        row['implementedSingleRooms'] = implemented_by_key.get(key, 0)
+        row['remainingSingleRooms'] = max(0, row['requiredSingleRooms'] - row['implementedSingleRooms'])
+        decisions = approval_state.get(key, {'pending': 0, 'approved': 0})
+        row['openApprovals'] = decisions['pending']
+        row['approvedExceptions'] = decisions['approved']
+        row['quotaStatus'] = ('DECISION_REQUIRED' if decisions['pending'] else
+            'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
     return [row for row in rows if not gender or row['gender'].lower() == gender.lower()]
 
 

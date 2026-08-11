@@ -839,6 +839,39 @@ def build_quota_warnings(people, rooms, quota_checks=None):
     return warnings
 
 
+def apply_single_room_entitlement_preview(people, rooms, quota_checks):
+    """Annotate requested single rooms with their provisional import status.
+
+    The preview is the professional source of truth: room assignment data must
+    never be used later to recreate these entitlements.  Excess requests stay
+    explicitly pending until the decision record identifies their recipients.
+    """
+    room_by_person = {}
+    for room in rooms:
+        room_by_person[room.get('person1Key')] = room
+        if room.get('person2Key'):
+            room_by_person[room.get('person2Key')] = room
+    allowances = {
+        (check.get('nationCode'), check.get('discipline'), check.get('gender')):
+            int(check.get('singleRoomsAllowed') or 0)
+        for check in quota_checks
+    }
+    allocated = {}
+    for person in people:
+        person['singleRoomEntitlement'] = None
+        room = room_by_person.get(person.get('matchKey'))
+        if ((person.get('function') or '').strip().lower() == 'athlete'
+                or not room or normalize_string(room.get('roomType')) != 'single'):
+            continue
+        key = quota_key({**person, 'discipline': person.get('industryName')})
+        used = allocated.get(key, 0)
+        if used < allowances.get(key, 0):
+            person['singleRoomEntitlement'] = 'IN_QUOTA'
+            allocated[key] = used + 1
+        else:
+            person['singleRoomEntitlement'] = 'APPROVAL_REQUIRED'
+
+
 def _serialize_person_preview(person):
     result = deepcopy(person)
     result['discipline'] = result.get('industryName')
@@ -1103,6 +1136,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
     room_result = parse_room_list(room_df, people_result['people'])
     quota_checks = []
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'], quota_checks)
+    apply_single_room_entitlement_preview(people_result['people'], room_result['rooms'], quota_checks)
     disposition_analysis = build_disposition_analysis(
         people_result['people'], room_result['rooms'], quota_warnings
     )
