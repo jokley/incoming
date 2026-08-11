@@ -26,6 +26,7 @@ import {
 } from 'lucide-react';
 
 import { ImportConflictNotice } from './ImportConflictNotice';
+import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
@@ -1156,7 +1157,7 @@ function QueueUnitCard({
             <span>·</span>
             <span>{formatShortDate(unit.checkInDate)} → {formatShortDate(unit.checkOutDate)}</span>
           </div>
-          {primaryOccupant?.singleRoomEntitlement && <div className="mt-1.5 inline-flex rounded-md border border-blue-400/30 bg-blue-400/10 px-2 py-0.5 text-[9px] font-bold text-blue-200">Einzelzimmer · {primaryOccupant.singleRoomEntitlement === 'APPROVED_EXTRA' ? 'Mehrpreis genehmigt' : 'innerhalb Quote'}</div>}
+          {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${hasPairWarning ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]' : 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]'}`}>
@@ -2281,6 +2282,7 @@ function DetailPanel({
                   <div>
                     <div className="text-sm font-semibold text-slate-100">{occupant.name}</div>
                     <div className="mt-1 text-[10px] font-mono text-slate-400">{occupant.nationCode}</div>
+                    <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
                   </div>
                   {booking.occupants.length > 1 && (
                     <button
@@ -2397,6 +2399,7 @@ function DetailPanel({
                   <div className="mt-1 text-[10px] font-mono text-slate-400">
                     {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
                   </div>
+                  <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
                 </div>
                 <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
                   {occupant.isAssigned ? 'zugewiesen' : 'offen'}

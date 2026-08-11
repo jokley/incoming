@@ -20,6 +20,7 @@ import { usePermissions } from '../auth/AuthProvider';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 import { ImportConflictNotice } from './ImportConflictNotice';
+import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 
@@ -74,6 +75,7 @@ function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: s
 
 function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; open: boolean; onClose: () => void }) {
   const permissions = usePermissions();
+  const navigate = useNavigate();
   const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
 
   useEffect(() => {
@@ -144,6 +146,8 @@ function AthleteDialog({ athlete, open, onClose }: { athlete: Athlete | null; op
             <ReadonlyField label="Importdatum" value={date(athlete?.athletesLastSeenAt)} />
             <ReadonlyField label="Importstatus" value={athlete ? importLabel(athlete) : undefined} />
             <ReadonlyField label="Quelle" value="FIS-Import" />
+            <Box><Typography variant="caption" color="text.secondary">Einzelzimmerstatus</Typography><Box sx={{ mt: 0.75 }}><SingleRoomStatusBadge status={athlete?.single_room_status} /></Box></Box>
+            {athlete?.single_room_decision_id && <Box sx={{ display: 'flex', alignItems: 'end' }}><Button size="small" variant="text" onClick={() => { onClose(); void navigate(`/import?decisionId=${athlete.single_room_decision_id}`); }}>Importentscheidung öffnen</Button></Box>}
           </FieldGrid>
         </DialogSection>
 
@@ -275,7 +279,7 @@ export function Athletes() {
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]"><Users className="h-4 w-4" /></span><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b>{athlete.fisCode && <span className="text-[11px] text-[var(--ops-text-subtle)]">FIS {athlete.fisCode}</span>}</div></div></Cell>
+                <Cell><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]"><Users className="h-4 w-4" /></span><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1 flex flex-wrap items-center gap-1.5">{athlete.fisCode && <span className="text-[11px] text-[var(--ops-text-subtle)]">FIS {athlete.fisCode}</span>}<SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell>
                   <button
