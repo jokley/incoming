@@ -17,6 +17,7 @@ import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import PaidRoundedIcon from '@mui/icons-material/PaidRounded';
 
 import { api } from '../services/api';
+import { describeAuditEvent } from '../services/auditActivity';
 import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomAssignment, RoomAvailability, RoomType } from '../types';
 import {
   ContentCard,
@@ -272,13 +273,16 @@ export function Dashboard() {
     { id: 'validation', title: 'Validierung', count: criticalAlerts.filter(alert => alert.tone === 'error' || alert.tone === 'warning').length, helper: 'kritische und offene Prüfpunkte', tone: criticalAlerts.some(alert => alert.tone === 'error') ? 'error' : criticalAlerts.some(alert => alert.tone === 'warning') ? 'warning' : 'success' as Tone },
   ];
 
-  const activityItems = auditEvents.length > 0 ? auditEvents.map(event => ({
-    id: event.id,
-    title: `${event.displayName || event.username}: ${event.action}`,
-    meta: `${event.entityType} · ${event.method} ${event.path}`,
-    time: new Date(event.createdAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
-    tone: 'info' as Tone,
-  })) : [
+  const activityItems = auditEvents.length > 0 ? auditEvents.map(event => {
+    const description = describeAuditEvent(event, { athletes, hotels, roomTypes, events });
+    return {
+      id: event.id,
+      title: description.activity,
+      meta: `${description.category} · ${description.entity}`,
+      time: new Date(event.createdAt).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+      tone: 'info' as Tone,
+    };
+  }) : [
     { id: 'assignments', title: `${formatNumber(operations.assignedRooms)} Zimmerzuweisungen geladen`, meta: `${formatPercent(operations.assignmentCoverage)} Abdeckung des Bedarfs`, time: 'Live', tone: operations.openAssignments > 0 ? 'warning' as Tone : 'success' as Tone },
     { id: 'events', title: `${formatNumber(events.length)} Events synchronisiert`, meta: nextEvents[0] ? `Nächstes Event: ${nextEvents[0].discipline}` : 'Keine Events vorhanden', time: 'Live', tone: 'info' as Tone },
   ];
