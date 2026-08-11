@@ -4,7 +4,6 @@ import {
   AlertCircle,
   AlertTriangle,
   ArrowRight,
-  BadgeEuro,
   Bell,
   Bed,
   Building2,
@@ -16,7 +15,6 @@ import {
   FileCheck2,
   Eye,
   Flag,
-  History,
   Link2,
   RefreshCw,
   Search,
@@ -716,6 +714,11 @@ export function Assignments() {
               rows={quotaUsage}
               assignedUnits={assignedUnits}
               allUnits={allUnitsCombined}
+              hotels={planning?.hotels ?? []}
+              onShowDecision={(id) => {
+                setSelectedQuotaKey(null);
+                setDecisionId(id);
+              }}
             />
           </AssignmentDialog>
         )}
@@ -2175,11 +2178,54 @@ function ApprovalInfo({ label, value, warning = false }: { label: string; value:
   return <div><div className="mb-1 text-[9px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`font-mono font-semibold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-text-subtle)]'}`}>{value}</div></div>;
 }
 
-function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits }: {
+type SingleRoomControlPerson = {
+  athleteId: string;
+  name: string;
+  status: 'IN_QUOTA' | 'APPROVED_EXTRA';
+  decisionId?: string | null;
+  operationalLabel: string;
+  operationalWarning: boolean;
+};
+
+function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[]): SingleRoomControlPerson[] {
+  const bookingsByAthlete = new Map<string, AssignmentGridBooking>();
+  hotels.forEach((hotel) => hotel.slots.forEach((slot) => slot.bookings.forEach((booking) => {
+    booking.occupants.forEach((occupant) => bookingsByAthlete.set(occupant.athleteId, booking));
+  })));
+
+  const people = new Map<string, SingleRoomControlPerson>();
+  allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
+    if (occupant.nationCode !== card.nationCode
+      || (occupant.discipline || '—') !== card.discipline
+      || normalizeGender(occupant.gender) !== card.gender
+      || (occupant.single_room_status !== 'IN_QUOTA' && occupant.single_room_status !== 'APPROVED_EXTRA')) return;
+
+    const booking = bookingsByAthlete.get(occupant.athleteId);
+    const isExclusive = Boolean(booking && booking.occupants.length === 1
+      && (booking.countsAsSingle || booking.capacity === 1));
+    people.set(occupant.athleteId, {
+      athleteId: occupant.athleteId,
+      name: occupant.name,
+      status: occupant.single_room_status,
+      decisionId: occupant.single_room_decision_id,
+      operationalLabel: !booking
+        ? 'Noch nicht disponiert'
+        : isExclusive
+          ? booking.capacity === 2 ? 'DZ als EZ exklusiv' : 'Einzelzimmer disponiert'
+          : 'Zimmerpartner offen',
+      operationalWarning: !isExclusive,
+    });
+  }));
+  return [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+}
+
+function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDecision }: {
   quotaKey: string;
   rows: OfficialQuotaUsage[];
   allUnits: RoomBookingUnit[];
   assignedUnits: RoomBookingUnit[];
+  hotels: AssignmentGridHotel[];
+  onShowDecision: (decisionId: string) => void;
 }) {
   const card = buildQuotaCards(rows, allUnits, assignedUnits).find((candidate) => candidate.key === quotaKey);
   if (!card) return <EmptyCenter text="Quote nicht mehr verfügbar." />;
@@ -2187,7 +2233,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits }: {
   const StateIcon = state.icon;
   const officialsOver = card.assignedOfficials > card.officialQuota;
   const singlesOver = card.singleRoomsUsed > card.singleRoomsAllowed;
-  const reasons = [officialsOver && `Officials überschreiten die Quote um ${card.assignedOfficials - card.officialQuota}.`, singlesOver && `Single Rooms überschreiten die Quote um ${card.singleRoomsUsed - card.singleRoomsAllowed}.`].filter(Boolean);
+  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels);
 
   return <div className="flex h-full flex-col">
     <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
@@ -2200,30 +2246,17 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits }: {
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Single Rooms" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
-      <DetailSection icon={<Users className="h-4 w-4" />} title="Athleten">
-        <p className="text-sm text-[var(--ops-text-subtle)]"><strong className="font-mono text-white">{card.athletes}</strong> gemeldete Athleten · {quotaGenderLabel(card.gender)}</p>
-      </DetailSection>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <DetailSection icon={<Users className="h-4 w-4" />} title="Officials"><QuotaProgress label="Belegte Quote" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} /></DetailSection>
-        <DetailSection icon={<Bed className="h-4 w-4" />} title="Single Rooms"><QuotaProgress label="Belegtes Kontingent" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} /></DetailSection>
-      </div>
-      <DetailSection icon={<FileCheck2 className="h-4 w-4" />} title="Genehmigungen">
-        {card.quotaStatus === 'EXCEPTION_APPROVED' ? <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><FileCheck2 className="h-4 w-4 text-[var(--ops-success)]" />Quote verletzt; Ausnahme ist dokumentiert und genehmigt.</div> : reasons.length ? <div className="space-y-2">{reasons.map((reason) => <div key={String(reason)} className="flex gap-2 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3 text-sm text-[var(--ops-tone-warning-text)]"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />{reason}</div>)}<p className="text-xs text-[var(--ops-text-muted)]">Entscheidung erforderlich. Regeln können hier nicht verändert werden.</p></div> : <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><CheckCircle2 className="h-4 w-4 text-[var(--ops-success)]" />Keine Genehmigung erforderlich.</div>}
-      </DetailSection>
-      <div className="grid grid-cols-3 gap-3">
-        <KpiBlock label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
-        <KpiBlock label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
-        <KpiBlock label="Mehrpreis genehmigt" value={String(card.approvedExtraSingleRooms)} />
-      </div>
-      <div className="grid gap-4 sm:grid-cols-2">
-        <DetailSection icon={<BadgeEuro className="h-4 w-4" />} title="Mehrkosten"><p className="font-mono text-lg font-bold text-white">{card.approvedExtraSingleRooms} Einzelzimmeranspruch/-ansprüche</p><p className="mt-1 text-xs text-[var(--ops-text-muted)]">Abrechnung nach genehmigtem Anspruch – unabhängig von Einzelzimmer oder Doppelzimmer zur Einzelnutzung.</p></DetailSection>
-        <DetailSection icon={<History className="h-4 w-4" />} title="Audit"><p className="text-sm text-[var(--ops-text-muted)]">Keine Genehmigungsaktivität vorhanden.</p></DetailSection>
-      </div>
-      <DetailSection icon={<Bed className="h-4 w-4" />} title="Operativer Status (Disposition)">
-        {card.remainingSingleRooms === 0 && card.requiredSingleRooms > 0
-          ? <div className="flex items-center gap-2 text-sm text-[var(--ops-tone-success-text)]"><CheckCircle2 className="h-4 w-4 text-[var(--ops-success)]" />Alle genehmigten Einzelzimmer umgesetzt</div>
-          : <div className="grid grid-cols-3 gap-3"><KpiBlock label="Benötigt" value={String(card.requiredSingleRooms)} /><KpiBlock label="Umgesetzt" value={String(card.implementedSingleRooms)} /><KpiBlock label="Noch umzusetzen" value={String(card.remainingSingleRooms)} warning={card.remainingSingleRooms > 0} /></div>}
-        <p className="mt-3 text-xs text-[var(--ops-text-muted)]">Der Umsetzungsgrad verändert den fachlichen Importstatus nicht.</p>
+      <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
+        {controlPeople.length ? <div className="overflow-hidden rounded-xl border border-[var(--ops-border)]">
+          {controlPeople.map((person) => <div key={person.athleteId} className="grid items-center gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3 last:border-0 md:grid-cols-[minmax(150px,1fr)_minmax(210px,auto)_minmax(170px,auto)_auto]">
+            <strong className="text-sm text-white">{person.name}</strong>
+            <SingleRoomStatusBadge status={person.status} />
+            <span className={`flex items-center gap-1.5 text-sm font-semibold ${person.operationalWarning ? 'text-[var(--ops-tone-warning-text)]' : 'text-[var(--ops-tone-success-text)]'}`}>
+              {person.operationalWarning && <AlertTriangle className="h-4 w-4 shrink-0" />}{person.operationalLabel}
+            </span>
+            <button type="button" disabled={!person.decisionId} title={!person.decisionId ? 'Innerhalb der Quote ist keine separate Importentscheidung hinterlegt.' : undefined} onClick={() => person.decisionId && onShowDecision(person.decisionId)} className="justify-self-start whitespace-nowrap text-sm font-semibold text-blue-300 hover:text-blue-200 disabled:cursor-not-allowed disabled:text-[var(--ops-text-subtle)] md:justify-self-end">Entscheidung anzeigen</button>
+          </div>)}
+        </div> : <p className="text-sm text-[var(--ops-text-muted)]">Keine Personen mit Einzelzimmeranspruch in dieser Quotengruppe.</p>}
       </DetailSection>
     </div>
   </div>;
