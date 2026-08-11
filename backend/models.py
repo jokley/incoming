@@ -66,6 +66,8 @@ IMPORT_SESSION_STATUSES = (
     'PREVIEW_CREATED', 'READY_FOR_IMPORT', 'NATION_CLARIFICATION', 'REPLACED', 'ARCHIVED',
 )
 
+SINGLE_ROOM_STATUSES = ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')
+
 
 class ImportSession(db.Model):
     """Long-lived workflow for one nation; uploads are immutable versions."""
@@ -324,6 +326,12 @@ class EventRoomDemand(db.Model):
 class Athlete(db.Model):
     """Athleten und Staff"""
     __tablename__ = 'athlete'
+    __table_args__ = (
+        db.CheckConstraint(
+            "single_room_status IN ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')",
+            name='ck_athlete_single_room_status',
+        ),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
@@ -363,8 +371,12 @@ class Athlete(db.Model):
 
     # Accommodation
     room_type = db.Column(db.String(50))  # Single, Double shared, etc.
-    # Fachliches Importergebnis; die Disposition wählt danach nur noch das Bett.
+    # Legacy compatibility field. New code uses the status and decision below.
     single_room_entitlement = db.Column(db.String(30))  # IN_QUOTA | APPROVED_EXTRA
+    # Fachliche Quelle für den Anspruch, unabhängig von einer Zimmerzuweisung.
+    single_room_status = db.Column(db.String(30), nullable=False, default='NONE')
+    single_room_decision_id = db.Column(db.Integer, db.ForeignKey('import_approval.id'), nullable=True)
+    single_room_decision = db.relationship('ImportApproval', foreign_keys=[single_room_decision_id])
     shared_with_name = db.Column(db.String(200))
     late_checkout = db.Column(db.Boolean, default=False)
 
@@ -414,6 +426,8 @@ class Athlete(db.Model):
             'email': self.email,
             'present': self.present,
             'singleRoomEntitlement': self.single_room_entitlement,
+            'single_room_status': self.single_room_status or 'NONE',
+            'single_room_decision_id': self.single_room_decision_id,
             'arrivalDate': self.arrival_date.isoformat() if self.arrival_date else None,
             'arrivalTime': self.arrival_time,
             'arrivalBy': self.arrival_by,
