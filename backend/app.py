@@ -774,6 +774,7 @@ def _build_room_booking_units():
                     'room_type': athlete.room_type,
                 })()),
                 'single_room_status': athlete.single_room_status or 'NONE',
+                'single_room_decision_id': str(athlete.single_room_decision_id) if athlete.single_room_decision_id else None,
                 'hasPendingReview': pending_review,
                 'changeTouchesAssignment': assigned_change,
                 'isAssigned': bool(athlete_booking),
@@ -876,6 +877,7 @@ def _build_assignment_planning_view():
                                     'name': f'{occ.athlete.firstname} {occ.athlete.lastname}'.strip(),
                                     'nationCode': occ.athlete.nation_code,
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
+                                    'single_room_decision_id': str(occ.athlete.single_room_decision_id) if occ.athlete.single_room_decision_id else None,
                                 }
                                 for occ in (booking.occupants or []) if occ.athlete
                             ],
@@ -1030,7 +1032,20 @@ def _validate_booking_payload(data, existing_booking=None):
     }, room_type, None
 
 
-def _save_booking_from_payload(payload, existing_booking=None):
+def _automatic_exclusive_occupancy(room_type, athlete_ids):
+    """Derive the operational EZ flag without changing the business decision."""
+    if not room_type or room_type.max_persons != 2 or len(athlete_ids) != 1:
+        return False
+    athlete = db.session.get(Athlete, athlete_ids[0])
+    return bool(athlete and athlete.single_room_status in {'IN_QUOTA', 'APPROVED_EXTRA'})
+
+
+def _sync_exclusive_occupancy(booking):
+    athlete_ids = sorted(row[0] for row in db.session.query(RoomBookingOccupant.athlete_id).filter_by(room_booking_id=booking.id).all())
+    booking.counts_as_single = _automatic_exclusive_occupancy(booking.room_type, athlete_ids)
+
+
+def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False):
     if existing_booking is None:
         booking = RoomBooking(
             hotel_id=payload['hotel_id'],
@@ -1054,6 +1069,9 @@ def _save_booking_from_payload(payload, existing_booking=None):
 
     for athlete_id in payload['athlete_ids']:
         db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
+    db.session.flush()
+    if not manual_single_override:
+        _sync_exclusive_occupancy(booking)
     _acknowledge_import_changes(payload['athlete_ids'])
     db.session.commit()
     return booking
@@ -1073,6 +1091,8 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
             remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
             if remaining == 0:
                 db.session.delete(booking)
+            else:
+                _sync_exclusive_occupancy(booking)
     db.session.commit()
 
 
@@ -2421,7 +2441,10 @@ def update_assigned_unit(booking_id):
     if error:
         return error
     _detach_athletes_from_existing_bookings(payload['athlete_ids'], exclude_booking_id=booking.id)
-    booking = _save_booking_from_payload(payload, existing_booking=booking)
+    # An explicit EZ toggle is the supported manual override. All actual
+    # assignment changes continue to derive the flag from occupancy and status.
+    manual_single_override = set(data) == {'countsAsSingle'}
+    booking = _save_booking_from_payload(payload, existing_booking=booking, manual_single_override=manual_single_override)
     return jsonify(booking.to_dict())
 
 
@@ -2451,6 +2474,8 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
     if remaining == 0:
         db.session.delete(booking)
+    else:
+        _sync_exclusive_occupancy(booking)
     db.session.commit()
     return jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
 

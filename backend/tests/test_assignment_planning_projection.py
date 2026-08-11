@@ -166,6 +166,60 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()['occupants'][0]['athlete']['id'], athlete_id)
 
+    def test_exclusive_occupancy_follows_status_and_actual_double_room_occupancy(self):
+        with app.app_context():
+            entitled = self.athlete('Lina', 'Frei')
+            entitled.single_room_status = 'IN_QUOTA'
+            partner = self.athlete('Mia', 'Berger')
+            db.session.add_all([entitled, partner])
+            db.session.commit()
+            entitled_id, partner_id = str(entitled.id), str(partner.id)
+            hotel_id = str(Hotel.query.one().id)
+            room_type_id = str(RoomType.query.one().id)
+
+        client = app.test_client()
+        created = client.post('/api/assignments/bookings', json={
+            'athleteIds': [entitled_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
+            'roomNumber': 'Slot 01', 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
+        })
+        self.assertEqual(created.status_code, 201)
+        self.assertTrue(created.get_json()['countsAsSingle'])
+        booking_id = created.get_json()['id']
+
+        shared = client.post('/api/assignments/bookings', json={
+            'assignedBookingId': booking_id, 'athleteIds': [entitled_id, partner_id],
+            'hotelId': hotel_id, 'roomTypeId': room_type_id, 'roomNumber': 'Slot 01',
+            'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
+        })
+        self.assertEqual(shared.status_code, 200)
+        self.assertFalse(shared.get_json()['countsAsSingle'])
+
+        removed = client.post(f'/api/assignments/bookings/{booking_id}/occupants/{partner_id}/unassign')
+        self.assertEqual(removed.status_code, 200)
+        with app.app_context():
+            self.assertTrue(db.session.get(RoomBooking, int(booking_id)).counts_as_single)
+
+        overridden = client.put(f'/api/assignments/bookings/{booking_id}', json={'countsAsSingle': False})
+        self.assertEqual(overridden.status_code, 200)
+        self.assertFalse(overridden.get_json()['countsAsSingle'])
+
+    def test_non_entitled_single_occupant_is_not_marked_exclusive(self):
+        with app.app_context():
+            athlete = self.athlete('Noah', 'Keller')
+            athlete.single_room_status = 'PENDING_APPROVAL'
+            db.session.add(athlete)
+            db.session.commit()
+            athlete_id = str(athlete.id)
+            hotel_id = str(Hotel.query.one().id)
+            room_type_id = str(RoomType.query.one().id)
+
+        response = app.test_client().post('/api/assignments/bookings', json={
+            'athleteIds': [athlete_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
+            'roomNumber': 'Slot 01', 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
+        })
+        self.assertEqual(response.status_code, 201)
+        self.assertFalse(response.get_json()['countsAsSingle'])
+
 
 if __name__ == '__main__':
     unittest.main()
