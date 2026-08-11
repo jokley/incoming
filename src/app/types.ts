@@ -79,6 +79,8 @@ export interface Athlete {
   phone?: string;
   email?: string;
   present?: boolean;
+  single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+  single_room_decision_id?: number | null;
 
   arrivalDate?: string | null; // ISO date
   arrivalTime?: string | null;
@@ -181,7 +183,7 @@ export interface RoomBookingUnitOccupant {
   specialMeal?: string | null;
   roomType?: string | null;
   statusBadges: string[];
-  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | null;
+  single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
   hasPendingReview: boolean;
   importChangeTypes: ImportChangeType[];
   changeTouchesAssignment: boolean;
@@ -239,6 +241,7 @@ export interface AssignmentGridBooking {
     athleteId: string;
     name: string;
     nationCode: string;
+    single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
   }>;
 }
 

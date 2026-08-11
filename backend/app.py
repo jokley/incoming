@@ -773,7 +773,7 @@ def _build_room_booking_units():
                     'special_meal': athlete.special_meal,
                     'room_type': athlete.room_type,
                 })()),
-                'singleRoomEntitlement': athlete.single_room_entitlement,
+                'single_room_status': athlete.single_room_status or 'NONE',
                 'hasPendingReview': pending_review,
                 'changeTouchesAssignment': assigned_change,
                 'isAssigned': bool(athlete_booking),
@@ -875,6 +875,7 @@ def _build_assignment_planning_view():
                                     'athleteId': str(occ.athlete.id),
                                     'name': f'{occ.athlete.firstname} {occ.athlete.lastname}'.strip(),
                                     'nationCode': occ.athlete.nation_code,
+                                    'single_room_status': occ.athlete.single_room_status or 'NONE',
                                 }
                                 for occ in (booking.occupants or []) if occ.athlete
                             ],

@@ -33,7 +33,7 @@ export function DataImport() {
   const currentStep = selected ? statusStep[selected.status] ?? 0 : files.length ? 0 : 0;
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
-  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const match = requested && loaded.find(session => session.id === requested); if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
+  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
   const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); setFiles([]); setSuccess(null); detailScrollRef.current?.scrollTo({ top: 0 }); };
   const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); detailScrollRef.current?.scrollTo({ top: 0 }); };
   const handleFiles = (incoming: FileList | File[] | null | undefined) => {
