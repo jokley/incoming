@@ -2183,6 +2183,13 @@ def update_room_type(room_type_id):
 @app.route('/room-types/<int:room_type_id>/', methods=['DELETE'])
 def delete_room_type(room_type_id):
     room_type = RoomType.query.get_or_404(room_type_id)
+    usage_count = HotelRoomInventory.query.filter_by(room_type_id=room_type_id).count()
+    if usage_count:
+        return jsonify({
+            'error': 'ROOM_TYPE_IN_USE',
+            'message': f'Dieser Zimmertyp wird aktuell in {usage_count} Zimmerkontingenten verwendet.',
+            'usageCount': usage_count,
+        }), 409
     db.session.delete(room_type)
     db.session.commit()
     return '', 204
