@@ -193,6 +193,9 @@ class ApiService {
 
   async deleteRoomType(id: string): Promise<void> {
     if (USE_MOCK_DATA) {
+      if (mockHotels.some(hotel => hotel.roomInventories?.some(inventory => inventory.roomType.id === id))) {
+        throw new Error('Room type is still in use');
+      }
       const index = mockRoomTypes.findIndex(rt => rt.id === id);
       if (index !== -1) {
         mockRoomTypes.splice(index, 1);
