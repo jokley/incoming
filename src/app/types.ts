@@ -23,6 +23,12 @@ export interface AuditEvent {
   method: string;
   path: string;
   changes?: Record<string, unknown>;
+  /** Presentation-ready business semantics recorded when the change occurred. */
+  activity?: string;
+  category?: 'Import' | 'Disposition' | 'Hotels' | 'Stammdaten' | 'Entscheidungen';
+  entityLabel?: string;
+  details?: string[];
+  entityRefs?: Record<string, string>;
 }
 
 export interface HotelRoomInventory {

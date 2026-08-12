@@ -222,6 +222,30 @@ def authenticate_api_request():
     permission = _required_permission()
     if permission and not g.current_user.has_permission(permission):
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
+    # Keep the fachliche description of objects that may be deleted by the
+    # endpoint. This snapshot is request-local and contains no transport data.
+    g.audit_snapshot = None
+    if request.method in {'PUT', 'PATCH', 'DELETE', 'POST'}:
+        parts = [part for part in request.path.split('/') if part]
+        numeric = [int(part) for part in parts if part.isdigit()]
+        try:
+            if request.path.startswith('/api/assignments/bookings/') and numeric:
+                booking = db.session.get(RoomBooking, numeric[0])
+                g.audit_snapshot = booking.to_dict() if booking else None
+            elif request.path.startswith('/api/room-assignments/') and numeric:
+                booking = db.session.get(RoomBooking, numeric[0])
+                g.audit_snapshot = booking.to_dict() if booking else None
+            elif request.path.startswith('/api/hotels/') and numeric:
+                hotel = db.session.get(Hotel, numeric[0])
+                g.audit_snapshot = hotel.to_dict() if hotel else None
+            elif request.path.startswith('/api/athletes/') and numeric:
+                athlete = db.session.get(Athlete, numeric[0])
+                g.audit_snapshot = athlete.to_dict() if athlete else None
+            elif request.path.startswith('/api/room-types/') and numeric:
+                room_type = db.session.get(RoomType, numeric[0])
+                g.audit_snapshot = room_type.to_dict() if room_type else None
+        except (ValueError, TypeError):
+            g.audit_snapshot = None
     return None
 
 
@@ -230,6 +254,122 @@ def _audit_entity():
     entity_type = parts[0] if parts else 'api'
     entity_id = next((part for part in parts[1:] if part.isdigit()), None)
     return entity_type, entity_id
+
+
+def _business_activity(entity_type, entity_id, action, payload, response):
+    """Turn a successful mutation into a stable, presentation-ready domain event."""
+    payload, response = payload or {}, response if isinstance(response, dict) else {}
+    snapshot = getattr(g, 'audit_snapshot', None)
+    if isinstance(snapshot, dict):
+        # Response values describe the new state; snapshot values fill details
+        # that a delete/unassign response can no longer return.
+        response = {**snapshot, **response}
+    refs, details = {}, []
+    category, title, label = 'Stammdaten', 'Stammdaten geändert', 'Stammdaten'
+
+    def ref(name, value):
+        if value is not None:
+            refs[name] = str(value)
+
+    if entity_type in {'assignments', 'room-assignments'}:
+        category = 'Disposition'
+        booking = response
+        occupants = booking.get('occupants') or []
+        athletes = [item.get('athlete') or {} for item in occupants]
+        athlete_ids = payload.get('athleteIds') or [a.get('id') for a in athletes]
+        path_ids = [part for part in request.path.split('/') if part.isdigit()]
+        if '/occupants/' in request.path and path_ids:
+            athlete_ids = [path_ids[-1]]
+        for index, athlete_id in enumerate(filter(None, athlete_ids)):
+            ref('personId' if index == 0 else f'personId{index + 1}', athlete_id)
+        booking_id = booking.get('id') or (path_ids[0] if path_ids else entity_id)
+        ref('bookingId', booking_id)
+        hotel = booking.get('hotel') or {}
+        room_type = booking.get('roomType') or {}
+        ref('hotelId', hotel.get('id') or payload.get('hotelId'))
+        ref('roomId', booking_id)
+        names = [' '.join(filter(None, [a.get('firstname'), a.get('lastname')])).strip() for a in athletes]
+        label = ', '.join(filter(None, names)) or 'Zimmerbelegung'
+        if 'unassign' in request.path or action == 'delete':
+            title = 'Zimmerzuweisung entfernt'
+        elif request.method == 'PUT':
+            title = 'EZ-Markierung gesetzt' if set(payload) == {'countsAsSingle'} and payload.get('countsAsSingle') else ('EZ-Markierung entfernt' if set(payload) == {'countsAsSingle'} else 'Zimmerpartner geändert')
+        else:
+            title = 'Zimmer zugewiesen'
+        if hotel.get('name'):
+            details.append(f"Hotel: {hotel['name']}")
+        room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber') and f"Slot {booking['roomNumber']}"]))
+        if room:
+            details.append(f'Zimmer: {room}')
+
+    elif entity_type == 'hotels':
+        hotel_id = entity_id or response.get('id')
+        ref('hotelId', hotel_id)
+        label = response.get('name') or payload.get('name') or 'Hotel'
+        if '/inventory' in request.path:
+            category = 'Hotels'
+            ref('roomId', response.get('id') or (request.path.rstrip('/').split('/')[-1] if request.path.rstrip('/').split('/')[-1].isdigit() else None))
+            title = {'create': 'Zimmerkontingent erstellt', 'update': 'Zimmerkontingent geändert', 'delete': 'Zimmerkontingent entfernt'}.get(action, 'Zimmerkontingent geändert')
+            hotel = Hotel.query.get(int(hotel_id)) if hotel_id else None
+            label = hotel.name if hotel else label
+            room_type_id = response.get('roomTypeId') or payload.get('roomTypeId')
+            room_type = RoomType.query.get(int(room_type_id)) if room_type_id else None
+            if room_type:
+                details.append(room_type.name)
+            count = response.get('roomCount', payload.get('roomCount'))
+            if count is not None:
+                details.append(f'{count} Zimmer')
+        else:
+            category = 'Hotels'
+            title = {'create': 'Hotel angelegt', 'update': 'Hotel bearbeitet', 'delete': 'Hotel entfernt'}.get(action, 'Hotel bearbeitet')
+
+    elif entity_type == 'athletes':
+        athlete_id = entity_id or response.get('id')
+        ref('personId', athlete_id)
+        label = ' '.join(filter(None, [response.get('firstname') or payload.get('firstname'), response.get('lastname') or payload.get('lastname')])).strip() or 'Athlet'
+        title = 'Athlet angelegt' if action == 'create' else 'Athlet bearbeitet'
+
+    elif entity_type == 'events':
+        ref('eventId', entity_id or response.get('id'))
+        label = response.get('discipline') or payload.get('discipline') or 'Event'
+        title = 'Event geändert' if action != 'create' else 'Event angelegt'
+
+    elif entity_type == 'room-types':
+        ref('roomTypeId', entity_id or response.get('id'))
+        label = response.get('name') or payload.get('name') or 'Zimmertyp'
+        title = 'Zimmertyp geändert' if action != 'create' else 'Zimmertyp angelegt'
+
+    elif entity_type == 'import':
+        category = 'Entscheidungen' if '/approvals/' in request.path else 'Import'
+        ids = [part for part in request.path.split('/') if part.isdigit()]
+        session_id = ids[0] if '/sessions/' in request.path and ids else response.get('id')
+        ref('importSessionId', session_id)
+        if '/approvals/' in request.path and ids:
+            ref('decisionId', ids[-1])
+        ref('nationId', response.get('nation') or payload.get('nation'))
+        label = response.get('nation') or payload.get('nation') or 'Importsession'
+        if request.path.endswith('/approve'):
+            title = 'Import freigegeben'
+        elif request.path.endswith('/import'):
+            title = 'Import durchgeführt'
+        elif '/approvals/' in request.path:
+            title = 'Einzelzimmerentscheidung getroffen'
+            if payload.get('decision') == 'APPROVED':
+                title = 'Einzelzimmerentscheidung genehmigt'
+            if payload.get('costCoverage'):
+                details.append('Mehrpreis genehmigt')
+        elif response.get('status') == 'TECHNICALLY_REVIEWED':
+            title = 'Import technisch geprüft'
+        elif response.get('status') == 'PROFESSIONALLY_REVIEWED':
+            title = 'Import fachlich geprüft'
+        else:
+            title = 'Import erstellt' if action == 'create' else 'Import bearbeitet'
+
+    else:
+        # Administrative/debug endpoints are not part of the business chronicle.
+        return None
+    return {'category': category, 'activity': title, 'entity_label': label,
+            'details': details, 'entity_refs': refs}
 
 
 @app.after_request
@@ -251,6 +391,13 @@ def audit_successful_mutation(response):
             action = 'assign'
         elif request.path.startswith('/api/import/'):
             action = 'import'
+        response_payload = response.get_json(silent=True)
+        business = _business_activity(entity_type, entity_id, action, payload, response_payload)
+        if business is None:
+            return response
+        # The primary reference remains available for old consumers; all target
+        # references live in entityRefs and do not have to be reconstructed from URLs.
+        primary_id = next(iter(business['entity_refs'].values()), entity_id)
         db.session.add(AuditEvent(
             username=user.username,
             display_name=user.display_name,
@@ -258,11 +405,15 @@ def audit_successful_mutation(response):
             groups_json=json.dumps(list(user.groups)),
             action=action,
             entity_type=entity_type,
-            entity_id=entity_id,
+            entity_id=primary_id,
             request_id=g.request_id,
             method=request.method,
             path=request.path,
             changes_json=json.dumps(payload, ensure_ascii=False, default=str) if payload else None,
+            activity=business['activity'], category=business['category'],
+            entity_label=business['entity_label'],
+            details_json=json.dumps(business['details'], ensure_ascii=False),
+            entity_refs_json=json.dumps(business['entity_refs'], ensure_ascii=False),
         ))
         db.session.commit()
     except Exception:
@@ -1171,6 +1322,21 @@ CRITICAL_ROUTE_ALIASES = [
 # Initialize database
 with app.app_context():
     db.create_all()
+
+    def ensure_audit_event_columns():
+        """Add semantic activity data without invalidating existing histories."""
+        existing = {column[1] for column in db.session.execute(text("PRAGMA table_info(audit_event)"))}
+        needed = {
+            'activity': 'VARCHAR(200)', 'category': 'VARCHAR(50)',
+            'entity_label': 'VARCHAR(300)', 'details_json': 'TEXT',
+            'entity_refs_json': "TEXT NOT NULL DEFAULT '{}'",
+        }
+        for name, sql_type in needed.items():
+            if name not in existing:
+                db.session.execute(text(f'ALTER TABLE audit_event ADD COLUMN {name} {sql_type}'))
+        db.session.commit()
+
+    ensure_audit_event_columns()
 
     # Lightweight SQLite migration for added columns (no Alembic in this repo)
     def ensure_athlete_columns():

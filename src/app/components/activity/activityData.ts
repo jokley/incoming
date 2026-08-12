@@ -10,6 +10,15 @@ export async function loadAllAuditEvents(): Promise<AuditEvent[]> {
 
 export function belongsToEntity(event: AuditEvent, entityType: string, entityId: string) {
   const targetId = String(entityId);
+  const referenceKeys: Record<string, string[]> = {
+    athletes: ['personId', 'personId2', 'personId3', 'personId4'],
+    hotels: ['hotelId'],
+    assignments: ['bookingId', 'roomId'],
+    events: ['eventId'],
+    'room-types': ['roomTypeId'],
+    import: ['importSessionId', 'decisionId', 'nationId'],
+  };
+  if ((referenceKeys[entityType] ?? []).some(key => String(event.entityRefs?.[key] ?? '') === targetId)) return true;
   if (event.entityType === entityType) {
     if (event.entityId != null) return String(event.entityId) === targetId;
     return event.path.split(/[/?]/).includes(targetId);

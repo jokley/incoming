@@ -6,7 +6,7 @@ db = SQLAlchemy()
 
 
 class AuditEvent(db.Model):
-    """Append-only record of successful state-changing API requests."""
+    """Append-only, user-facing record of a completed business event."""
     __tablename__ = 'audit_event'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -22,6 +22,11 @@ class AuditEvent(db.Model):
     method = db.Column(db.String(10), nullable=False)
     path = db.Column(db.String(500), nullable=False)
     changes_json = db.Column(db.Text)
+    activity = db.Column(db.String(200))
+    category = db.Column(db.String(50))
+    entity_label = db.Column(db.String(300))
+    details_json = db.Column(db.Text)
+    entity_refs_json = db.Column(db.Text, nullable=False, default='{}')
 
     def to_dict(self):
         return {
@@ -38,6 +43,11 @@ class AuditEvent(db.Model):
             'method': self.method,
             'path': self.path,
             'changes': json.loads(self.changes_json) if self.changes_json else None,
+            'activity': self.activity,
+            'category': self.category,
+            'entityLabel': self.entity_label,
+            'details': json.loads(self.details_json or '[]'),
+            'entityRefs': json.loads(self.entity_refs_json or '{}'),
         }
 
 class ImportRun(db.Model):
