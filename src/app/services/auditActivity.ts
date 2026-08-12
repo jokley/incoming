@@ -2,10 +2,12 @@ import type { Athlete, AuditEvent, Event, Hotel, RoomType } from '../types';
 import type { ImportSession } from '../data/importSessions';
 
 export interface AuditActivity {
-  category: 'Import' | 'Assignments' | 'Hotels' | 'Nationen' | 'Administration';
+  category: 'Import' | 'Disposition' | 'Stammdaten' | 'Entscheidungen';
   activity: string;
   entity: string;
   details: string[];
+  openLabel?: string;
+  href?: string;
 }
 
 export interface AuditActivityContext {
@@ -43,10 +45,11 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
     const room = [roomType?.name, text(changes.roomNumber) && `Zimmer ${text(changes.roomNumber)}`].filter(Boolean).join(' – ');
     const isUnassign = event.action === 'unassign';
     return {
-      category: 'Assignments',
+      category: 'Disposition',
       activity: isUnassign ? 'Zimmerzuweisung entfernt' : event.action === 'update' ? 'Zimmerzuweisung geändert' : 'Zimmer zugewiesen',
       entity: peopleLabel || (isUnassign ? 'Zimmerzuweisung' : 'Personenzuweisung'),
       details: [hotel?.name && `Hotel: ${hotel.name}`, room && `Zimmer: ${room}`].filter((value): value is string => Boolean(value)),
+      openLabel: people.length ? 'Athlet öffnen' : 'Zuweisungen öffnen', href: '/assignments',
     };
   }
 
@@ -67,10 +70,11 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
     else if (isApproval && changes.decision === 'APPROVED') activity = 'Einzelzimmer-Ausnahme genehmigt';
     else if (isApproval && changes.decision === 'NEW_LIST_ANNOUNCED') activity = 'Neue Meldeliste angekündigt';
     return {
-      category: 'Import',
+      category: isApproval ? 'Entscheidungen' : 'Import',
       activity,
       entity: approvedPeople || sessionLabel || text(changes.nation) || 'Importsession',
       details: [sessionLabel && approvedPeople && sessionLabel, version && `Version ${version}`, text(changes.costCoverage) && 'Mehrpreis genehmigt'].filter((value): value is string => Boolean(value)),
+      openLabel: isApproval ? 'Entscheidung anzeigen' : 'Importsession öffnen', href: sessionId ? `/import?sessionId=${sessionId}` : '/import',
     };
   }
 
@@ -80,27 +84,28 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
     const name = text(changes.name) || hotel?.name || 'Hotel';
     const inventory = event.path.includes('/inventory');
     return {
-      category: 'Hotels',
+      category: inventory ? 'Disposition' : 'Stammdaten',
       activity: inventory
         ? ({ create: 'Zimmerkontingent angelegt', update: 'Zimmerkontingent geändert', delete: 'Zimmerkontingent entfernt' }[event.action] || 'Zimmerkontingent geändert')
         : ({ create: 'Hotel angelegt', update: 'Hotel geändert', delete: 'Hotel entfernt' }[event.action] || 'Hotel bearbeitet'),
       entity: name,
       details: [],
+      openLabel: 'Hotel öffnen', href: '/hotels',
     };
   }
 
   if (event.entityType === 'athletes') {
     const athlete = context.athletes?.find(item => item.id === entityId);
     const name = athlete ? personName(athlete) : [text(changes.firstname), text(changes.lastname)].filter(Boolean).join(' ');
-    return { category: 'Nationen', activity: event.path.includes('acknowledge-roomlist-change') ? 'Meldelistenänderung bestätigt' : event.action === 'create' ? 'Person angelegt' : 'Personendaten geändert', entity: name || 'Person', details: [] };
+    return { category: 'Stammdaten', activity: event.path.includes('acknowledge-roomlist-change') ? 'Meldelistenänderung bestätigt' : event.action === 'create' ? 'Athlet angelegt' : 'Athlet bearbeitet', entity: name || 'Person', details: [], openLabel: 'Athlet öffnen', href: '/athletes' };
   }
 
   if (event.entityType === 'events') {
     const item = context.events?.find(candidate => candidate.id === entityId);
-    return { category: 'Administration', activity: ({ create: 'Veranstaltung angelegt', update: 'Veranstaltung geändert', delete: 'Veranstaltung entfernt' }[event.action] || 'Veranstaltung bearbeitet'), entity: text(changes.discipline) || item?.discipline || 'Veranstaltung', details: [] };
+    return { category: 'Stammdaten', activity: ({ create: 'Veranstaltung angelegt', update: 'Veranstaltung geändert', delete: 'Veranstaltung entfernt' }[event.action] || 'Veranstaltung bearbeitet'), entity: text(changes.discipline) || item?.discipline || 'Veranstaltung', details: [], openLabel: 'Event öffnen', href: '/events' };
   }
 
   const labels: Record<string, string> = { 'room-types': 'Zimmerkategorie', admin: 'Testdaten' };
   const entity = labels[event.entityType] || 'Einstellung';
-  return { category: 'Administration', activity: ({ create: `${entity} angelegt`, update: `${entity} geändert`, delete: `${entity} entfernt` }[event.action] || `${entity} bearbeitet`), entity, details: [] };
+  return { category: 'Stammdaten', activity: ({ create: `${entity} angelegt`, update: `${entity} geändert`, delete: `${entity} entfernt` }[event.action] || `${entity} bearbeitet`), entity, details: [], openLabel: `${entity} öffnen`, href: event.entityType === 'room-types' ? '/room-types' : undefined };
 }

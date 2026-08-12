@@ -35,7 +35,7 @@ export function Layout() {
                   </NavLink>
                 ))}
                 {permissions.canManageImports && <NavLink to="/import" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}><Upload className="mr-2 h-4 w-4" />Import</NavLink>}
-                {hasPermission('audit.read') && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}><ShieldCheck className="mr-2 h-4 w-4" />Audit</NavLink>}
+                {hasPermission('audit.read') && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}><ShieldCheck className="mr-2 h-4 w-4" />Aktivitäten</NavLink>}
                 {permissions.isAdmin && <NavLink to="/administration/test-data" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500 hover:bg-slate-100 hover:text-slate-800'}`}><Settings className="mr-2 h-4 w-4" />Administration</NavLink>}
               </div>
             </div>
@@ -57,6 +57,7 @@ export function Layout() {
           </div>
           <div className="flex gap-1 overflow-x-auto pb-2 lg:hidden">
             {navItems.map(({ to, end, label, icon: Icon }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}><Icon className="mr-1.5 h-4 w-4" />{label}</NavLink>)}
+            {hasPermission('audit.read') && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}><ShieldCheck className="mr-1.5 h-4 w-4" />Aktivitäten</NavLink>}
             {permissions.isAdmin && <NavLink to="/administration/test-data" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-500'}`}><Settings className="mr-1.5 h-4 w-4" />Administration</NavLink>}
           </div>
         </div>
