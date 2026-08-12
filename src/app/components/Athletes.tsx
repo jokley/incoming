@@ -13,7 +13,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, Search, ShieldCheck, UserRound } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
@@ -42,6 +42,13 @@ const genderLabel = (value?: string) => {
 };
 const assignmentLabel = (athlete: Athlete) => athlete.assignment?.hasAssignment ? 'Zugewiesen' : 'Nicht zugewiesen';
 const importLabel = (athlete: Athlete) => athlete.hasPendingRoomlistReview ? 'Import geändert' : 'Aktuell';
+const roomTypeLabel = (athlete: Athlete) => {
+  const roomType = athlete.assignment?.roomTypeName || athlete.roomType;
+  if (!roomType) return '—';
+
+  const abbreviation = roomType.toUpperCase().match(/(?:^|\s|\/)(3BZ|4BZ|EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1];
+  return abbreviation || roomType;
+};
 
 function countValues(athletes: Athlete[], getValue: (athlete: Athlete) => string, getLabel: (value: string) => string = value => value): CountItem[] {
   const counts = new Map<string, number>();
@@ -288,29 +295,18 @@ export function Athletes() {
           </div>
         </div>
         <div className="min-h-[24rem] overflow-auto xl:min-h-0 xl:flex-1">
-          <table className="w-full min-w-[1280px] border-separate border-spacing-0 text-left text-sm">
+          <table className="w-full min-w-[1120px] border-separate border-spacing-0 text-left text-sm">
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
-              <tr>{['Name', 'Nation', 'Disziplin', 'Gender', 'Funktion', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Assignment Status', 'Import Status'].map(label => <th key={label} className="border-b border-[var(--ops-border)] px-3 py-3 whitespace-nowrap">{label}</th>)}</tr>
+              <tr>{['Name', 'Nation', 'Disziplin', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Status', 'Import'].map(label => <th key={label} className="border-b border-[var(--ops-border)] px-3 py-3 whitespace-nowrap">{label}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div className="flex items-center gap-2"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]"><Users className="h-4 w-4" /></span><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1 flex flex-wrap items-center gap-1.5">{athlete.fisCode && <span className="text-[11px] text-[var(--ops-text-subtle)]">FIS {athlete.fisCode}</span>}<SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></div></Cell>
-                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</Cell><Cell>{genderLabel(athlete.gender || athlete.forGender)}</Cell><Cell>{athlete.function || 'Athlet'}</Cell><Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
-                <Cell>
-                  <button
-                    type="button"
-                    onClick={event => {
-                      event.stopPropagation();
-                      void navigate('/assignments', { state: { athleteId: athlete.id } });
-                    }}
-                    onKeyDown={event => event.stopPropagation()}
-                    className="font-bold text-[var(--ops-primary)] underline decoration-transparent underline-offset-4 transition hover:decoration-current focus-visible:decoration-current focus-visible:outline-none"
-                    aria-label={`${athlete.assignment?.hasAssignment ? 'Assignment öffnen' : 'Zuweisung starten'} für ${athlete.firstname} ${athlete.lastname}`}
-                  >
-                    {athlete.assignment?.hotelName || 'Zuweisung starten'}
-                  </button>
-                </Cell>
-                <Cell>{athlete.assignment?.roomNumber || athlete.assignment?.roomTypeName || '—'}</Cell>
+                <Cell><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5"><SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></Cell>
+                <Cell><b>{athlete.nationCode}</b></Cell>
+                <Cell><div className="min-w-28"><b className="block text-[var(--ops-text)]">{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block text-xs text-[var(--ops-text-subtle)]">{athlete.function || 'Athlet'}</span></div></Cell>
+                <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
+                <Cell><span className="font-semibold text-[var(--ops-text)]">{athlete.assignment?.hotelName || '—'}</span></Cell>
+                <Cell><b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b></Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
                 <Cell><StatusChip tone={athlete.hasPendingRoomlistReview ? 'warning' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
               </tr>)}
