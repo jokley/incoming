@@ -17,7 +17,7 @@ import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, L
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
-import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { ImportConflictNotice } from './ImportConflictNotice';
@@ -305,8 +305,8 @@ export function Athletes() {
                 <Cell><b>{athlete.nationCode}</b></Cell>
                 <Cell><div className="min-w-28"><b className="block font-bold text-[var(--ops-text)]">{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block text-[11px] font-medium text-[var(--ops-text-subtle)]">{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
-                <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <button type="button" className="font-semibold text-[var(--ops-text)] underline decoration-[var(--ops-border)] underline-offset-4 transition hover:text-[var(--ops-primary)] hover:decoration-[var(--ops-primary)] focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ops-primary)]" onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</button> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
-                <Cell>{athlete.assignment?.hasAssignment ? <button type="button" className="font-bold text-[var(--ops-text)] underline decoration-[var(--ops-border)] underline-offset-4 transition hover:text-[var(--ops-primary)] hover:decoration-[var(--ops-primary)] focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ops-primary)]" onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</button> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
+                <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
+                <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
                 <Cell><StatusChip tone={athlete.hasPendingRoomlistReview ? 'warning' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
               </tr>)}

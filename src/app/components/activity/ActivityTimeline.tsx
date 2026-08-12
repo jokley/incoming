@@ -1,4 +1,5 @@
 import { ArrowUpRight, CircleUserRound, Clock3 } from 'lucide-react';
+import { InlineActionLink } from '../../design-system';
 import type { AuditEvent } from '../../types';
 import type { AuditActivity } from '../../services/auditActivity';
 
@@ -33,7 +34,7 @@ export function ActivityTimeline({ items, emptyMessage = 'Für dieses Objekt sin
         <div className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-[var(--ops-divider)] pt-3 text-xs text-[var(--ops-text-muted)]">
           <time dateTime={item.event.createdAt} className="inline-flex items-center gap-1.5"><Clock3 size={14}/>{dateTime(item.event.createdAt)}</time>
           <span className="inline-flex items-center gap-1.5"><CircleUserRound size={14}/>{item.event.displayName || item.event.username || 'System'}</span>
-          {onOpen && item.description.href && <button type="button" onClick={() => onOpen(item)} className="ml-auto inline-flex items-center gap-1 font-bold text-[var(--ops-primary)] hover:underline">{item.description.openLabel || 'Objekt öffnen'} <ArrowUpRight size={14}/></button>}
+          {onOpen && item.description.href && <InlineActionLink className="ml-auto" onClick={() => onOpen(item)}>{item.description.openLabel || 'Objekt öffnen'} <ArrowUpRight size={14}/></InlineActionLink>}
         </div>
       </article>
     </li>)}
