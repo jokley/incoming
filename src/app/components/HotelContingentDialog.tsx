@@ -3,6 +3,7 @@ import { Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, Di
 import type { Hotel, HotelRoomInventory, RoomType } from '../types';
 import { HotelContingentForm } from './HotelContingentForm';
 import { emptyContingentValues, validateHotelContingent, type HotelContingentValues } from './HotelContingentValidation';
+import { ActivitySummaryCard } from './activity';
 
 type Props = { open: boolean; mode: 'create' | 'edit'; hotel: Hotel | null; contingent?: HotelRoomInventory | null; roomTypes: RoomType[]; onClose: () => void; onSubmit: (values: HotelContingentValues) => Promise<void> };
 
@@ -18,6 +19,7 @@ export function HotelContingentDialog({ open, mode, hotel, contingent, roomTypes
     <DialogContent dividers><Stack spacing={3}>
       <Box><Typography variant="overline" color="text.secondary">Hotelinformationen</Typography><Typography fontWeight={700}>{hotel?.name}</Typography><Typography variant="body2" color="text.secondary">{hotel?.location || 'Kein Ort'} · {hotel?.region || 'Keine Region'}</Typography>{mode === 'edit' && contingent && <Typography variant="body2" color="text.secondary">{contingent.availableFrom.slice(0,10)} – {contingent.availableUntil.slice(0,10)}</Typography>}</Box>
       <Divider /><HotelContingentForm values={values} errors={errors} touched={touched} roomTypes={roomTypes} onChange={(next) => { setValues(next); setTouched(true); }} />
+      {mode === 'edit' && <ActivitySummaryCard entityType="hotels" entityId={contingent?.id} />}
     </Stack></DialogContent>
     <DialogActions sx={{ justifyContent: 'space-between' }}><Button onClick={requestClose} disabled={saving}>Abbrechen</Button><Button variant="contained" disabled={!valid || saving} onClick={save} startIcon={saving ? <CircularProgress size={16} color="inherit" /> : undefined}>{mode === 'create' ? 'Erstellen' : 'Speichern'}</Button></DialogActions>
   </Dialog>

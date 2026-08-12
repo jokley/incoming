@@ -10,6 +10,7 @@ import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, 
 import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, quotaViolationLabel, type OperationsTask } from './OperationsDecisionDialog';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
+import { ActivitySummaryCard } from './activity';
 
 const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
 const workflowSteps = ['Entwurf', 'Technisch geprüft', 'Fachlich geprüft', 'Warten auf Nation', 'Erneut prüfen', 'Freigegeben', 'Importiert'];
@@ -93,6 +94,7 @@ export function DataImport() {
               <PreviewCard peopleRows={peopleRows} roomRows={roomRows} onOpen={setDetail}/>
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
               <details className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4"><summary className="cursor-pointer font-extrabold">Neue Meldeliste hochladen</summary><div className="mt-4 grid items-start gap-5 lg:grid-cols-2"><UploadCard files={files} onChange={handleFiles}/><div><p className="text-sm text-[var(--ops-text-muted)]">Die neue Meldeliste wird als Version {(selected.currentVersion?.version ?? 0) + 1} geprüft. Die bisherige Version bleibt in der Historie erhalten.</p><div className="mt-4 flex gap-2"><OpsButton onClick={runPreview} disabled={files.length<2||loading}>{loading?<Loader2 className="mr-2 inline h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 inline h-4 w-4"/>}Version prüfen</OpsButton><OpsButton onClick={cancel} disabled={!files.length}>Abbrechen</OpsButton></div></div></div></details>
+              <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
             </div>
             </>}
           </div>

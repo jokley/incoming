@@ -10,6 +10,7 @@ import { ImportConflictNotice } from './ImportConflictNotice';
 import type { OperationsLocationState } from '../operationsContext';
 import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip, Toolbar } from '../design-system';
 import { READ_ONLY_TOOLTIP } from './PageLayout';
+import { ActivitySummaryCard } from './activity';
 
 type RoomTypeForm = { name: string; maxPersons: number };
 const EMPTY_FORM: RoomTypeForm = { name: '', maxPersons: 2 };
@@ -32,6 +33,7 @@ function RoomTypeDialog({ open, roomType, onClose, onSave }: { open: boolean; ro
     <Stack spacing={2.25} sx={{ pt: 1 }}>
       <TextField required label="Bezeichnung" placeholder="z. B. DZ / DU" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} />
       <TextField required type="number" label="Maximale Personen" value={form.maxPersons || ''} inputProps={{ min: 1, max: 10, step: 1 }} helperText="Zulässige Belegung dieses Zimmertyps" onChange={event => setForm({ ...form, maxPersons: Number(event.target.value) })} />
+      {roomType && <ActivitySummaryCard entityType="room-types" entityId={roomType.id} />}
     </Stack>
   </CrudDialog>;
 }
@@ -52,6 +54,7 @@ function RoomTypeSummary({ roomType }: { roomType: RoomType }) {
 
 export function RoomTypesManagement() {
   const location=useLocation(); const operations=(location.state as OperationsLocationState|null)?.operationsContext;
+  const requestedRoomTypeId = new URLSearchParams(location.search).get('roomTypeId') || operations?.roomTypeId;
   const detailScrollRef = useRef<HTMLDivElement>(null);
   const permissions = usePermissions();
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
@@ -66,7 +69,7 @@ export function RoomTypesManagement() {
     try {
       setLoading(true);
       const data = await api.getRoomTypes();
-      setRoomTypes(data); if(operations?.roomTypeId){const target=data.find(item=>item.id===operations.roomTypeId);if(target){setSelectedId(target.id);setDialog({open:true,roomType:target});}}
+      setRoomTypes(data); if(requestedRoomTypeId){const target=data.find(item=>item.id===requestedRoomTypeId);if(target){setSelectedId(target.id);setDialog({open:true,roomType:target});}}
       setSelectedId(current => current && data.some(item => item.id === current) ? current : data[0]?.id || null);
       setError(null);
     } catch {

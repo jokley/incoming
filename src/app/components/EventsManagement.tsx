@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router';
 import { Stack, TextField } from '@mui/material';
 import { CalendarDays, Pencil, Plus, Search } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -8,6 +9,7 @@ import type { Event } from '../types';
 import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 import { OperationsTimeline, type TimelineRowData } from './timeline';
+import { ActivitySummaryCard } from './activity';
 
 type EventForm = { discipline: string; startDate: string; endDate: string; personDemand: number; singleRoomPercentage: number };
 const EMPTY_FORM: EventForm = { discipline: '', startDate: '', endDate: '', personDemand: 0, singleRoomPercentage: 50 };
@@ -43,6 +45,7 @@ function EventDialog({ open, event, onClose, onSave }: { open: boolean; event: E
       <TextField required type="number" label="EZ-Anteil (%)" value={form.singleRoomPercentage} inputProps={{ min: 0, max: 100, step: 1 }} helperText={`DZ-Anteil: ${100 - form.singleRoomPercentage} %`} onChange={e => setForm({ ...form, singleRoomPercentage: Number(e.target.value) })} />
       <TextField required type="date" label="Startdatum" value={form.startDate} onChange={e => setForm({ ...form, startDate: e.target.value })} slotProps={{ inputLabel: { shrink: true } }} />
       <TextField required type="date" label="Enddatum" value={form.endDate} error={Boolean(form.endDate && form.startDate && form.endDate < form.startDate)} helperText={form.endDate && form.startDate && form.endDate < form.startDate ? 'Das Enddatum muss nach dem Startdatum liegen.' : undefined} onChange={e => setForm({ ...form, endDate: e.target.value })} slotProps={{ inputLabel: { shrink: true } }} />
+      {event && <ActivitySummaryCard entityType="events" entityId={event.id} />}
     </Stack>
   </CrudDialog>;
 }
@@ -54,11 +57,12 @@ function PlanningSummary({ event }: { event: Event }) {
 }
 
 export function EventsManagement() {
+  const location = useLocation(); const requestedEventId = new URLSearchParams(location.search).get('eventId');
   const permissions = usePermissions();
   const [events, setEvents] = useState<Event[]>([]), [selectedId, setSelectedId] = useState<string | null>(null), [search, setSearch] = useState('');
   const [dialog, setDialog] = useState<{ open: boolean; event: Event | null }>({ open: false, event: null });
   const [loading, setLoading] = useState(true), [error, setError] = useState<string | null>(null);
-  const load = async () => { try { setLoading(true); const data = await api.getEvents(); setEvents(data); setSelectedId(value => value && data.some(event => event.id === value) ? value : data[0]?.id || null); setError(null); } catch { setError('Events konnten nicht geladen werden.'); } finally { setLoading(false); } };
+  const load = async () => { try { setLoading(true); const data = await api.getEvents(); setEvents(data); setSelectedId(value => requestedEventId && data.some(event => event.id === requestedEventId) ? requestedEventId : value && data.some(event => event.id === value) ? value : data[0]?.id || null); setError(null); } catch { setError('Events konnten nicht geladen werden.'); } finally { setLoading(false); } };
   useEffect(() => { void load(); }, []);
   const selected = events.find(event => event.id === selectedId) || null;
   const filtered = useMemo(() => events.filter(event => !search.trim() || event.discipline.toLowerCase().includes(search.trim().toLowerCase())), [events, search]);

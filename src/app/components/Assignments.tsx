@@ -26,6 +26,7 @@ import {
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
+import { ActivitySummaryCard } from './activity';
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
@@ -82,7 +83,8 @@ export function Assignments() {
   const location = useLocation();
   const navigate = useNavigate();
   const routeState = location.state as ({ athleteId?: string; assignmentId?: string; view?: AppView; quotaKey?: string } & OperationsLocationState) | null;
-  const requestedAthleteId = routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
+  const routeQuery = new URLSearchParams(location.search);
+  const requestedAthleteId = routeQuery.get('athleteId') || routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeQuery.get('assignmentId')||routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
@@ -95,7 +97,7 @@ export function Assignments() {
 
   const [view, setView] = useState<AppView>(routeState?.view || (routeState?.operationsContext?.quotaKey ? 'quotas' : 'dispatch'));
   const [selected, setSelected] = useState<SelectedState>(null);
-  const [activeHotelId, setActiveHotelId] = useState<string | null>(null);
+  const [activeHotelId, setActiveHotelId] = useState<string | null>(routeQuery.get('hotelId'));
   const [showAlert, setShowAlert] = useState(true);
   const [selectedQuotaKey, setSelectedQuotaKey] = useState<string | null>(routeState?.quotaKey || routeState?.operationsContext?.quotaKey || null);
 
@@ -2406,6 +2408,7 @@ function DetailPanel({
             {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? 'Ausbuchen läuft...' : 'Zuweisung entfernen'}
           </button>
         </div>
+        <div className="px-4 pb-4"><ActivitySummaryCard entityType="assignments" entityId={booking.bookingId} /></div>
       </div>
     );
   }
@@ -2524,6 +2527,7 @@ function DetailPanel({
           </div>
         )}
       </div>
+      <div className="px-4 pb-4"><ActivitySummaryCard entityType="assignments" entityId={selectedAssignedUnit?.assignedBookingId || selectedUnit.unitId} /></div>
     </div>
   );
 }
