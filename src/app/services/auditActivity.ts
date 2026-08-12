@@ -18,6 +18,24 @@ export interface AuditActivityContext {
   importSessions?: ImportSession[];
 }
 
+export function auditActivityHref(event: AuditEvent): string | undefined {
+  const refs = event.entityRefs ?? {};
+  const value = (key: string) => refs[key] ? encodeURIComponent(refs[key]) : undefined;
+  if (refs.decisionId) return `/import?decisionId=${value('decisionId')}`;
+  if (refs.importSessionId) return `/import?sessionId=${value('importSessionId')}`;
+  if (refs.personId) return `/athletes?athleteId=${value('personId')}`;
+  if (refs.bookingId || refs.roomId) {
+    const params = new URLSearchParams();
+    if (refs.bookingId) params.set('assignmentId', refs.bookingId);
+    if (refs.hotelId) params.set('hotelId', refs.hotelId);
+    if (refs.roomTypeId) params.set('roomTypeId', refs.roomTypeId);
+    return `/assignments?${params}`;
+  }
+  if (refs.hotelId) return `/hotels?hotelId=${value('hotelId')}${refs.inventoryId ? `&inventoryId=${value('inventoryId')}` : ''}`;
+  if (refs.eventId) return `/events?eventId=${value('eventId')}`;
+  if (refs.roomTypeId) return `/room-types?roomTypeId=${value('roomTypeId')}`;
+}
+
 const text = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 const id = (value: unknown) => value == null ? undefined : String(value);
 
@@ -34,17 +52,17 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
   // mappings below intentionally remain as compatibility for existing history.
   if (event.activity && event.category && event.entityLabel) {
     const refs = event.entityRefs ?? {};
-    const href = refs.importSessionId ? `/import?sessionId=${refs.importSessionId}`
-      : refs.personId || refs.bookingId ? '/assignments'
-      : refs.hotelId ? '/hotels'
-      : refs.eventId ? '/events'
-      : refs.roomTypeId ? '/room-types' : undefined;
+    const href = auditActivityHref(event);
+    const openLabel = refs.decisionId ? 'Entscheidung anzeigen' : refs.importSessionId ? 'Importsession öffnen'
+      : refs.personId ? 'Athlet öffnen' : refs.bookingId || refs.roomId ? 'Zimmer öffnen'
+      : refs.inventoryId ? 'Zimmerkontingent öffnen' : refs.hotelId ? 'Hotel öffnen'
+      : refs.eventId ? 'Event öffnen' : refs.roomTypeId ? 'Zimmertyp öffnen' : undefined;
     return {
       category: event.category,
       activity: event.activity,
       entity: event.entityLabel,
       details: event.details ?? [],
-      openLabel: href ? 'Betroffene Entität öffnen' : undefined,
+      openLabel,
       href,
     };
   }
@@ -67,7 +85,7 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
       activity: isUnassign ? 'Zimmerzuweisung entfernt' : event.action === 'update' ? 'Zimmerzuweisung geändert' : 'Zimmer zugewiesen',
       entity: peopleLabel || (isUnassign ? 'Zimmerzuweisung' : 'Personenzuweisung'),
       details: [hotel?.name && `Hotel: ${hotel.name}`, room && `Zimmer: ${room}`].filter((value): value is string => Boolean(value)),
-      openLabel: people.length ? 'Athlet öffnen' : 'Zuweisungen öffnen', href: '/assignments',
+      openLabel: people.length ? 'Athlet öffnen' : 'Zimmer öffnen', href: people[0] ? `/athletes?athleteId=${people[0].id}` : `/assignments?assignmentId=${event.entityId ?? ids[0] ?? ''}`,
     };
   }
 
@@ -108,19 +126,19 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
         : ({ create: 'Hotel angelegt', update: 'Hotel geändert', delete: 'Hotel entfernt' }[event.action] || 'Hotel bearbeitet'),
       entity: name,
       details: [],
-      openLabel: 'Hotel öffnen', href: '/hotels',
+      openLabel: inventory ? 'Zimmerkontingent öffnen' : 'Hotel öffnen', href: `/hotels?hotelId=${entityId || ''}${inventory ? `&inventoryId=${ids.at(-1) || ''}` : ''}`,
     };
   }
 
   if (event.entityType === 'athletes') {
     const athlete = context.athletes?.find(item => item.id === entityId);
     const name = athlete ? personName(athlete) : [text(changes.firstname), text(changes.lastname)].filter(Boolean).join(' ');
-    return { category: 'Stammdaten', activity: event.path.includes('acknowledge-roomlist-change') ? 'Meldelistenänderung bestätigt' : event.action === 'create' ? 'Athlet angelegt' : 'Athlet bearbeitet', entity: name || 'Person', details: [], openLabel: 'Athlet öffnen', href: '/athletes' };
+    return { category: 'Stammdaten', activity: event.path.includes('acknowledge-roomlist-change') ? 'Meldelistenänderung bestätigt' : event.action === 'create' ? 'Athlet angelegt' : 'Athlet bearbeitet', entity: name || 'Person', details: [], openLabel: 'Athlet öffnen', href: `/athletes?athleteId=${entityId || ''}` };
   }
 
   if (event.entityType === 'events') {
     const item = context.events?.find(candidate => candidate.id === entityId);
-    return { category: 'Stammdaten', activity: ({ create: 'Veranstaltung angelegt', update: 'Veranstaltung geändert', delete: 'Veranstaltung entfernt' }[event.action] || 'Veranstaltung bearbeitet'), entity: text(changes.discipline) || item?.discipline || 'Veranstaltung', details: [], openLabel: 'Event öffnen', href: '/events' };
+    return { category: 'Stammdaten', activity: ({ create: 'Veranstaltung angelegt', update: 'Veranstaltung geändert', delete: 'Veranstaltung entfernt' }[event.action] || 'Veranstaltung bearbeitet'), entity: text(changes.discipline) || item?.discipline || 'Veranstaltung', details: [], openLabel: 'Event öffnen', href: `/events?eventId=${entityId || ''}` };
   }
 
   const labels: Record<string, string> = { 'room-types': 'Zimmerkategorie', admin: 'Testdaten' };

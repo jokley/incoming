@@ -5,7 +5,7 @@ import { ActivityHistoryDialog } from './ActivityHistoryDialog';
 
 const dateTime = (value?: string) => value ? new Date(value).toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' }) : '—';
 
-export function ActivityInfoBlock({ entityType, entityId, createdAt, updatedAt }: { entityType: string; entityId?: string | null; createdAt?: string | null; updatedAt?: string | null }) {
+export function ActivitySummaryCard({ entityType, entityId, createdAt, updatedAt }: { entityType: string; entityId?: string | null; createdAt?: string | null; updatedAt?: string | null }) {
   const [historyOpen, setHistoryOpen] = useState(false);
   const [metadata, setMetadata] = useState({ createdAt, createdBy: '—', updatedAt, updatedBy: '—' });
   useEffect(() => {
@@ -23,4 +23,6 @@ export function ActivityInfoBlock({ entityType, entityId, createdAt, updatedAt }
     <button type="button" disabled={!entityId} onClick={() => setHistoryOpen(true)} className="flex w-full items-center justify-between border-t border-[var(--ops-divider)] px-4 py-3 text-sm font-bold text-[var(--ops-primary)] hover:bg-[var(--ops-surface-overlay)] disabled:opacity-50">Änderungsverlauf anzeigen <ArrowRight size={16}/></button>
   </section><ActivityHistoryDialog entityType={historyOpen ? entityType : null} entityId={historyOpen ? entityId || null : null} onClose={() => setHistoryOpen(false)}/></>;
 }
+/** @deprecated Use the product name ActivitySummaryCard. */
+export const ActivityInfoBlock = ActivitySummaryCard;
 function Fact({ label, value }: { label: string; value: string }) { return <div><dt className="text-xs font-bold text-[var(--ops-text-muted)]">{label}</dt><dd className="mt-1 font-semibold">{value}</dd></div>; }

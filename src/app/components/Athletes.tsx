@@ -185,6 +185,7 @@ function ReadonlyField({ label, value }: { label: string; value?: string | null 
 export function Athletes() {
   const navigate = useNavigate();
   const location = useLocation(); const operations = (location.state as OperationsLocationState | null)?.operationsContext;
+  const requestedAthleteId = new URLSearchParams(location.search).get('athleteId') || operations?.personId;
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [filters, setFilters] = useState<Filters>(emptyFilters);
   const [search, setSearch] = useState('');
@@ -198,7 +199,7 @@ export function Athletes() {
       try {
         setLoading(true);
         const loaded = await api.getAthletes(); setAthletes(loaded);
-        if (operations?.personId) setSelectedAthlete(loaded.find(athlete => athlete.id === operations.personId) || null);
+        if (requestedAthleteId) setSelectedAthlete(loaded.find(athlete => athlete.id === requestedAthleteId) || null);
         setError(null);
       } catch {
         setError('Athleten konnten nicht geladen werden.');

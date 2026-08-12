@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Dialog, DialogContent } from '@mui/material';
 import { History, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router';
 import { DialogFooter, DialogHeader, InfoPanel, OpsButton } from '../../design-system';
 import { api } from '../../services/api';
 import { describeAuditEvent, type AuditActivityContext } from '../../services/auditActivity';
@@ -9,6 +10,7 @@ import { ActivityTimeline } from './ActivityTimeline';
 import { belongsToEntity, loadAllAuditEvents } from './activityData';
 
 export function ActivityHistoryDialog({ entityType, entityId, onClose }: { entityType: string | null; entityId: string | null; onClose: () => void }) {
+  const navigate = useNavigate();
   const [events, setEvents] = useState<AuditEvent[]>([]);
   const [context, setContext] = useState<AuditActivityContext>({});
   const [loading, setLoading] = useState(false);
@@ -26,7 +28,7 @@ export function ActivityHistoryDialog({ entityType, entityId, onClose }: { entit
     <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]"><DialogHeader title="Änderungsverlauf" subtitle="Vollständige fachliche Historie · schreibgeschützt" />
       <DialogContent dividers><div className="mb-5 flex items-center gap-2 text-sm text-[var(--ops-text-muted)]"><History size={17}/>Alle Änderungen an diesem Objekt in zeitlicher Reihenfolge.</div>
         {error && <InfoPanel tone="error" title="Laden fehlgeschlagen">{error}</InfoPanel>}
-        {loading ? <div className="flex justify-center gap-2 py-14 text-sm text-[var(--ops-text-muted)]"><Loader2 className="animate-spin" size={20}/>Aktivitäten werden geladen …</div> : !error && <ActivityTimeline items={items}/>} 
+        {loading ? <div className="flex justify-center gap-2 py-14 text-sm text-[var(--ops-text-muted)]"><Loader2 className="animate-spin" size={20}/>Aktivitäten werden geladen …</div> : !error && <ActivityTimeline items={items} onOpen={item => { if (item.description.href) { onClose(); navigate(item.description.href); } }}/>}
       </DialogContent><DialogFooter><OpsButton onClick={onClose}>Schließen</OpsButton></DialogFooter></div>
   </Dialog>;
 }

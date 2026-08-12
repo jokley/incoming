@@ -12,7 +12,7 @@ export function belongsToEntity(event: AuditEvent, entityType: string, entityId:
   const targetId = String(entityId);
   const referenceKeys: Record<string, string[]> = {
     athletes: ['personId', 'personId2', 'personId3', 'personId4'],
-    hotels: ['hotelId'],
+    hotels: ['hotelId', 'inventoryId'],
     assignments: ['bookingId', 'roomId'],
     events: ['eventId'],
     'room-types': ['roomTypeId'],
