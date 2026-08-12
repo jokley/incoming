@@ -46,7 +46,7 @@ import type {
 } from '../types';
 
 type AppView = 'dispatch' | 'quotas';
-type QueueStatus = 'pending' | 'done' | 'all';
+type QueueStatus = 'pending' | 'all';
 type RoomCategoryFilter = '' | 'ez' | 'dz';
 type SelectedState =
   | { type: 'unit'; id: string }
@@ -257,10 +257,18 @@ export function Assignments() {
     return Array.from(values).sort();
   }, [allUnitsCombined]);
 
+  const importReviewCount = useMemo(
+    () => allUnitsCombined.filter((unit) => unit.occupants.some((occupant) => occupant.hasPendingReview)).length,
+    [allUnitsCombined]
+  );
+
+  useEffect(() => {
+    if (importReviewCount === 0 && filterImportReview) setFilterImportReview(false);
+  }, [filterImportReview, importReviewCount]);
+
   const queueUnits = useMemo(() => {
     const source =
       filterStatus === 'pending' ? allUnits :
-      filterStatus === 'done' ? assignedUnits :
       allUnitsCombined;
 
     const query = queueSearch.trim().toLowerCase();
@@ -274,7 +282,7 @@ export function Assignments() {
       const matchesSearch = !query || haystack.includes(query);
       return matchesNation && matchesDiscipline && matchesGender && matchesRoomCategory && matchesImportReview && matchesSearch;
     });
-  }, [allUnits, allUnitsCombined, assignedUnits, filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
+  }, [allUnits, allUnitsCombined, filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
 
   const filteredHotels = useMemo(() => {
     const query = hotelSearch.trim().toLowerCase();
@@ -607,6 +615,7 @@ export function Assignments() {
               onFilterRoomCategory={setFilterRoomCategory}
               filterImportReview={filterImportReview}
               onFilterImportReview={setFilterImportReview}
+              importReviewCount={importReviewCount}
               search={queueSearch}
               onSearch={setQueueSearch}
               nationOptions={nationOptions}
@@ -922,6 +931,7 @@ function QueueSidebar({
   onFilterRoomCategory,
   filterImportReview,
   onFilterImportReview,
+  importReviewCount,
   search,
   onSearch,
   nationOptions,
@@ -953,6 +963,7 @@ function QueueSidebar({
   onFilterRoomCategory: (value: RoomCategoryFilter) => void;
   filterImportReview: boolean;
   onFilterImportReview: (value: boolean) => void;
+  importReviewCount: number;
   search: string;
   onSearch: (value: string) => void;
   nationOptions: string[];
@@ -989,47 +1000,31 @@ function QueueSidebar({
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
-        <div className="mt-3 flex flex-wrap gap-1.5">
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <FilterButtonGroup
+            label="Status"
+            value={filterStatus}
+            options={[{ id: 'all', label: 'Alle' }, { id: 'pending', label: 'Offen' }]}
+            onChange={(value) => onFilterStatus(value as QueueStatus)}
+          />
+          <FilterButtonGroup
+            label="Zimmerwunsch"
+            value={filterRoomCategory || 'all'}
+            options={[{ id: 'all', label: 'Alle' }, { id: 'ez', label: 'EZ' }, { id: 'dz', label: 'DZ' }]}
+            onChange={(value) => onFilterRoomCategory(value === 'all' ? '' : value as RoomCategoryFilter)}
+          />
+        </div>
+
+        {importReviewCount > 0 && (
           <button
             onClick={() => onFilterImportReview(!filterImportReview)}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${filterImportReview ? 'bg-amber-500 text-slate-950' : 'bg-[var(--ops-surface-elevated)] text-amber-200'}`}
+            aria-pressed={filterImportReview}
+            className={`mt-3 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ${filterImportReview ? 'border-amber-500/60 bg-amber-500/15 text-amber-100' : 'border-amber-500/30 bg-[var(--ops-surface-elevated)] text-amber-200 hover:border-amber-500/50'}`}
           >
-            Disposition prüfen
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {importReviewCount} {importReviewCount === 1 ? 'Disposition' : 'Dispositionen'} prüfen
           </button>
-          {[
-            { id: 'pending', label: 'Offen' },
-            { id: 'done', label: 'Erledigt' },
-            { id: 'all', label: 'Alle' },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onFilterStatus(item.id as QueueStatus)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                filterStatus === item.id
-                  ? 'bg-[var(--ops-primary-emphasis)] text-[var(--ops-on-accent)]'
-                  : 'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-subtle)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-          {[
-            { id: 'ez', label: 'EZ' },
-            { id: 'dz', label: 'DZ' },
-          ].map((item) => (
-            <button
-              key={item.id}
-              onClick={() => onFilterRoomCategory(filterRoomCategory === item.id ? '' : item.id as RoomCategoryFilter)}
-              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-                filterRoomCategory === item.id
-                  ? 'bg-[var(--ops-primary-emphasis)] text-[var(--ops-on-accent)]'
-                  : 'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-subtle)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]'
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
+        )}
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1134,7 +1129,7 @@ function QueueUnitCard({
   const primaryOccupant = unit.occupants[0];
   const partnerOccupant = unit.occupants[1] ?? null;
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
-  const roomCategory = getUnitRoomCategory(unit).toUpperCase();
+  const discipline = primaryOccupant?.discipline || '—';
   const cardBase = highlighted
     ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
     : selected
@@ -1154,21 +1149,23 @@ function QueueUnitCard({
           <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
             {primaryOccupant ? `${primaryOccupant.firstname} ${primaryOccupant.lastname}` : '—'}
           </div>
-          <div className="mt-0.5 text-[11px] font-medium text-[var(--ops-text-subtle)]">
-            Zimmerpartner: {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Zimmerpartner offen'}
+          <div className="mt-0.5 text-[11px] font-semibold text-[var(--ops-text-subtle)]">
+            {unit.nationCode || '—'} · {discipline}
           </div>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[10px] font-mono font-semibold text-[var(--ops-text-subtle)]">
-            <span>{unit.nationCode || '—'}</span>
-            <span>·</span>
-            <span>{roomCategory}</span>
-            <span>·</span>
-            <span>{formatShortDate(unit.checkInDate)} → {formatShortDate(unit.checkOutDate)}</span>
+          <div className="mt-0.5 text-[11px] font-mono font-semibold text-[var(--ops-text-subtle)]">
+            {formatShortDate(unit.checkInDate)}–{formatShortDate(unit.checkOutDate)}
+          </div>
+          <div className="mt-2 border-t border-[var(--ops-divider)] pt-2">
+            <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Zimmerpartner</div>
+            <div className="mt-0.5 truncate text-xs font-semibold text-[var(--ops-text)]">
+              {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Offen'}
+            </div>
           </div>
           {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${hasPairWarning ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]' : 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]'}`}>
-            {hasPairWarning ? 'Warnung' : 'Bereit'}
+            {hasPairWarning ? 'Offen' : 'Bereit'}
           </span>
           <span className="text-[10px] text-slate-400">
             {unit.isFullyAssigned ? 'erledigt' : unit.hasAnyAssigned ? 'teilweise' : 'offen'}
@@ -1845,10 +1842,10 @@ function HotelDetailView({
                             {entry.slot.roomNumber || `#${index + 1}`}
                           </span>
                           <div className="min-w-0">
-                            <div className="truncate text-sm font-bold text-white">
+                            <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
                               {entry.slot.roomNumber ? `Zimmer ${entry.slot.roomNumber}` : `${group.roomTypeName} · Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
-                            <div className="mt-0.5 truncate text-xs font-bold text-[var(--ops-text)]">
+                            <div className="mt-0.5 truncate text-sm font-extrabold text-white">
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
@@ -1883,7 +1880,7 @@ function HotelDetailView({
                           onDragOverRoomType(roomTypeKey);
                         }}
                         onDragLeave={onDragLeaveRoomType}
-                        className={`rounded-xl border border-dashed px-4 py-3 text-sm transition-all ${
+                        className={`flex min-h-20 flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-3 text-center transition-all ${
                           dragOverRoomTypeKey === roomTypeKey
                             ? canDrop
                               ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
@@ -1891,9 +1888,14 @@ function HotelDetailView({
                             : 'border-[#5a7391] bg-[#395274] text-slate-200'
                         }`}
                       >
-                        {dragOverRoomTypeKey === roomTypeKey
-                          ? 'Loslassen, um neue Zuweisung anzulegen'
-                          : `${summary.remainingRooms} freie Zimmer — hier zum Zuweisen ablegen`}
+                        <div className="text-base font-extrabold">
+                          {dragOverRoomTypeKey === roomTypeKey
+                            ? 'Loslassen, um neue Zuweisung anzulegen'
+                            : `${summary.remainingRooms} freie Zimmer`}
+                        </div>
+                        {dragOverRoomTypeKey !== roomTypeKey && (
+                          <div className="mt-1 text-xs font-medium text-slate-400">Hier zum Zuweisen ablegen</div>
+                        )}
                       </div>
                     ) : (
                       <div className="flex items-center gap-2 rounded-xl border border-red-900/30 bg-red-950/20 px-4 py-2 text-xs text-red-500">
@@ -2568,6 +2570,41 @@ function SearchInput({
   );
 }
 
+function FilterButtonGroup({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ id: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--ops-text-muted)]">{label}</legend>
+      <div className="inline-flex w-full rounded-lg bg-[var(--ops-surface-elevated)] p-0.5">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            aria-pressed={value === option.id}
+            className={`min-w-0 flex-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
+              value === option.id
+                ? 'bg-[var(--ops-primary-emphasis)] text-[var(--ops-on-accent)]'
+                : 'text-[var(--ops-text-subtle)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
 function DarkSelect({
   value,
   onChange,
@@ -2687,7 +2724,8 @@ function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
 
 function formatShortDate(value?: string | null) {
   if (!value) return '—';
-  return value.slice(5);
+  const [year, month, day] = value.split('-');
+  return year && month && day ? `${day}.${month}.` : value;
 }
 
 function summarizeHotel(hotel: AssignmentGridHotel) {
