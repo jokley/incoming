@@ -330,6 +330,10 @@ export function Assignments() {
     () => quotaUsage.filter((row) => row.assignedOfficials > row.officialQuota || row.singleRoomsUsed > row.singleRoomsAllowed),
     [quotaUsage]
   );
+  const pendingQuotaDecisions = useMemo(
+    () => quotaUsage.filter((row) => row.quotaStatus === 'DECISION_REQUIRED' || row.openApprovals > 0),
+    [quotaUsage]
+  );
 
   const shareRequests = useMemo(() => {
     return queueUnits
@@ -592,8 +596,8 @@ export function Assignments() {
           quotaRefreshing={quotaRefreshing}
         />
 
-        {showAlert && quotaViolations.length > 0 && (
-          <AlertBanner row={quotaViolations[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
+        {showAlert && pendingQuotaDecisions.length > 0 && (
+          <AlertBanner row={pendingQuotaDecisions[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
         )}
 
         <div className={`grid min-h-0 flex-1 border-t border-[var(--ops-divider)] ${view === 'dispatch' ? 'grid-cols-[352px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
@@ -1129,6 +1133,8 @@ function QueueUnitCard({
   const primaryOccupant = unit.occupants[0];
   const partnerOccupant = unit.occupants[1] ?? null;
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
+  const isReadOnly = unit.isFullyAssigned;
+  const workStatus = isReadOnly ? 'Erledigt' : unit.hasAnyAssigned ? 'Teilweise' : hasPairWarning ? 'Offen' : 'Bereit';
   const discipline = primaryOccupant?.discipline || '—';
   const cardBase = highlighted
     ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
@@ -1158,17 +1164,14 @@ function QueueUnitCard({
           <div className="mt-2 border-t border-[var(--ops-divider)] pt-2">
             <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Zimmerpartner</div>
             <div className="mt-0.5 truncate text-xs font-semibold text-[var(--ops-text)]">
-              {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Offen'}
+              {partnerOccupant ? `${partnerOccupant.firstname} ${partnerOccupant.lastname}` : 'Noch kein Zimmerpartner'}
             </div>
           </div>
           {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
         </div>
         <div className="flex flex-col items-end gap-1">
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${hasPairWarning ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]' : 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]'}`}>
-            {hasPairWarning ? 'Offen' : 'Bereit'}
-          </span>
-          <span className="text-[10px] text-slate-400">
-            {unit.isFullyAssigned ? 'erledigt' : unit.hasAnyAssigned ? 'teilweise' : 'offen'}
+          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${workStatus === 'Erledigt' || workStatus === 'Bereit' ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]'}`}>
+            {workStatus}
           </span>
         </div>
       </div>
@@ -1184,7 +1187,7 @@ function QueueUnitCard({
           title="Athlet"
           occupant={primaryOccupant}
           isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === primaryOccupant?.athleteId}
-          canEditAssignments={canEditAssignments}
+          canEditAssignments={canEditAssignments && !isReadOnly}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
@@ -1194,9 +1197,9 @@ function QueueUnitCard({
         <QueueOccupantActionRow
           title="Zimmerpartner"
           occupant={partnerOccupant}
-          emptyLabel="Zimmerpartner offen"
+          emptyLabel="Noch kein Zimmerpartner"
           isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === partnerOccupant?.athleteId}
-          canEditAssignments={canEditAssignments}
+          canEditAssignments={canEditAssignments && !isReadOnly}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
@@ -1205,16 +1208,16 @@ function QueueUnitCard({
         />
         {unit.occupants.length >= 2 && (
           <button
-            draggable={canEditAssignments && !pending}
-            disabled={pending}
-            title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
+            draggable={canEditAssignments && !isReadOnly && !pending}
+            disabled={pending || isReadOnly || !canEditAssignments}
+            title={isReadOnly ? 'Disposition bereits erledigt.' : !canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
             onDragStart={() => onDragStart(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId), 'Beide zusammen')}
             onDragEnd={onDragEnd}
             onClick={(event) => {
               event.stopPropagation();
               onQuickAssign(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId));
             }}
-            className="rounded-lg bg-[var(--ops-primary-emphasis)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--ops-on-accent)] transition-colors hover:opacity-90 disabled:cursor-wait"
+            className="rounded-lg bg-[var(--ops-primary-emphasis)] px-2.5 py-1.5 text-[11px] font-semibold text-[var(--ops-on-accent)] transition-colors hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-45"
           >
             Beide zusammen zuweisen
           </button>
@@ -1269,7 +1272,7 @@ function QueueOccupantActionRow({
       <div className="mt-1 flex gap-1.5">
         <button
           draggable={canEditAssignments && !pending}
-          disabled={pending}
+          disabled={pending || !canEditAssignments}
           title={!canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
           onDragStart={() => onDragStart(unitId, [occupant.athleteId], occupant.firstname)}
           onDragEnd={onDragEnd}
@@ -1277,7 +1280,7 @@ function QueueOccupantActionRow({
             event.stopPropagation();
             onQuickAssign(unitId, [occupant.athleteId]);
           }}
-          className="flex-1 rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-text)] transition-colors hover:border-[var(--ops-primary)] disabled:cursor-wait"
+          className="flex-1 rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-text)] transition-colors hover:border-[var(--ops-primary)] disabled:cursor-not-allowed disabled:opacity-45"
         >
           Einzeln zuweisen
         </button>
