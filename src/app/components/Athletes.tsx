@@ -13,7 +13,7 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, History, LockKeyhole, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, Search, ShieldCheck, UserRound, Users } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
@@ -22,6 +22,7 @@ import { api } from '../services/api';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
+import { ActivityInfoBlock } from './activity';
 import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 
@@ -151,13 +152,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
           </FieldGrid>
         </DialogSection>
 
-        <DialogSection icon={<History size={18} />} title="Audit" subtitle="Systeminformationen zur Nachvollziehbarkeit.">
-          <FieldGrid>
-            <ReadonlyField label="Erstellt" value={date(athlete?.entryDate)} />
-            <ReadonlyField label="Zuletzt geändert" value={date(athlete?.lastUpdate)} />
-            <ReadonlyField label="Zuletzt importiert" value={date(athlete?.athletesLastSeenAt)} />
-          </FieldGrid>
-        </DialogSection>
+        <ActivityInfoBlock entityType="athletes" entityId={athlete?.id} createdAt={athlete?.entryDate} updatedAt={athlete?.lastUpdate} />
       </Stack>
     </DialogContent>
     <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button variant="contained" onClick={onClose}>Schließen</Button></DialogActions>
