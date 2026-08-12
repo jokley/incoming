@@ -130,7 +130,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${stay.discipline})` : ''}`).join(', ')} />
             <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
-            <ReadonlyField label="FIS-ID" value={athlete?.fisCode} />
+            <ReadonlyField label="FIS-ID" value={athlete?.fisCode} emptyValue="Keine FIS-ID" />
           </FieldGrid>
         </DialogSection>
 
@@ -203,8 +203,8 @@ function FieldGrid({ children }: { children: ReactNode }) {
   return <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 2 }}>{children}</Box>;
 }
 
-function ReadonlyField({ label, value }: { label: string; value?: string | null }) {
-  return <TextField fullWidth label={label} value={value || '—'} slotProps={{ input: { readOnly: true } }} sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'rgba(255,255,255,0.025)' }, '& .MuiInputBase-input': { color: 'text.secondary' } }} />;
+function ReadonlyField({ label, value, emptyValue = '—' }: { label: string; value?: string | null; emptyValue?: string }) {
+  return <TextField fullWidth label={label} value={value || emptyValue} slotProps={{ input: { readOnly: true } }} sx={{ '& .MuiOutlinedInput-root': { bgcolor: 'rgba(255,255,255,0.025)' }, '& .MuiInputBase-input': { color: 'text.secondary' } }} />;
 }
 
 export function Athletes() {
@@ -301,12 +301,12 @@ export function Athletes() {
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div><b className="block whitespace-nowrap text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5"><SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></Cell>
+                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5"><SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
-                <Cell><div className="min-w-28"><b className="block text-[var(--ops-text)]">{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block text-xs text-[var(--ops-text-subtle)]">{athlete.function || 'Athlet'}</span></div></Cell>
+                <Cell><div className="min-w-28"><b className="block font-bold text-[var(--ops-text)]">{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block text-[11px] font-medium text-[var(--ops-text-subtle)]">{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
-                <Cell><span className="font-semibold text-[var(--ops-text)]">{athlete.assignment?.hotelName || '—'}</span></Cell>
-                <Cell><b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b></Cell>
+                <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <button type="button" className="font-semibold text-[var(--ops-text)] underline decoration-[var(--ops-border)] underline-offset-4 transition hover:text-[var(--ops-primary)] hover:decoration-[var(--ops-primary)] focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ops-primary)]" onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</button> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
+                <Cell>{athlete.assignment?.hasAssignment ? <button type="button" className="font-bold text-[var(--ops-text)] underline decoration-[var(--ops-border)] underline-offset-4 transition hover:text-[var(--ops-primary)] hover:decoration-[var(--ops-primary)] focus-visible:rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--ops-primary)]" onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</button> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
                 <Cell><StatusChip tone={athlete.hasPendingRoomlistReview ? 'warning' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
               </tr>)}
