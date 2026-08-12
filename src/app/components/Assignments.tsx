@@ -1,5 +1,6 @@
 import { Profiler, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
+import { Dialog, DialogContent } from '@mui/material';
 import {
   AlertCircle,
   AlertTriangle,
@@ -27,6 +28,7 @@ import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
+import { DialogFooter, DialogHeader, OpsButton } from '../design-system';
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
@@ -694,7 +696,7 @@ export function Assignments() {
         </div>
 
         {selected && (
-          <AssignmentDialog onClose={() => setSelected(null)}>
+          <AssignmentDialog title="Zimmer / Zuweisung" subtitle="Bewohner, Importinformationen und Disposition im Überblick" onClose={() => setSelected(null)}>
           <DetailPanel
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
@@ -710,7 +712,7 @@ export function Assignments() {
         )}
 
         {selectedQuotaKey && (
-          <AssignmentDialog onClose={() => setSelectedQuotaKey(null)}>
+          <AssignmentDialog title="Quotendetails" subtitle="Quoten- und Regelstatus" onClose={() => setSelectedQuotaKey(null)}>
             <QuotaDetail
               quotaKey={selectedQuotaKey}
               rows={quotaUsage}
@@ -842,21 +844,14 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
   );
 }
 
-function AssignmentDialog({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => event.key === 'Escape' && onClose();
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [onClose]);
-
-  return (
-    <div role="dialog" aria-modal="true" aria-label="Assignment Details" className="absolute inset-0 z-50 flex items-center justify-center bg-[var(--ops-backdrop)] p-5 backdrop-blur-sm" onMouseDown={onClose}>
-      <div className="relative h-[min(760px,calc(100vh-150px))] w-full max-w-2xl overflow-hidden rounded-[var(--ops-radius-xxl)] border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] shadow-[var(--ops-shadow-lg)]" onMouseDown={(event) => event.stopPropagation()}>
-        <button onClick={onClose} aria-label="Dialog schließen" className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)] hover:text-white"><X className="h-4 w-4" /></button>
-        {children}
-      </div>
+function AssignmentDialog({ children, title, subtitle, onClose }: { children: ReactNode; title: string; subtitle?: string; onClose: () => void }) {
+  return <Dialog open onClose={onClose} fullWidth maxWidth="md">
+    <div className="flex max-h-[calc(100vh-64px)] flex-col bg-[var(--ops-surface)] text-[var(--ops-text)]">
+      <DialogHeader title={title} subtitle={subtitle} />
+      <DialogContent dividers className="min-h-0 p-0">{children}</DialogContent>
+      <DialogFooter><OpsButton onClick={onClose}>Schließen</OpsButton></DialogFooter>
     </div>
-  );
+  </Dialog>;
 }
 
 function OperationsNotice({ message, onClose }: { message: string; onClose: () => void }) {
@@ -2309,18 +2304,8 @@ function DetailPanel({
   if (selectedBookingContext) {
     const { booking, hotel, slot } = selectedBookingContext;
     return (
-      <div className="flex h-full flex-col overflow-y-auto" aria-busy={pendingAction?.bookingId === booking.bookingId}>
-        <div className="flex items-start justify-between border-b border-[#334766] px-4 py-4">
-          <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Zimmerdetail</div>
-            <div className="mt-2 text-sm font-bold text-slate-100">{hotel.hotelName}</div>
-            <div className="mt-1 text-[10px] font-mono text-slate-400">
-              {slot.roomTypeName} · {booking.checkInDate || '—'} → {booking.checkOutDate || '—'}
-            </div>
-          </div>
-        </div>
-        <div className="border-b border-[#334766] px-4 py-4">
-          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Bewohner</div>
+      <div className="space-y-5 p-5 sm:p-6" aria-busy={pendingAction?.bookingId === booking.bookingId}>
+        <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (
               <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
@@ -2340,15 +2325,11 @@ function DetailPanel({
                     </button>
                   )}
                 </div>
-                {occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && (
-                  <SingleRoomDecisionCard decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
-                )}
               </div>
             ))}
           </div>
-        </div>
-        <div className="px-4 py-4">
-          <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Zuweisung</div>
+        </DetailSection>
+        <DetailSection icon={<Building2 className="h-4 w-4" />} title="Zuweisung">
           <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
             <div className="flex items-center gap-2.5">
               <CheckCircle2 className="h-5 w-5 text-emerald-400" />
@@ -2385,11 +2366,22 @@ function DetailPanel({
               {booking.countsAsSingle ? 'DZ wird aktuell exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}
             </div>
           )}
+        </DetailSection>
+        <DetailSection icon={<FileCheck2 className="h-4 w-4" />} title="Import">
+          <div className="space-y-3">
+            {booking.occupants.map((occupant) => <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm">{occupant.name}</strong><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
+              <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
+            </div>)}
+          </div>
+        </DetailSection>
+        <ActivitySummaryCard entityType="assignments" entityId={booking.bookingId} />
+        <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
           {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
             <button
               disabled={pendingAction?.bookingId === booking.bookingId}
               onClick={() => onMarkBookingAsSingle(booking.bookingId, !booking.countsAsSingle)}
-              className={`mt-3 flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
+              className={`flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
                 booking.countsAsSingle
                   ? 'border-amber-700/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
                   : 'border-[#5e7aa0] bg-[#314763] text-slate-100 hover:bg-[#395274]'
@@ -2407,8 +2399,7 @@ function DetailPanel({
             {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? 'Ausbuchen läuft...' : 'Zuweisung entfernen'}
           </button>
-        </div>
-        <div className="px-4 pb-4"><ActivitySummaryCard entityType="assignments" entityId={booking.bookingId} /></div>
+        </DetailSection>
       </div>
     );
   }
@@ -2461,7 +2452,7 @@ function DetailPanel({
                 </span>
               </div>
               {occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && (
-                <SingleRoomDecisionCard decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
+                <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
               )}
             </div>
           ))}
@@ -2532,12 +2523,12 @@ function DetailPanel({
   );
 }
 
-function SingleRoomDecisionCard({ decisionId, onShowDecision }: { decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
+function SingleRoomDecisionCard({ status, decisionId, onShowDecision }: { status?: string | null; decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
+  const importStatus = status === 'PENDING_APPROVAL' ? 'Entscheidung offen' : decisionId ? 'Entscheidung dokumentiert' : 'Aus Import übernommen';
   return (
-    <div className="mt-2 border-t border-[#425a79] pt-2 text-xs text-slate-300">
-      <div className="font-bold text-slate-100">Einzelzimmerstatus</div>
-      <div className="mt-1">Importentscheidung: <span className="font-semibold text-emerald-300">Genehmigt</span></div>
-      {decisionId && <button onClick={() => onShowDecision(decisionId)} className="mt-1.5 font-semibold text-blue-300 hover:text-blue-200">Entscheidung anzeigen</button>}
+    <div className="mt-2 border-t border-[var(--ops-divider)] pt-2 text-xs text-[var(--ops-text-muted)]">
+      <div><span className="font-bold text-[var(--ops-text)]">Importstatus:</span> {importStatus}</div>
+      {decisionId && <button onClick={() => onShowDecision(decisionId)} className="mt-1.5 font-semibold text-[var(--ops-primary)] hover:underline">Entscheidung anzeigen</button>}
     </div>
   );
 }
