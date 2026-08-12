@@ -18,17 +18,29 @@ export interface AuditActivityContext {
   importSessions?: ImportSession[];
 }
 
+export type AssignmentWorkspaceRefs = {
+  bookingId?: string | null;
+  hotelId?: string | null;
+  roomTypeId?: string | null;
+  personId?: string | null;
+};
+
+/** The single deep-link contract for opening an assignment in the operations workspace. */
+export function assignmentWorkspaceHref(refs: AssignmentWorkspaceRefs): string {
+  const params = new URLSearchParams();
+  if (refs.bookingId) params.set('assignmentId', refs.bookingId);
+  if (refs.hotelId) params.set('hotelId', refs.hotelId);
+  if (refs.roomTypeId) params.set('roomTypeId', refs.roomTypeId);
+  if (refs.personId) params.set('athleteId', refs.personId);
+  return `/assignments${params.size ? `?${params}` : ''}`;
+}
+
 export function auditActivityHref(event: AuditEvent): string | undefined {
   const refs = event.entityRefs ?? {};
   const value = (key: string) => refs[key] ? encodeURIComponent(refs[key]) : undefined;
   if (refs.decisionId) return `/import?decisionId=${value('decisionId')}`;
   if (event.category === 'Disposition' || refs.bookingId || refs.roomId) {
-    const params = new URLSearchParams();
-    if (refs.bookingId) params.set('assignmentId', refs.bookingId);
-    if (refs.hotelId) params.set('hotelId', refs.hotelId);
-    if (refs.roomTypeId) params.set('roomTypeId', refs.roomTypeId);
-    if (refs.personId) params.set('athleteId', refs.personId);
-    return `/assignments${params.size ? `?${params}` : ''}`;
+    return assignmentWorkspaceHref(refs);
   }
   if (refs.importSessionId) return `/import?sessionId=${value('importSessionId')}`;
   if (refs.personId) return `/athletes?athleteId=${value('personId')}`;
@@ -87,12 +99,12 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
       entity: peopleLabel || (isUnassign ? 'Zimmerzuweisung' : 'Personenzuweisung'),
       details: [hotel?.name && `Hotel: ${hotel.name}`, room && `Zimmer: ${room}`].filter((value): value is string => Boolean(value)),
       openLabel: 'Zuweisungen öffnen',
-      href: `/assignments?${new URLSearchParams({
-        assignmentId: event.entityId ?? ids[0] ?? '',
-        ...(id(changes.hotelId) ? { hotelId: id(changes.hotelId)! } : {}),
-        ...(id(changes.roomTypeId) ? { roomTypeId: id(changes.roomTypeId)! } : {}),
-        ...(people[0]?.id ? { athleteId: people[0].id } : {}),
-      })}`,
+      href: assignmentWorkspaceHref({
+        bookingId: event.entityId ?? ids[0],
+        hotelId: id(changes.hotelId),
+        roomTypeId: id(changes.roomTypeId),
+        personId: people[0]?.id,
+      }),
     };
   }
 

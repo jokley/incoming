@@ -19,6 +19,7 @@ import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
+import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
@@ -77,6 +78,7 @@ function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: s
 
 function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
+  const navigate = useNavigate();
   const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
 
   useEffect(() => {
@@ -140,6 +142,22 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
             <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
           </FieldGrid>
+          {athlete?.assignment?.hasAssignment && <Box sx={{ mt: 1.25 }}>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => {
+                onClose();
+                navigate(assignmentWorkspaceHref({
+                  bookingId: athlete.assignment?.bookingId,
+                  hotelId: athlete.assignment?.hotelId,
+                  personId: athlete.id,
+                }));
+              }}
+            >
+              Zuweisung öffnen →
+            </Button>
+          </Box>}
         </DialogSection>
 
         <DialogSection icon={<ClipboardList size={18} />} title="Import" subtitle="Vorbereitet für die zukünftige Änderungsverfolgung.">
