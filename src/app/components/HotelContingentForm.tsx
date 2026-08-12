@@ -18,8 +18,8 @@ export function HotelContingentForm({ values, errors, touched, roomTypes, onChan
       <TextField required fullWidth type="date" label="Enddatum" value={values.availableUntil} error={Boolean(show('availableUntil'))} helperText={show('availableUntil')} slotProps={{ inputLabel: { shrink: true } }} onChange={(event) => onChange({ ...values, availableUntil: event.target.value })} />
     </Stack>
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
-      <FormControlLabel control={<Checkbox checked={values.hasHalfBoard} onChange={(event) => onChange({ ...values, hasHalfBoard: event.target.checked })} />} label="Halbpension / HP-Aufpreis" />
-      <FormControlLabel control={<Checkbox checked={values.hasSR} onChange={(event) => onChange({ ...values, hasSR: event.target.checked })} />} label="SR-Aufpreis" />
+      <FormControlLabel control={<Checkbox checked={values.hasHalfBoard} onChange={(event) => onChange({ ...values, hasHalfBoard: event.target.checked })} />} label="Halbpension" />
+      <FormControlLabel control={<Checkbox checked={values.hasSR} onChange={(event) => onChange({ ...values, hasSR: event.target.checked })} />} label="Skiraum" />
     </Stack>
   </Stack>;
 }
