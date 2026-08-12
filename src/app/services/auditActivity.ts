@@ -2,7 +2,7 @@ import type { Athlete, AuditEvent, Event, Hotel, RoomType } from '../types';
 import type { ImportSession } from '../data/importSessions';
 
 export interface AuditActivity {
-  category: 'Import' | 'Disposition' | 'Stammdaten' | 'Entscheidungen';
+  category: 'Import' | 'Disposition' | 'Hotels' | 'Stammdaten' | 'Entscheidungen';
   activity: string;
   entity: string;
   details: string[];
@@ -30,6 +30,24 @@ function personName(athlete: Athlete): string {
 }
 
 export function describeAuditEvent(event: AuditEvent, context: AuditActivityContext = {}): AuditActivity {
+  // New records already contain their immutable fachliche description.  The
+  // mappings below intentionally remain as compatibility for existing history.
+  if (event.activity && event.category && event.entityLabel) {
+    const refs = event.entityRefs ?? {};
+    const href = refs.importSessionId ? `/import?sessionId=${refs.importSessionId}`
+      : refs.personId || refs.bookingId ? '/assignments'
+      : refs.hotelId ? '/hotels'
+      : refs.eventId ? '/events'
+      : refs.roomTypeId ? '/room-types' : undefined;
+    return {
+      category: event.category,
+      activity: event.activity,
+      entity: event.entityLabel,
+      details: event.details ?? [],
+      openLabel: href ? 'Betroffene Entität öffnen' : undefined,
+      href,
+    };
+  }
   const changes = event.changes ?? {};
   const ids = pathIds(event.path);
   const athleteIds = Array.isArray(changes.athleteIds) ? changes.athleteIds.map(String) : [];

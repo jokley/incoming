@@ -7,7 +7,7 @@ import type { AuditEvent } from '../types';
 import { ActivityTimeline, type ActivityItem } from './activity';
 import { loadAllAuditEvents } from './activity/activityData';
 
-const filters = ['Alle', 'Import', 'Disposition', 'Stammdaten', 'Entscheidungen'] as const;
+const filters = ['Alle', 'Import', 'Disposition', 'Hotels', 'Stammdaten', 'Entscheidungen'] as const;
 
 export function AuditLog() {
   const navigate = useNavigate();
