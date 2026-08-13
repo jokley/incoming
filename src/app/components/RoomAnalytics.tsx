@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { AlertTriangle, ArrowRight, Building2, CalendarRange, ChartNoAxesCombined, CircleUserRound, Flag, Loader2, ListChecks } from 'lucide-react';
@@ -60,23 +60,26 @@ type CapacityDay = {
   bedSupply: number; assignedBeds: number; freeBeds: number; plannedBeds: number; demandBeds: number;
   ezSupply: number; assignedEz: number; freeEz: number; plannedEz: number; demandEz: number;
   dzSupply: number; assignedDz: number; freeDz: number; plannedDz: number; demandDz: number;
-  roomReserve: number; bedReserve: number; ezReserve: number; dzReserve: number;
+  eventRoomReserve: number; eventBedReserve: number; eventEzReserve: number; eventDzReserve: number;
+  liveRoomReserve: number; liveBedReserve: number; liveEzReserve: number; liveDzReserve: number;
 };
 
-function CapacityTooltip({ active, payload, metric, hasLiveDemand }: { active?: boolean; payload?: Array<{ payload: CapacityDay }>; metric: 'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'; hasLiveDemand: boolean }) {
+type DemandSource = 'event' | 'live';
+
+function CapacityTooltip({ active, payload, metric, source }: { active?: boolean; payload?: Array<{ payload: CapacityDay }>; metric: 'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'; source: DemandSource }) {
   const day = payload?.[0]?.payload;
   if (!active || !day) return null;
   const config = {
-    rooms: ['roomSupply', 'assignedRooms', 'freeRooms', 'plannedRooms', 'demandRooms', 'roomReserve'],
-    beds: ['bedSupply', 'assignedBeds', 'freeBeds', 'plannedBeds', 'demandBeds', 'bedReserve'],
-    singleRooms: ['ezSupply', 'assignedEz', 'freeEz', 'plannedEz', 'demandEz', 'ezReserve'],
-    doubleRooms: ['dzSupply', 'assignedDz', 'freeDz', 'plannedDz', 'demandDz', 'dzReserve'],
+    rooms: ['roomSupply', 'assignedRooms', 'freeRooms', source === 'event' ? 'plannedRooms' : 'demandRooms', source === 'event' ? 'eventRoomReserve' : 'liveRoomReserve'],
+    beds: ['bedSupply', 'assignedBeds', 'freeBeds', source === 'event' ? 'plannedBeds' : 'demandBeds', source === 'event' ? 'eventBedReserve' : 'liveBedReserve'],
+    singleRooms: ['ezSupply', 'assignedEz', 'freeEz', source === 'event' ? 'plannedEz' : 'demandEz', source === 'event' ? 'eventEzReserve' : 'liveEzReserve'],
+    doubleRooms: ['dzSupply', 'assignedDz', 'freeDz', source === 'event' ? 'plannedDz' : 'demandDz', source === 'event' ? 'eventDzReserve' : 'liveDzReserve'],
   }[metric] as Array<keyof CapacityDay>;
-  const [supply, assigned, free, eventDemand, liveDemand, reserve] = config.map(key => Number(day[key]));
+  const [supply, assigned, free, demand, reserve] = config.map(key => Number(day[key]));
   const Row = ({ label, value, color }: { label: string; value: number | string; color?: string }) => <div className="flex min-w-48 items-center justify-between gap-6 py-0.5"><span className="flex items-center gap-2 text-[var(--ops-text-muted)]">{color && <i className="h-2 w-2 rounded-sm" style={{ background: color }}/>} {label}</span><strong className="font-mono">{value}</strong></div>;
   return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
     <div className="mb-1.5 border-b border-[var(--ops-divider)] pb-1.5 text-sm font-extrabold">{day.label}</div>
-    <Row label="Kontingent" value={supply} /><Row label="Disponiert" value={assigned} color="var(--ops-primary)"/><Row label="Frei" value={free} color="var(--ops-success)"/><Row label="Eventbedarf" value={eventDemand} color="#F59E0B"/>{hasLiveDemand && <Row label="Livebedarf" value={liveDemand} color="var(--ops-warning)"/>}<Row label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
+    <Row label="Kontingent" value={supply} /><Row label="Disponiert" value={assigned} color="var(--ops-primary)"/><Row label="Frei" value={free} color="var(--ops-success)"/><Row label={`Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={demand} color="#FFB224"/><Row label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
 }
 const tableClass = 'w-full min-w-[42rem] text-sm';
@@ -88,11 +91,14 @@ type CapacityMetricConfig = {
   free: keyof CapacityDay; plan: keyof CapacityDay; reserve: keyof CapacityDay;
 };
 
-function CapacityChartTable({ timeline, config, hasNations, metric, onDayClick }: {
-  timeline: CapacityDay[]; config: CapacityMetricConfig; hasNations: boolean;
-  metric: 'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'; onDayClick: (day: CapacityDay) => void;
+function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
+  timeline: CapacityDay[]; config: CapacityMetricConfig;
+  metric: 'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'; source: DemandSource; onDayClick: (day: CapacityDay) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [hidden, setHidden] = useState<Set<string>>(() => new Set());
+  const [hoveredSeries, setHoveredSeries] = useState<string | null>(null);
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const columnWidth = 76;
   const labelWidth = 112;
   const width = Math.max(760, labelWidth + timeline.length * columnWidth);
@@ -100,21 +106,30 @@ function CapacityChartTable({ timeline, config, hasNations, metric, onDayClick }
     { label: 'Kontingent', key: config.supply },
     { label: 'Disponiert', key: config.assigned },
     { label: 'Frei', key: config.free },
-    { label: 'Eventbedarf', key: config.plan },
-    ...(hasNations ? [{ label: 'Livebedarf', key: config.demand }] : []),
+    { label: `Bedarf (${source === 'event' ? 'Event' : 'Live'})`, key: source === 'event' ? config.plan : config.demand },
     { label: 'Reserve', key: config.reserve },
   ];
+  const legend = [
+    { key: 'supply', label: 'Kontingent', color: '#DCE6F2', line: false },
+    { key: 'assigned', label: 'Disponiert', color: 'var(--ops-primary)', line: false },
+    { key: 'free', label: 'Frei', color: 'var(--ops-success)', line: false },
+    { key: 'demand', label: 'Bedarf', color: '#FFB224', line: true },
+  ];
+  const opacity = (key: string, normal = 1) => hoveredSeries && hoveredSeries !== key ? .2 : normal;
+  const toggle = (key: string) => setHidden(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; });
+  const isolate = (key: string) => { if (clickTimer.current) clearTimeout(clickTimer.current); setHidden(new Set(legend.filter(item => item.key !== key).map(item => item.key))); };
   return <div className="overflow-x-auto" aria-label="Kontingentverlauf mit Tageswerten">
     <div style={{ width }}>
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--ops-divider)] px-3 py-2" aria-label="Diagrammlegende">{legend.map(item => <button type="button" key={item.key} aria-pressed={!hidden.has(item.key)} onMouseEnter={() => setHoveredSeries(item.key)} onMouseLeave={() => setHoveredSeries(null)} onClick={() => { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => toggle(item.key), 220); }} onDoubleClick={() => isolate(item.key)} className={clsx('flex items-center gap-2 text-xs font-semibold transition-opacity focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]', hidden.has(item.key) && 'opacity-35 line-through')}><span className={item.line ? 'h-[3px] w-5 rounded-full' : 'h-3 w-3 rounded-sm'} style={{ background: item.color }}/>{item.label}</button>)}</div>
       <div className="h-[340px]" onMouseLeave={() => setActiveIndex(null)}>
         <ResponsiveContainer width="100%" height="100%">
           <ComposedChart data={timeline} barCategoryGap="24%" margin={{ top: 20, right: 10, bottom: 0, left: labelWidth - 50 }} onMouseMove={state => setActiveIndex(typeof state.activeTooltipIndex === 'number' ? state.activeTooltipIndex : null)} onClick={state => { if (typeof state.activeTooltipIndex === 'number') onDayClick(timeline[state.activeTooltipIndex]); }}>
             <CartesianGrid stroke="var(--ops-divider)" vertical={false}/><XAxis dataKey="label" hide/><YAxis stroke="var(--ops-text-muted)" width={50}/>
-            <Tooltip isAnimationActive={false} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ pointerEvents: 'none', zIndex: 20 }} content={<CapacityTooltip metric={metric} hasLiveDemand={hasNations}/>}/>
-            <Bar dataKey={config.assigned} name="Disponiert" stackId="capacity" fill="var(--ops-primary)">{timeline.map((day, index) => <Cell key={day.date} opacity={activeIndex === null || activeIndex === index ? 1 : .38} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2}/>)}</Bar>
-            <Bar dataKey={config.free} name="Frei" stackId="capacity" fill="var(--ops-success)" radius={[4,4,0,0]}>{timeline.map((day, index) => <Cell key={day.date} opacity={activeIndex === null || activeIndex === index ? .72 : .24} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2}/>)}</Bar>
-            <Line type="monotone" dataKey={config.plan} name="Eventbedarf" stroke="#F59E0B" strokeWidth={hasNations ? 1.5 : 3} dot={false} opacity={hasNations ? .65 : 1}/>
-            {hasNations && <Line type="monotone" dataKey={config.demand} name="Livebedarf" stroke="var(--ops-warning)" strokeWidth={3} dot={false}/>}
+            <Tooltip isAnimationActive={false} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ pointerEvents: 'none', zIndex: 20 }} content={<CapacityTooltip metric={metric} source={source}/>}/>
+            {!hidden.has('assigned') && <Bar dataKey={config.assigned} name="Disponiert" stackId="capacity" fill="var(--ops-primary)" opacity={opacity('assigned')}>{timeline.map((day, index) => <Cell key={day.date} opacity={activeIndex === null || activeIndex === index ? 1 : .38} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2}/>)}</Bar>}
+            {!hidden.has('free') && <Bar dataKey={config.free} name="Frei" stackId="capacity" fill="var(--ops-success)" radius={[4,4,0,0]} opacity={opacity('free', .78)}>{timeline.map((day, index) => <Cell key={day.date} opacity={activeIndex === null || activeIndex === index ? 1 : .34} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2}/>)}</Bar>}
+            {!hidden.has('supply') && <Line type="step" dataKey={config.supply} name="Kontingent" stroke="#DCE6F2" strokeWidth={1.25} strokeDasharray="3 3" dot={false} opacity={opacity('supply', .72)}/>}
+            {!hidden.has('demand') && <Line type="monotone" dataKey={source === 'event' ? config.plan : config.demand} name="Bedarf" stroke="#FFB224" strokeWidth={4} dot={{ r: 4, fill: '#FFB224', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7, strokeWidth: 2 }} opacity={opacity('demand')}/>}
           </ComposedChart>
         </ResponsiveContainer>
       </div>
@@ -132,6 +147,8 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
   const [metric, setMetric] = useState<'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'>('rooms');
   const hasNations = data.athletes.length > 0;
+  const [source, setSource] = useState<DemandSource>(() => hasNations ? 'live' : 'event');
+  useEffect(() => setSource(hasNations ? 'live' : 'event'), [hasNations]);
   const dates = [
     ...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]),
     ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])),
@@ -152,29 +169,34 @@ function CapacityView({ data }: { data: AnalyticsData }) {
     const activeBookings = data.bookings.filter(booking => bookingOnDay(booking, date));
     const assignedRooms = activeBookings.length;
     const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
-    const demand = hasNations ? livePlan : { beds: plannedBeds, rooms: plannedRooms, singleRooms: plans.reduce((sum, plan) => sum + plan.singleRooms, 0), doubleRooms: plans.reduce((sum, plan) => sum + plan.doubleRooms, 0) };
+    const assignedEz = activeBookings.filter(booking => booking.countsAsSingle || isSingle(booking.roomType)).length;
+    const assignedDz = assignedRooms - assignedEz;
+    const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0);
+    const plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0);
     return {
       date, label: formatDay(date), roomSupply: supply.rooms, bedSupply, ezSupply: supply.singleRooms, dzSupply: supply.doubleRooms,
-      plannedRooms, plannedBeds, plannedEz: plans.reduce((sum, plan) => sum + plan.singleRooms, 0), plannedDz: plans.reduce((sum, plan) => sum + plan.doubleRooms, 0),
-      demandRooms: demand.rooms, demandBeds: demand.beds, demandEz: demand.singleRooms, demandDz: demand.doubleRooms,
-      assignedRooms, assignedBeds, assignedEz: assignedRooms / 2, assignedDz: assignedRooms / 2,
-      freeRooms: Math.max(supply.rooms - assignedRooms, 0), freeBeds: Math.max(bedSupply - assignedBeds, 0), freeEz: Math.max(supply.singleRooms - assignedRooms / 2, 0), freeDz: Math.max(supply.doubleRooms - assignedRooms / 2, 0),
-      roomReserve: supply.rooms - demand.rooms, bedReserve: bedSupply - demand.beds, ezReserve: supply.singleRooms - demand.singleRooms, dzReserve: supply.doubleRooms - demand.doubleRooms,
+      plannedRooms, plannedBeds, plannedEz, plannedDz,
+      demandRooms: livePlan.rooms, demandBeds: livePlan.beds, demandEz: livePlan.singleRooms, demandDz: livePlan.doubleRooms,
+      assignedRooms, assignedBeds, assignedEz, assignedDz,
+      freeRooms: Math.max(supply.rooms - assignedRooms, 0), freeBeds: Math.max(bedSupply - assignedBeds, 0), freeEz: Math.max(supply.singleRooms - assignedEz, 0), freeDz: Math.max(supply.doubleRooms - assignedDz, 0),
+      eventRoomReserve: supply.rooms - plannedRooms, eventBedReserve: bedSupply - plannedBeds, eventEzReserve: supply.singleRooms - plannedEz, eventDzReserve: supply.doubleRooms - plannedDz,
+      liveRoomReserve: supply.rooms - livePlan.rooms, liveBedReserve: bedSupply - livePlan.beds, liveEzReserve: supply.singleRooms - livePlan.singleRooms, liveDzReserve: supply.doubleRooms - livePlan.doubleRooms,
     };
   });
   const metricConfig = {
-    beds: { label: 'Betten', supply: 'bedSupply', demand: 'demandBeds', assigned: 'assignedBeds', free: 'freeBeds', plan: 'plannedBeds', reserve: 'bedReserve', group: 'beds' as const },
-    rooms: { label: 'Zimmer', supply: 'roomSupply', demand: 'demandRooms', assigned: 'assignedRooms', free: 'freeRooms', plan: 'plannedRooms', reserve: 'roomReserve', group: 'rooms' as const },
-    singleRooms: { label: 'EZ', supply: 'ezSupply', demand: 'demandEz', assigned: 'assignedEz', free: 'freeEz', plan: 'plannedEz', reserve: 'ezReserve', group: 'quality' as const },
-    doubleRooms: { label: 'DZ', supply: 'dzSupply', demand: 'demandDz', assigned: 'assignedDz', free: 'freeDz', plan: 'plannedDz', reserve: 'dzReserve', group: 'quality' as const },
+    beds: { label: 'Betten', supply: 'bedSupply', demand: 'demandBeds', assigned: 'assignedBeds', free: 'freeBeds', plan: 'plannedBeds', reserve: source === 'event' ? 'eventBedReserve' : 'liveBedReserve', group: 'beds' as const },
+    rooms: { label: 'Zimmer', supply: 'roomSupply', demand: 'demandRooms', assigned: 'assignedRooms', free: 'freeRooms', plan: 'plannedRooms', reserve: source === 'event' ? 'eventRoomReserve' : 'liveRoomReserve', group: 'rooms' as const },
+    singleRooms: { label: 'EZ', supply: 'ezSupply', demand: 'demandEz', assigned: 'assignedEz', free: 'freeEz', plan: 'plannedEz', reserve: source === 'event' ? 'eventEzReserve' : 'liveEzReserve', group: 'quality' as const },
+    doubleRooms: { label: 'DZ', supply: 'dzSupply', demand: 'demandDz', assigned: 'assignedDz', free: 'freeDz', plan: 'plannedDz', reserve: source === 'event' ? 'eventDzReserve' : 'liveDzReserve', group: 'quality' as const },
   }[metric];
-  const peak = timeline.reduce((best, day) => Number(day[metricConfig.demand]) > Number(best?.[metricConfig.demand] || -1) ? day : best, timeline[0]);
+  const demandKey = source === 'event' ? metricConfig.plan : metricConfig.demand;
+  const peak = timeline.reduce((best, day) => Number(day[demandKey]) > Number(best?.[demandKey] || -1) ? day : best, timeline[0]);
   const value = (key: keyof CapacityDay) => Number(peak?.[key] || 0);
   const reserve = value(metricConfig.reserve);
   return <ViewShell title="Wie entwickelt sich mein Zimmerkontingent?">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><ClickMetric onClick={() => navigate('/hotels')} label="Kontingent" value={value(metricConfig.supply)} helper={peak?.label || '—'} trend="Gesamt" tone="info"/><ClickMetric onClick={() => navigate('/assignments')} label="Disponiert" value={value(metricConfig.assigned)} helper={peak?.label || '—'} trend="Belegt" tone="primary"/><ClickMetric onClick={() => navigate('/hotels')} label="Frei" value={value(metricConfig.free)} helper={peak?.label || '—'} trend="Frei" tone="success"/><ClickMetric onClick={() => navigate(hasNations ? '/athletes' : '/events')} label={hasNations ? 'Livebedarf' : 'Eventbedarf'} value={value(metricConfig.demand)} helper={peak?.label || '—'} trend={hasNations ? 'Live' : 'Plan'} tone="warning"/><ClickMetric onClick={() => navigate('/analytics')} label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} helper={peak?.label || '—'} trend={reserve < 0 ? 'Unterdeckung' : 'Gedeckt'} tone={reserve < 0 ? 'error' : 'success'}/></div>
-    <DataPanel title="Kontingentverlauf" actions={<div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['rooms','singleRooms','doubleRooms','beds'] as const).map(key => <button key={key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{({ beds: 'Betten', rooms: 'Zimmer', singleRooms: 'EZ', doubleRooms: 'DZ' })[key]}</button>)}</div>}>
-      <CapacityChartTable timeline={timeline} config={metricConfig} hasNations={hasNations} metric={metric} onDayClick={day => navigate(`/hotels?date=${day.date}`)}/>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><ClickMetric onClick={() => navigate('/hotels')} label="Kontingent" value={value(metricConfig.supply)} helper={peak?.label || '—'} trend="Gesamt" tone="info"/><ClickMetric onClick={() => navigate('/assignments')} label="Disponiert" value={value(metricConfig.assigned)} helper={peak?.label || '—'} trend="Belegt" tone="primary"/><ClickMetric onClick={() => navigate('/hotels')} label="Frei" value={value(metricConfig.free)} helper={peak?.label || '—'} trend="Frei" tone="success"/><ClickMetric onClick={() => navigate(source === 'live' ? '/athletes' : '/events')} label={`${source === 'live' ? 'Live' : 'Event'}bedarf`} value={value(demandKey)} helper={peak?.label || '—'} trend={source === 'live' ? 'Live' : 'Plan'} tone="warning"/><ClickMetric onClick={() => navigate('/analytics')} label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} helper={peak?.label || '—'} trend={reserve < 0 ? 'Unterdeckung' : 'Gedeckt'} tone={reserve < 0 ? 'error' : 'success'}/></div>
+    <DataPanel title="Kontingentverlauf" actions={<div className="flex flex-wrap items-center gap-2"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['rooms','singleRooms','doubleRooms','beds'] as const).map(key => <button key={key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{({ beds: 'Betten', rooms: 'Zimmer', singleRooms: 'EZ', doubleRooms: 'DZ' })[key]}</button>)}</div><div className="flex items-center gap-2 rounded-lg bg-[var(--ops-surface-elevated)] p-1"><span className="px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Bedarf</span>{(['event','live'] as const).map(key => <button key={key} onClick={() => setSource(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', source === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{key === 'event' ? 'Event' : 'Live'}</button>)}</div></div>}>
+      <CapacityChartTable timeline={timeline} config={metricConfig} metric={metric} source={source} onDayClick={day => navigate(`/hotels?date=${day.date}`)}/>
     </DataPanel>
   </ViewShell>;
 }
