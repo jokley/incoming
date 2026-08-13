@@ -19,7 +19,7 @@ import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 import { api } from '../services/api';
 import { describeAuditEvent } from '../services/auditActivity';
 import type { ImportSession } from '../data/importSessions';
-import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomAssignment, RoomAvailability, RoomType } from '../types';
+import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomAssignment, RoomType } from '../types';
 import {
   ContentCard,
   DataPanel,
@@ -61,11 +61,11 @@ const toneAccent: Record<Tone, string> = {
 };
 
 function IconTile({ icon, tone = 'neutral' }: { icon: ReactNode; tone?: Tone }) {
-  return <span className={`inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)] ${toneAccent[tone]}`}>{icon}</span>;
+  return <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)] ${toneAccent[tone]}`}>{icon}</span>;
 }
 
 function KpiCard({ label, value, helper, trend, tone = 'neutral', icon, href }: { label: string; value: ReactNode; helper: ReactNode; trend?: ReactNode; tone?: Tone; icon: ReactNode; href: string }) {
-  return <ContentCard interactive className="min-h-[8rem] p-4" surface="elevated" elevation="none"><Link to={href} className="flex h-full items-start gap-3 focus-visible:outline-none"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{label}</div><div className="mt-2.5 text-[var(--ops-type-kpi-size)] font-extrabold leading-none tracking-[-0.04em] text-[var(--ops-text)]">{value}</div><div className="mt-2.5 flex items-center justify-between gap-2 text-xs leading-5 text-[var(--ops-text-muted)]"><span className="truncate">{helper}</span>{trend && <StatusChip tone={tone}>{trend}</StatusChip>}</div></div></Link></ContentCard>;
+  return <ContentCard interactive className="min-h-[6.5rem] p-3" surface="elevated" elevation="none"><Link to={href} className="flex h-full items-start gap-2.5 focus-visible:outline-none"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{label}</div><div className="mt-1.5 text-[var(--ops-type-kpi-size)] font-extrabold leading-none tracking-[-0.04em] text-[var(--ops-text)]">{value}</div><div className="mt-1.5 flex items-center justify-between gap-2 text-xs leading-4 text-[var(--ops-text-muted)]"><span className="truncate">{helper}</span>{trend && <StatusChip tone={tone}>{trend}</StatusChip>}</div></div></Link></ContentCard>;
 }
 
 function TextLink({ children, to }: { children: ReactNode; to: string }) {
@@ -124,7 +124,6 @@ export function Dashboard() {
   const [hotels, setHotels] = useState<HotelType[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
-  const [availability, setAvailability] = useState<RoomAvailability[]>([]);
   const [assignments, setAssignments] = useState<RoomAssignment[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [importSessions, setImportSessions] = useState<ImportSession[]>([]);
@@ -137,12 +136,11 @@ export function Dashboard() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const [athletesData, hotelsData, roomTypesData, eventsData, availabilityData, assignmentsData, auditData, importData] = await Promise.all([
+      const [athletesData, hotelsData, roomTypesData, eventsData, assignmentsData, auditData, importData] = await Promise.all([
         api.getAthletes(),
         api.getHotels(),
         api.getRoomTypes(),
         api.getEvents(),
-        api.getRoomAvailability(),
         api.getRoomAssignments(),
         api.getAuditEvents(1).catch(() => ({ items: [], total: 0, pages: 0 })),
         api.getImportSessions().catch(() => []),
@@ -151,9 +149,8 @@ export function Dashboard() {
       setHotels(hotelsData);
       setRoomTypes(roomTypesData);
       setEvents(eventsData);
-      setAvailability(availabilityData);
       setAssignments(assignmentsData);
-      setAuditEvents(auditData.items.slice(0, 4));
+      setAuditEvents(auditData.items.slice(0, 3));
       setImportSessions(importData);
     } catch (err) {
       console.error('Fehler beim Laden der Daten', err);
@@ -267,19 +264,19 @@ export function Dashboard() {
   }).sort((a, b) => a.remaining - b.remaining || b.percent - a.percent), [assignments, hotels]);
 
   const criticalHotels = hotelOverview.filter(item => item.rooms > 0 && (item.percent >= 90 || item.remaining <= 2));
-  const operationalConflicts = operations.pendingImportReviews + availability.filter(item => item.difference < 0).length;
+  // Kontingentquoten sind Planungshinweise, keine operativen Importkonflikte.
+  const invalidAssignments = assignments.filter(assignment => !assignment.athlete || !assignment.hotel || !assignment.roomType).length;
+  const operationalConflicts = operations.pendingImportReviews + invalidAssignments;
 
   const criticalAlerts = useMemo<AlertItem[]>(() => {
     const alerts: AlertItem[] = [];
-    if (operations.roomDelta < 0) alerts.push({ id: 'rooms-missing', title: 'Fehlende Zimmer', detail: `${Math.abs(operations.roomDelta)} Zimmer fehlen gegenüber dem Spitzenbedarf.`, tone: 'error', status: 'kritisch', href: '/analytics' });
-    if (operations.bedDelta < 0) alerts.push({ id: 'beds-missing', title: 'Fehlende Betten', detail: `${Math.abs(operations.bedDelta)} Betten fehlen gegenüber dem Spitzenbedarf.`, tone: 'error', status: 'kritisch', href: '/analytics' });
-    if (operations.peopleWithoutRoom > 0) alerts.push({ id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: operations.peopleWithoutRoom > 10 ? 'warning' : 'info', status: 'offen', href: '/assignments' });
+    if (operations.peopleWithoutRoom > 0) alerts.push({ id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: 'error', status: 'sofort', href: '/assignments?status=open' });
     criticalHotels.slice(0, 2).forEach(item => alerts.push({ id: `hotel-${item.hotel.id}`, title: item.percent >= 100 ? 'Hotel überbucht' : 'Hotelreserve kritisch', detail: `${item.hotel.name}: ${item.remaining} Zimmer Reserve bei ${formatPercent(item.percent)} Auslastung.`, tone: item.percent >= 100 ? 'error' : 'warning', status: 'Hotel', href: `/hotels?hotelId=${item.hotel.id}` }));
-    if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'EZ-Entscheidungen offen', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/import' });
-    if (operations.pendingImportReviews > 0) alerts.push({ id: 'import-reviews', title: 'Import-Prüfungen offen', detail: `${operations.pendingImportReviews} Personen benötigen eine Prüfung aus dem letzten Import.`, tone: 'warning', status: 'Import', href: '/import' });
-    availability.filter(item => item.difference < 0).slice(0, 3).forEach(item => alerts.push({ id: `availability-${item.roomType.id}`, title: `Quote verletzt: ${item.roomType.name}`, detail: `${Math.abs(item.difference)} Zimmer fehlen in dieser Kategorie.`, tone: 'warning', status: 'prüfen', href: '/analytics' }));
-    return alerts.length > 0 ? alerts : [{ id: 'stable', title: 'Keine kritischen Hinweise', detail: 'Kapazität, Bedarf und Zuweisungen liegen aktuell im operativen Rahmen.', tone: 'success', status: 'stabil', href: '/analytics' }];
-  }, [availability, criticalHotels, operations.bedDelta, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom, operations.roomDelta]);
+    if (invalidAssignments > 0) alerts.push({ id: 'invalid-assignments', title: 'Ungültige Zuordnungen', detail: `${invalidAssignments} Zuordnungen verweisen auf unvollständige Stamm- oder Hoteldaten.`, tone: 'error', status: 'prüfen', href: '/assignments' });
+    if (operations.pendingImportReviews > 0) alerts.push({ id: 'import-reviews', title: 'Importkonflikte', detail: `${operations.pendingImportReviews} Personen benötigen eine Prüfung aus dem letzten Import.`, tone: 'warning', status: 'Import', href: '/athletes?review=pending' });
+    if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'EZ-Entscheidungen offen', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/athletes?singleRoomStatus=PENDING_APPROVAL' });
+    return (alerts.length > 0 ? alerts : [{ id: 'stable', title: 'Keine kritischen Hinweise', detail: 'Aktuell besteht kein unmittelbarer operativer Handlungsbedarf.', tone: 'success' as Tone, status: 'stabil', href: '/assignments' }]).slice(0, 3);
+  }, [criticalHotels, invalidAssignments, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
   const today = new Date().toLocaleDateString('en-CA');
   const arrivalsToday = athletes.filter(athlete => athlete.arrivalDate === today).length;
@@ -288,13 +285,13 @@ export function Dashboard() {
   const upcomingMovements = useMemo(() => athletes.flatMap(athlete => [
     athlete.arrivalDate && athlete.arrivalDate >= today ? { id: `arrival-${athlete.id}`, athlete, date: athlete.arrivalDate, kind: 'Anreise' as const } : null,
     athlete.departureDate && athlete.departureDate >= today ? { id: `departure-${athlete.id}`, athlete, date: athlete.departureDate, kind: 'Abreise' as const } : null,
-  ]).filter((item): item is NonNullable<typeof item> => Boolean(item)).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 5), [athletes, today]);
+  ]).filter((item): item is NonNullable<typeof item> => Boolean(item)).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 3), [athletes, today]);
 
   const importStatuses = [
-    { id: 'sessions', title: 'Importsessions', count: importSessions.length, helper: `${importSessions.filter(session => !['IMPORTED', 'REPLACED', 'ARCHIVED'].includes(session.status)).length} in Bearbeitung`, tone: importSessions.length > 0 ? 'success' : 'warning' as Tone, href: '/import' },
-    { id: 'reviews', title: 'Importprüfungen', count: operations.pendingImportReviews, helper: 'Personen mit Klärungsbedarf', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/import' },
-    { id: 'decisions', title: 'EZ-Entscheidungen', count: operations.pendingSingleRooms, helper: 'offene Einzelzimmer-Freigaben', tone: operations.pendingSingleRooms > 0 ? 'warning' : 'success' as Tone, href: '/import' },
-    { id: 'validation', title: 'Importkonflikte', count: operationalConflicts, helper: 'operative Auswirkungen prüfen', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: '/import' },
+    { id: 'sessions', title: 'Importsessions', count: importSessions.length, helper: `${importSessions.filter(session => !['IMPORTED', 'REPLACED', 'ARCHIVED'].includes(session.status)).length} in Bearbeitung`, tone: importSessions.length > 0 ? 'success' : 'warning' as Tone, href: importSessions[0] ? `/import?sessionId=${importSessions[0].id}` : '/import' },
+    { id: 'reviews', title: 'Importprüfungen', count: operations.pendingImportReviews, helper: 'Personen mit Klärungsbedarf', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/athletes?review=pending' },
+    { id: 'decisions', title: 'EZ-Entscheidungen', count: operations.pendingSingleRooms, helper: 'offene Einzelzimmer-Freigaben', tone: operations.pendingSingleRooms > 0 ? 'warning' : 'success' as Tone, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' },
+    { id: 'validation', title: 'Importkonflikte', count: operationalConflicts, helper: 'operative Auswirkungen prüfen', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: operations.pendingImportReviews > 0 ? '/athletes?review=pending' : '/assignments' },
   ];
 
   const activityItems = auditEvents.length > 0 ? auditEvents.map(event => {
@@ -315,29 +312,29 @@ export function Dashboard() {
   if (loading) return <LoadingState label="Dashboard-Lagebild wird geladen…" />;
 
   return (
-    <div className="space-y-3 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-4 text-[var(--ops-text)]" style={dashboardReadabilityTheme}>
-      <ContentCard className="p-4" surface="raised" elevation="none">
+    <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]" style={dashboardReadabilityTheme}>
+      <ContentCard className="p-3" surface="raised" elevation="none">
         <SectionHeader title="Operations Center" subtitle="Projektstatus, heutige Bewegungen und direkte Einstiege in die Arbeitsbereiche." actions={<StatusChip tone={operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'warning' : 'success'}>{operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
-        <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7">
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
           <KpiCard label="Personen gesamt" value={formatNumber(athletes.length)} helper="im Projekt" tone="primary" trend="Live" icon={<GroupsRoundedIcon />} href="/athletes" />
           <KpiCard label="Zimmerkontingent" value={formatNumber(operations.roomsAvailable)} helper={`${formatNumber(operations.bedsAvailable)} Betten`} tone="info" icon={<BedRoundedIcon />} href="/hotels" />
           <KpiCard label="Aktuell disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" tone="success" icon={<AssignmentTurnedInRoundedIcon />} href="/assignments" />
           <KpiCard label="Freie Zimmer" value={formatNumber(Math.max(operations.roomDelta, 0))} helper="Reserve am Spitzenbedarf" tone={operations.roomDelta <= 0 ? 'error' : 'success'} trend={operations.roomDelta <= 0 ? 'Limit' : 'Reserve'} icon={<PieChartRoundedIcon />} href="/analytics" />
           <KpiCard label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach Reserve priorisiert" tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<ApartmentRoundedIcon />} href="/hotels" />
-          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="Personen offen" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/assignments" />
-          <KpiCard label="Operative Konflikte" value={formatNumber(operationalConflicts)} helper={`${operations.pendingSingleRooms} EZ-Entscheidungen`} tone={operationalConflicts > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/import" />
+          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="Personen offen" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/assignments?status=open" />
+          <KpiCard label="Operative Konflikte" value={formatNumber(operationalConflicts)} helper={`${operations.pendingSingleRooms} EZ-Entscheidungen`} tone={operationalConflicts > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=pending" />
         </div>
       </ContentCard>
 
       <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Heute</span>} actions={<TextLink to="/assignments">Operations Cockpit öffnen</TextLink>}>
         <div className="grid grid-cols-2 divide-x divide-y divide-[var(--ops-divider)] md:grid-cols-3 xl:grid-cols-6 xl:divide-y-0">
-          {[{ label: 'Anreisen', value: arrivalsToday, href: '/athletes' }, { label: 'Abreisen', value: departuresToday, href: '/athletes' }, { label: 'Neue Zimmerzuweisungen', value: assignmentsToday, href: '/assignments' }, { label: 'Offene Zimmerzuweisungen', value: operations.peopleWithoutRoom, href: '/assignments' }, { label: 'Kritische Hotels', value: criticalHotels.length, href: '/hotels' }, { label: 'Offene Entscheidungen', value: operations.pendingSingleRooms, href: '/import' }].map(item => <Link key={item.label} to={item.href} className="px-4 py-3 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-1 text-xl font-extrabold">{formatNumber(item.value)}</div></Link>)}
+          {[{ label: 'Anreisen', value: arrivalsToday, href: `/athletes?movement=arrival&date=${today}` }, { label: 'Abreisen', value: departuresToday, href: `/athletes?movement=departure&date=${today}` }, { label: 'Neue Zimmerzuweisungen', value: assignmentsToday, href: '/assignments' }, { label: 'Offene Zimmerzuweisungen', value: operations.peopleWithoutRoom, href: '/assignments?status=open' }, { label: 'Kritische Hotels', value: criticalHotels.length, href: criticalHotels[0] ? `/hotels?hotelId=${criticalHotels[0].hotel.id}` : '/hotels' }, { label: 'Offene Entscheidungen', value: operations.pendingSingleRooms, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' }].map(item => <Link key={item.label} to={item.href} className="px-3 py-2 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-lg font-extrabold">{formatNumber(item.value)}</div></Link>)}
         </div>
       </DataPanel>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1.02fr]">
         <DataPanel title={<span className="inline-flex items-center gap-2"><WarningAmberRoundedIcon fontSize="small" />Kritische Hinweise</span>}>
-          <div className="grid grid-cols-1 gap-3 p-3 md:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 p-2 md:grid-cols-3">
             {criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-3" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-2 text-xs leading-5 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-2"><TextLink to={alert.href}>Details anzeigen</TextLink></div></ContentCard>)}
           </div>
         </DataPanel>
@@ -352,7 +349,7 @@ export function Dashboard() {
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
         <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Hotelübersicht</span>} actions={<StatusChip tone="info">Nach Priorität</StatusChip>} className="xl:col-span-1">
           <div className="space-y-2 p-3">
-            {hotelOverview.slice(0, 6).map(item => <Link to={`/hotels?hotelId=${item.hotel.id}`} key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
+            {hotelOverview.slice(0, 4).map(item => <Link to={`/hotels?hotelId=${item.hotel.id}`} key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
             <div className="pt-2 text-center"><TextLink to="/hotels">Alle Hotels anzeigen</TextLink></div>
           </div>
         </DataPanel>
