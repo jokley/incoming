@@ -10,6 +10,7 @@ import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, 
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 import { OperationsTimeline, type TimelineRowData } from './timeline';
 import { ActivitySummaryCard } from './activity';
+import { eventRoomPlan } from '../services/planningCalculations';
 
 type EventForm = { discipline: string; startDate: string; endDate: string; personDemand: number; singleRoomPercentage: number };
 const EMPTY_FORM: EventForm = { discipline: '', startDate: '', endDate: '', personDemand: 0, singleRoomPercentage: 50 };
@@ -24,12 +25,9 @@ const eventStatus = (event: Event) => {
   return null;
 };
 const demandStats = (event: Event) => {
-  const people = Math.max(0, event.personDemand || 0);
+  const people = Math.max(0, event.personDemand || 0), plan = eventRoomPlan(event);
   const singlePercentage = Math.max(0, Math.min(100, event.singleRoomPercentage ?? 50));
-  const singleRooms = Math.round(people * singlePercentage / 100);
-  const doublePeople = people - singleRooms;
-  const doubleRooms = Math.ceil(doublePeople / 2);
-  return { people, singlePercentage, doublePercentage: 100 - singlePercentage, singleRooms, doubleRooms, rooms: singleRooms + doubleRooms, beds: singleRooms + doubleRooms * 2 };
+  return { people, singlePercentage, doublePercentage: 100 - singlePercentage, singleRooms: plan.singleRooms, doubleRooms: plan.doubleRooms, rooms: plan.rooms, beds: plan.beds };
 };
 
 function EventDialog({ open, event, onClose, onSave }: { open: boolean; event: Event | null; onClose: () => void; onSave: (value: EventForm) => Promise<void> }) {
