@@ -101,7 +101,11 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const columnWidth = 76;
   const labelWidth = 112;
-  const tableWidth = Math.max(760, labelWidth + timeline.length * columnWidth);
+  // The chart and its value grid deliberately share this single band scale.
+  // Every consumer below uses these positions; the table has no second layout.
+  const xScale = (index: number) => labelWidth + index * columnWidth;
+  const barCenters = timeline.map((_, index) => xScale(index) + columnWidth / 2);
+  const contentWidth = xScale(timeline.length);
   const rows = [
     { label: 'Kontingent', key: config.supply },
     { label: 'Disponiert', key: config.assigned },
@@ -119,27 +123,30 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
   const toggle = (key: string) => setHidden(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; });
   const isolate = (key: string) => { if (clickTimer.current) clearTimeout(clickTimer.current); setHidden(new Set(legend.filter(item => item.key !== key).map(item => item.key))); };
   return <div className="min-w-0 overflow-hidden" aria-label="Kontingentverlauf mit Tageswerten">
-    <div className="min-w-0 px-2">
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--ops-divider)] px-3 py-2" aria-label="Diagrammlegende">{legend.map(item => <button type="button" key={item.key} aria-pressed={!hidden.has(item.key)} onMouseEnter={() => setHoveredSeries(item.key)} onMouseLeave={() => setHoveredSeries(null)} onClick={() => { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => toggle(item.key), 220); }} onDoubleClick={() => isolate(item.key)} className={clsx('flex items-center gap-2 text-xs font-semibold transition-opacity focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]', hidden.has(item.key) && 'opacity-35 line-through')}><span className={item.line ? 'h-[3px] w-5 rounded-full' : 'h-3 w-3 rounded-sm'} style={{ background: item.color }}/>{item.label}</button>)}</div>
-      <div className="h-[340px]" onMouseLeave={() => setActiveIndex(null)}>
-        <ResponsiveContainer width="100%" height="100%">
-          <ComposedChart data={timeline} barCategoryGap="24%" margin={{ top: 20, right: 10, bottom: 0, left: labelWidth - 50 }} onMouseMove={state => setActiveIndex(typeof state.activeTooltipIndex === 'number' ? state.activeTooltipIndex : null)} onClick={state => { if (typeof state.activeTooltipIndex === 'number') onDayClick(timeline[state.activeTooltipIndex]); }}>
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--ops-divider)] px-3 py-2" aria-label="Diagrammlegende">{legend.map(item => <button type="button" key={item.key} aria-pressed={!hidden.has(item.key)} onMouseEnter={() => setHoveredSeries(item.key)} onMouseLeave={() => setHoveredSeries(null)} onClick={() => { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => toggle(item.key), 220); }} onDoubleClick={() => isolate(item.key)} className={clsx('flex items-center gap-2 text-xs font-semibold transition-opacity focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]', hidden.has(item.key) && 'opacity-35 line-through')}><span className={item.line ? 'h-[3px] w-5 rounded-full' : 'h-3 w-3 rounded-sm'} style={{ background: item.color }}/>{item.label}</button>)}</div>
+    <div className="max-w-full overflow-x-auto" onMouseLeave={() => setActiveIndex(null)}>
+      <div className="relative" style={{ width: contentWidth }}>
+        <div className="h-[340px]">
+          <ResponsiveContainer width="100%" height="100%">
+          <ComposedChart data={timeline} barCategoryGap="24%" margin={{ top: 20, right: 0, bottom: 0, left: labelWidth - 50 }} onMouseMove={state => setActiveIndex(typeof state.activeTooltipIndex === 'number' ? state.activeTooltipIndex : null)} onClick={state => { if (typeof state.activeTooltipIndex === 'number') onDayClick(timeline[state.activeTooltipIndex]); }}>
             <CartesianGrid stroke="var(--ops-divider)" vertical={false}/><XAxis dataKey="label" hide/><YAxis stroke="var(--ops-text-muted)" width={50}/>
-            <Tooltip isAnimationActive={false} allowEscapeViewBox={{ x: true, y: true }} wrapperStyle={{ pointerEvents: 'none', zIndex: 20 }} content={<CapacityTooltip metric={metric} source={source}/>}/>
             {!hidden.has('assigned') && <Bar dataKey={config.assigned} name="Disponiert" stackId="capacity" fill="var(--ops-primary)" opacity={opacity('assigned')}>{timeline.map((day, index) => <Cell key={day.date} opacity={activeIndex === null || activeIndex === index ? 1 : .38} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2}/>)}</Bar>}
             {!hidden.has('free') && <Bar dataKey={config.free} name="Frei" stackId="capacity" fill="var(--ops-success)" radius={[4,4,0,0]} opacity={opacity('free', .78)}>{timeline.map((day, index) => <Cell key={day.date} opacity={activeIndex === null || activeIndex === index ? 1 : .34} stroke={activeIndex === index ? '#fff' : 'none'} strokeWidth={2}/>)}</Bar>}
             {!hidden.has('supply') && <Line type="step" dataKey={config.supply} name="Kontingent" stroke="#DCE6F2" strokeWidth={1.25} strokeDasharray="3 3" dot={false} opacity={opacity('supply', .72)}/>}
             {!hidden.has('demand') && <Line type="monotone" dataKey={source === 'event' ? config.plan : config.demand} name="Bedarf" stroke="#FFB224" strokeWidth={4} dot={{ r: 4, fill: '#FFB224', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7, strokeWidth: 2 }} opacity={opacity('demand')}/>}
           </ComposedChart>
-        </ResponsiveContainer>
-      </div>
-    </div>
-    <div className="max-w-full overflow-x-auto" aria-label="Tageswerte">
-      <table className="table-fixed border-collapse text-xs" style={{ width: tableWidth }} onMouseLeave={() => setActiveIndex(null)}>
+          </ResponsiveContainer>
+        </div>
+        {activeIndex !== null && <div className="pointer-events-none absolute top-5 z-20 -translate-x-1/2" style={{ left: barCenters[activeIndex] }}><CapacityTooltip active payload={[{ payload: timeline[activeIndex] }]} metric={metric} source={source}/></div>}
+        <div className="grid border-y border-[var(--ops-divider)] text-xs" style={{ gridTemplateColumns: `${labelWidth}px repeat(${timeline.length}, ${columnWidth}px)` }} aria-label="X-Achse: Tage">
+          <div className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 font-semibold text-[var(--ops-text-muted)]">Tag</div>
+          {timeline.map((day, index) => <button type="button" key={day.date} onMouseEnter={() => setActiveIndex(index)} onFocus={() => setActiveIndex(index)} onBlur={() => setActiveIndex(null)} onClick={() => onDayClick(day)} className={clsx('py-2 text-center font-bold transition-colors', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-text)]')}>{day.label}</button>)}
+        </div>
+        <table className="table-fixed border-collapse text-xs" style={{ width: contentWidth }} aria-label="Tageswerte">
         <colgroup><col style={{ width: labelWidth }}/>{timeline.map(day => <col key={day.date} style={{ width: columnWidth }}/>)}</colgroup>
-        <thead><tr className="border-y border-[var(--ops-divider)]"><th className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 text-left text-[var(--ops-text-muted)]">Tag</th>{timeline.map((day, index) => <th key={day.date} onMouseEnter={() => setActiveIndex(index)} onClick={() => onDayClick(day)} className={clsx('cursor-pointer py-2 text-center font-bold', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-text)]')}>{day.label}</th>)}</tr></thead>
         <tbody>{rows.map(row => <tr key={row.label} className="border-b border-[var(--ops-divider)]"><th className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 text-left font-semibold">{row.label}</th>{timeline.map((day, index) => { const value = Number(day[row.key]); const reserve = row.key === config.reserve; return <td key={day.date} onMouseEnter={() => setActiveIndex(index)} onClick={() => onDayClick(day)} className={clsx('cursor-pointer py-2 text-center font-mono tabular-nums transition-colors', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)]', reserve && (value < 0 ? 'font-bold text-[var(--ops-error)]' : 'font-bold text-[var(--ops-success)]'))}>{reserve && value > 0 ? '+' : ''}{value}</td>; })}</tr>)}</tbody>
       </table>
+      </div>
     </div>
     {!timeline.length && <EmptyState title="Keine Zeiträume vorhanden" />}
   </div>;
