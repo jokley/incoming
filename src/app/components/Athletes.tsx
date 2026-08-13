@@ -215,6 +215,9 @@ export function Athletes() {
   const requestedNation = query.get('nation') || '';
   const requestedDiscipline = query.get('discipline') || '';
   const requestedSingleRoomStatus = query.get('singleRoomStatus') || '';
+  const requestedReview = query.get('review') || '';
+  const requestedMovement = query.get('movement') || '';
+  const requestedDate = query.get('date') || '';
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, discipline: requestedDiscipline });
   const [search, setSearch] = useState('');
@@ -256,13 +259,19 @@ export function Athletes() {
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
     const statusMatches = !filters.status || (filters.status === 'unassigned' && !athlete.assignment?.hasAssignment) || (filters.status === 'changed' && athlete.hasPendingRoomlistReview);
     const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
+    const reviewMatches = requestedReview !== 'pending' || athlete.hasPendingRoomlistReview || athlete.missingFromLatestAthletesImport || athlete.missingFromLatestRoomlistImport;
+    const movementMatches = !requestedMovement || !requestedDate
+      || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
       && (!filters.discipline || (athlete.disciplines || [athlete.discipline]).includes(filters.discipline))
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.function || (athlete.function || 'Athlet') === filters.function)
-      && statusMatches && singleRoomMatches;
-  }), [athletes, filters, search]);
+      && statusMatches
+      && singleRoomMatches
+      && reviewMatches
+      && movementMatches;
+  }), [athletes, filters, requestedDate, requestedMovement, requestedReview, requestedSingleRoomStatus, search]);
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
   const setFilter = (key: FilterKey, value: string) => setFilters(current => ({ ...current, [key]: value }));
