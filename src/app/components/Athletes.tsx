@@ -210,9 +210,13 @@ function ReadonlyField({ label, value, emptyValue = '—' }: { label: string; va
 export function Athletes() {
   const navigate = useNavigate();
   const location = useLocation(); const operations = (location.state as OperationsLocationState | null)?.operationsContext;
-  const requestedAthleteId = new URLSearchParams(location.search).get('athleteId') || operations?.personId;
+  const query = new URLSearchParams(location.search);
+  const requestedAthleteId = query.get('athleteId') || operations?.personId;
+  const requestedNation = query.get('nation') || '';
+  const requestedDiscipline = query.get('discipline') || '';
+  const requestedSingleRoomStatus = query.get('singleRoomStatus') || '';
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [filters, setFilters] = useState<Filters>(emptyFilters);
+  const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, discipline: requestedDiscipline });
   const [search, setSearch] = useState('');
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
   const [decisionId, setDecisionId] = useState<string | null>(null);
@@ -251,12 +255,13 @@ export function Athletes() {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
     const statusMatches = !filters.status || (filters.status === 'unassigned' && !athlete.assignment?.hasAssignment) || (filters.status === 'changed' && athlete.hasPendingRoomlistReview);
+    const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
       && (!filters.discipline || (athlete.disciplines || [athlete.discipline]).includes(filters.discipline))
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.function || (athlete.function || 'Athlet') === filters.function)
-      && statusMatches;
+      && statusMatches && singleRoomMatches;
   }), [athletes, filters, search]);
 
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
