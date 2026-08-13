@@ -30,6 +30,12 @@ const athleteOnDay = (athlete: Athlete, date: string) => {
   const stays = athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }];
   return stays.some(stay => Boolean(stay.arrivalDate && stay.departureDate && dayKey(stay.arrivalDate) <= date && dayKey(stay.departureDate) > date));
 };
+const bookingOnDay = (booking: RoomBooking, date: string) => {
+  const from = dayKey(booking.checkInDate);
+  const until = dayKey(booking.checkOutDate);
+  // Legacy bookings without dates still consume a room; dated stays use hotel-night semantics.
+  return (!from || from <= date) && (!until || until > date);
+};
 
 const NAV: Array<{ key: ViewKey; label: string; question: string; icon: typeof Building2 }> = [
   { key: 'capacity', label: 'Bedarf & Kontingent', question: 'Haben wir genügend Zimmer?', icon: ChartNoAxesCombined },
@@ -57,7 +63,7 @@ const headClass = 'text-left text-[11px] uppercase tracking-wider text-[var(--op
 
 function CapacityView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
-  const [metric, setMetric] = useState<'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'>('beds');
+  const [metric, setMetric] = useState<'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'>('rooms');
   const dates = [...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]), ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)]))].filter(Boolean).sort();
   const days = dates.length ? range(dates[0], dates.at(-1)!) : [];
   const timeline = days.map(date => {
@@ -76,30 +82,44 @@ function CapacityView({ data }: { data: AnalyticsData }) {
     const plannedBeds = plans.reduce((sum, plan) => sum + plan.beds, 0);
     const plannedRooms = plans.reduce((sum, plan) => sum + plan.rooms, 0);
     const actualRooms = actualEz + actualDz;
-    const comparisonPeople = actualPeople.length ? actualPeople.length : plannedBeds;
-    const comparisonRooms = actualPeople.length ? actualRooms : plannedRooms;
-    return { date, label: formatDay(date), dzSupply, ezSupply, roomSupply, dzDemand, ezDemand, actualDz, actualEz, actualRooms, actualPeople: actualPeople.length, plannedRooms, plannedBeds, bedSupply, dzReserve: dzSupply - (actualPeople.length ? actualDz : dzDemand), ezReserve: ezSupply - (actualPeople.length ? actualEz : ezDemand), roomReserve: roomSupply - comparisonRooms, bedReserve: bedSupply - comparisonPeople };
+    const usesNations = data.athletes.length > 0;
+    const demandBeds = usesNations ? actualPeople.length : plannedBeds;
+    const demandRooms = usesNations ? actualRooms : plannedRooms;
+    const demandEz = usesNations ? actualEz : ezDemand;
+    const demandDz = usesNations ? actualDz : dzDemand;
+    const activeBookings = data.bookings.filter(booking => bookingOnDay(booking, date));
+    const assignedRooms = activeBookings.length;
+    const assignedEz = activeBookings.filter(booking => isSingle(booking.roomType)).length;
+    const assignedDz = assignedRooms - assignedEz;
+    const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
+    return {
+      date, label: formatDay(date), dzSupply, ezSupply, roomSupply, bedSupply,
+      plannedRooms, plannedBeds, plannedEz: ezDemand, plannedDz: dzDemand,
+      demandRooms, demandBeds, demandEz, demandDz,
+      assignedRooms, assignedBeds, assignedEz, assignedDz,
+      freeRooms: Math.max(roomSupply - assignedRooms, 0), freeBeds: Math.max(bedSupply - assignedBeds, 0),
+      freeEz: Math.max(ezSupply - assignedEz, 0), freeDz: Math.max(dzSupply - assignedDz, 0),
+      roomReserve: roomSupply - demandRooms, bedReserve: bedSupply - demandBeds,
+      ezReserve: ezSupply - demandEz, dzReserve: dzSupply - demandDz,
+    };
   });
-  const minDz = timeline.length ? Math.min(...timeline.map(day => day.dzReserve)) : 0;
-  const minEz = timeline.length ? Math.min(...timeline.map(day => day.ezReserve)) : 0;
-  const minBeds = timeline.length ? Math.min(...timeline.map(day => day.bedReserve)) : 0;
-  const minRooms = timeline.length ? Math.min(...timeline.map(day => day.roomReserve)) : 0;
-  const critical = timeline.filter(day => day.bedReserve < 0 || day.roomReserve < 0);
   const metricConfig = {
-    beds: { label: 'Betten', supply: 'bedSupply', plan: 'plannedBeds', actual: 'actualPeople', group: 'beds' as const },
-    rooms: { label: 'Zimmer', supply: 'roomSupply', plan: 'plannedRooms', actual: 'actualRooms', group: 'rooms' as const },
-    singleRooms: { label: 'EZ', supply: 'ezSupply', plan: 'ezDemand', actual: 'actualEz', group: 'quality' as const },
-    doubleRooms: { label: 'DZ', supply: 'dzSupply', plan: 'dzDemand', actual: 'actualDz', group: 'quality' as const },
+    beds: { label: 'Betten', supply: 'bedSupply', demand: 'demandBeds', assigned: 'assignedBeds', free: 'freeBeds', plan: 'plannedBeds', group: 'beds' as const },
+    rooms: { label: 'Zimmer', supply: 'roomSupply', demand: 'demandRooms', assigned: 'assignedRooms', free: 'freeRooms', plan: 'plannedRooms', group: 'rooms' as const },
+    singleRooms: { label: 'EZ', supply: 'ezSupply', demand: 'demandEz', assigned: 'assignedEz', free: 'freeEz', plan: 'plannedEz', group: 'quality' as const },
+    doubleRooms: { label: 'DZ', supply: 'dzSupply', demand: 'demandDz', assigned: 'assignedDz', free: 'freeDz', plan: 'plannedDz', group: 'quality' as const },
   }[metric];
-  const chartSeries = [{ key: metricConfig.supply, label: `${metricConfig.label} verfügbar`, color: 'var(--ops-success)', group: metricConfig.group }, { key: metricConfig.plan, label: `${metricConfig.label} Soll`, color: 'var(--ops-warning)', group: metricConfig.group }, { key: metricConfig.actual, label: `${metricConfig.label} Ist`, color: 'var(--ops-primary)', group: metricConfig.group }];
-  return <ViewShell title="Sind Kapazität und FIS-Quote gesichert?" subtitle="Betten beantworten die Kapazitätsfrage. Zimmer, EZ und DZ zeigen die Unterbringungsqualität – bewusst getrennt.">
-    <Kpis><ClickMetric onClick={() => setMetric('beds')} label="Betten" value={minBeds} helper="kleinste Tagesreserve" trend={minBeds < 0 ? 'Personen gefährdet' : 'Kapazität gedeckt'} tone={minBeds < 0 ? 'error' : 'success'} /><ClickMetric onClick={() => setMetric('rooms')} label="Zimmer" value={minRooms} helper="kleinste Tagesreserve" trend={minRooms < 0 ? 'Unterdeckung' : 'ausreichend'} tone={minRooms < 0 ? 'error' : 'success'} /><ClickMetric onClick={() => setMetric('singleRooms')} label="EZ" value={minEz} helper="kleinste Quotenreserve" trend={minEz < 0 && minRooms >= 0 ? 'DZ umwandeln' : minEz < 0 ? 'Unterdeckung' : 'Quote erfüllt'} tone={minEz < 0 ? 'warning' : 'success'} /><ClickMetric onClick={() => setMetric('doubleRooms')} label="DZ" value={minDz} helper="kleinste Quotenreserve" trend={minDz < 0 ? 'Quote prüfen' : 'ausreichend'} tone={minDz < 0 ? 'warning' : 'success'} /></Kpis>
-    <DataPanel title={`${metricConfig.label}: Verfügbar · Soll · Ist`} actions={<div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(Object.keys({ beds: 1, rooms: 1, singleRooms: 1, doubleRooms: 1 }) as Array<typeof metric>).map(key => <button key={key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{({ beds: 'Betten', rooms: 'Zimmer', singleRooms: 'EZ', doubleRooms: 'DZ' })[key]}</button>)}</div>}><EnterpriseChart id={`capacity-${metric}`} data={timeline} onPointClick={row => navigate(`/hotels?date=${row.date}`)} series={chartSeries}><ComposedChart data={timeline}><CartesianGrid stroke="var(--ops-divider)" vertical={false}/><XAxis dataKey="label" stroke="var(--ops-text-muted)" fontSize={11}/><YAxis stroke="var(--ops-text-muted)"/><ChartTip/><Line type="monotone" dataKey={metricConfig.supply} name={`${metricConfig.label} verfügbar`} stroke="var(--ops-success)" strokeWidth={3}/><Line type="monotone" dataKey={metricConfig.plan} name={`${metricConfig.label} Soll`} stroke="var(--ops-warning)" strokeWidth={2} strokeDasharray="6 4"/><Line type="monotone" dataKey={metricConfig.actual} name={`${metricConfig.label} Ist`} stroke="var(--ops-primary)" strokeWidth={3}/></ComposedChart></EnterpriseChart></DataPanel>
+  const peak = timeline.reduce((best, day) => Number(day[metricConfig.demand]) > Number(best?.[metricConfig.demand] || -1) ? day : best, timeline[0]);
+  const chartSeries = [{ key: metricConfig.assigned, label: `${metricConfig.label} disponiert`, color: 'var(--ops-primary)', group: metricConfig.group }, { key: metricConfig.free, label: `${metricConfig.label} frei`, color: 'var(--ops-success)', group: metricConfig.group }, { key: metricConfig.demand, label: `${metricConfig.label} benötigt`, color: 'var(--ops-warning)', group: metricConfig.group }];
+  const sourceLabel = data.athletes.length ? 'Nationen (Ist)' : 'Events (Planung)';
+  return <ViewShell title="Geht die Unterkunftsplanung noch auf?" subtitle={`Eine Berechnungslogik, aktuelle Bedarfsquelle: ${sourceLabel}. Betten bleiben eine ergänzende interne Kennzahl.`}>
+    <Kpis><ClickMetric onClick={() => navigate('/hotels')} label={`${metricConfig.label} verfügbar`} value={Number(peak?.[metricConfig.supply] || 0)} helper="Gesamtkapazität am Bedarfshöchsttag" trend="Kapazität" tone="info"/><ClickMetric onClick={() => navigate('/assignments')} label="Bereits disponiert" value={Number(peak?.[metricConfig.assigned] || 0)} helper={peak ? `${peak.label} · live` : 'keine Daten'} trend="Belegt" tone="primary"/><ClickMetric onClick={() => navigate('/hotels')} label="Noch frei" value={Number(peak?.[metricConfig.free] || 0)} helper="Kapazität minus Disposition" trend="Verfügbar" tone="success"/><ClickMetric onClick={() => navigate(data.athletes.length ? '/athletes' : '/events')} label="Aktuell benötigt" value={Number(peak?.[metricConfig.demand] || 0)} helper={sourceLabel} trend={Number(peak?.[metricConfig.supply] || 0) >= Number(peak?.[metricConfig.demand] || 0) ? 'gedeckt' : 'Unterdeckung'} tone={Number(peak?.[metricConfig.supply] || 0) >= Number(peak?.[metricConfig.demand] || 0) ? 'success' : 'error'}/></Kpis>
+    <DataPanel title={`${metricConfig.label}: disponiert + frei · aktueller Bedarf`} actions={<div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(Object.keys({ rooms: 1, singleRooms: 1, doubleRooms: 1, beds: 1 }) as Array<typeof metric>).map(key => <button key={key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{({ beds: 'Betten', rooms: 'Zimmer', singleRooms: 'EZ', doubleRooms: 'DZ' })[key]}</button>)}</div>}><EnterpriseChart id={`capacity-${metric}`} data={timeline} onPointClick={row => navigate(`/hotels?date=${row.date}`)} series={chartSeries}><ComposedChart data={timeline}><CartesianGrid stroke="var(--ops-divider)" vertical={false}/><XAxis dataKey="label" stroke="var(--ops-text-muted)" fontSize={11}/><YAxis stroke="var(--ops-text-muted)"/><ChartTip/><Bar dataKey={metricConfig.assigned} name={`${metricConfig.label} disponiert`} stackId="capacity" fill="var(--ops-primary)"/><Bar dataKey={metricConfig.free} name={`${metricConfig.label} frei`} stackId="capacity" fill="var(--ops-success)" radius={[4, 4, 0, 0]}/><Line type="monotone" dataKey={metricConfig.demand} name={`${metricConfig.label} benötigt`} stroke="var(--ops-warning)" strokeWidth={3} strokeDasharray="7 5" dot={false}/></ComposedChart></EnterpriseChart></DataPanel>
     <DataPanel title="Tägliche Gegenüberstellung · fachliche Reihenfolge"><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Tag</th><th>Größe</th><th>Verfügbar</th><th>Soll</th><th>Ist</th><th>Reserve</th><th>Ampel</th></tr></thead><tbody>{timeline.flatMap(day => ([
-      { key: 'beds', label: 'Betten', available: day.bedSupply, plan: day.plannedBeds, actual: day.actualPeople, reserve: day.bedReserve, quality: false },
-      { key: 'rooms', label: 'Zimmer', available: day.roomSupply, plan: day.plannedRooms, actual: day.actualRooms, reserve: day.roomReserve, quality: false },
-      { key: 'ez', label: 'EZ', available: day.ezSupply, plan: day.ezDemand, actual: day.actualEz, reserve: day.ezReserve, quality: true },
-      { key: 'dz', label: 'DZ', available: day.dzSupply, plan: day.dzDemand, actual: day.actualDz, reserve: day.dzReserve, quality: true },
+      { key: 'rooms', label: 'Zimmer', available: day.roomSupply, plan: day.plannedRooms, actual: day.demandRooms, reserve: day.roomReserve, quality: false },
+      { key: 'ez', label: 'EZ', available: day.ezSupply, plan: day.plannedEz, actual: day.demandEz, reserve: day.ezReserve, quality: true },
+      { key: 'dz', label: 'DZ', available: day.dzSupply, plan: day.plannedDz, actual: day.demandDz, reserve: day.dzReserve, quality: true },
+      { key: 'beds', label: 'Betten (Info)', available: day.bedSupply, plan: day.plannedBeds, actual: day.demandBeds, reserve: day.bedReserve, quality: false },
     ]).map((row, index) => { const bad = row.reserve < 0; const conversion = row.key === 'ez' && bad && day.roomReserve >= 0; return <tr key={`${day.date}-${row.key}`} onClick={() => navigate(`/hotels?date=${day.date}`)} className={clsx(rowClass, index === 0 && 'border-t-2 border-[var(--ops-border-strong)]')}><td className="p-3 font-bold">{index === 0 ? day.label : ''}</td><td className="font-bold">{row.label}</td><td>{row.available}</td><td>{row.plan}</td><td>{row.actual || '—'}</td><td className={clsx('font-mono font-bold', bad ? 'text-[var(--ops-error)]' : 'text-[var(--ops-success)]')}>{row.reserve > 0 ? '+' : ''}{row.reserve}</td><td><StatusChip tone={conversion || (row.quality && bad) ? 'warning' : bad ? 'error' : 'success'}>{conversion ? 'DZ → EZ prüfen' : bad ? row.quality ? 'Quote prüfen' : 'kritisch' : 'gedeckt'}</StatusChip></td></tr>; }))}</tbody></table>{!timeline.length && <EmptyState title="Keine Zeiträume vorhanden" />}</div></DataPanel>
   </ViewShell>;
 }
@@ -153,8 +173,14 @@ function Navigation({ active, data, onSelect }: { active: ViewKey; data: Analyti
 
 export function RoomAnalytics() {
   const [active, setActive] = useState<ViewKey>('capacity'); const [data, setData] = useState<AnalyticsData>({ hotels: [], events: [], athletes: [], bookings: [] }); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
-  useEffect(() => { void Promise.all([api.getHotels(), api.getEvents(), api.getAthletes(), api.getRoomAssignments()]).then(([hotels, events, athletes, bookings]) => { setData({ hotels, events, athletes, bookings }); setError(null); }).catch(() => setError('Analytics-Daten konnten nicht geladen werden.')).finally(() => setLoading(false)); }, []);
+  useEffect(() => {
+    const load = () => Promise.all([api.getHotels(), api.getEvents(), api.getAthletes(), api.getRoomAssignments()]).then(([hotels, events, athletes, bookings]) => { setData({ hotels, events, athletes, bookings }); setError(null); }).catch(() => setError('Analytics-Daten konnten nicht geladen werden.')).finally(() => setLoading(false));
+    void load();
+    const refresh = window.setInterval(() => void load(), 30_000);
+    return () => window.clearInterval(refresh);
+  }, []);
   const updated = useMemo(() => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date()), [data]);
+  const phase = data.bookings.length ? 'Phase 3 · Betrieb' : data.athletes.length ? 'Phase 2 · Durchführung' : 'Phase 1 · Planung';
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600"/></div>;
-  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4]"><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" subtitle="Engpässe erkennen, Soll und Ist vergleichen und ohne Umweg in den richtigen Arbeitsbereich springen." meta={<><StatusChip tone={data.athletes.length ? 'info' : 'neutral'}>{data.athletes.length ? 'Phase 2 · Durchführung' : 'Phase 1 · Planung'}</StatusChip><StatusChip tone="success">Live-Daten</StatusChip><StatusChip tone="neutral"><CalendarRange className="mr-1 h-3 w-3"/>Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<div className="flex flex-col gap-4 xl:flex-row"><Navigation active={active} data={data} onSelect={setActive}/><main className="min-w-0 flex-1" role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'events' && <EventsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</main></div></PageLayout>;
+  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4]"><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" subtitle="Engpässe erkennen, Soll und Ist vergleichen und ohne Umweg in den richtigen Arbeitsbereich springen." meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral"><CalendarRange className="mr-1 h-3 w-3"/>Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<div className="flex flex-col gap-4 xl:flex-row"><Navigation active={active} data={data} onSelect={setActive}/><main className="min-w-0 flex-1" role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'events' && <EventsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</main></div></PageLayout>;
 }
