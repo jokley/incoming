@@ -1,4 +1,4 @@
-import { Children, cloneElement, isValidElement, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { Children, cloneElement, isValidElement, useEffect, useMemo, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { ResponsiveContainer } from 'recharts';
 import { Download, RotateCcw } from 'lucide-react';
 
@@ -30,7 +30,8 @@ function mapSeries(node: ReactNode, visible: Set<string>, highlighted: string | 
 
 export function EnterpriseChart({ id, data, series, children, height = 320, onPointClick }: Props) {
   const storageKey = `enterprise-chart:${id}:visible`;
-  const allKeys = useMemo(() => series.map(item => item.key), [series]);
+  const seriesKey = series.map(item => item.key).join('|');
+  const allKeys = useMemo(() => series.map(item => item.key), [seriesKey]);
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem(storageKey) || 'null') || allKeys; } catch { return allKeys; }
   });
@@ -52,14 +53,23 @@ export function EnterpriseChart({ id, data, series, children, height = 320, onPo
     image.onload = () => { const canvas = document.createElement('canvas'); canvas.width = svg.clientWidth * 2; canvas.height = svg.clientHeight * 2; const context = canvas.getContext('2d'); if (!context) return; context.scale(2, 2); context.drawImage(image, 0, 0); const link = document.createElement('a'); link.download = `${id}.png`; link.href = canvas.toDataURL('image/png'); link.click(); };
     image.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
   };
-  const showGroup = (group?: EnterpriseSeries['group']) => save(group ? series.filter(item => item.group === group).map(item => item.key) : allKeys);
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(localStorage.getItem(storageKey) || 'null');
+      setVisibleKeys(Array.isArray(stored) && stored.some(key => allKeys.includes(key)) ? stored.filter(key => allKeys.includes(key)) : allKeys);
+    } catch {
+      setVisibleKeys(allKeys);
+    }
+    setHighlighted(null);
+    setIsolated(null);
+  }, [storageKey, allKeys]);
 
-  return <div ref={root} className="relative select-none" onContextMenu={event => event.preventDefault()}>
+  return <div key={id} ref={root} className="relative select-none" onContextMenu={event => event.preventDefault()}>
     <div className="flex flex-wrap gap-x-4 gap-y-2 border-b border-[var(--ops-divider)] px-4 py-3" aria-label="Diagrammlegende">
       {series.map(item => <button key={item.key} type="button" aria-pressed={visible.has(item.key)} onClick={() => toggle(item.key)} onDoubleClick={() => isolate(item.key)} onMouseEnter={() => setHighlighted(item.key)} onMouseLeave={() => setHighlighted(null)} className={`flex items-center gap-2 text-xs font-bold transition-opacity ${visible.has(item.key) ? 'opacity-100' : 'opacity-35 line-through'}`} title="Klick: ein-/ausblenden · Doppelklick: isolieren"><span className="h-2.5 w-2.5 rounded-sm" style={{ background: item.color }}/>{item.label}</button>)}
-      <button type="button" onClick={() => { setIsolated(null); showGroup(); }} className="ml-auto text-[var(--ops-text-muted)]" title="Alle anzeigen"><RotateCcw size={15}/></button>
+      <button type="button" onClick={() => { setIsolated(null); save(allKeys); }} className="ml-auto text-[var(--ops-text-muted)]" title="Alle anzeigen"><RotateCcw size={15}/></button>
+      <button onClick={exportPng} className="inline-flex items-center gap-1 text-[var(--ops-text-muted)]"><Download size={12}/>PNG</button><button onClick={exportCsv} className="inline-flex items-center gap-1 text-[var(--ops-text-muted)]"><Download size={12}/>CSV</button>
     </div>
-    <div style={{ height }} onClick={(event) => { if (!onPointClick) return; const target = event.target as SVGElement; const index = Number(target.getAttribute?.('index')); if (Number.isFinite(index) && data[index]) onPointClick(data[index]); }}><ResponsiveContainer width="100%" height="100%">{mapSeries(children, visible, highlighted) as ReactElement}</ResponsiveContainer></div>
-    <div className="flex flex-wrap justify-end gap-2 px-4 pb-3 text-[11px] text-[var(--ops-text-muted)]"><button onClick={() => showGroup('beds')}>Nur Betten</button><button onClick={() => showGroup('rooms')}>Nur Zimmer</button><button onClick={() => showGroup('quality')}>Nur EZ/DZ</button><button onClick={() => showGroup()}>Alle</button><button onClick={exportPng} className="inline-flex items-center gap-1"><Download size={12}/>PNG</button><button onClick={exportCsv} className="inline-flex items-center gap-1"><Download size={12}/>CSV</button></div>
+    <div style={{ height }} onClick={(event) => { if (!onPointClick) return; const target = event.target as SVGElement; const index = Number(target.getAttribute?.('index')); if (Number.isFinite(index) && data[index]) onPointClick(data[index]); }}><ResponsiveContainer key={id} width="100%" height="100%">{mapSeries(children, visible, highlighted) as ReactElement}</ResponsiveContainer></div>
   </div>;
 }
