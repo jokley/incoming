@@ -101,7 +101,7 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
   const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const columnWidth = 76;
   const labelWidth = 112;
-  const width = Math.max(760, labelWidth + timeline.length * columnWidth);
+  const tableWidth = Math.max(760, labelWidth + timeline.length * columnWidth);
   const rows = [
     { label: 'Kontingent', key: config.supply },
     { label: 'Disponiert', key: config.assigned },
@@ -118,8 +118,8 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
   const opacity = (key: string, normal = 1) => hoveredSeries && hoveredSeries !== key ? .2 : normal;
   const toggle = (key: string) => setHidden(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; });
   const isolate = (key: string) => { if (clickTimer.current) clearTimeout(clickTimer.current); setHidden(new Set(legend.filter(item => item.key !== key).map(item => item.key))); };
-  return <div className="overflow-x-auto" aria-label="Kontingentverlauf mit Tageswerten">
-    <div style={{ width }}>
+  return <div className="min-w-0 overflow-hidden" aria-label="Kontingentverlauf mit Tageswerten">
+    <div className="min-w-0 px-2">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-[var(--ops-divider)] px-3 py-2" aria-label="Diagrammlegende">{legend.map(item => <button type="button" key={item.key} aria-pressed={!hidden.has(item.key)} onMouseEnter={() => setHoveredSeries(item.key)} onMouseLeave={() => setHoveredSeries(null)} onClick={() => { if (clickTimer.current) clearTimeout(clickTimer.current); clickTimer.current = setTimeout(() => toggle(item.key), 220); }} onDoubleClick={() => isolate(item.key)} className={clsx('flex items-center gap-2 text-xs font-semibold transition-opacity focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]', hidden.has(item.key) && 'opacity-35 line-through')}><span className={item.line ? 'h-[3px] w-5 rounded-full' : 'h-3 w-3 rounded-sm'} style={{ background: item.color }}/>{item.label}</button>)}</div>
       <div className="h-[340px]" onMouseLeave={() => setActiveIndex(null)}>
         <ResponsiveContainer width="100%" height="100%">
@@ -133,13 +133,15 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
           </ComposedChart>
         </ResponsiveContainer>
       </div>
-      <table className="table-fixed border-collapse text-xs" style={{ width }} onMouseLeave={() => setActiveIndex(null)}>
+    </div>
+    <div className="max-w-full overflow-x-auto" aria-label="Tageswerte">
+      <table className="table-fixed border-collapse text-xs" style={{ width: tableWidth }} onMouseLeave={() => setActiveIndex(null)}>
         <colgroup><col style={{ width: labelWidth }}/>{timeline.map(day => <col key={day.date} style={{ width: columnWidth }}/>)}</colgroup>
         <thead><tr className="border-y border-[var(--ops-divider)]"><th className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 text-left text-[var(--ops-text-muted)]">Tag</th>{timeline.map((day, index) => <th key={day.date} onMouseEnter={() => setActiveIndex(index)} onClick={() => onDayClick(day)} className={clsx('cursor-pointer py-2 text-center font-bold', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-text)]')}>{day.label}</th>)}</tr></thead>
         <tbody>{rows.map(row => <tr key={row.label} className="border-b border-[var(--ops-divider)]"><th className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 text-left font-semibold">{row.label}</th>{timeline.map((day, index) => { const value = Number(day[row.key]); const reserve = row.key === config.reserve; return <td key={day.date} onMouseEnter={() => setActiveIndex(index)} onClick={() => onDayClick(day)} className={clsx('cursor-pointer py-2 text-center font-mono tabular-nums transition-colors', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)]', reserve && (value < 0 ? 'font-bold text-[var(--ops-error)]' : 'font-bold text-[var(--ops-success)]'))}>{reserve && value > 0 ? '+' : ''}{value}</td>; })}</tr>)}</tbody>
       </table>
-      {!timeline.length && <EmptyState title="Keine Zeiträume vorhanden" />}
     </div>
+    {!timeline.length && <EmptyState title="Keine Zeiträume vorhanden" />}
   </div>;
 }
 
@@ -193,12 +195,12 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   const peak = timeline.reduce((best, day) => Number(day[demandKey]) > Number(best?.[demandKey] || -1) ? day : best, timeline[0]);
   const value = (key: keyof CapacityDay) => Number(peak?.[key] || 0);
   const reserve = value(metricConfig.reserve);
-  return <ViewShell title="Wie entwickelt sich mein Zimmerkontingent?">
+  return <div className="min-w-0 space-y-4">
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><ClickMetric onClick={() => navigate('/hotels')} label="Kontingent" value={value(metricConfig.supply)} helper={peak?.label || '—'} trend="Gesamt" tone="info"/><ClickMetric onClick={() => navigate('/assignments')} label="Disponiert" value={value(metricConfig.assigned)} helper={peak?.label || '—'} trend="Belegt" tone="primary"/><ClickMetric onClick={() => navigate('/hotels')} label="Frei" value={value(metricConfig.free)} helper={peak?.label || '—'} trend="Frei" tone="success"/><ClickMetric onClick={() => navigate(source === 'live' ? '/athletes' : '/events')} label={`${source === 'live' ? 'Live' : 'Event'}bedarf`} value={value(demandKey)} helper={peak?.label || '—'} trend={source === 'live' ? 'Live' : 'Plan'} tone="warning"/><ClickMetric onClick={() => navigate('/analytics')} label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} helper={peak?.label || '—'} trend={reserve < 0 ? 'Unterdeckung' : 'Gedeckt'} tone={reserve < 0 ? 'error' : 'success'}/></div>
-    <DataPanel title="Kontingentverlauf" actions={<div className="flex flex-wrap items-center gap-2"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['rooms','singleRooms','doubleRooms','beds'] as const).map(key => <button key={key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{({ beds: 'Betten', rooms: 'Zimmer', singleRooms: 'EZ', doubleRooms: 'DZ' })[key]}</button>)}</div><div className="flex items-center gap-2 rounded-lg bg-[var(--ops-surface-elevated)] p-1"><span className="px-2 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Bedarf</span>{(['event','live'] as const).map(key => <button key={key} onClick={() => setSource(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', source === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{key === 'event' ? 'Event' : 'Live'}</button>)}</div></div>}>
+    <DataPanel title="Kontingentverlauf" actions={<div className="flex flex-wrap items-end gap-3"><div><div className="mb-1 pl-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Darstellung</div><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['rooms','singleRooms','doubleRooms','beds'] as const).map(key => <button type="button" key={key} aria-pressed={metric === key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{({ beds: 'Betten', rooms: 'Zimmer', singleRooms: 'EZ', doubleRooms: 'DZ' })[key]}</button>)}</div></div><div><div className="mb-1 pl-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Bedarfsquelle</div><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['event','live'] as const).map(key => <button type="button" key={key} aria-pressed={source === key} onClick={() => setSource(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', source === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{key === 'event' ? 'Event' : 'Live'}</button>)}</div></div></div>}>
       <CapacityChartTable timeline={timeline} config={metricConfig} metric={metric} source={source} onDayClick={day => navigate(`/hotels?date=${day.date}`)}/>
     </DataPanel>
-  </ViewShell>;
+  </div>;
 }
 function HotelsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
