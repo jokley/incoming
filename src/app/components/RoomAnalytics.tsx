@@ -7,7 +7,7 @@ import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
 import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { EnterpriseChart } from './charts/EnterpriseChart';
-import { eventRoomPlan } from '../services/planningCalculations';
+import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
 
 type ViewKey = 'capacity' | 'hotels' | 'nations' | 'assignments' | 'events' | 'singleRooms' | 'conflicts';
 type AnalyticsData = { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] };
@@ -64,34 +64,38 @@ const headClass = 'text-left text-[11px] uppercase tracking-wider text-[var(--op
 function CapacityView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
   const [metric, setMetric] = useState<'beds' | 'rooms' | 'singleRooms' | 'doubleRooms'>('rooms');
-  const dates = [...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]), ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)]))].filter(Boolean).sort();
+  const dates = [
+    ...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]),
+    ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])),
+    ...data.athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])),
+    ...data.bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)]),
+  ].filter(Boolean).sort();
   const days = dates.length ? range(dates[0], dates.at(-1)!) : [];
   const timeline = days.map(date => {
     const inventory = data.hotels.flatMap(h => h.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
     const events = data.events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date);
-    const dzSupply = inventory.filter(item => !isSingle(item.roomType)).reduce((sum, item) => sum + item.roomCount, 0);
-    const ezSupply = inventory.filter(item => isSingle(item.roomType)).reduce((sum, item) => sum + item.roomCount, 0);
+    const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
+    const supply = calculateRoomPlan(bedSupply);
+    const roomSupply = supply.rooms;
+    const ezSupply = supply.singleRooms;
+    const dzSupply = supply.doubleRooms;
     const plans = events.map(eventRoomPlan);
     const dzDemand = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0);
     const ezDemand = plans.reduce((sum, plan) => sum + plan.singleRooms, 0);
     const actualPeople = data.athletes.filter(athlete => athleteOnDay(athlete, date));
-    const actualEz = actualPeople.filter(athleteIsSingle).length;
-    const actualDz = Math.ceil(Math.max(0, actualPeople.length - actualEz) / 2);
-    const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
-    const roomSupply = inventory.reduce((sum, item) => sum + item.roomCount, 0);
+    const livePlan = calculateRoomPlan(actualPeople.length);
     const plannedBeds = plans.reduce((sum, plan) => sum + plan.beds, 0);
     const plannedRooms = plans.reduce((sum, plan) => sum + plan.rooms, 0);
-    const actualRooms = actualEz + actualDz;
     const usesNations = data.athletes.length > 0;
     const demandBeds = usesNations ? actualPeople.length : plannedBeds;
-    const demandRooms = usesNations ? actualRooms : plannedRooms;
-    const demandEz = usesNations ? actualEz : ezDemand;
-    const demandDz = usesNations ? actualDz : dzDemand;
+    const demandRooms = usesNations ? livePlan.rooms : plannedRooms;
+    const demandEz = usesNations ? livePlan.singleRooms : ezDemand;
+    const demandDz = usesNations ? livePlan.doubleRooms : dzDemand;
     const activeBookings = data.bookings.filter(booking => bookingOnDay(booking, date));
     const assignedRooms = activeBookings.length;
-    const assignedEz = activeBookings.filter(booking => isSingle(booking.roomType)).length;
-    const assignedDz = assignedRooms - assignedEz;
     const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
+    const assignedEz = assignedRooms / 2;
+    const assignedDz = assignedRooms / 2;
     return {
       date, label: formatDay(date), dzSupply, ezSupply, roomSupply, bedSupply,
       plannedRooms, plannedBeds, plannedEz: ezDemand, plannedDz: dzDemand,

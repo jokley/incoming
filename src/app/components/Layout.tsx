@@ -1,4 +1,4 @@
-import { Outlet, NavLink, useLocation } from 'react-router';
+import { Outlet, NavLink } from 'react-router';
 import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut, Settings } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 
@@ -14,13 +14,11 @@ const navItems = [
 
 export function Layout() {
   const { user, hasPermission, permissions } = useAuth();
-  const { pathname } = useLocation();
-  const isOperationsSplitPage = pathname === '/hotels' || pathname === '/events' || pathname === '/room-types' || pathname === '/athletes' || pathname === '/analytics';
   const displayName = user?.displayName?.trim() || user?.username || 'Benutzer';
   const initials = displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U';
 
   return (
-    <div className={isOperationsSplitPage ? 'min-h-screen bg-slate-100 xl:flex xl:h-dvh xl:min-h-0 xl:flex-col xl:overflow-hidden' : 'min-h-screen bg-slate-100'}>
+    <div className="min-h-screen bg-slate-100">
       <nav className="sticky top-0 z-40 shrink-0 border-b border-slate-200/80 bg-white/95 shadow-sm backdrop-blur">
         <div className="mx-auto w-full max-w-[1920px] px-3 sm:px-5 lg:px-6">
           <div className="flex min-h-16 items-center gap-4 py-2">
@@ -62,7 +60,7 @@ export function Layout() {
           </div>
         </div>
       </nav>
-      <main className={`mx-auto w-full max-w-[1920px] px-3 py-4 sm:px-5 lg:px-6 ${isOperationsSplitPage ? 'xl:min-h-0 xl:flex-1 xl:overflow-hidden' : ''}`}>
+      <main className="mx-auto w-full max-w-[1920px] px-3 py-4 sm:px-5 lg:px-6">
         <Outlet />
       </main>
     </div>
