@@ -81,7 +81,8 @@ function CapacityTooltip({ active, payload, metric, source }: { active?: boolean
     <Row label="EZ disponiert" value={day.assignedEz} color="#285A8C"/><Row label="DZ disponiert" value={day.assignedDz} color="#5585B5"/>
     <Row label="EZ frei" value={day.freeEz} color="#57A773"/><Row label="DZ frei" value={day.freeDz} color="#9BD0AE"/>
     <Row label={`EZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedEz : day.demandEz} color="#F59E0B"/>
-    <Row label={`DZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedDz : day.demandDz} color="#D9467B"/>
+    <Row label={`DZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedDz : day.demandDz}/>
+    <Row label={`Gesamtbedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="#DC2626"/>
     <Row label="Reserve gesamt" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
   return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
@@ -136,7 +137,7 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
     { key: 'freeEz', label: 'EZ frei', color: '#57A773', line: false },
     { key: 'freeDz', label: 'DZ frei', color: '#9BD0AE', line: false },
     { key: 'demandEz', label: 'EZ-Bedarf', color: '#F59E0B', line: true },
-    { key: 'demandDz', label: 'DZ-Bedarf', color: '#D9467B', line: true },
+    { key: 'demandTotal', label: 'Gesamtbedarf (EZ + DZ)', color: '#DC2626', line: true },
   ] : [
     { key: 'supply', label: 'Kontingent', color: '#DCE6F2', line: false },
     { key: 'assigned', label: 'Disponiert', color: 'var(--ops-primary)', line: false },
@@ -166,7 +167,7 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
             {!hidden.has('supply') && <Line type="step" dataKey={config.supply} name="Kontingent" stroke="#DCE6F2" strokeWidth={1.25} strokeDasharray="3 3" dot={false} opacity={opacity('supply', .72)}/>}
             {metric === 'rooms' ? <>
               {!hidden.has('demandEz') && <Line type="monotone" dataKey={source === 'event' ? 'plannedEz' : 'demandEz'} name="EZ-Bedarf" stroke="#F59E0B" strokeWidth={4} dot={{ r: 4, fill: '#F59E0B', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandEz')}/>}
-              {!hidden.has('demandDz') && <Line type="monotone" dataKey={source === 'event' ? 'plannedDz' : 'demandDz'} name="DZ-Bedarf" stroke="#D9467B" strokeWidth={4} dot={{ r: 4, fill: '#D9467B', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandDz')}/>}
+              {!hidden.has('demandTotal') && <Line type="monotone" dataKey={source === 'event' ? 'plannedRooms' : 'demandRooms'} name="Gesamtbedarf (EZ + DZ)" stroke="#DC2626" strokeWidth={4} dot={{ r: 4, fill: '#DC2626', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandTotal')}/>}
             </> : !hidden.has('demand') && <Line type="monotone" dataKey={source === 'event' ? config.plan : config.demand} name="Bedarf" stroke="#F59E0B" strokeWidth={4} dot={{ r: 4, fill: '#F59E0B', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7, strokeWidth: 2 }} opacity={opacity('demand')}/>}
           </ComposedChart>
           </ResponsiveContainer>
