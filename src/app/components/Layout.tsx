@@ -9,7 +9,7 @@ const navItems = [
   { to: '/hotels', label: 'Hotels', icon: Hotel },
   { to: '/events', label: 'Events', icon: Calendar },
   { to: '/assignments', label: 'Zuweisungen', icon: UserCheck },
-  { to: '/analytics', label: 'Analysen', icon: BarChart3 },
+  { to: '/analytics', label: 'Operations Cockpit', icon: BarChart3 },
 ];
 
 export function Layout() {
