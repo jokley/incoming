@@ -222,7 +222,11 @@ export function Dashboard() {
     }).length;
     const athleteCount = Math.max(athletes.length - officials, 0);
     const assignedRooms = assignments.length;
-    const assignedPersonIds = new Set(assignments.flatMap(assignment => [assignment.athlete.id, assignment.sharedWith?.id].filter(Boolean)));
+    // Historical assignments may reference people that have since been removed.
+    // The API keeps those assignments for audit purposes, but omits the relation.
+    const assignedPersonIds = new Set(assignments.flatMap(assignment =>
+      [assignment.athlete?.id, assignment.sharedWith?.id].filter((id): id is string => Boolean(id))
+    ));
     const assignedPeople = athletes.filter(athlete => athlete.assignment?.hasAssignment || assignedPersonIds.has(athlete.id)).length;
     const peopleWithoutRoom = Math.max(athletes.length - assignedPeople, 0);
     const pendingSingleRooms = athletes.filter(athlete => athlete.single_room_status === 'PENDING_APPROVAL').length;
@@ -257,7 +261,7 @@ export function Dashboard() {
   const hotelOverview = useMemo(() => hotels.map(hotel => {
     const rooms = hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount, 0) || 0;
     const beds = hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0) || 0;
-    const assigned = assignments.filter(assignment => assignment.hotel.id === hotel.id).length;
+    const assigned = assignments.filter(assignment => assignment.hotel?.id === hotel.id).length;
     const percent = rooms > 0 ? (assigned / rooms) * 100 : 0;
     return { hotel, rooms, beds, assigned, remaining: Math.max(rooms - assigned, 0), availableBeds: Math.max(beds - assigned, 0), percent, tone: getStatusTone(percent) };
   }).sort((a, b) => a.remaining - b.remaining || b.percent - a.percent), [assignments, hotels]);
