@@ -6,6 +6,7 @@ const columns: Array<[keyof ListRow, string]> = [
   ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
   ['surcharge', 'Mehrpreis'], ['roommate', 'Zimmerpartner'],
+  ['remark', 'Bemerkung'],
 ];
 
 const download = (blob: Blob, filename: string) => {
