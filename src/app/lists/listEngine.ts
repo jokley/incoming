@@ -4,6 +4,8 @@ export type ListKind = 'hotels' | 'nations';
 
 export interface ListRow {
   id: string;
+  hotelId: string;
+  bookingId: string;
   hotel: string;
   room: string;
   roomType: string;
@@ -26,10 +28,9 @@ export interface ListRow {
 export interface ListFilters {
   search: string;
   selection: string;
+  discipline: string;
   assignedOnly: boolean;
   activeOnly: boolean;
-  from: string;
-  until: string;
 }
 
 const value = (entry?: string | null) => entry?.trim() || '—';
@@ -51,6 +52,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[]): Li
     const booking = assignment?.booking;
     return {
       id: athlete.id,
+      hotelId: booking?.hotel.id || '',
+      bookingId: booking?.id || '',
       hotel: value(booking?.hotel.name),
       room: value(booking?.roomNumber),
       roomType: value(booking?.roomType.name || athlete.roomType),
@@ -78,8 +81,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
     if (filters.assignedOnly && !row.assigned) return false;
     if (filters.activeOnly && !row.active) return false;
     if (filters.selection && (kind === 'hotels' ? row.hotel : row.nation) !== filters.selection) return false;
-    if (filters.from && row.departure && row.departure < filters.from) return false;
-    if (filters.until && row.arrival && row.arrival > filters.until) return false;
+    if (filters.discipline && row.discipline !== filters.discipline) return false;
     return !query || Object.values(row).some((item) => String(item).toLocaleLowerCase('de').includes(query));
   });
 }
