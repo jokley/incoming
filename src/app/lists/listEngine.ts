@@ -21,6 +21,7 @@ export interface ListRow {
   lateCheckout: string;
   surcharge: string;
   roommate: string;
+  remark: string;
   assigned: boolean;
   active: boolean;
 }
@@ -69,6 +70,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[]): Li
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
       surcharge: athlete.single_room_status === 'APPROVED_EXTRA' ? 'Ja' : 'Nein',
       roommate: value(assignment?.roommate || athlete.sharedWithName),
+      remark: value(athlete.additionalItems),
       assigned: Boolean(booking),
       active: !athlete.missingFromLatestAthletesImport && !athlete.missingFromLatestRoomlistImport,
     };
