@@ -18,6 +18,7 @@ import LogoutRoundedIcon from '@mui/icons-material/LogoutRounded';
 
 import { api } from '../services/api';
 import { describeAuditEvent } from '../services/auditActivity';
+import { athleteWorkCategory } from '../services/workflowStatus';
 import type { ImportSession } from '../data/importSessions';
 import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomAssignment, RoomType } from '../types';
 import {
@@ -227,7 +228,8 @@ export function Dashboard() {
     const assignedPeople = athletes.filter(athlete => athlete.assignment?.hasAssignment || assignedPersonIds.has(athlete.id)).length;
     const peopleWithoutRoom = Math.max(athletes.length - assignedPeople, 0);
     const pendingSingleRooms = athletes.filter(athlete => athlete.single_room_status === 'PENDING_APPROVAL').length;
-    const pendingImportReviews = athletes.filter(athlete => athlete.hasPendingRoomlistReview || athlete.missingFromLatestAthletesImport || athlete.missingFromLatestRoomlistImport).length;
+    const pendingImportReviews = athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length;
+    const invalidMasterData = athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length;
     const surchargeRisks = athletes.filter(athlete => athlete.lateCheckout || Boolean(athlete.specialMeal) || Boolean(athlete.additionalItems)).length;
     const utilization = totalRoomsAvailable > 0 ? (totalRoomsDemand / totalRoomsAvailable) * 100 : 0;
     const assignmentCoverage = totalRoomsDemand > 0 ? (assignedRooms / totalRoomsDemand) * 100 : 0;
@@ -251,6 +253,7 @@ export function Dashboard() {
       utilization,
       assignmentCoverage,
       pendingImportReviews,
+      invalidMasterData,
       surchargeRisks,
     };
   }, [assignments.length, athletes, events, hotels, roomTypes.length]);
@@ -266,17 +269,17 @@ export function Dashboard() {
   const criticalHotels = hotelOverview.filter(item => item.rooms > 0 && (item.percent >= 90 || item.remaining <= 2));
   // Kontingentquoten sind Planungshinweise, keine operativen Importkonflikte.
   const invalidAssignments = assignments.filter(assignment => !assignment.athlete || !assignment.hotel || !assignment.roomType).length;
-  const operationalConflicts = operations.pendingImportReviews + invalidAssignments;
+  const operationalConflicts = operations.invalidMasterData + invalidAssignments;
 
   const criticalAlerts = useMemo<AlertItem[]>(() => {
     const alerts: AlertItem[] = [];
-    if (operations.peopleWithoutRoom > 0) alerts.push({ id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: 'error', status: 'sofort', href: '/assignments?status=open' });
+    if (operations.peopleWithoutRoom > 0) alerts.push({ id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: 'error', status: 'sofort', href: '/assignments?workflow=open' });
     criticalHotels.slice(0, 2).forEach(item => alerts.push({ id: `hotel-${item.hotel.id}`, title: item.percent >= 100 ? 'Hotel überbucht' : 'Hotelreserve kritisch', detail: `${item.hotel.name}: ${item.remaining} Zimmer Reserve bei ${formatPercent(item.percent)} Auslastung.`, tone: item.percent >= 100 ? 'error' : 'warning', status: 'Hotel', href: `/hotels?hotelId=${item.hotel.id}` }));
-    if (invalidAssignments > 0) alerts.push({ id: 'invalid-assignments', title: 'Ungültige Zuordnungen', detail: `${invalidAssignments} Zuordnungen verweisen auf unvollständige Stamm- oder Hoteldaten.`, tone: 'error', status: 'prüfen', href: '/assignments' });
-    if (operations.pendingImportReviews > 0) alerts.push({ id: 'import-reviews', title: 'Importkonflikte', detail: `${operations.pendingImportReviews} Personen benötigen eine Prüfung aus dem letzten Import.`, tone: 'warning', status: 'Import', href: '/athletes?review=pending' });
+    if (invalidAssignments > 0 || operations.invalidMasterData > 0) alerts.push({ id: 'invalid-assignments', title: 'Ungültige Stammdaten', detail: `${invalidAssignments + operations.invalidMasterData} Personen oder Zuordnungen benötigen eine fachliche Korrektur.`, tone: 'error', status: 'Fehler', href: '/athletes?review=invalid' });
+    if (operations.pendingImportReviews > 0) alerts.push({ id: 'assignment-reviews', title: 'Disposition prüfen', detail: `${operations.pendingImportReviews} bestehende Dispositionen wurden durch einen späteren Import berührt.`, tone: 'warning', status: 'Prüfen', href: '/assignments?workflow=review' });
     if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'EZ-Entscheidungen offen', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/athletes?singleRoomStatus=PENDING_APPROVAL' });
     return (alerts.length > 0 ? alerts : [{ id: 'stable', title: 'Keine kritischen Hinweise', detail: 'Aktuell besteht kein unmittelbarer operativer Handlungsbedarf.', tone: 'success' as Tone, status: 'stabil', href: '/assignments' }]).slice(0, 3);
-  }, [criticalHotels, invalidAssignments, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
+  }, [criticalHotels, invalidAssignments, operations.invalidMasterData, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
   const today = new Date().toLocaleDateString('en-CA');
   const arrivalsToday = athletes.filter(athlete => athlete.arrivalDate === today).length;
@@ -289,9 +292,9 @@ export function Dashboard() {
 
   const importStatuses = [
     { id: 'sessions', title: 'Importsessions', count: importSessions.length, helper: `${importSessions.filter(session => !['IMPORTED', 'REPLACED', 'ARCHIVED'].includes(session.status)).length} in Bearbeitung`, tone: importSessions.length > 0 ? 'success' : 'warning' as Tone, href: importSessions[0] ? `/import?sessionId=${importSessions[0].id}` : '/import' },
-    { id: 'reviews', title: 'Importprüfungen', count: operations.pendingImportReviews, helper: 'Personen mit Klärungsbedarf', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/athletes?review=pending' },
+    { id: 'reviews', title: 'Disposition prüfen', count: operations.pendingImportReviews, helper: 'geänderte bestehende Zuweisungen', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/assignments?workflow=review' },
     { id: 'decisions', title: 'EZ-Entscheidungen', count: operations.pendingSingleRooms, helper: 'offene Einzelzimmer-Freigaben', tone: operations.pendingSingleRooms > 0 ? 'warning' : 'success' as Tone, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' },
-    { id: 'validation', title: 'Importkonflikte', count: operationalConflicts, helper: 'operative Auswirkungen prüfen', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: operations.pendingImportReviews > 0 ? '/athletes?review=pending' : '/assignments' },
+    { id: 'validation', title: 'Importprüfungen', count: operationalConflicts, helper: 'Referenzen und Konflikte im Import', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: '/import' },
   ];
 
   const activityItems = auditEvents.length > 0 ? auditEvents.map(event => {
@@ -321,14 +324,14 @@ export function Dashboard() {
           <KpiCard label="Aktuell disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" tone="success" icon={<AssignmentTurnedInRoundedIcon />} href="/assignments" />
           <KpiCard label="Freie Zimmer" value={formatNumber(Math.max(operations.roomDelta, 0))} helper="Reserve am Spitzenbedarf" tone={operations.roomDelta <= 0 ? 'error' : 'success'} trend={operations.roomDelta <= 0 ? 'Limit' : 'Reserve'} icon={<PieChartRoundedIcon />} href="/analytics" />
           <KpiCard label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach Reserve priorisiert" tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<ApartmentRoundedIcon />} href="/hotels" />
-          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="Personen offen" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/assignments?status=open" />
-          <KpiCard label="Operative Konflikte" value={formatNumber(operationalConflicts)} helper={`${operations.pendingSingleRooms} EZ-Entscheidungen`} tone={operationalConflicts > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=pending" />
+          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="Personen offen" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/assignments?workflow=open" />
+          <KpiCard label="Operative Konflikte" value={formatNumber(operationalConflicts)} helper={`${operations.invalidMasterData} Stammdatenfehler`} tone={operationalConflicts > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=invalid" />
         </div>
       </ContentCard>
 
       <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Heute</span>} actions={<TextLink to="/assignments">Operations Cockpit öffnen</TextLink>}>
         <div className="grid grid-cols-2 divide-x divide-y divide-[var(--ops-divider)] md:grid-cols-3 xl:grid-cols-6 xl:divide-y-0">
-          {[{ label: 'Anreisen', value: arrivalsToday, href: `/athletes?movement=arrival&date=${today}` }, { label: 'Abreisen', value: departuresToday, href: `/athletes?movement=departure&date=${today}` }, { label: 'Neue Zimmerzuweisungen', value: assignmentsToday, href: '/assignments' }, { label: 'Offene Zimmerzuweisungen', value: operations.peopleWithoutRoom, href: '/assignments?status=open' }, { label: 'Kritische Hotels', value: criticalHotels.length, href: criticalHotels[0] ? `/hotels?hotelId=${criticalHotels[0].hotel.id}` : '/hotels' }, { label: 'Offene Entscheidungen', value: operations.pendingSingleRooms, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' }].map(item => <Link key={item.label} to={item.href} className="px-3 py-2 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-lg font-extrabold">{formatNumber(item.value)}</div></Link>)}
+          {[{ label: 'Anreisen', value: arrivalsToday, href: `/athletes?movement=arrival&date=${today}` }, { label: 'Abreisen', value: departuresToday, href: `/athletes?movement=departure&date=${today}` }, { label: 'Neue Zimmerzuweisungen', value: assignmentsToday, href: '/assignments' }, { label: 'Offene Zimmerzuweisungen', value: operations.peopleWithoutRoom, href: '/assignments?workflow=open' }, { label: 'Kritische Hotels', value: criticalHotels.length, href: criticalHotels[0] ? `/hotels?hotelId=${criticalHotels[0].hotel.id}` : '/hotels' }, { label: 'Offene Entscheidungen', value: operations.pendingSingleRooms, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' }].map(item => <Link key={item.label} to={item.href} className="px-3 py-2 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-lg font-extrabold">{formatNumber(item.value)}</div></Link>)}
         </div>
       </DataPanel>
 

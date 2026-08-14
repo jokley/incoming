@@ -1240,6 +1240,8 @@ def _apply_person_record(athlete, person, now):
 
 def _snapshot_roomlist_fields(athlete):
     return {
+        'nationCode': athlete.nation_code or None,
+        'event': athlete.discipline or None,
         'arrivalDate': athlete.arrival_date.isoformat() if athlete.arrival_date else None,
         'departureDate': athlete.departure_date.isoformat() if athlete.departure_date else None,
         'roomType': athlete.room_type or None,
@@ -1251,6 +1253,8 @@ def _snapshot_roomlist_fields(athlete):
 
 
 IMPORT_CHANGE_FIELDS = {
+    'nationCode': 'NATION_CHANGED',
+    'event': 'EVENT_CHANGED',
     'arrivalDate': 'DATE_CHANGED',
     'departureDate': 'DATE_CHANGED',
     'firstMeal': 'DATE_CHANGED',
@@ -1376,16 +1380,18 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
             athlete.single_room_status = 'NONE'
             athlete.single_room_decision_id = None
         if existing_before is None:
-            athlete.roomlist_changed_at = now
-            athlete.roomlist_change_summary = 'Neuer Athlet'
+            # A newly created person is new assignment work, not a change to an
+            # existing disposition.  Keep the import reason, but deliberately do
+            # not open a room-list review.
+            athlete.roomlist_changed_at = None
+            athlete.roomlist_change_summary = 'Neu importiert'
             athlete.import_change_types_json = json.dumps(['NEW_ATHLETE'])
-            athlete.roomlist_change_acknowledged_at = None
-            athlete.roomlist_change_acknowledged_summary = None
         else:
             existing_after = _snapshot_roomlist_fields(athlete)
             changed_keys = [key for key, value in existing_after.items() if existing_before.get(key) != value]
-            if changed_keys:
-                change_types = _typed_import_changes(changed_keys)
+            change_types = _typed_import_changes(changed_keys)
+            has_assignment = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first() is not None
+            if change_types and has_assignment:
                 athlete.roomlist_changed_at = now
                 athlete.roomlist_change_summary = 'changed: ' + ', '.join(changed_keys)
                 athlete.import_change_types_json = json.dumps(change_types)
