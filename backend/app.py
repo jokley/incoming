@@ -2482,6 +2482,10 @@ def get_athletes():
         data['hasPendingRoomlistReview'] = bool(raw_pending_review and data['assignment']['hasAssignment'])
         data['changeTouchesAssignment'] = data['hasPendingRoomlistReview']
         import_types = data.get('importChangeTypes') or []
+        # This is the authoritative workflow classification consumed by every
+        # client surface. Import presence/change flags are operational history,
+        # not master-data integrity failures. CONFLICT is intentionally reserved
+        # for explicit integrity validation and must never be inferred from them.
         data['workflowStatus'] = (
             'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
             'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
