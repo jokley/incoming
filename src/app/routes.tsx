@@ -12,6 +12,7 @@ import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
 import { AuditLog } from "./components/AuditLog";
 import { AdminRoute } from "./auth/AdminRoute";
 import { AdministrationTestData } from "./components/AdministrationTestData";
+import { Lists } from "./components/Lists";
 
 export const router = createBrowserRouter([
   {
@@ -27,6 +28,7 @@ export const router = createBrowserRouter([
       { path: "events", Component: EventsManagement },
       { path: "import", Component: DataImport },
       { path: "analytics", Component: RoomAnalytics },
+      { path: "lists", Component: Lists },
       { path: "audit", Component: AuditLog },
       { path: "administration/test-data", element: <AdminRoute><AdministrationTestData /></AdminRoute> },
     ],

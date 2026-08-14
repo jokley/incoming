@@ -1,5 +1,5 @@
 import { Outlet, NavLink } from 'react-router';
-import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut, Settings } from 'lucide-react';
+import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut, Settings, List } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 
 const navItems = [
@@ -10,6 +10,7 @@ const navItems = [
   { to: '/events', label: 'Events', icon: Calendar },
   { to: '/assignments', label: 'Zuweisungen', icon: UserCheck },
   { to: '/analytics', label: 'Operations Cockpit', icon: BarChart3 },
+  { to: '/lists', label: 'Listen', icon: List },
 ];
 
 export function Layout() {
