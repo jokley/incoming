@@ -926,7 +926,7 @@ def _build_room_booking_units():
                 })()),
                 'single_room_status': athlete.single_room_status or 'NONE',
                 'single_room_decision_id': str(athlete.single_room_decision_id) if athlete.single_room_decision_id else None,
-                'hasPendingReview': pending_review,
+                'hasPendingReview': assigned_change,
                 'changeTouchesAssignment': assigned_change,
                 'isAssigned': bool(athlete_booking),
                 'assignedBookingId': str(athlete_booking.id) if athlete_booking else None,
@@ -2471,13 +2471,23 @@ def get_athletes():
             'checkOutDate': None,
             'bookingId': None,
         }
-        data['hasPendingRoomlistReview'] = bool(
+        raw_pending_review = bool(
             a.roomlist_changed_at and (
                 a.roomlist_change_acknowledged_at is None
                 or a.roomlist_change_acknowledged_at < a.roomlist_changed_at
             )
         )
-        data['changeTouchesAssignment'] = bool(data['hasPendingRoomlistReview'] and data['assignment']['hasAssignment'])
+        # Reviews are exclusively follow-up work for an existing disposition.
+        # Unassigned/new people always stay in the normal assignment queue.
+        data['hasPendingRoomlistReview'] = bool(raw_pending_review and data['assignment']['hasAssignment'])
+        data['changeTouchesAssignment'] = data['hasPendingRoomlistReview']
+        import_types = data.get('importChangeTypes') or []
+        data['workflowStatus'] = (
+            'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
+            'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
+            'OPEN_ASSIGNMENT' if not data['assignment']['hasAssignment'] else
+            'CURRENT'
+        )
 
         result.append(data)
 

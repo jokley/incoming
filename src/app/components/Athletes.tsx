@@ -20,6 +20,7 @@ import { usePermissions } from '../auth/AuthProvider';
 import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
+import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
@@ -41,7 +42,7 @@ const genderLabel = (value?: string) => {
   return value || 'Nicht angegeben';
 };
 const assignmentLabel = (athlete: Athlete) => athlete.assignment?.hasAssignment ? 'Zugewiesen' : 'Nicht zugewiesen';
-const importLabel = (athlete: Athlete) => athlete.hasPendingRoomlistReview ? 'Import geändert' : 'Aktuell';
+const importLabel = (athlete: Athlete) => WORK_CATEGORY_LABELS[athleteWorkCategory(athlete)];
 const roomTypeLabel = (athlete: Athlete) => {
   const roomType = athlete.assignment?.roomTypeName || athlete.roomType;
   if (!roomType) return '—';
@@ -249,17 +250,20 @@ export function Athletes() {
     function: countValues(athletes, athlete => athlete.function || 'Athlet'),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
-      { value: 'unassigned', label: 'Nicht zugewiesen', count: athletes.filter(athlete => !athlete.assignment?.hasAssignment).length },
-      { value: 'changed', label: 'Import geändert', count: athletes.filter(athlete => athlete.hasPendingRoomlistReview).length },
+      { value: 'open', label: 'Zuweisung offen', count: athletes.filter(athlete => ['new', 'open'].includes(athleteWorkCategory(athlete))).length },
+      { value: 'new', label: 'Neu importiert', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
+      { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
+      { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
     ],
   }), [athletes]);
 
   const filtered = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
-    const statusMatches = !filters.status || (filters.status === 'unassigned' && !athlete.assignment?.hasAssignment) || (filters.status === 'changed' && athlete.hasPendingRoomlistReview);
+    const category = athleteWorkCategory(athlete);
+    const statusMatches = !filters.status || (filters.status === 'open' ? ['new', 'open'].includes(category) : filters.status === category);
     const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
-    const reviewMatches = requestedReview !== 'pending' || athlete.hasPendingRoomlistReview || athlete.missingFromLatestAthletesImport || athlete.missingFromLatestRoomlistImport;
+    const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
@@ -322,7 +326,7 @@ export function Athletes() {
                 <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
                 <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
-                <Cell><StatusChip tone={athlete.hasPendingRoomlistReview ? 'warning' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
+                <Cell><StatusChip tone={['review', 'conflict'].includes(athleteWorkCategory(athlete)) ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
               </tr>)}
             </tbody>
           </table>

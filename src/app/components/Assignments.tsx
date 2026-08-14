@@ -78,6 +78,8 @@ const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
   DATE_CHANGED: 'Aufenthaltsdatum geändert',
   ROOMMATE_CHANGED: 'Zimmerpartner geändert',
   ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert',
+  EVENT_CHANGED: 'Event geändert',
+  NATION_CHANGED: 'Nation geändert',
 };
 
 export function Assignments() {
@@ -108,9 +110,10 @@ export function Assignments() {
   const [filterNation, setFilterNation] = useState('');
   const [filterDiscipline, setFilterDiscipline] = useState('');
   const [filterGender, setFilterGender] = useState('');
-  const [filterStatus, setFilterStatus] = useState<QueueStatus>('pending');
+  const requestedWorkflow = routeQuery.get('workflow') || (routeQuery.get('status') === 'open' ? 'open' : '');
+  const [filterStatus, setFilterStatus] = useState<QueueStatus>(requestedWorkflow === 'review' ? 'all' : 'pending');
   const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
-  const [filterImportReview, setFilterImportReview] = useState(false);
+  const [filterImportReview, setFilterImportReview] = useState(requestedWorkflow === 'review');
   const [regionFilter, setRegionFilter] = useState('');
 
   const [dragging, setDragging] = useState<DragState | null>(null);

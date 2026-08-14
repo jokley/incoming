@@ -129,6 +129,7 @@ export interface Athlete {
   missingFromLatestRoomlistImport?: boolean;
   hasPendingRoomlistReview?: boolean;
   changeTouchesAssignment?: boolean;
+  workflowStatus?: 'NEW_PERSON' | 'OPEN_ASSIGNMENT' | 'REVIEW_ASSIGNMENT' | 'CURRENT' | 'CONFLICT';
   assignment?: {
     hasAssignment: boolean;
     hotelName?: string | null;
@@ -146,7 +147,9 @@ export type ImportChangeType =
   | 'NEW_ATHLETE'
   | 'DATE_CHANGED'
   | 'ROOMMATE_CHANGED'
-  | 'ROOM_DEMAND_CHANGED';
+  | 'ROOM_DEMAND_CHANGED'
+  | 'EVENT_CHANGED'
+  | 'NATION_CHANGED';
 
 export interface RoomAssignment {
   id: string;
