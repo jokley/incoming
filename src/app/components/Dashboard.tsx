@@ -20,7 +20,7 @@ import { api } from '../services/api';
 import { describeAuditEvent } from '../services/auditActivity';
 import { athleteWorkCategory } from '../services/workflowStatus';
 import type { ImportSession } from '../data/importSessions';
-import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomAssignment, RoomType } from '../types';
+import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomBooking, RoomType } from '../types';
 import {
   ContentCard,
   DataPanel,
@@ -125,7 +125,7 @@ export function Dashboard() {
   const [hotels, setHotels] = useState<HotelType[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
-  const [assignments, setAssignments] = useState<RoomAssignment[]>([]);
+  const [assignments, setAssignments] = useState<RoomBooking[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [importSessions, setImportSessions] = useState<ImportSession[]>([]);
   const [loading, setLoading] = useState(true);
@@ -220,10 +220,8 @@ export function Dashboard() {
     }).length;
     const athleteCount = Math.max(athletes.length - officials, 0);
     const assignedRooms = assignments.length;
-    // Historical assignments may reference people that have since been removed.
-    // The API keeps those assignments for audit purposes, but omits the relation.
     const assignedPersonIds = new Set(assignments.flatMap(assignment =>
-      [assignment.athlete?.id, assignment.sharedWith?.id].filter((id): id is string => Boolean(id))
+      assignment.occupants.map(occupant => occupant.athlete.id)
     ));
     const assignedPeople = athletes.filter(athlete => athlete.assignment?.hasAssignment || assignedPersonIds.has(athlete.id)).length;
     const peopleWithoutRoom = Math.max(athletes.length - assignedPeople, 0);
@@ -268,18 +266,17 @@ export function Dashboard() {
 
   const criticalHotels = hotelOverview.filter(item => item.rooms > 0 && (item.percent >= 90 || item.remaining <= 2));
   // Kontingentquoten sind Planungshinweise, keine operativen Importkonflikte.
-  const invalidAssignments = assignments.filter(assignment => !assignment.athlete || !assignment.hotel || !assignment.roomType).length;
-  const operationalConflicts = operations.invalidMasterData + invalidAssignments;
+  const operationalConflicts = operations.invalidMasterData;
 
   const criticalAlerts = useMemo<AlertItem[]>(() => {
     const alerts: AlertItem[] = [];
     if (operations.peopleWithoutRoom > 0) alerts.push({ id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: 'error', status: 'sofort', href: '/assignments?workflow=open' });
     criticalHotels.slice(0, 2).forEach(item => alerts.push({ id: `hotel-${item.hotel.id}`, title: item.percent >= 100 ? 'Hotel überbucht' : 'Hotelreserve kritisch', detail: `${item.hotel.name}: ${item.remaining} Zimmer Reserve bei ${formatPercent(item.percent)} Auslastung.`, tone: item.percent >= 100 ? 'error' : 'warning', status: 'Hotel', href: `/hotels?hotelId=${item.hotel.id}` }));
-    if (invalidAssignments > 0 || operations.invalidMasterData > 0) alerts.push({ id: 'invalid-assignments', title: 'Ungültige Stammdaten', detail: `${invalidAssignments + operations.invalidMasterData} Personen oder Zuordnungen benötigen eine fachliche Korrektur.`, tone: 'error', status: 'Fehler', href: '/athletes?review=invalid' });
+    if (operations.invalidMasterData > 0) alerts.push({ id: 'invalid-master-data', title: 'Ungültige Stammdaten', detail: `${operations.invalidMasterData} Personen benötigen eine fachliche Korrektur.`, tone: 'error', status: 'Fehler', href: '/athletes?review=invalid' });
     if (operations.pendingImportReviews > 0) alerts.push({ id: 'assignment-reviews', title: 'Disposition prüfen', detail: `${operations.pendingImportReviews} bestehende Dispositionen wurden durch einen späteren Import berührt.`, tone: 'warning', status: 'Prüfen', href: '/assignments?workflow=review' });
     if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'EZ-Entscheidungen offen', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/athletes?singleRoomStatus=PENDING_APPROVAL' });
     return (alerts.length > 0 ? alerts : [{ id: 'stable', title: 'Keine kritischen Hinweise', detail: 'Aktuell besteht kein unmittelbarer operativer Handlungsbedarf.', tone: 'success' as Tone, status: 'stabil', href: '/assignments' }]).slice(0, 3);
-  }, [criticalHotels, invalidAssignments, operations.invalidMasterData, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
+  }, [criticalHotels, operations.invalidMasterData, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
   const today = new Date().toLocaleDateString('en-CA');
   const arrivalsToday = athletes.filter(athlete => athlete.arrivalDate === today).length;
