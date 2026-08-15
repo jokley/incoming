@@ -17,6 +17,7 @@ implizit verändern.
 | `quota_service.py` | Fachliche Quotenberechnung ohne HTTP-Verantwortung |
 | `scenario_generator.py` | Deterministische Testdaten-Artefakte |
 | `*_migration.py` | Idempotente, explizite SQLite-Schemaanpassungen |
+| `schema_alignment.py` | Transaktionale physische Angleichung von Legacy-SQLite an `db.metadata` |
 
 `import_csv.py`, `seed_data.py` und `generate_test_files.py` sind operative
 Werkzeuge und gehören nicht zum Request-Pfad.
@@ -33,6 +34,9 @@ verwendet weiterhin `DATABASE_PATH`. Für PostgreSQL ist zusätzlich eine
 `DATABASE_URL` mit `postgresql://` erforderlich; die Anwendung verwendet dafür
 den Psycopg-3-Treiber. Bis zur Alembic-Baseline führt die Anwendung ihre
 bestehenden automatischen Schema-Upgrades ausschließlich im SQLite-Modus aus.
+Nach den fachlichen Backfills entfernt das idempotente Schema-Alignment
+verbliebene physische Abweichungen bei Constraints und temporären
+Server-Defaults. PostgreSQL wird von diesem Kompatibilitätspfad nie verändert.
 Der operative Endpunkt `GET /health` prüft die Datenbankverbindung und meldet
 den ausgewählten Datenbanktyp als `databaseBackend`.
 

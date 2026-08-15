@@ -24,6 +24,7 @@ from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from import_session_migration import migrate_import_sessions
 from single_room_status_migration import migrate_single_room_status
+from schema_alignment import align_sqlite_schema
 from config import RuntimeSettings
 from logging_config import configure_logging
 
@@ -1459,6 +1460,11 @@ if settings.database_backend == 'sqlite':
             db.session.commit()
 
         ensure_event_planning_columns()
+
+        # Additive legacy upgrades above preserve and backfill business data.
+        # Rebuild only physically divergent tables afterwards so constraints
+        # and server defaults exactly match the canonical model metadata.
+        align_sqlite_schema(db)
 
         def backfill_room_bookings():
             existing_booking = RoomBooking.query.first()
