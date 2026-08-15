@@ -1,0 +1,4 @@
+This directory contains Alembic's migration environment.
+
+Revision files will live in versions/. Sprint 3.2 intentionally contains no
+revision or baseline; see ../README.md for the controlled workflow.

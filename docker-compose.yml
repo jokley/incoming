@@ -11,12 +11,6 @@ services:
       - backend-data:/app/data
     env_file:
       - incoming.env
-    environment:
-      - FLASK_ENV=development
-      - APP_DATA_DIR=/app/data
-      - DATABASE_BACKEND=${DATABASE_BACKEND:-sqlite}
-      - DATABASE_PATH=/app/data/freestyle_wm_new.db
-      - DATABASE_URL=${DATABASE_URL:-postgresql://incoming:change-me@postgres:5432/incoming}
     networks:
       - freestyle-network
     restart: unless-stopped
@@ -30,10 +24,8 @@ services:
   postgres:
     image: postgres:17-alpine
     container_name: freestyle-wm-postgres
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-incoming}
-      POSTGRES_USER: ${POSTGRES_USER:-incoming}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    env_file:
+      - incoming.env
     volumes:
       - postgres-data:/var/lib/postgresql/data
     networks:

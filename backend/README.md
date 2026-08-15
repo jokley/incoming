@@ -36,6 +36,35 @@ bestehenden automatischen Schema-Upgrades ausschließlich im SQLite-Modus aus.
 Der operative Endpunkt `GET /health` prüft die Datenbankverbindung und meldet
 den ausgewählten Datenbanktyp als `databaseBackend`.
 
+## Alembic-Migrationsworkflow
+
+Alembic verwendet dieselben `RuntimeSettings` und dieselben SQLAlchemy-Metadaten
+wie die Anwendung. Befehle werden aus `backend/` ausgeführt; `DATABASE_BACKEND`,
+`DATABASE_PATH` und `DATABASE_URL` wählen deshalb für Anwendung und Migration
+dieselbe Datenbank. SQLite bleibt der Standard. PostgreSQL wird nur bei einer
+bewussten Konfiguration angesprochen.
+
+```bash
+cd backend
+
+# Freigegebene Revisionskette als SQL rendern (öffnet keine Datenbankverbindung)
+python -m alembic upgrade head --sql
+
+# Zukünftig: Revision nach einer bewussten Modelländerung erzeugen und prüfen
+python -m alembic revision --autogenerate -m "kurze beschreibung"
+
+# Zukünftig: freigegebene Revisionen anwenden bzw. zurückrollen
+python -m alembic upgrade head
+python -m alembic downgrade -1
+```
+
+Autogenerierte Revisionen sind immer manuell auf Dialektunterschiede,
+Constraint-Namen, Datenverlust und eine belastbare `downgrade()`-Operation zu
+prüfen. Vor `upgrade` ist ein Backup vorgeschrieben. Migrationen werden nicht
+beim Anwendungsstart ausgeführt, damit Deployment und Schemaänderung getrennte,
+beobachtbare Schritte bleiben. Der Ordner `migrations/versions/` ist in diesem
+Sprint absichtlich leer; Baseline und Schemaänderungen gehören in Folgesprints.
+
 ## Logging und Fehler
 
 Anwendungs- und Bibliothekslogs gehen nach stdout und enthalten Level, Logger
