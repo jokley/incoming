@@ -24,19 +24,18 @@ from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from import_session_migration import migrate_import_sessions
 from single_room_status_migration import migrate_single_room_status
+from config import RuntimeSettings
+from logging_config import configure_logging
 
+settings = RuntimeSettings.from_environment()
+configure_logging(settings.log_level)
 app = Flask(__name__)
-if os.environ.get('CORS_ORIGINS'):
-    CORS(app, origins=[origin.strip() for origin in os.environ['CORS_ORIGINS'].split(',')])
+settings.apply(app)
+if settings.cors_origins:
+    CORS(app, origins=list(settings.cors_origins))
 
-# Database configuration
-basedir = os.path.abspath(os.path.dirname(__file__))
-mock_files_dir = os.path.join(basedir, 'mock_fis_files')
-data_dir = os.environ.get('APP_DATA_DIR', os.path.join(basedir, 'data'))
-os.makedirs(data_dir, exist_ok=True)
-database_path = os.environ.get('DATABASE_PATH', os.path.join(data_dir, 'freestyle_wm_new.db'))
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///' + database_path
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+mock_files_dir = str(settings.mock_files_dir)
+database_path = str(settings.database_path)
 
 migrate_import_sessions(database_path)
 db.init_app(app)
@@ -2683,7 +2682,7 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
 def get_debug_routes():
     is_production = (
         str(app.config.get('ENV', '')).lower() == 'production'
-        or os.getenv('FLASK_ENV', '').lower() == 'production'
+        or app.config.get('RUNTIME_ENV', '').lower() == 'production'
     )
     if is_production:
         return jsonify({'error': 'Not found'}), 404
@@ -2984,4 +2983,4 @@ def get_occupancy_timeline():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000)

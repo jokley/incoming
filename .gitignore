@@ -16,3 +16,5 @@ backend/mock_fis_files/*.xls
 
 # Local Incoming runtime secrets
 incoming.env
+
+backend/**/__pycache__/

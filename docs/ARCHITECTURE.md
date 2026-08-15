@@ -27,11 +27,30 @@ Farben oder Abstände parallel zu definieren.
 
 ## Backend
 
-Das Flask-Backend liegt in `backend/`. `app.py` stellt HTTP-Endpunkte und deren
-Transaktionsgrenzen bereit, `models.py` definiert die persistierten Modelle.
-Import-, Quoten- und Authentifizierungslogik ist in den gleichnamigen Modulen
-gekapselt. Schemaänderungen werden als explizite Migrationsskripte abgelegt und
-dürfen nicht stillschweigend beim Frontend-Start erfolgen.
+Das Flask-Backend liegt in `backend/`. Der Composition Root `app.py` verbindet
+HTTP-Endpunkte und deren Transaktionsgrenzen. `config.py` ist die einzige Stelle,
+die Laufzeitumgebung interpretiert; `logging_config.py` definiert die gemeinsame
+Observability-Policy. `models.py` definiert Persistenz und Beziehungen. Import-,
+Quoten- und Authentifizierungslogik ist in fachlich benannten Modulen gekapselt.
+Die detaillierte Modulmatrix und Betriebsanleitung steht in
+[`backend/README.md`](../backend/README.md).
+
+### Architekturentscheidungen für Release 1
+
+- **ADR-001 – Expliziter Composition Root:** Initialisierung bleibt sichtbar in
+  `app.py`. Konfiguration und Logging haben keine Abhängigkeit zu Routes oder
+  Modellen. Damit bleibt die Startreihenfolge überprüfbar.
+- **ADR-002 – Routes als Transaktionsgrenze:** Bestehende Commit-/Rollback-
+  Semantik wird für Release 1 bewahrt. Fachservices berechnen Ergebnisse, aber
+  erzeugen keine HTTP-Responses.
+- **ADR-003 – Keine Big-Bang-Aufteilung:** Der historisch gewachsene Route-Layer
+  wird nicht lediglich auf Dateien verteilt. Künftige Blueprints werden nur mit
+  klarer Service-/Repository-Grenze und Vertragstests extrahiert.
+- **ADR-004 – Explizite Migrationen:** Schemaänderungen werden als idempotente
+  Migrationsskripte ausgeführt. Model-Importe verändern kein Schema.
+- **ADR-005 – Produktionsserver im Container:** Gunicorn übernimmt Worker- und
+  Access-Logging; der Flask-Server bleibt ein lokales Entwicklungswerkzeug ohne
+  erzwungenen Debug-Modus.
 
 ## Abhängigkeitsregeln
 
