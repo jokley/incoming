@@ -28,7 +28,7 @@ import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
-import { DialogFooter, DialogHeader, OpsButton } from '../design-system';
+import { DialogFooter, DialogHeader, OpsButton, WorkspaceFrame } from '../design-system';
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
@@ -68,9 +68,9 @@ type PendingAssignmentAction = {
 };
 
 const REGION_COLORS: Record<string, string> = {
-  Bludenz: '#4F8EF7',
-  Montafon: '#34D399',
-  Feldkirch: '#8B5CF6',
+  Bludenz: 'var(--ops-primary)',
+  Montafon: 'var(--ops-success)',
+  Feldkirch: 'var(--ops-secondary)',
 };
 
 const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
@@ -580,13 +580,13 @@ export function Assignments() {
       {saving && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-50" role="status" aria-live="polite">
           <div className="h-1 overflow-hidden bg-blue-950"><div className="h-full w-1/2 animate-pulse bg-blue-400" /></div>
-          <div className="absolute right-4 top-3 flex items-center gap-2 rounded-lg bg-[#122033] px-3 py-2 text-xs font-semibold text-blue-100 shadow-xl">
+          <div className="absolute right-4 top-3 flex items-center gap-2 rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-xs font-semibold text-blue-100 shadow-xl">
             <RefreshCw className="h-4 w-4 animate-spin" /> Zuweisung wird verarbeitet …
           </div>
         </div>
       )}
     <div className="relative flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
-      <div className="flex h-full w-full max-w-[1980px] flex-col overflow-hidden rounded-[28px] border border-[var(--ops-border)] bg-[var(--ops-surface)] text-[var(--ops-text)] shadow-[var(--ops-shadow-md)] [--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-primary:#60a5fa] [--ops-primary-emphasis:#60a5fa] [--ops-text-muted:#c5cfdb]">
+      <WorkspaceFrame>
         <div className="p-3 pb-0"><ImportConflictNotice/></div>
         <TopBar
           view={view}
@@ -744,7 +744,7 @@ export function Assignments() {
         )}
 
         {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
-    </div>
+    </WorkspaceFrame>
     </div>
     </div>
     </Profiler>
@@ -773,7 +773,7 @@ function TopBar({
   quotaRefreshing: boolean;
 }) {
   return (
-    <div className="flex h-14 items-center justify-between border-b border-[#334766] bg-[#122033] px-4">
+    <div className="flex h-14 items-center justify-between border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-4">
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20 text-xs font-bold text-blue-300">
@@ -795,7 +795,7 @@ function TopBar({
               className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-all ${
                 view === item.id
                   ? 'border-blue-500/50 bg-blue-500/15 text-blue-200'
-                  : 'border-transparent text-slate-500 hover:bg-[#152034] hover:text-slate-300'
+                  : 'border-transparent text-slate-500 hover:bg-[var(--ops-surface-raised)] hover:text-slate-300'
               }`}
             >
               {item.label}
@@ -808,7 +808,7 @@ function TopBar({
         <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} refreshing={quotaRefreshing} />
         <div className="flex items-center gap-2">
           <div className="w-20">
-            <CapacityBar pct={progress.percent} trackClassName="bg-[#314766]" />
+            <CapacityBar pct={progress.percent} trackClassName="bg-[var(--ops-surface-overlay)]" />
           </div>
           <span className="font-mono text-slate-400">
             <strong className="text-slate-200">{progress.done}</strong> / {progress.total}
@@ -823,11 +823,11 @@ function TopBar({
 
         <button
           onClick={onRefresh}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[#152034] hover:text-slate-200"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-slate-200"
         >
           <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
         </button>
-        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[#152034] hover:text-slate-200">
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-slate-200">
           <Bell className="h-4 w-4" />
         </button>
       </div>
@@ -840,8 +840,8 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
   if (!row) return <span className="hidden text-slate-500 xl:inline">Keine Quoten verfügbar</span>;
 
   return (
-    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:border-[var(--ops-primary)] hover:bg-[#263a54] xl:flex">
-      {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[#122033]/95 py-0.5 text-[9px] text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
+    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-surface-elevated)] xl:flex">
+      {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[var(--ops-surface)]/95 py-0.5 text-[9px] text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
       <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
         <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-amber-300' : 'text-[var(--ops-text)]'}`}>
@@ -906,7 +906,7 @@ function AlertBanner({
   const message = [officialText, singleText].filter(Boolean).join(' und ');
 
   return (
-    <div className="flex items-center gap-3 border-b border-amber-700/40 bg-[#3a2614] px-4 py-2.5 text-sm text-amber-200">
+    <div className="flex items-center gap-3 border-b border-amber-700/40 bg-[var(--ops-tone-warning-surface)] px-4 py-2.5 text-sm text-amber-200">
       <AlertTriangle className="h-4 w-4 flex-shrink-0" />
       <div className="min-w-0 flex-1 truncate">
         {message || 'Quoten-Warnung'}
@@ -1085,7 +1085,7 @@ function QueueSidebar({
               />
             ))}
             {!regularUnits.length && !shareRequests.length && (
-              <div className="rounded-2xl border border-dashed border-[#5a7391] bg-[#2a3d58] px-4 py-10 text-center text-sm text-slate-300">
+              <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-slate-300">
                 Keine Einheiten mit den aktuellen Filtern.
               </div>
             )}
@@ -1151,7 +1151,7 @@ function QueueUnitCard({
       aria-busy={pending}
       className={`relative w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging || pending ? 'opacity-60' : ''}`}
     >
-      {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[#122033] px-2 py-1 text-[9px] font-semibold text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
+      {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
       {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">Disposition prüfen</span>}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -1523,7 +1523,7 @@ function HotelGridView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex flex-wrap items-center gap-3 border-b border-[#49617d] px-4 py-3">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--ops-divider)] px-4 py-3">
         <SearchInput value={hotelSearch} onChange={onHotelSearch} placeholder="Hotels oder Orte suchen..." dark />
         <div className="flex items-center gap-1">
           {['', 'Bludenz', 'Feldkirch', 'Montafon'].map((region) => (
@@ -1534,8 +1534,8 @@ function HotelGridView({
                 regionFilter === region
                   ? region
                     ? 'border border-blue-700/40 bg-blue-500/15 text-blue-300'
-                  : 'bg-[#314763] text-slate-100'
-                  : 'text-slate-400 hover:bg-[#344b68] hover:text-white'
+                  : 'bg-[var(--ops-surface-elevated)] text-slate-100'
+                  : 'text-slate-400 hover:bg-[var(--ops-surface-overlay)] hover:text-white'
               }`}
             >
               {region || 'Alle Regionen'}
@@ -1552,7 +1552,7 @@ function HotelGridView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-3 [scrollbar-color:#5e7aa0_#263a54] [scrollbar-width:thin]">
+      <div className="flex-1 overflow-y-auto p-3">
         <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-3">
           {hotels.map((hotel) => (
             <HotelCard
@@ -1599,7 +1599,7 @@ function HotelCard({
   pending: boolean;
 }) {
   const totals = summarizeHotel(hotel);
-  const regionColor = REGION_COLORS[hotel.region || ''] || '#4F8EF7';
+  const regionColor = REGION_COLORS[hotel.region || ''] || 'var(--ops-primary)';
   const contingentRange = getHotelContingentRange(hotel);
 
   return (
@@ -1622,11 +1622,11 @@ function HotelCard({
             ? 'scale-[1.02] border-blue-400/60 bg-blue-500/15'
             : 'border-red-400/50 bg-red-500/10'
           : active
-            ? 'border-blue-400/60 bg-[#395274]'
-            : 'border-[#506987] bg-[#314763] hover:border-[#6580a1] hover:bg-[#395274]'
+            ? 'border-blue-400/60 bg-[var(--ops-surface-overlay)]'
+            : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)]'
       }`}
     >
-      {pending && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#122033]/55" role="status" aria-live="polite"><span className="flex items-center gap-2 rounded-lg bg-[#122033] px-3 py-2 text-xs font-semibold text-blue-100"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span></div>}
+      {pending && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ops-surface)]/55" role="status" aria-live="polite"><span className="flex items-center gap-2 rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-xs font-semibold text-blue-100"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span></div>}
       <div className="h-[3px] w-full" style={{ backgroundColor: regionColor }} />
       <div className="flex flex-1 flex-col gap-2 p-3">
         <div className="flex items-start justify-between gap-2">
@@ -1637,7 +1637,7 @@ function HotelCard({
             </div>
             <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
-          <div className="rounded-md border border-[#5e7898] bg-[#405978] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+          <div className="rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-slate-100">
             {totals.totalRooms} Zimmer
           </div>
         </div>
@@ -1669,7 +1669,7 @@ function HotelCard({
         </div>
       </div>
 
-      <div className="flex items-center justify-between border-t border-[#49617d]/60 px-3 py-2">
+      <div className="flex items-center justify-between border-t border-[var(--ops-divider)]/60 px-3 py-2">
         <span className="text-[10px] text-slate-400">{totals.roomTypes.length} Zimmertypen</span>
         <div className={`flex items-center gap-1 text-[11px] font-bold ${dragOver && canDrop ? 'text-blue-200' : active ? 'text-blue-200' : 'text-slate-400 group-hover:text-blue-200'}`}>
           {dragging && dragOver ? (canDrop ? 'Loslassen zum Zuweisen' : 'Blockiert') : 'Öffnen →'}
@@ -1741,11 +1741,11 @@ function HotelDetailView({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[#49617d] bg-[#314763] px-4 py-2.5">
+      <div className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] px-4 py-2.5">
         <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-[#496688] hover:text-white"
+              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-[var(--ops-surface-overlay)] hover:text-white"
             >
               <ChevronLeft className="mr-1 inline h-3.5 w-3.5" />
             Alle Hotels
@@ -1755,7 +1755,7 @@ function HotelDetailView({
             <div className="flex items-center gap-2 text-[11px] text-slate-400">
               <span>{hotel.location || '—'}</span>
               <span>·</span>
-              <span style={{ color: REGION_COLORS[hotel.region || ''] || '#4F8EF7' }}>{hotel.region}</span>
+              <span style={{ color: REGION_COLORS[hotel.region || ''] || 'var(--ops-primary)' }}>{hotel.region}</span>
             </div>
             <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
@@ -1774,7 +1774,7 @@ function HotelDetailView({
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto bg-[#2b405d] p-3 [scrollbar-color:#5e7aa0_#263a54] [scrollbar-width:thin]">
+      <div className="flex-1 overflow-y-auto bg-[var(--ops-surface-raised)] p-3">
         <div className="space-y-2.5">
           {grouped.map((group) => {
             const summary = summarizeRoomType(group.slots);
@@ -1783,16 +1783,16 @@ function HotelDetailView({
             const canDrop = !!draggingUnitId && hasSlotForRoomType(group.slots);
 
             return (
-              <div key={group.roomTypeId} className="overflow-hidden rounded-2xl border border-[#506987]">
+              <div key={group.roomTypeId} className="overflow-hidden rounded-2xl border border-[var(--ops-border)]">
                 <button
                   onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
-                  className="flex w-full items-center gap-3 bg-[#395274] px-3 py-2.5 text-left hover:bg-[#45607f]"
+                  className="flex w-full items-center gap-3 bg-[var(--ops-surface-overlay)] px-3 py-2.5 text-left hover:bg-[var(--ops-surface-overlay)]"
                 >
                   <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
                       <span className="text-[15px] font-extrabold text-white">{group.roomTypeName}</span>
-                      <span className="rounded-md bg-[#4a6382] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+                      <span className="rounded-md bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-slate-100">
                         {summary.capacityPerRoom}p max
                       </span>
                     </div>
@@ -1836,13 +1836,13 @@ function HotelDetailView({
                         disabled={pendingAction?.bookingId === entry.booking.bookingId}
                         className={`relative flex h-full w-full items-start justify-between rounded-xl border px-3 py-2 text-left transition-all ${
                           selectedBookingId === entry.booking.bookingId
-                            ? 'border-blue-400/60 bg-[#45607f]'
+                            ? 'border-blue-400/60 bg-[var(--ops-surface-overlay)]'
                             : isBookingDropTarget && canAddPartner
                               ? 'border-violet-400/70 bg-violet-500/15'
-                              : 'border-[#506987] bg-[#395274] hover:border-[#6580a1]'
+                              : 'border-[var(--ops-border)] bg-[var(--ops-surface-overlay)] hover:border-[var(--ops-border-strong)]'
                         }`}
                       >
-                        {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[#122033]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
+                        {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[var(--ops-surface)]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
                         <div className="flex min-w-0 items-start gap-3">
                           <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
                             {entry.slot.roomNumber || `#${index + 1}`}
@@ -1891,7 +1891,7 @@ function HotelDetailView({
                             ? canDrop
                               ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
                               : 'border-red-500/60 bg-red-500/10 text-red-200'
-                            : 'border-[#5a7391] bg-[#395274] text-slate-200'
+                            : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] text-slate-200'
                         }`}
                       >
                         <div className="text-base font-extrabold">
@@ -1940,12 +1940,12 @@ function AthletesPanel({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[#2D4260] bg-[#1C2B42] px-4 py-3">
+      <div className="border-b border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-4 py-3">
         <SearchInput value={search} onChange={setSearch} placeholder="Athleten suchen..." dark />
       </div>
       <div className="flex-1 overflow-auto">
         <table className="min-w-full text-sm">
-          <thead className="sticky top-0 bg-[#0C1624]">
+          <thead className="sticky top-0 bg-[var(--ops-surface)]">
             <tr>
               {['Name', 'Nation', 'Disz.', 'Gender', 'Anr.', 'Abr.', 'Status'].map((heading) => (
                 <th key={heading} className="px-3 py-2.5 text-left text-[9px] font-bold uppercase tracking-widest text-slate-600">
@@ -1954,12 +1954,12 @@ function AthletesPanel({
               ))}
             </tr>
           </thead>
-          <tbody className="divide-y divide-[#1A2035]">
+          <tbody className="divide-y divide-[var(--ops-divider)]">
             {filtered.map((athlete) => (
               <tr
                 key={athlete.id}
                 onClick={() => onSelectAthlete(athlete.id)}
-                className={`cursor-pointer transition-colors ${selectedAthleteId === athlete.id ? 'bg-[#1E3358]' : 'hover:bg-[#1C2B42]'}`}
+                className={`cursor-pointer transition-colors ${selectedAthleteId === athlete.id ? 'bg-[var(--ops-tone-primary-surface)]' : 'hover:bg-[var(--ops-surface-raised)]'}`}
               >
                 <td className="px-3 py-2.5 text-xs font-semibold text-slate-200">{athlete.firstname} {athlete.lastname}</td>
                 <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.nationCode}</td>
@@ -2297,12 +2297,12 @@ function DetailPanel({
   if (!selectedUnit && !selectedBookingContext) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[#2D4260] bg-[#243550] text-slate-500">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] text-slate-500">
           <Eye className="h-5 w-5" />
         </div>
         <div className="text-lg font-semibold text-slate-300">Nichts ausgewählt</div>
         <div className="mt-2 text-sm text-slate-500">Wähle eine Buchung oder eine Einheit aus</div>
-        <div className="mt-6 rounded-2xl border border-dashed border-[#2D4260] px-6 py-4 text-sm text-slate-500">
+        <div className="mt-6 rounded-2xl border border-dashed border-[var(--ops-border)] px-6 py-4 text-sm text-slate-500">
           Ziehe eine Einheit aus der Warteschlange auf freie Zimmerbereiche
         </div>
       </div>
@@ -2316,7 +2316,7 @@ function DetailPanel({
         <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (
-              <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
+              <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <div className="text-sm font-semibold text-slate-100">{occupant.name}</div>
@@ -2349,7 +2349,7 @@ function DetailPanel({
               </div>
             </div>
           </div>
-          <div className="mt-3 rounded-xl border border-[#39506f] bg-[#243650] p-3 text-xs text-slate-300">
+          <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-slate-300">
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-slate-500">Hotel</div>
@@ -2370,7 +2370,7 @@ function DetailPanel({
             </div>
           </div>
           {(booking.capacity || 0) === 2 && (
-            <div className="mt-3 rounded-xl border border-[#39506f] bg-[#243650] p-3 text-xs font-semibold text-slate-200">
+            <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs font-semibold text-slate-200">
               {booking.countsAsSingle ? 'DZ wird aktuell exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}
             </div>
           )}
@@ -2392,7 +2392,7 @@ function DetailPanel({
               className={`flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
                 booking.countsAsSingle
                   ? 'border-amber-700/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
-                  : 'border-[#5e7aa0] bg-[#314763] text-slate-100 hover:bg-[#395274]'
+                  : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-slate-100 hover:bg-[var(--ops-surface-overlay)]'
               }`}
             >
               {pendingAction?.kind === 'single' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Bed className="h-3.5 w-3.5" />}
@@ -2425,7 +2425,7 @@ function DetailPanel({
           <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
         </div>
       )}
-      <div className="border-b border-[#334766] px-4 py-4">
+      <div className="border-b border-[var(--ops-divider)] px-4 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-blue-200">
             {selectedUnit.nationCode}
@@ -2442,11 +2442,11 @@ function DetailPanel({
         </div>
       </div>
 
-      <div className="border-b border-[#334766] px-4 py-4">
+      <div className="border-b border-[var(--ops-divider)] px-4 py-4">
         <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Bewohner</div>
         <div className="space-y-2">
           {selectedUnit.occupants.map((occupant) => (
-            <div key={occupant.athleteId} className="rounded-xl border border-[#425a79] bg-[#2a3e5d] px-3 py-2">
+            <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <div>
                   <div className="text-sm font-semibold text-slate-100">{occupant.firstname} {occupant.lastname}</div>
@@ -2489,7 +2489,7 @@ function DetailPanel({
                 </div>
               </div>
             </div>
-            <div className="rounded-xl border border-[#39506f] bg-[#243650] p-3 text-xs text-slate-300">
+            <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-slate-300">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <div className="text-[10px] uppercase tracking-wide text-slate-500">Nation</div>
@@ -2568,7 +2568,7 @@ function SearchInput({
         placeholder={placeholder}
         className={`w-full rounded-xl border pl-9 pr-3 py-2 text-sm transition-all focus:outline-none ${
           dark
-            ? 'border-[#425a79] bg-[#213550] text-slate-100 placeholder:text-slate-500 focus:border-blue-400/50'
+            ? 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] text-slate-100 placeholder:text-slate-500 focus:border-blue-400/50'
             : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-blue-500'
         }`}
       />
@@ -2629,7 +2629,7 @@ function DarkSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full appearance-none rounded-xl border border-[#2D4260] bg-[#152034] px-3 py-2 text-sm text-slate-300 transition-all focus:border-blue-500/50 focus:outline-none"
+        className="w-full appearance-none rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-3 py-2 text-sm text-slate-300 transition-all focus:border-blue-500/50 focus:outline-none"
       >
         <option value="">{placeholder}</option>
         {options.map((option) => (
@@ -2646,7 +2646,7 @@ function DarkSelect({
 function CapacityBar({
   pct,
   className = '',
-  trackClassName = 'bg-[#253A56]',
+  trackClassName = 'bg-[var(--ops-surface-overlay)]',
 }: {
   pct: number;
   className?: string;

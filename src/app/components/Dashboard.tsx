@@ -73,53 +73,6 @@ function TextLink({ children, to }: { children: ReactNode; to: string }) {
   return <Link to={to} className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--ops-primary)] transition-colors hover:text-[var(--ops-primary-emphasis)] focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]">{children}<OpenInNewRoundedIcon fontSize="inherit" /></Link>;
 }
 
-const dashboardReadabilityTheme = {
-  '--ops-background': '#0B1220',
-  '--ops-surface': '#172234',
-  '--ops-surface-raised': '#1D2A3D',
-  '--ops-surface-elevated': '#223149',
-  '--ops-surface-overlay': '#2A3B54',
-  '--ops-border': 'rgba(240, 246, 252, 0.07)',
-  '--ops-border-strong': 'rgba(240, 246, 252, 0.14)',
-  '--ops-divider': 'rgba(240, 246, 252, 0.06)',
-  '--ops-primary': '#60AFFF',
-  '--ops-primary-emphasis': '#58A6FF',
-  '--ops-secondary': '#79C0FF',
-  '--ops-success': '#3FB950',
-  '--ops-warning': '#D29922',
-  '--ops-error': '#F85149',
-  '--ops-info': '#58A6FF',
-  '--ops-text': '#F0F6FC',
-  '--ops-text-muted': '#C9D1D9',
-  '--ops-text-subtle': '#D0D7DE',
-  '--ops-tone-neutral-border': 'rgba(240, 246, 252, 0.12)',
-  '--ops-tone-neutral-surface': 'rgba(201, 209, 217, 0.12)',
-  '--ops-tone-neutral-text': '#F0F6FC',
-  '--ops-tone-primary-border': 'rgba(88, 166, 255, 0.45)',
-  '--ops-tone-primary-surface': 'rgba(56, 139, 253, 0.20)',
-  '--ops-tone-primary-text': '#DDF4FF',
-  '--ops-tone-success-border': 'rgba(63, 185, 80, 0.50)',
-  '--ops-tone-success-surface': 'rgba(46, 160, 67, 0.20)',
-  '--ops-tone-success-text': '#D2FEDB',
-  '--ops-tone-warning-border': 'rgba(210, 153, 34, 0.52)',
-  '--ops-tone-warning-surface': 'rgba(187, 128, 9, 0.22)',
-  '--ops-tone-warning-text': '#FFF8C5',
-  '--ops-tone-error-border': 'rgba(248, 81, 73, 0.52)',
-  '--ops-tone-error-surface': 'rgba(218, 54, 51, 0.22)',
-  '--ops-tone-error-text': '#FFDCD7',
-  '--ops-tone-info-border': 'rgba(88, 166, 255, 0.45)',
-  '--ops-tone-info-surface': 'rgba(56, 139, 253, 0.18)',
-  '--ops-tone-info-text': '#DDF4FF',
-  '--ops-type-section-title-size': '0.9rem',
-  '--ops-type-caption-size': '0.8125rem',
-  '--ops-type-label-size': '0.75rem',
-  '--ops-type-kpi-size': '2rem',
-  '--ops-shadow-xs': '0 1px 2px rgba(1, 4, 9, 0.18)',
-  '--ops-shadow-sm': '0 8px 24px rgba(1, 4, 9, 0.16)',
-  '--ops-shadow-md': '0 14px 36px rgba(1, 4, 9, 0.20)',
-  '--ops-shadow-lg': '0 20px 52px rgba(1, 4, 9, 0.24)',
-};
-
 export function Dashboard() {
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [hotels, setHotels] = useState<HotelType[]>([]);
@@ -312,7 +265,7 @@ export function Dashboard() {
   if (loading) return <LoadingState label="Dashboard-Lagebild wird geladen…" />;
 
   return (
-    <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]" style={dashboardReadabilityTheme}>
+    <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
       <ContentCard className="p-3" surface="raised" elevation="none">
         <SectionHeader title="Operations Center" subtitle="Projektstatus, heutige Bewegungen und direkte Einstiege in die Arbeitsbereiche." actions={<StatusChip tone={operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'warning' : 'success'}>{operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
