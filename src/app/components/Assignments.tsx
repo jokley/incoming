@@ -604,7 +604,7 @@ export function Assignments() {
         )}
 
         <div className={`grid min-h-0 flex-1 border-t border-[var(--ops-divider)] ${view === 'dispatch' ? 'grid-cols-[352px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
-          {view === 'dispatch' && <aside className="min-h-0 border-r border-[var(--ops-divider)] bg-[var(--ops-surface-raised)]">
+          {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
             <QueueSidebar
               units={queueUnits}
               regularUnits={regularQueueUnits}
@@ -652,7 +652,7 @@ export function Assignments() {
             />
           </aside>}
 
-          <main className="min-h-0 overflow-hidden bg-[var(--ops-surface-elevated)]">
+          <main className="min-h-0 overflow-hidden bg-[var(--ops-assignment-canvas)]">
             {view === 'dispatch' && (
               filteredHotels.length > 0 ? (
                 <DispatchWorkspace
@@ -776,12 +776,12 @@ function TopBar({
     <div className="flex h-14 items-center justify-between border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-4">
       <div className="flex items-center gap-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20 text-xs font-bold text-blue-300">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20 text-xs font-bold text-[var(--ops-assignment-text-accent-strong)]">
             FIS
           </div>
           <div>
-            <div className="text-sm font-bold text-white">NWSC 2027</div>
-            <div className="text-[10px] uppercase tracking-[0.22em] text-slate-400">Zimmer-Disposition</div>
+            <div className="text-sm font-bold text-[var(--ops-assignment-text-bright)]">NWSC 2027</div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-[var(--ops-assignment-text-muted)]">Zimmer-Disposition</div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -794,8 +794,8 @@ function TopBar({
               onClick={() => onViewChange(item.id as AppView)}
               className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-all ${
                 view === item.id
-                  ? 'border-blue-500/50 bg-blue-500/15 text-blue-200'
-                  : 'border-transparent text-slate-500 hover:bg-[var(--ops-surface-raised)] hover:text-slate-300'
+                  ? 'border-blue-500/50 bg-blue-500/15 text-[var(--ops-assignment-text-accent)]'
+                  : 'border-transparent text-[var(--ops-assignment-text-faint)] hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]'
               }`}
             >
               {item.label}
@@ -808,26 +808,26 @@ function TopBar({
         <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} refreshing={quotaRefreshing} />
         <div className="flex items-center gap-2">
           <div className="w-20">
-            <CapacityBar pct={progress.percent} trackClassName="bg-[var(--ops-surface-overlay)]" />
+            <CapacityBar pct={progress.percent} />
           </div>
-          <span className="font-mono text-slate-400">
-            <strong className="text-slate-200">{progress.done}</strong> / {progress.total}
+          <span className="font-mono text-[var(--ops-assignment-text-muted)]">
+            <strong className="text-[var(--ops-assignment-text-body)]">{progress.done}</strong> / {progress.total}
           </span>
         </div>
 
         {violations > 0 && (
-          <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-amber-300">
+          <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
             {violations} Quote
           </div>
         )}
 
         <button
           onClick={onRefresh}
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-slate-200"
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ops-assignment-text-faint)] transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]"
         >
           <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
         </button>
-        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-slate-200">
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ops-assignment-text-faint)] transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]">
           <Bell className="h-4 w-4" />
         </button>
       </div>
@@ -837,21 +837,21 @@ function TopBar({
 
 function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage[]; onOpen: () => void; refreshing: boolean }) {
   const row = rows[0];
-  if (!row) return <span className="hidden text-slate-500 xl:inline">Keine Quoten verfügbar</span>;
+  if (!row) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
 
   return (
-    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-surface-elevated)] xl:flex">
-      {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[var(--ops-surface)]/95 py-0.5 text-[9px] text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
+    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
+      {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[var(--ops-surface)]/95 py-0.5 text-[9px] text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
       <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
-        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-amber-300' : 'text-[var(--ops-text)]'}`}>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
           {row.assignedOfficials} / {row.officialQuota}
           {row.assignedOfficials <= row.officialQuota && <Check className="h-3.5 w-3.5 text-emerald-400" />}
         </span>
       </span>
       <span className="min-w-[112px] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Single Rooms</span>
-        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.singleRoomsUsed > row.singleRoomsAllowed ? 'text-amber-300' : 'text-[var(--ops-text)]'}`}>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.singleRoomsUsed > row.singleRoomsAllowed ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
           {row.singleRoomsUsed} / {row.singleRoomsAllowed}
           {row.singleRoomsUsed <= row.singleRoomsAllowed && <Check className="h-3.5 w-3.5 text-emerald-400" />}
         </span>
@@ -911,10 +911,10 @@ function AlertBanner({
       <div className="min-w-0 flex-1 truncate">
         {message || 'Quoten-Warnung'}
       </div>
-      <button onClick={onGoQuotas} className="font-semibold text-amber-200 hover:text-white">
+      <button onClick={onGoQuotas} className="font-semibold text-amber-200 hover:text-[var(--ops-assignment-text-bright)]">
         Zu den Quoten →
       </button>
-      <button onClick={onClose} className="text-amber-400 hover:text-white">
+      <button onClick={onClose} className="text-amber-400 hover:text-[var(--ops-assignment-text-bright)]">
         <X className="h-4 w-4" />
       </button>
     </div>
@@ -991,10 +991,10 @@ function QueueSidebar({
       <div className="border-b border-[var(--ops-border)] px-3 py-2.5">
         <div className="mb-2 flex items-center justify-between">
           <div>
-            <div className="text-sm font-bold uppercase tracking-wide text-slate-100">Dispo-Warteschlange</div>
-            <div className="text-xs text-slate-400">{units.length} passende Einheiten</div>
+            <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
+            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} passende Einheiten</div>
           </div>
-          <div className="rounded-xl border border-amber-700/40 bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-amber-300">
+          <div className="rounded-xl border border-amber-700/40 bg-amber-500/10 px-2.5 py-1 text-xs font-bold text-[var(--ops-assignment-text-warning)]">
             {units.length}
           </div>
         </div>
@@ -1038,7 +1038,7 @@ function QueueSidebar({
         {shareRequests.length > 0 && (
           <div className="border-b border-[var(--ops-divider)] px-3 py-2">
             <div className="mb-2 flex items-center justify-between px-1">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-slate-400">
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[var(--ops-assignment-text-muted)]">
                 <Link2 className="h-3.5 w-3.5 text-violet-400" />
                 Zimmerpartner
               </div>
@@ -1085,7 +1085,7 @@ function QueueSidebar({
               />
             ))}
             {!regularUnits.length && !shareRequests.length && (
-              <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-slate-300">
+              <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-[var(--ops-assignment-text-body)]">
                 Keine Einheiten mit den aktuellen Filtern.
               </div>
             )}
@@ -1095,13 +1095,13 @@ function QueueSidebar({
 
       <div className="border-t border-[var(--ops-divider)] px-4 py-3">
         <div className="mb-2 flex items-center justify-between text-xs">
-          <span className="text-slate-400">Gesamtfortschritt</span>
-          <span className="font-mono text-slate-300">{progress.done}/{progress.total}</span>
+          <span className="text-[var(--ops-assignment-text-muted)]">Gesamtfortschritt</span>
+          <span className="font-mono text-[var(--ops-assignment-text-body)]">{progress.done}/{progress.total}</span>
         </div>
         <CapacityBar pct={progress.percent} />
         <div className="mt-2 flex items-center justify-between text-[11px]">
-          <span className="text-blue-300">{progress.percent}%</span>
-          <span className="text-slate-400">{Math.max(progress.total - progress.done, 0)} offen</span>
+          <span className="text-[var(--ops-assignment-text-accent-strong)]">{progress.percent}%</span>
+          <span className="text-[var(--ops-assignment-text-muted)]">{Math.max(progress.total - progress.done, 0)} offen</span>
         </div>
       </div>
     </div>
@@ -1151,7 +1151,7 @@ function QueueUnitCard({
       aria-busy={pending}
       className={`relative w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging || pending ? 'opacity-60' : ''}`}
     >
-      {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
+      {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
       {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">Disposition prüfen</span>}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -1265,10 +1265,10 @@ function QueueOccupantActionRow({
     <div className={`rounded-lg border px-2.5 py-1.5 ${occupant.isAssigned ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'} ${isDragging ? 'opacity-70' : ''}`}>
       <div className="flex items-center justify-between gap-2">
         <div>
-          <div className="text-[11px] uppercase tracking-wide text-slate-400">{title}</div>
+          <div className="text-[11px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">{title}</div>
           <div className="text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>
         </div>
-        <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-slate-300'}`}>
+        <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-[var(--ops-assignment-text-body)]'}`}>
           {occupant.isAssigned ? 'zugewiesen' : 'offen'}
         </span>
       </div>
@@ -1533,9 +1533,9 @@ function HotelGridView({
               className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
                 regionFilter === region
                   ? region
-                    ? 'border border-blue-700/40 bg-blue-500/15 text-blue-300'
-                  : 'bg-[var(--ops-surface-elevated)] text-slate-100'
-                  : 'text-slate-400 hover:bg-[var(--ops-surface-overlay)] hover:text-white'
+                    ? 'border border-blue-700/40 bg-blue-500/15 text-[var(--ops-assignment-text-accent-strong)]'
+                  : 'bg-[var(--ops-surface-elevated)] text-[var(--ops-assignment-text-strong)]'
+                  : 'text-[var(--ops-assignment-text-muted)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-assignment-text-bright)]'
               }`}
             >
               {region || 'Alle Regionen'}
@@ -1543,8 +1543,8 @@ function HotelGridView({
           ))}
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs">
-          <span className="font-mono text-slate-300">
-            <strong className="text-white">{usedBeds}</strong> / {totalBeds} Betten
+          <span className="font-mono text-[var(--ops-assignment-text-body)]">
+            <strong className="text-[var(--ops-assignment-text-bright)]">{usedBeds}</strong> / {totalBeds} Betten
           </span>
           <div className="w-24">
             <CapacityBar pct={totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0} />
@@ -1623,7 +1623,7 @@ function HotelCard({
             : 'border-red-400/50 bg-red-500/10'
           : active
             ? 'border-blue-400/60 bg-[var(--ops-surface-overlay)]'
-            : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)]'
+            : 'border-[var(--ops-border)] bg-[var(--ops-assignment-card)] shadow-[var(--ops-assignment-card-shadow)] hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-card-hover-shadow)]'
       }`}
     >
       {pending && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ops-surface)]/55" role="status" aria-live="polite"><span className="flex items-center gap-2 rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-xs font-semibold text-blue-100"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span></div>}
@@ -1637,20 +1637,20 @@ function HotelCard({
             </div>
             <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
-          <div className="rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+          <div className="rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-[var(--ops-assignment-text-strong)]">
             {totals.totalRooms} Zimmer
           </div>
         </div>
 
-        <div className="rounded-lg bg-[var(--ops-surface-raised)] px-2.5 py-2">
+        <div className="rounded-lg border border-[var(--ops-assignment-card-header-border)] bg-[var(--ops-assignment-card-header)] px-2.5 py-2">
           <div className="mb-1.5 flex items-center justify-between text-[11px]">
             <span className="font-semibold text-[var(--ops-text-subtle)]"><strong className="text-sm font-extrabold text-[var(--ops-text)]">{totals.usedBeds}</strong> belegt · <strong className="text-sm font-extrabold text-[var(--ops-success)]">{Math.max(0, totals.totalBeds - totals.usedBeds)}</strong> frei</span>
-            <span className={`font-mono text-xs font-bold ${totals.percent >= 75 ? 'text-amber-300' : totals.percent > 0 ? 'text-blue-200' : 'text-slate-500'}`}>
+            <span className={`font-mono text-xs font-bold ${totals.percent >= 75 ? 'text-[var(--ops-assignment-text-warning)]' : totals.percent > 0 ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-faint)]'}`}>
               {totals.percent}%
             </span>
           </div>
           <CapacityBar pct={totals.percent} className="h-1.5" />
-          <div className="mt-1.5 flex items-center justify-between text-[9px] text-slate-400">
+          <div className="mt-1.5 flex items-center justify-between text-[9px] text-[var(--ops-assignment-text-muted)]">
             <span>{totals.usedRooms} Zimmer belegt</span>
             <span>{totals.totalRooms - totals.usedRooms} frei</span>
           </div>
@@ -1670,8 +1670,8 @@ function HotelCard({
       </div>
 
       <div className="flex items-center justify-between border-t border-[var(--ops-divider)]/60 px-3 py-2">
-        <span className="text-[10px] text-slate-400">{totals.roomTypes.length} Zimmertypen</span>
-        <div className={`flex items-center gap-1 text-[11px] font-bold ${dragOver && canDrop ? 'text-blue-200' : active ? 'text-blue-200' : 'text-slate-400 group-hover:text-blue-200'}`}>
+        <span className="text-[10px] text-[var(--ops-assignment-text-muted)]">{totals.roomTypes.length} Zimmertypen</span>
+        <div className={`flex items-center gap-1 text-[11px] font-bold ${dragOver && canDrop ? 'text-[var(--ops-assignment-text-accent)]' : active ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)] group-hover:text-[var(--ops-assignment-text-accent)]'}`}>
           {dragging && dragOver ? (canDrop ? 'Loslassen zum Zuweisen' : 'Blockiert') : 'Öffnen →'}
         </div>
       </div>
@@ -1745,14 +1745,14 @@ function HotelDetailView({
         <div className="flex items-center gap-3">
             <button
               onClick={onBack}
-              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-200 transition-colors hover:bg-[var(--ops-surface-overlay)] hover:text-white"
+              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-[var(--ops-assignment-text-body)] transition-colors hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-assignment-text-bright)]"
             >
               <ChevronLeft className="mr-1 inline h-3.5 w-3.5" />
             Alle Hotels
           </button>
           <div className="flex-1">
             <h2 className="truncate text-lg font-extrabold text-[var(--ops-text)]">{hotel.hotelName}</h2>
-            <div className="flex items-center gap-2 text-[11px] text-slate-400">
+            <div className="flex items-center gap-2 text-[11px] text-[var(--ops-assignment-text-muted)]">
               <span>{hotel.location || '—'}</span>
               <span>·</span>
               <span style={{ color: REGION_COLORS[hotel.region || ''] || 'var(--ops-primary)' }}>{hotel.region}</span>
@@ -1761,11 +1761,11 @@ function HotelDetailView({
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <div className="font-mono text-base font-bold text-slate-100">
+              <div className="font-mono text-base font-bold text-[var(--ops-assignment-text-strong)]">
                 {totals.usedBeds}
-                <span className="text-sm text-slate-500">/{totals.totalBeds}</span>
+                <span className="text-sm text-[var(--ops-assignment-text-faint)]">/{totals.totalBeds}</span>
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-slate-400">belegte Betten</div>
+              <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">belegte Betten</div>
             </div>
             <div className="w-24">
               <CapacityBar pct={totals.percent} />
@@ -1788,15 +1788,15 @@ function HotelDetailView({
                   onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
                   className="flex w-full items-center gap-3 bg-[var(--ops-surface-overlay)] px-3 py-2.5 text-left hover:bg-[var(--ops-surface-overlay)]"
                 >
-                  <ChevronDown className={`h-4 w-4 text-slate-500 transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+                  <ChevronDown className={`h-4 w-4 text-[var(--ops-assignment-text-faint)] transition-transform ${isOpen ? '' : '-rotate-90'}`} />
                   <div className="flex-1">
                     <div className="flex items-center gap-2">
-                      <span className="text-[15px] font-extrabold text-white">{group.roomTypeName}</span>
-                      <span className="rounded-md bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-slate-100">
+                      <span className="text-[15px] font-extrabold text-[var(--ops-assignment-text-bright)]">{group.roomTypeName}</span>
+                      <span className="rounded-md bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-[var(--ops-assignment-text-strong)]">
                         {summary.capacityPerRoom}p max
                       </span>
                     </div>
-                    <div className="mt-0.5 text-xs font-mono text-slate-400">
+                    <div className="mt-0.5 text-xs font-mono text-[var(--ops-assignment-text-muted)]">
                       {summary.usedRooms}/{summary.totalRooms} Zimmer · {summary.usedBeds}/{summary.totalBeds} Betten
                     </div>
                   </div>
@@ -1851,15 +1851,15 @@ function HotelDetailView({
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
-                            <div className="mt-0.5 truncate text-sm font-extrabold text-white">
+                            <div className="mt-0.5 truncate text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-amber-600/50 bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-200">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-emerald-700/50 bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
+                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-amber-600/50 bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-200">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-emerald-700/50 bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
                               </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-emerald-300">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
                               {canAddPartner && (
-                                <span className={`${isBookingDropTarget ? 'text-blue-200' : 'text-slate-400'}`}>
+                                <span className={`${isBookingDropTarget ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)]'}`}>
                                   Partner hinzufügen
                                 </span>
                               )}
@@ -1891,7 +1891,7 @@ function HotelDetailView({
                             ? canDrop
                               ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
                               : 'border-red-500/60 bg-red-500/10 text-red-200'
-                            : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] text-slate-200'
+                            : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] text-[var(--ops-assignment-text-body)]'
                         }`}
                       >
                         <div className="text-base font-extrabold">
@@ -1900,7 +1900,7 @@ function HotelDetailView({
                             : `${summary.remainingRooms} freie Zimmer`}
                         </div>
                         {dragOverRoomTypeKey !== roomTypeKey && (
-                          <div className="mt-1 text-xs font-medium text-slate-400">Hier zum Zuweisen ablegen</div>
+                          <div className="mt-1 text-xs font-medium text-[var(--ops-assignment-text-muted)]">Hier zum Zuweisen ablegen</div>
                         )}
                       </div>
                     ) : (
@@ -1961,12 +1961,12 @@ function AthletesPanel({
                 onClick={() => onSelectAthlete(athlete.id)}
                 className={`cursor-pointer transition-colors ${selectedAthleteId === athlete.id ? 'bg-[var(--ops-tone-primary-surface)]' : 'hover:bg-[var(--ops-surface-raised)]'}`}
               >
-                <td className="px-3 py-2.5 text-xs font-semibold text-slate-200">{athlete.firstname} {athlete.lastname}</td>
-                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.nationCode}</td>
-                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.discipline || '—'}</td>
-                <td className="px-3 py-2.5 text-xs text-slate-400">{normalizeGender(athlete.gender) || '—'}</td>
-                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.arrivalDate || '—'}</td>
-                <td className="px-3 py-2.5 text-xs text-slate-400">{athlete.departureDate || '—'}</td>
+                <td className="px-3 py-2.5 text-xs font-semibold text-[var(--ops-assignment-text-body)]">{athlete.firstname} {athlete.lastname}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.nationCode}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.discipline || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{normalizeGender(athlete.gender) || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.arrivalDate || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.departureDate || '—'}</td>
                 <td className="px-3 py-2.5 text-xs">
                   {athlete.assignment?.hasAssignment ? (
                     <span className="rounded-lg border border-emerald-800/50 bg-emerald-950/50 px-2 py-0.5 font-semibold text-emerald-400">Erledigt</span>
@@ -2094,7 +2094,7 @@ function QuotasPanel({
         <div>
           <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--ops-primary)]"><Flag className="h-3.5 w-3.5" /> Live-Regelzentrale</div>
           <h2 className="text-xl font-bold text-[var(--ops-text)]">Quoten nach Nation, Disziplin &amp; Gender</h2>
-          <p className="mt-1 flex items-center gap-2 text-sm text-[var(--ops-text-muted)]">Regelverstöße, Freigaben und Dispositionsstand auf einen Blick. {refreshing && <span className="flex items-center gap-1 text-blue-200" role="status" aria-live="polite"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> wird aktualisiert</span>}</p>
+          <p className="mt-1 flex items-center gap-2 text-sm text-[var(--ops-text-muted)]">Regelverstöße, Freigaben und Dispositionsstand auf einen Blick. {refreshing && <span className="flex items-center gap-1 text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> wird aktualisiert</span>}</p>
         </div>
         <div className="flex gap-2">
           <SummaryPill label="Kombinationen" value={cards.length} />
@@ -2123,8 +2123,8 @@ function QuotasPanel({
               <div className="p-5">
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div className="flex items-center gap-3">
-                    <div className="flex h-11 min-w-11 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-white">{card.nationCode}</div>
-                    <div><div className="font-bold text-white">{card.nationCode} · {card.discipline} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quotengruppe</div></div>
+                    <div className="flex h-11 min-w-11 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div>
+                    <div><div className="font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {card.discipline} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quotengruppe</div></div>
                   </div>
                   <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
                 </div>
@@ -2162,7 +2162,7 @@ function QuotasPanel({
 }
 
 function SummaryPill({ label, value, warning = false }: { label: string; value: number; warning?: boolean }) {
-  return <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-3.5 py-2"><span className="text-[10px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</span><span className={`ml-2 font-mono font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-white'}`}>{value}</span></div>;
+  return <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-3.5 py-2"><span className="text-[10px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</span><span className={`ml-2 font-mono font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-assignment-text-bright)]'}`}>{value}</span></div>;
 }
 
 function StatusPill({ tone, label, icon }: { tone: 'success' | 'warning' | 'error'; label: string; icon: ReactNode }) {
@@ -2171,7 +2171,7 @@ function StatusPill({ tone, label, icon }: { tone: 'success' | 'warning' | 'erro
 }
 
 function KpiBlock({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
-  return <div className="rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3"><div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`mt-1.5 font-mono text-lg font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-white'}`}>{value}</div></div>;
+  return <div className="rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3"><div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`mt-1.5 font-mono text-lg font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-assignment-text-bright)]'}`}>{value}</div></div>;
 }
 
 function QuotaProgress({ label, current, max, warning = false }: { label: string; current: number; max: number; warning?: boolean }) {
@@ -2243,7 +2243,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   return <div className="flex h-full flex-col">
     <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3"><div className="flex h-12 min-w-12 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-white">{card.nationCode}</div><div><div className="text-lg font-bold text-white">{card.nationCode} · {card.discipline} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quoten- und Regelstatus</div></div></div>
+        <div className="flex items-center gap-3"><div className="flex h-12 min-w-12 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div><div><div className="text-lg font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {card.discipline} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quoten- und Regelstatus</div></div></div>
         <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
       </div>
     </header>
@@ -2255,13 +2255,13 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
         {controlPeople.length ? <div className="overflow-hidden rounded-xl border border-[var(--ops-border)]">
           {controlPeople.map((person) => <div key={person.athleteId} className="grid items-center gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3 last:border-0 md:grid-cols-[minmax(150px,1fr)_minmax(170px,auto)_auto]">
             <div>
-              <strong className="block text-sm text-white">{person.name}</strong>
+              <strong className="block text-sm text-[var(--ops-assignment-text-bright)]">{person.name}</strong>
               <div className="mt-1.5"><SingleRoomStatusBadge status={person.status} /></div>
             </div>
             <span className={`flex items-center gap-1.5 text-sm font-semibold ${person.operationalWarning ? 'text-[var(--ops-tone-warning-text)]' : 'text-[var(--ops-tone-success-text)]'}`}>
               {person.operationalWarning && <AlertTriangle className="h-4 w-4 shrink-0" />}{person.operationalLabel}
             </span>
-            <button type="button" disabled={!person.decisionId} title={!person.decisionId ? 'Innerhalb der Quote ist keine separate Importentscheidung hinterlegt.' : undefined} onClick={() => person.decisionId && onShowDecision(person.decisionId)} className="justify-self-start whitespace-nowrap text-sm font-semibold text-blue-300 hover:text-blue-200 disabled:cursor-not-allowed disabled:text-[var(--ops-text-subtle)] md:justify-self-end">Entscheidung anzeigen</button>
+            <button type="button" disabled={!person.decisionId} title={!person.decisionId ? 'Innerhalb der Quote ist keine separate Importentscheidung hinterlegt.' : undefined} onClick={() => person.decisionId && onShowDecision(person.decisionId)} className="justify-self-start whitespace-nowrap text-sm font-semibold text-[var(--ops-assignment-text-accent-strong)] hover:text-[var(--ops-assignment-text-accent)] disabled:cursor-not-allowed disabled:text-[var(--ops-text-subtle)] md:justify-self-end">Entscheidung anzeigen</button>
           </div>)}
         </div> : <p className="text-sm text-[var(--ops-text-muted)]">Keine Personen mit Einzelzimmeranspruch in dieser Quotengruppe.</p>}
       </DetailSection>
@@ -2297,12 +2297,12 @@ function DetailPanel({
   if (!selectedUnit && !selectedBookingContext) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
-        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] text-slate-500">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] text-[var(--ops-assignment-text-faint)]">
           <Eye className="h-5 w-5" />
         </div>
-        <div className="text-lg font-semibold text-slate-300">Nichts ausgewählt</div>
-        <div className="mt-2 text-sm text-slate-500">Wähle eine Buchung oder eine Einheit aus</div>
-        <div className="mt-6 rounded-2xl border border-dashed border-[var(--ops-border)] px-6 py-4 text-sm text-slate-500">
+        <div className="text-lg font-semibold text-[var(--ops-assignment-text-body)]">Nichts ausgewählt</div>
+        <div className="mt-2 text-sm text-[var(--ops-assignment-text-faint)]">Wähle eine Buchung oder eine Einheit aus</div>
+        <div className="mt-6 rounded-2xl border border-dashed border-[var(--ops-border)] px-6 py-4 text-sm text-[var(--ops-assignment-text-faint)]">
           Ziehe eine Einheit aus der Warteschlange auf freie Zimmerbereiche
         </div>
       </div>
@@ -2319,8 +2319,8 @@ function DetailPanel({
               <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
                 <div className="flex items-center justify-between gap-2">
                   <div>
-                    <div className="text-sm font-semibold text-slate-100">{occupant.name}</div>
-                    <div className="mt-1 text-[10px] font-mono text-slate-400">{occupant.nationCode}</div>
+                    <div className="text-sm font-semibold text-[var(--ops-assignment-text-strong)]">{occupant.name}</div>
+                    <div className="mt-1 text-[10px] font-mono text-[var(--ops-assignment-text-muted)]">{occupant.nationCode}</div>
                     <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
                   </div>
                   {booking.occupants.length > 1 && (
@@ -2349,28 +2349,28 @@ function DetailPanel({
               </div>
             </div>
           </div>
-          <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-slate-300">
+          <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-[var(--ops-assignment-text-body)]">
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-500">Hotel</div>
-                <div className="mt-1 font-semibold text-slate-100">{hotel.hotelName}</div>
+                <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Hotel</div>
+                <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{hotel.hotelName}</div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-500">Ort</div>
-                <div className="mt-1 font-semibold text-slate-100">{hotel.location || '—'}</div>
+                <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Ort</div>
+                <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{hotel.location || '—'}</div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-500">Anreise</div>
-                <div className="mt-1 font-mono text-slate-200">{booking.checkInDate || '—'}</div>
+                <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Anreise</div>
+                <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{booking.checkInDate || '—'}</div>
               </div>
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-slate-500">Abreise</div>
-                <div className="mt-1 font-mono text-slate-200">{booking.checkOutDate || '—'}</div>
+                <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Abreise</div>
+                <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{booking.checkOutDate || '—'}</div>
               </div>
             </div>
           </div>
           {(booking.capacity || 0) === 2 && (
-            <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs font-semibold text-slate-200">
+            <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs font-semibold text-[var(--ops-assignment-text-body)]">
               {booking.countsAsSingle ? 'DZ wird aktuell exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}
             </div>
           )}
@@ -2392,7 +2392,7 @@ function DetailPanel({
               className={`flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
                 booking.countsAsSingle
                   ? 'border-amber-700/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
-                  : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-slate-100 hover:bg-[var(--ops-surface-overlay)]'
+                  : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-[var(--ops-assignment-text-strong)] hover:bg-[var(--ops-surface-overlay)]'
               }`}
             >
               {pendingAction?.kind === 'single' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Bed className="h-3.5 w-3.5" />}
@@ -2427,15 +2427,15 @@ function DetailPanel({
       )}
       <div className="border-b border-[var(--ops-divider)] px-4 py-4">
         <div className="flex items-center gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-blue-200">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-[var(--ops-assignment-text-accent)]">
             {selectedUnit.nationCode}
           </div>
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-slate-500">Einheitsdetail</div>
-            <div className="mt-2 text-sm font-bold text-slate-100">
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--ops-assignment-text-faint)]">Einheitsdetail</div>
+            <div className="mt-2 text-sm font-bold text-[var(--ops-assignment-text-strong)]">
               {selectedUnit.occupants.map((occ) => `${occ.firstname} ${occ.lastname}`).join(' / ')}
             </div>
-            <div className="mt-1 text-[10px] font-mono text-slate-400">
+            <div className="mt-1 text-[10px] font-mono text-[var(--ops-assignment-text-muted)]">
               {selectedUnit.roomTypeLabel} · {selectedUnit.checkInDate || '—'} → {selectedUnit.checkOutDate || '—'}
             </div>
           </div>
@@ -2443,19 +2443,19 @@ function DetailPanel({
       </div>
 
       <div className="border-b border-[var(--ops-divider)] px-4 py-4">
-        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Bewohner</div>
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Bewohner</div>
         <div className="space-y-2">
           {selectedUnit.occupants.map((occupant) => (
             <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <div className="text-sm font-semibold text-slate-100">{occupant.firstname} {occupant.lastname}</div>
-                  <div className="mt-1 text-[10px] font-mono text-slate-400">
+                  <div className="text-sm font-semibold text-[var(--ops-assignment-text-strong)]">{occupant.firstname} {occupant.lastname}</div>
+                  <div className="mt-1 text-[10px] font-mono text-[var(--ops-assignment-text-muted)]">
                     {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
                   </div>
                   <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
                 </div>
-                <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>
+                <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
                   {occupant.isAssigned ? 'zugewiesen' : 'offen'}
                 </span>
               </div>
@@ -2475,7 +2475,7 @@ function DetailPanel({
       </div>
 
       <div className="px-4 py-4">
-        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-slate-500">Zuweisung</div>
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Zuweisung</div>
         {selectedAssignedUnit && selectedAssignedUnit.hasAnyAssigned ? (
           <div className="space-y-3">
             <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
@@ -2489,23 +2489,23 @@ function DetailPanel({
                 </div>
               </div>
             </div>
-            <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-slate-300">
+            <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-[var(--ops-assignment-text-body)]">
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Nation</div>
-                  <div className="mt-1 font-semibold text-slate-100">{selectedUnit.nationCode}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Nation</div>
+                  <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{selectedUnit.nationCode}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Typ</div>
-                  <div className="mt-1 font-semibold text-slate-100">{selectedUnit.roomTypeLabel}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Typ</div>
+                  <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{selectedUnit.roomTypeLabel}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Anreise</div>
-                  <div className="mt-1 font-mono text-slate-200">{selectedUnit.checkInDate || '—'}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Anreise</div>
+                  <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{selectedUnit.checkInDate || '—'}</div>
                 </div>
                 <div>
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500">Abreise</div>
-                  <div className="mt-1 font-mono text-slate-200">{selectedUnit.checkOutDate || '—'}</div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Abreise</div>
+                  <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{selectedUnit.checkOutDate || '—'}</div>
                 </div>
               </div>
             </div>
@@ -2520,7 +2520,7 @@ function DetailPanel({
             )}
           </div>
         ) : (
-          <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-amber-300">
+          <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-[var(--ops-assignment-text-warning)]">
             <AlertTriangle className="h-3.5 w-3.5" />
             Zuweisung starten — auf einen Zimmerbereich ziehen
           </div>
@@ -2542,7 +2542,7 @@ function SingleRoomDecisionCard({ status, decisionId, onShowDecision }: { status
 }
 function EmptyCenter({ text }: { text: string }) {
   return (
-    <div className="flex h-full items-center justify-center text-sm text-slate-500">
+    <div className="flex h-full items-center justify-center text-sm text-[var(--ops-assignment-text-faint)]">
       {text}
     </div>
   );
@@ -2561,15 +2561,15 @@ function SearchInput({
 }) {
   return (
     <div className="relative">
-      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ops-assignment-input-icon)]" />
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         className={`w-full rounded-xl border pl-9 pr-3 py-2 text-sm transition-all focus:outline-none ${
           dark
-            ? 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] text-slate-100 placeholder:text-slate-500 focus:border-blue-400/50'
-            : 'border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 focus:border-blue-500'
+            ? 'border-[var(--ops-assignment-input-border)] bg-[var(--ops-assignment-input)] text-[var(--ops-assignment-input-text)] placeholder:text-[var(--ops-assignment-input-placeholder)] hover:bg-[var(--ops-assignment-input-hover)] hover:border-[var(--ops-assignment-input-hover-border)] focus:border-[var(--ops-assignment-input-focus)] focus:shadow-[var(--ops-assignment-input-focus-ring)]'
+            : 'border-[var(--ops-assignment-input-alt-border)] bg-[var(--ops-assignment-input-alt)] text-[var(--ops-assignment-input-alt-text)] placeholder:text-[var(--ops-assignment-input-alt-placeholder)] hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-input-hover)] focus:border-[var(--ops-focus)] focus:shadow-[var(--ops-assignment-input-focus-ring)]'
         }`}
       />
     </div>
@@ -2629,7 +2629,7 @@ function DarkSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full appearance-none rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-3 py-2 text-sm text-slate-300 transition-all focus:border-blue-500/50 focus:outline-none"
+        className="w-full appearance-none rounded-xl border border-[var(--ops-assignment-input-border)] bg-[var(--ops-assignment-input)] px-3 py-2 text-sm text-[var(--ops-assignment-select-text)] transition-all hover:border-[var(--ops-assignment-input-hover-border)] hover:bg-[var(--ops-assignment-input-hover)] focus:border-[var(--ops-assignment-input-focus)] focus:outline-none focus:shadow-[var(--ops-assignment-input-focus-ring)]"
       >
         <option value="">{placeholder}</option>
         {options.map((option) => (
@@ -2638,7 +2638,7 @@ function DarkSelect({
           </option>
         ))}
       </select>
-      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ops-assignment-text-faint)]" />
     </div>
   );
 }
@@ -2646,7 +2646,7 @@ function DarkSelect({
 function CapacityBar({
   pct,
   className = '',
-  trackClassName = 'bg-[var(--ops-surface-overlay)]',
+  trackClassName = 'bg-[var(--ops-assignment-progress-track)]',
 }: {
   pct: number;
   className?: string;
@@ -2686,9 +2686,9 @@ function QuotaMetric({
   const pct = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
   return (
     <div>
-      <div className="mb-2 text-[10px] uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mb-2 text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">{label}</div>
       <div className="mb-2 flex items-end gap-1">
-        <span className={`font-mono text-2xl font-bold ${tone === 'red' ? 'text-red-400' : 'text-slate-200'}`}>{current}</span>
+        <span className={`font-mono text-2xl font-bold ${tone === 'red' ? 'text-red-400' : 'text-[var(--ops-assignment-text-body)]'}`}>{current}</span>
         <span className="pb-0.5 text-xs text-slate-600">/ {max}</span>
       </div>
       <CapacityBar pct={pct} />
