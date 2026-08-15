@@ -906,15 +906,15 @@ function AlertBanner({
   const message = [officialText, singleText].filter(Boolean).join(' und ');
 
   return (
-    <div className="flex items-center gap-3 border-b border-amber-700/40 bg-[var(--ops-tone-warning-surface)] px-4 py-2.5 text-sm text-amber-200">
+    <div className="flex items-center gap-3 border-b border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-4 py-2.5 text-sm text-[var(--ops-tone-warning-text)]">
       <AlertTriangle className="h-4 w-4 flex-shrink-0" />
       <div className="min-w-0 flex-1 truncate">
         {message || 'Quoten-Warnung'}
       </div>
-      <button onClick={onGoQuotas} className="font-semibold text-amber-200 hover:text-[var(--ops-assignment-text-bright)]">
+      <button onClick={onGoQuotas} className="font-semibold text-[var(--ops-tone-warning-text)] hover:text-[var(--ops-warning)]">
         Zu den Quoten →
       </button>
-      <button onClick={onClose} className="text-amber-400 hover:text-[var(--ops-assignment-text-bright)]">
+      <button onClick={onClose} className="text-[var(--ops-warning)] hover:text-[var(--ops-tone-warning-text)]">
         <X className="h-4 w-4" />
       </button>
     </div>
@@ -1152,7 +1152,7 @@ function QueueUnitCard({
       className={`relative w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging || pending ? 'opacity-60' : ''}`}
     >
       {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
-      {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-amber-500/40 bg-amber-500/15 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-amber-200">Disposition prüfen</span>}
+      {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ops-tone-warning-text)]">Disposition prüfen</span>}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
@@ -1855,9 +1855,9 @@ function HotelDetailView({
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-amber-600/50 bg-amber-500/10 px-1.5 py-0.5 font-bold text-amber-200">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-emerald-700/50 bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
+                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
-                              </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-emerald-300">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
+                              </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-[var(--ops-success)]">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
                               {canAddPartner && (
                                 <span className={`${isBookingDropTarget ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)]'}`}>
                                   Partner hinzufügen
@@ -2327,7 +2327,7 @@ function DetailPanel({
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}
                       onClick={() => onUnassignOccupant(booking.bookingId, occupant.athleteId)}
-                      className="rounded-lg border border-amber-700/40 bg-amber-500/10 px-2 py-1 text-[10px] font-semibold text-amber-200 hover:bg-amber-500/20"
+                      className="rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-tone-warning-text)] hover:bg-[var(--ops-tone-warning-hover)] disabled:border-[var(--ops-tone-warning-disabled-border)] disabled:bg-[var(--ops-tone-warning-disabled-surface)] disabled:text-[var(--ops-tone-warning-disabled-text)]"
                     >
                       {pendingAction?.athleteIds?.includes(occupant.athleteId) ? <><RefreshCw className="mr-1 inline h-3 w-3 animate-spin" /> Loading</> : 'Nur diese Person'}
                     </button>
