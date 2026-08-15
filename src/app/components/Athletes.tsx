@@ -17,7 +17,7 @@ import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, L
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
-import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
@@ -282,7 +282,7 @@ export function Athletes() {
 
   if (loading) return <div className="flex h-64 items-center justify-center"><CircularProgress /></div>;
 
-  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+  return <SplitPageLayout>
     <ImportConflictNotice />
     <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => athlete.assignment?.hasAssignment).length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => !athlete.assignment?.hasAssignment).length} offen</StatusChip></>} />
     {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
@@ -336,7 +336,7 @@ export function Athletes() {
     </div>
     <AthleteDialog athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} onShowDecision={setDecisionId} />
     <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
-  </PageLayout>;
+  </SplitPageLayout>;
 }
 
 function Cell({ children }: { children: ReactNode }) {
