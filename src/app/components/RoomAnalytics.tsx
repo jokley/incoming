@@ -5,7 +5,7 @@ import { AlertTriangle, ArrowRight, Building2, CalendarRange, ChartNoAxesCombine
 import { clsx } from 'clsx';
 import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
-import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, SplitPageLayout, SplitPaneLayout, SectionHeader, StatusChip } from '../design-system';
 import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
 
 type ViewKey = 'capacity' | 'hotels' | 'nations' | 'assignments' | 'singleRooms' | 'conflicts';
@@ -78,16 +78,16 @@ function CapacityTooltip({ active, payload, metric, source }: { active?: boolean
   if (metric === 'rooms') return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
     <div className="mb-1.5 border-b border-[var(--ops-divider)] pb-1.5 text-sm font-extrabold">{day.label}</div>
     <Row label="Kontingent" value={day.roomSupply} />
-    <Row label="EZ disponiert" value={day.assignedEz} color="#285A8C"/><Row label="DZ disponiert" value={day.assignedDz} color="#5585B5"/>
-    <Row label="EZ frei" value={day.freeEz} color="#57A773"/><Row label="DZ frei" value={day.freeDz} color="#9BD0AE"/>
-    <Row label={`EZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedEz : day.demandEz} color="#F59E0B"/>
+    <Row label="EZ disponiert" value={day.assignedEz} color="var(--ops-primary-emphasis)"/><Row label="DZ disponiert" value={day.assignedDz} color="var(--ops-primary)"/>
+    <Row label="EZ frei" value={day.freeEz} color="var(--ops-success)"/><Row label="DZ frei" value={day.freeDz} color="var(--ops-tone-success-text)"/>
+    <Row label={`EZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedEz : day.demandEz} color="var(--ops-warning)"/>
     <Row label={`DZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedDz : day.demandDz}/>
-    <Row label={`Gesamtbedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="#DC2626"/>
+    <Row label={`Gesamtbedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="var(--ops-error)"/>
     <Row label="Reserve gesamt" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
   return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
     <div className="mb-1.5 border-b border-[var(--ops-divider)] pb-1.5 text-sm font-extrabold">{day.label}</div>
-    <Row label="Kontingent" value={supply} /><Row label="Disponiert" value={assigned} color="var(--ops-primary)"/><Row label="Frei" value={free} color="var(--ops-success)"/><Row label={`Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={demand} color="#FFB224"/><Row label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
+    <Row label="Kontingent" value={supply} /><Row label="Disponiert" value={assigned} color="var(--ops-primary)"/><Row label="Frei" value={free} color="var(--ops-success)"/><Row label={`Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={demand} color="var(--ops-warning)"/><Row label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
 }
 const tableClass = 'w-full min-w-[42rem] text-sm';
@@ -131,18 +131,18 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
     { label: 'Reserve', key: config.reserve },
   ];
   const legend = metric === 'rooms' ? [
-    { key: 'supply', label: 'Kontingent', color: '#DCE6F2', line: true },
-    { key: 'assignedEz', label: 'EZ disponiert', color: '#285A8C', line: false },
-    { key: 'assignedDz', label: 'DZ disponiert', color: '#5585B5', line: false },
-    { key: 'freeEz', label: 'EZ frei', color: '#57A773', line: false },
-    { key: 'freeDz', label: 'DZ frei', color: '#9BD0AE', line: false },
-    { key: 'demandEz', label: 'EZ-Bedarf', color: '#F59E0B', line: true },
-    { key: 'demandTotal', label: 'Gesamtbedarf (EZ + DZ)', color: '#DC2626', line: true },
+    { key: 'supply', label: 'Kontingent', color: 'var(--ops-text-muted)', line: true },
+    { key: 'assignedEz', label: 'EZ disponiert', color: 'var(--ops-primary-emphasis)', line: false },
+    { key: 'assignedDz', label: 'DZ disponiert', color: 'var(--ops-primary)', line: false },
+    { key: 'freeEz', label: 'EZ frei', color: 'var(--ops-success)', line: false },
+    { key: 'freeDz', label: 'DZ frei', color: 'var(--ops-tone-success-text)', line: false },
+    { key: 'demandEz', label: 'EZ-Bedarf', color: 'var(--ops-warning)', line: true },
+    { key: 'demandTotal', label: 'Gesamtbedarf (EZ + DZ)', color: 'var(--ops-error)', line: true },
   ] : [
-    { key: 'supply', label: 'Kontingent', color: '#DCE6F2', line: false },
+    { key: 'supply', label: 'Kontingent', color: 'var(--ops-text-muted)', line: false },
     { key: 'assigned', label: 'Disponiert', color: 'var(--ops-primary)', line: false },
     { key: 'free', label: 'Frei', color: 'var(--ops-success)', line: false },
-    { key: 'demand', label: 'Bedarf', color: '#FFB224', line: true },
+    { key: 'demand', label: 'Bedarf', color: 'var(--ops-warning)', line: true },
   ];
   const opacity = (key: string, normal = 1) => hoveredSeries && hoveredSeries !== key ? .2 : normal;
   const toggle = (key: string) => setHidden(current => { const next = new Set(current); next.has(key) ? next.delete(key) : next.add(key); return next; });
@@ -156,19 +156,19 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
           <ComposedChart data={timeline} barCategoryGap="24%" margin={{ top: 20, right: 0, bottom: 0, left: labelWidth - 50 }} onMouseMove={state => setActiveIndex(typeof state.activeTooltipIndex === 'number' ? state.activeTooltipIndex : null)} onClick={state => { if (typeof state.activeTooltipIndex === 'number') onDayClick(timeline[state.activeTooltipIndex]); }}>
             <CartesianGrid stroke="var(--ops-divider)" vertical={false}/><XAxis dataKey="label" hide/><YAxis stroke="var(--ops-text-muted)" width={50}/>
             {metric === 'rooms' ? <>
-              {!hidden.has('assignedEz') && <Bar dataKey="assignedEz" name="EZ disponiert" stackId="capacity" fill="#285A8C" opacity={opacity('assignedEz')}/>}
-              {!hidden.has('assignedDz') && <Bar dataKey="assignedDz" name="DZ disponiert" stackId="capacity" fill="#5585B5" opacity={opacity('assignedDz')}/>}
-              {!hidden.has('freeEz') && <Bar dataKey="freeEz" name="EZ frei" stackId="capacity" fill="#57A773" opacity={opacity('freeEz', .88)}/>}
-              {!hidden.has('freeDz') && <Bar dataKey="freeDz" name="DZ frei" stackId="capacity" fill="#9BD0AE" radius={[4,4,0,0]} opacity={opacity('freeDz', .88)}/>}
+              {!hidden.has('assignedEz') && <Bar dataKey="assignedEz" name="EZ disponiert" stackId="capacity" fill="var(--ops-primary-emphasis)" opacity={opacity('assignedEz')}/>}
+              {!hidden.has('assignedDz') && <Bar dataKey="assignedDz" name="DZ disponiert" stackId="capacity" fill="var(--ops-primary)" opacity={opacity('assignedDz')}/>}
+              {!hidden.has('freeEz') && <Bar dataKey="freeEz" name="EZ frei" stackId="capacity" fill="var(--ops-success)" opacity={opacity('freeEz', .88)}/>}
+              {!hidden.has('freeDz') && <Bar dataKey="freeDz" name="DZ frei" stackId="capacity" fill="var(--ops-tone-success-text)" radius={[4,4,0,0]} opacity={opacity('freeDz', .88)}/>}
             </> : <>
               {!hidden.has('assigned') && <Bar dataKey={config.assigned} name="Disponiert" stackId="capacity" fill="var(--ops-primary)" opacity={opacity('assigned')}/>}
               {!hidden.has('free') && <Bar dataKey={config.free} name="Frei" stackId="capacity" fill="var(--ops-success)" radius={[4,4,0,0]} opacity={opacity('free', .78)}/>}
             </>}
-            {!hidden.has('supply') && <Line type="step" dataKey={config.supply} name="Kontingent" stroke="#DCE6F2" strokeWidth={1.25} strokeDasharray="3 3" dot={false} opacity={opacity('supply', .72)}/>}
+            {!hidden.has('supply') && <Line type="step" dataKey={config.supply} name="Kontingent" stroke="var(--ops-text-muted)" strokeWidth={1.25} strokeDasharray="3 3" dot={false} opacity={opacity('supply', .72)}/>}
             {metric === 'rooms' ? <>
-              {!hidden.has('demandEz') && <Line type="monotone" dataKey={source === 'event' ? 'plannedEz' : 'demandEz'} name="EZ-Bedarf" stroke="#F59E0B" strokeWidth={4} dot={{ r: 4, fill: '#F59E0B', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandEz')}/>}
-              {!hidden.has('demandTotal') && <Line type="monotone" dataKey={source === 'event' ? 'plannedRooms' : 'demandRooms'} name="Gesamtbedarf (EZ + DZ)" stroke="#DC2626" strokeWidth={4} dot={{ r: 4, fill: '#DC2626', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandTotal')}/>}
-            </> : !hidden.has('demand') && <Line type="monotone" dataKey={source === 'event' ? config.plan : config.demand} name="Bedarf" stroke="#F59E0B" strokeWidth={4} dot={{ r: 4, fill: '#F59E0B', stroke: '#111D2E', strokeWidth: 2 }} activeDot={{ r: 7, strokeWidth: 2 }} opacity={opacity('demand')}/>}
+              {!hidden.has('demandEz') && <Line type="monotone" dataKey={source === 'event' ? 'plannedEz' : 'demandEz'} name="EZ-Bedarf" stroke="var(--ops-warning)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-warning)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandEz')}/>}
+              {!hidden.has('demandTotal') && <Line type="monotone" dataKey={source === 'event' ? 'plannedRooms' : 'demandRooms'} name="Gesamtbedarf (EZ + DZ)" stroke="var(--ops-error)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-error)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandTotal')}/>}
+            </> : !hidden.has('demand') && <Line type="monotone" dataKey={source === 'event' ? config.plan : config.demand} name="Bedarf" stroke="var(--ops-warning)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-warning)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7, strokeWidth: 2 }} opacity={opacity('demand')}/>}
           </ComposedChart>
           </ResponsiveContainer>
         </div>
@@ -274,7 +274,7 @@ function HotelsView({ data }: { data: AnalyticsData }) {
 }
 function NationsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
-  const colors = ['#4F8DD6', '#57A773', '#F59E0B', '#D66B6B', '#9B7ED9', '#43B8B0', '#E181B0', '#8DA0B8', '#C6A15B', '#6F9E5B', '#A7766A', '#5E7DB2'];
+  const colors = ['var(--ops-primary)', 'var(--ops-success)', 'var(--ops-warning)', 'var(--ops-error)', 'var(--ops-secondary)', 'var(--ops-info)', 'var(--ops-primary-emphasis)', 'var(--ops-text-muted)'];
   const rows = Object.values(data.athletes.reduce<Record<string, { nation: string; people: number; athletes: number; officials: number; ez: number; dzPeople: number }>>((result, person) => {
     const nation = person.nationCode || '—';
     const row = result[nation] ||= { nation, people: 0, athletes: 0, officials: 0, ez: 0, dzPeople: 0 };
@@ -360,5 +360,5 @@ export function RoomAnalytics() {
   const updated = useMemo(() => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date()), [data]);
   const phase = data.bookings.length ? 'Phase 3 · Betrieb' : data.athletes.length ? 'Phase 2 · Durchführung' : 'Phase 1 · Planung';
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600"/></div>;
-  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4]"><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral"><CalendarRange className="mr-1 h-3 w-3"/>Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<div className="flex flex-col gap-4 xl:flex-row"><Navigation active={active} data={data} onSelect={setActive}/><main className="min-w-0 flex-1" role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</main></div></PageLayout>;
+  return <SplitPageLayout><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral"><CalendarRange className="mr-1 h-3 w-3"/>Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<SplitPaneLayout sidebar={<Navigation active={active} data={data} onSelect={setActive}/>}><div role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</div></SplitPaneLayout></SplitPageLayout>;
 }
