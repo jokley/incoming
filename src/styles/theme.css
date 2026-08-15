@@ -304,13 +304,13 @@
   --ops-shadow-xs: 0 1px 2px rgba(30, 48, 72, 0.12); --ops-shadow-sm: 0 8px 24px rgba(30, 48, 72, 0.11);
   --ops-shadow-md: 0 18px 60px rgba(30, 48, 72, 0.16); --ops-shadow-lg: 0 28px 90px rgba(30, 48, 72, 0.22);
   --ops-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.25);
-  --ops-assignment-sidebar: #fbfcfe;
-  --ops-assignment-sidebar-border: #9eafc2;
+  --ops-assignment-sidebar: #e8eef5;
+  --ops-assignment-sidebar-border: #9aacc0;
   --ops-assignment-sidebar-shadow: 3px 0 12px rgba(30, 48, 72, 0.08);
-  --ops-assignment-canvas: #eef3f8;
+  --ops-assignment-canvas: #f2f5f9;
   --ops-assignment-card: #ffffff;
   --ops-assignment-card-hover: #f9fbfd;
-  --ops-assignment-card-header: #f6f9fc;
+  --ops-assignment-card-header: #f5f8fb;
   --ops-assignment-card-header-border: var(--ops-divider);
   --ops-assignment-card-shadow: 0 1px 2px rgba(30, 48, 72, 0.09), 0 5px 14px rgba(30, 48, 72, 0.07);
   --ops-assignment-card-hover-shadow: 0 2px 4px rgba(30, 48, 72, 0.1), 0 9px 22px rgba(30, 48, 72, 0.1);
@@ -318,7 +318,7 @@
   --ops-assignment-kpi-hover-shadow: var(--ops-assignment-card-hover-shadow);
   --ops-assignment-input: #ffffff;
   --ops-assignment-input-hover: #fbfdff;
-  --ops-assignment-input-border: var(--ops-border-strong);
+  --ops-assignment-input-border: #8fa3ba;
   --ops-assignment-input-hover-border: var(--ops-primary);
   --ops-assignment-input-focus: var(--ops-focus);
   --ops-assignment-input-text: var(--ops-text);
@@ -338,17 +338,27 @@
   --ops-assignment-input-alt-text: var(--ops-text);
   --ops-assignment-input-alt-placeholder: var(--ops-text-muted);
   --ops-assignment-input-alt-border: var(--ops-border-strong);
-  --ops-assignment-progress-track: #c8d4e1;
+  --ops-assignment-progress-track: #b8c7d6;
 }
 
 /* Keep inactive controls legible in daylight without making them look enabled. */
 :root[data-theme='light'] :is(button, input, select, textarea):disabled {
-  opacity: 0.62;
+  opacity: 0.72;
 }
 
 :root[data-theme='light'] :is(input, textarea)::placeholder {
   color: var(--ops-text-subtle);
   opacity: 1;
+}
+
+:root[data-theme='light'] .assignment-review-warning {
+  border-color: rgba(161, 98, 7, 0.48);
+  background: rgba(217, 119, 6, 0.13);
+  color: #713f12;
+}
+
+:root[data-theme='light'] .assignment-review-warning svg {
+  color: #854d0e;
 }
 
 @layer base {

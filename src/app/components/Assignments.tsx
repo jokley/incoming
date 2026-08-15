@@ -1026,7 +1026,7 @@ function QueueSidebar({
           <button
             onClick={() => onFilterImportReview(!filterImportReview)}
             aria-pressed={filterImportReview}
-            className={`mt-3 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ${filterImportReview ? 'border-amber-500/60 bg-amber-500/15 text-amber-100' : 'border-amber-500/30 bg-[var(--ops-surface-elevated)] text-amber-200 hover:border-amber-500/50'}`}
+            className={`assignment-review-warning mt-3 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ${filterImportReview ? 'border-amber-500/60 bg-amber-500/15 text-amber-100' : 'border-amber-500/30 bg-[var(--ops-surface-elevated)] text-amber-200 hover:border-amber-500/50'}`}
           >
             <AlertTriangle className="h-3.5 w-3.5" />
             {importReviewCount} {importReviewCount === 1 ? 'Disposition' : 'Dispositionen'} prüfen
