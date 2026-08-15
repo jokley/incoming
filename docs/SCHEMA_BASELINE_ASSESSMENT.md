@@ -1,5 +1,9 @@
 # Release 1 / Sprint 3.3a: Schema- und Baseline-Bewertung
 
+> Historischer Readiness-Befund aus Sprint 3.3a. Die in Sprint 3.3b
+> implementierte Angleichung und der aktuelle Freigabestand sind in
+> `SCHEMA_ALIGNMENT.md` dokumentiert.
+
 Stand der Prüfung: 15. August 2026. Untersucht wurden das eingecheckte
 SQLite-Artefakt `backend/data/freestyle_wm_new.db` (SHA-256
 `c0c1d672ff65f0de0a5f9cd03e950aec50c8c9982d5b1c71a3998faa456d62d7`) und
