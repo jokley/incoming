@@ -1,10 +1,9 @@
 from dataclasses import dataclass
 from functools import wraps
-import os
 import re
 import secrets
 
-from flask import g, jsonify, request
+from flask import current_app, g, jsonify, request
 
 
 ROLE_PERMISSIONS = {
@@ -48,9 +47,9 @@ def _permissions(groups: tuple[str, ...]) -> frozenset[str]:
 
 
 def load_user_from_request():
-    expected_proxy_secret = os.environ.get('AUTH_PROXY_SECRET', '')
+    expected_proxy_secret = current_app.config.get('AUTH_PROXY_SECRET', '')
     supplied_proxy_secret = request.headers.get('X-Auth-Proxy-Secret', '')
-    dev_user = os.environ.get('AUTH_DEV_USER', '')
+    dev_user = current_app.config.get('AUTH_DEV_USER', '')
     if not expected_proxy_secret and not dev_user:
         return None
     if expected_proxy_secret and not secrets.compare_digest(expected_proxy_secret, supplied_proxy_secret):
@@ -61,7 +60,7 @@ def load_user_from_request():
     # Explicit opt-in for local development only. Never set this in production.
     if not username and dev_user:
         username = dev_user.strip()
-        groups = _split_groups(os.environ.get('AUTH_DEV_GROUPS', 'incoming-admin'))
+        groups = _split_groups(current_app.config.get('AUTH_DEV_GROUPS', 'incoming-admin'))
 
     if not username:
         return None
