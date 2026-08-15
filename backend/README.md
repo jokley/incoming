@@ -28,6 +28,14 @@ vollständige Vorlage steht in `../incoming.env.example`. Geheimnisse dürfen
 nicht eingecheckt werden. `AUTH_DEV_*` ist ausschließlich für lokale Entwicklung
 vorgesehen. CORS bleibt ohne `CORS_ORIGINS` deaktiviert.
 
+`DATABASE_BACKEND` akzeptiert `sqlite` (Standard) oder `postgresql`. SQLite
+verwendet weiterhin `DATABASE_PATH`. Für PostgreSQL ist zusätzlich eine
+`DATABASE_URL` mit `postgresql://` erforderlich; die Anwendung verwendet dafür
+den Psycopg-3-Treiber. Bis zur Alembic-Baseline führt die Anwendung ihre
+bestehenden automatischen Schema-Upgrades ausschließlich im SQLite-Modus aus.
+Der operative Endpunkt `GET /health` prüft die Datenbankverbindung und meldet
+den ausgewählten Datenbanktyp als `databaseBackend`.
+
 ## Logging und Fehler
 
 Anwendungs- und Bibliothekslogs gehen nach stdout und enthalten Level, Logger
