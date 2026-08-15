@@ -86,21 +86,20 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
 }
 
 export function groupListRows(rows: ListRow[], kind: ListKind) {
-  const groups = new Map<string, Map<string, ListRow[]>>();
+  const groups = new Map<string, ListRow[]>();
   rows.forEach((row) => {
     const primary = kind === 'hotels' ? row.hotel : row.nation;
-    const secondary = kind === 'hotels' ? `${row.room} · ${row.roomType}` : row.discipline;
-    if (!groups.has(primary)) groups.set(primary, new Map());
-    const children = groups.get(primary)!;
-    if (!children.has(secondary)) children.set(secondary, []);
-    children.get(secondary)!.push(row);
+    if (!groups.has(primary)) groups.set(primary, []);
+    groups.get(primary)!.push(row);
   });
-  return [...groups].sort(([a], [b]) => a.localeCompare(b, 'de')).map(([label, children]) => ({
+  return [...groups].sort(([a], [b]) => a.localeCompare(b, 'de')).map(([label, entries]) => ({
     label,
-    count: [...children.values()].reduce((sum, entries) => sum + entries.length, 0),
-    children: [...children].sort(([a], [b]) => a.localeCompare(b, 'de')).map(([childLabel, entries]) => ({
-      label: childLabel,
-      rows: entries.sort((a, b) => a.name.localeCompare(b.name, 'de')),
-    })),
+    count: entries.length,
+    rows: entries.sort((a, b) => {
+      const section = kind === 'hotels'
+        ? a.room.localeCompare(b.room, 'de', { numeric: true })
+        : a.discipline.localeCompare(b.discipline, 'de');
+      return section || a.name.localeCompare(b.name, 'de');
+    }),
   }));
 }
