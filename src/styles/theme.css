@@ -301,6 +301,14 @@
   --ops-tone-warning-border: rgba(161, 98, 7, 0.4); --ops-tone-warning-surface: rgba(217, 119, 6, 0.11); --ops-tone-warning-text: #854d0e;
   --ops-tone-error-border: rgba(190, 18, 60, 0.38); --ops-tone-error-surface: rgba(225, 29, 72, 0.09); --ops-tone-error-text: #9f1239;
   --ops-tone-info-border: rgba(3, 105, 161, 0.36); --ops-tone-info-surface: rgba(14, 116, 144, 0.1); --ops-tone-info-text: #075985;
+  /* Complete semantic state contracts. Values deliberately reuse the restrained
+     light palette so every status family has one accessible source of truth. */
+  --ops-tone-neutral-icon: #334155; --ops-tone-neutral-hover: #dce5ef; --ops-tone-neutral-disabled-border: #cbd6e2; --ops-tone-neutral-disabled-surface: #f7f9fc; --ops-tone-neutral-disabled-text: #5b6f86;
+  --ops-tone-primary-icon: #1d4ed8; --ops-tone-primary-hover: rgba(37, 99, 235, 0.1); --ops-tone-primary-disabled-border: #cbd6e2; --ops-tone-primary-disabled-surface: #f7f9fc; --ops-tone-primary-disabled-text: #5b6f86;
+  --ops-tone-success-icon: #047857; --ops-tone-success-hover: rgba(4, 120, 87, 0.1); --ops-tone-success-disabled-border: #cbd6e2; --ops-tone-success-disabled-surface: #f7f9fc; --ops-tone-success-disabled-text: #5b6f86;
+  --ops-tone-warning-icon: #a16207; --ops-tone-warning-hover: rgba(217, 119, 6, 0.11); --ops-tone-warning-disabled-border: #cbd6e2; --ops-tone-warning-disabled-surface: #f7f9fc; --ops-tone-warning-disabled-text: #5b6f86;
+  --ops-tone-error-icon: #be123c; --ops-tone-error-hover: rgba(225, 29, 72, 0.09); --ops-tone-error-disabled-border: #cbd6e2; --ops-tone-error-disabled-surface: #f7f9fc; --ops-tone-error-disabled-text: #5b6f86;
+  --ops-tone-info-icon: #0369a1; --ops-tone-info-hover: rgba(14, 116, 144, 0.1); --ops-tone-info-disabled-border: #cbd6e2; --ops-tone-info-disabled-surface: #f7f9fc; --ops-tone-info-disabled-text: #5b6f86;
   --ops-shadow-xs: 0 1px 2px rgba(30, 48, 72, 0.12); --ops-shadow-sm: 0 8px 24px rgba(30, 48, 72, 0.11);
   --ops-shadow-md: 0 18px 60px rgba(30, 48, 72, 0.16); --ops-shadow-lg: 0 28px 90px rgba(30, 48, 72, 0.22);
   --ops-focus-ring: 0 0 0 3px rgba(37, 99, 235, 0.25);

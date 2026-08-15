@@ -6,7 +6,7 @@ type Density = 'comfortable' | 'compact';
 type Elevation = 'none' | 'sm' | 'md' | 'lg';
 type Surface = 'default' | 'raised' | 'elevated';
 
-const toneClasses: Record<Tone, string> = {
+export const semanticToneClasses: Record<Tone, string> = {
   neutral: 'border-[var(--ops-tone-neutral-border)] bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]',
   primary: 'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)] text-[var(--ops-tone-primary-text)]',
   success: 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]',
@@ -85,14 +85,14 @@ export const FilterToolbar = Toolbar;
 export const ActionToolbar = Toolbar;
 export const SectionToolbar = Toolbar;
 
-export function StatusChip({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) { return <span className={clsx('inline-flex items-center rounded-[var(--ops-radius-sm)] border px-2 py-0.5 text-[11px] font-bold', toneClasses[tone])}>{children}</span>; }
+export function StatusChip({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) { return <span data-tone={tone} className={clsx('inline-flex items-center rounded-[var(--ops-radius-sm)] border px-2 py-0.5 text-[11px] font-bold', semanticToneClasses[tone])}>{children}</span>; }
 export const ProgressChip = StatusChip;
 export const SeverityBadge = StatusChip;
 
 export function EmptyState({ title, description, action }: { title: ReactNode; description?: ReactNode; action?: ReactNode }) { return <div className="rounded-[var(--ops-radius-xl)] border border-dashed border-[var(--ops-border-strong)] px-6 py-10 text-center"><div className="font-semibold text-[var(--ops-text)]">{title}</div>{description && <p className="mt-2 text-sm text-[var(--ops-text-muted)]">{description}</p>}{action && <div className="mt-4">{action}</div>}</div>; }
 export function LoadingState({ label = 'Laden…' }: { label?: ReactNode }) { return <div role="status" aria-live="polite" className="animate-pulse rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)] p-6 text-sm text-[var(--ops-text-muted)]">{label}</div>; }
 export function ErrorState({ title = 'Fehler', description, action }: { title?: ReactNode; description?: ReactNode; action?: ReactNode }) { return <InfoPanel tone="error" title={title} action={action}>{description}</InfoPanel>; }
-export function InfoPanel({ children, title, tone = 'info', action }: { children?: ReactNode; title?: ReactNode; tone?: Tone; action?: ReactNode }) { return <div className={clsx('rounded-[var(--ops-radius-lg)] border p-4', toneClasses[tone])}><div className="flex items-start justify-between gap-3"><div>{title && <div className="font-bold">{title}</div>}{children && <div className="mt-1 text-sm opacity-95">{children}</div>}</div>{action}</div></div>; }
+export function InfoPanel({ children, title, tone = 'info', action }: { children?: ReactNode; title?: ReactNode; tone?: Tone; action?: ReactNode }) { return <div data-tone={tone} className={clsx('rounded-[var(--ops-radius-lg)] border p-4', semanticToneClasses[tone])}><div className="flex items-start justify-between gap-3"><div>{title && <div className="font-bold">{title}</div>}{children && <div className="mt-1 text-sm opacity-95">{children}</div>}</div>{action}</div></div>; }
 export const ConfirmationPanel = InfoPanel;
 
 export function DialogHeader({ title, subtitle }: { title: ReactNode; subtitle?: ReactNode }) { return <div className="border-b border-[var(--ops-divider)] px-5 py-4"><h2 className="text-[var(--ops-type-title-size)] font-bold text-[var(--ops-text)]">{title}</h2>{subtitle && <p className="mt-1 text-sm text-[var(--ops-text-muted)]">{subtitle}</p>}</div>; }

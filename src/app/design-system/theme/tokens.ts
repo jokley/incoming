@@ -64,6 +64,13 @@ export const opsLightThemeTokens = {
     background: '#EDF2F7', surface: '#FFFFFF', surfaceRaised: '#F7F9FC', surfaceElevated: '#E8EEF5', surfaceOverlay: '#DCE5EF',
     border: '#B8C6D6', borderStrong: '#7E93AC', divider: '#CBD6E2', focus: '#2563EB', primary: '#2563EB', primaryEmphasis: '#1D4ED8',
     secondary: '#0369A1', success: '#047857', warning: '#A16207', error: '#BE123C', info: '#0369A1', text: '#142033', textMuted: '#455970', textSubtle: '#5B6F86', onAccent: '#FFFFFF',
+    tone: {
+      neutral: { border: '#B8C6D6', surface: 'rgba(100, 116, 139, 0.12)', text: '#334155', icon: '#334155', hover: '#DCE5EF', disabledBorder: '#CBD6E2', disabledSurface: '#F7F9FC', disabledText: '#5B6F86' },
+      success: { border: 'rgba(4, 120, 87, 0.38)', surface: 'rgba(4, 120, 87, 0.1)', text: '#065F46', icon: '#047857', hover: 'rgba(4, 120, 87, 0.1)', disabledBorder: '#CBD6E2', disabledSurface: '#F7F9FC', disabledText: '#5B6F86' },
+      warning: { border: 'rgba(161, 98, 7, 0.4)', surface: 'rgba(217, 119, 6, 0.11)', text: '#854D0E', icon: '#A16207', hover: 'rgba(217, 119, 6, 0.11)', disabledBorder: '#CBD6E2', disabledSurface: '#F7F9FC', disabledText: '#5B6F86' },
+      error: { border: 'rgba(190, 18, 60, 0.38)', surface: 'rgba(225, 29, 72, 0.09)', text: '#9F1239', icon: '#BE123C', hover: 'rgba(225, 29, 72, 0.09)', disabledBorder: '#CBD6E2', disabledSurface: '#F7F9FC', disabledText: '#5B6F86' },
+      info: { border: 'rgba(3, 105, 161, 0.36)', surface: 'rgba(14, 116, 144, 0.1)', text: '#075985', icon: '#0369A1', hover: 'rgba(14, 116, 144, 0.1)', disabledBorder: '#CBD6E2', disabledSurface: '#F7F9FC', disabledText: '#5B6F86' },
+    },
   },
 } as const;
 
