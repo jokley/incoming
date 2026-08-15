@@ -1,4 +1,4 @@
-import {
+import type {
   RoomType,
   Hotel,
   HotelRoomInventory,
@@ -16,9 +16,10 @@ import {
   FisMockFilePair
 } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
-import { OfficialQuotaUsage } from './fisRules';
+import type { OfficialQuotaUsage } from './fisRules';
 import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
 import { finishAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
+import { downloadResponse } from './download';
 
 import {
   mockRoomTypes as initialRoomTypes,
@@ -130,21 +131,13 @@ class ApiService {
   async generateScenario(number: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/admin/scenarios/${number}/generate`, { method: 'POST' });
     if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Szenario konnte nicht generiert werden.');
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = `wm-scenario-${number}.zip`; link.click();
-    URL.revokeObjectURL(url);
+    await downloadResponse(response, `wm-scenario-${number}.zip`);
   }
 
   async generateCompleteScenarios(): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/admin/scenarios/complete/generate`, { method: 'POST' });
     if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Kompletter Testordner konnte nicht generiert werden.');
-    const blob = await response.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url; link.download = 'Kompletter_Testordner.zip'; link.click();
-    URL.revokeObjectURL(url);
+    await downloadResponse(response, 'Kompletter_Testordner.zip');
   }
 
   // ============================================================================
