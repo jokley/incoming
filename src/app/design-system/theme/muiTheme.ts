@@ -35,16 +35,19 @@ export const createOpsMuiTheme = (mode: 'light' | 'dark') => {
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: { borderRadius: t.layout.radius.md, transition: t.motion.transition.normal, '&:focus-visible': { boxShadow: shadow.focus } },
+        root: { minHeight: 40, borderRadius: t.layout.radius.md, transition: t.motion.transition.normal, '&:focus-visible': { boxShadow: shadow.focus } },
       },
     },
     MuiCard: { styleOverrides: { root: { backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: shadow.sm } } },
     MuiChip: { styleOverrides: { root: { borderRadius: t.layout.radius.sm, fontWeight: 750, '&:focus-visible': { boxShadow: shadow.focus } } } },
-    MuiDialog: { styleOverrides: { paper: { backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: shadow.lg } } },
+    MuiDialog: { defaultProps: { transitionDuration: 180 }, styleOverrides: { paper: { maxHeight: 'calc(100dvh - 32px)', overflow: 'hidden', backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: shadow.lg } } },
+    MuiDialogTitle: { styleOverrides: { root: { flexShrink: 0, padding: '20px 24px', borderBottom: `1px solid ${c.divider}` } } },
+    MuiDialogContent: { styleOverrides: { root: { minHeight: 0, overflowY: 'auto', padding: '20px 24px' } } },
+    MuiDialogActions: { styleOverrides: { root: { flexShrink: 0, minHeight: 64, gap: 8, padding: '12px 24px', borderTop: `1px solid ${c.divider}` } } },
     MuiDrawer: { styleOverrides: { paper: { backgroundImage: 'none', borderColor: c.border } } },
     MuiTooltip: { styleOverrides: { tooltip: { backgroundColor: c.surfaceOverlay, border: `1px solid ${c.border}`, boxShadow: shadow.md } } },
     MuiTableCell: { styleOverrides: { root: { borderBottomColor: c.divider } } },
-    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: t.layout.radius.md, '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: c.focus, boxShadow: shadow.focus } } } },
+    MuiOutlinedInput: { styleOverrides: { root: { minHeight: 44, borderRadius: t.layout.radius.md, '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: c.focus, boxShadow: shadow.focus } } } },
     MuiMenuItem: { styleOverrides: { root: { borderRadius: t.layout.radius.sm, '&.Mui-focusVisible': { backgroundColor: c.surfaceElevated } } } },
   },
   });

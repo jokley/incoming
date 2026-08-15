@@ -1,5 +1,5 @@
 import React, { type ReactNode } from 'react';
-import { Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle } from '@mui/material';
+import { ConfirmDialog, EnterpriseDialog, EnterpriseDialogActions, type EnterpriseDialogSize } from './EnterpriseDialog';
 
 interface CrudDialogProps {
   open: boolean;
@@ -9,31 +9,23 @@ interface CrudDialogProps {
   saving?: boolean;
   saveDisabled?: boolean;
   saveLabel?: string;
+  description?: ReactNode;
+  status?: ReactNode;
+  size?: EnterpriseDialogSize;
   onClose: () => void;
   onSave: () => void;
 }
 
 /** Shared create/edit shell used by operational master-data modules. */
-export function CrudDialog({ open, title, children, dirty = false, saving = false, saveDisabled = false, saveLabel = 'Speichern', onClose, onSave }: CrudDialogProps) {
+export function CrudDialog({ open, title, description = 'Pflichtfelder vollständig ausfüllen und Änderungen anschließend speichern.', status, children, dirty = false, saving = false, saveDisabled = false, saveLabel = 'Speichern', size = 'small', onClose, onSave }: CrudDialogProps) {
   const [confirmClose, setConfirmClose] = React.useState(false);
   const requestClose = () => dirty ? setConfirmClose(true) : onClose();
 
   return <>
-    <Dialog open={open} onClose={(_, reason) => reason === 'backdropClick' && dirty ? setConfirmClose(true) : requestClose()} fullWidth maxWidth="sm">
-      <DialogTitle>{title}</DialogTitle>
-      <DialogContent dividers>{children}</DialogContent>
-      <DialogActions sx={{ justifyContent: 'space-between' }}>
-        <Button onClick={requestClose}>Abbrechen</Button>
-        <Button variant="contained" disabled={saveDisabled || saving} startIcon={saving ? <CircularProgress size={16} /> : undefined} onClick={onSave}>{saveLabel}</Button>
-      </DialogActions>
-    </Dialog>
-    <Dialog open={confirmClose} onClose={() => setConfirmClose(false)}>
-      <DialogTitle>Änderungen verwerfen?</DialogTitle>
-      <DialogContent>Ihre ungespeicherten Änderungen gehen verloren.</DialogContent>
-      <DialogActions>
-        <Button onClick={() => setConfirmClose(false)}>Weiter bearbeiten</Button>
-        <Button color="error" onClick={() => { setConfirmClose(false); onClose(); }}>Verwerfen</Button>
-      </DialogActions>
-    </Dialog>
+    <EnterpriseDialog open={open} title={title} description={description} status={status} size={size} busy={saving} onClose={requestClose} onSubmit={saveDisabled || saving ? undefined : onSave}
+      actions={<EnterpriseDialogActions busy={saving} submitDisabled={saveDisabled} submitLabel={saveLabel} onCancel={requestClose} onSubmit={onSave} />}>
+      {children}
+    </EnterpriseDialog>
+    <ConfirmDialog open={confirmClose} title="Änderungen verwerfen?" description="Ihre ungespeicherten Änderungen gehen verloren." confirmLabel="Verwerfen" destructive onCancel={() => setConfirmClose(false)} onConfirm={() => { setConfirmClose(false); onClose(); }} />
   </>;
 }
