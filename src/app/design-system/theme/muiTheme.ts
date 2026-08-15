@@ -3,6 +3,13 @@ import { opsLightThemeTokens, opsThemeTokens as t } from './tokens';
 
 export const createOpsMuiTheme = (mode: 'light' | 'dark') => {
   const c = mode === 'dark' ? t.color : { ...t.color, ...opsLightThemeTokens.color };
+  const shadow = mode === 'dark' ? t.layout.shadow : {
+    ...t.layout.shadow,
+    sm: '0 8px 24px rgba(30, 48, 72, 0.11)',
+    md: '0 18px 60px rgba(30, 48, 72, 0.16)',
+    lg: '0 28px 90px rgba(30, 48, 72, 0.22)',
+    focus: '0 0 0 3px rgba(37, 99, 235, 0.25)',
+  };
   return createTheme({
   palette: {
     mode, background: { default: c.background, paper: c.surface }, primary: { main: c.primary, dark: c.primaryEmphasis, contrastText: c.onAccent },
@@ -28,16 +35,16 @@ export const createOpsMuiTheme = (mode: 'light' | 'dark') => {
     MuiButton: {
       defaultProps: { disableElevation: true },
       styleOverrides: {
-        root: { borderRadius: t.layout.radius.md, transition: t.motion.transition.normal, '&:focus-visible': { boxShadow: t.layout.shadow.focus } },
+        root: { borderRadius: t.layout.radius.md, transition: t.motion.transition.normal, '&:focus-visible': { boxShadow: shadow.focus } },
       },
     },
-    MuiCard: { styleOverrides: { root: { backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: t.layout.shadow.sm } } },
-    MuiChip: { styleOverrides: { root: { borderRadius: t.layout.radius.sm, fontWeight: 750, '&:focus-visible': { boxShadow: t.layout.shadow.focus } } } },
-    MuiDialog: { styleOverrides: { paper: { backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: t.layout.shadow.lg } } },
+    MuiCard: { styleOverrides: { root: { backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: shadow.sm } } },
+    MuiChip: { styleOverrides: { root: { borderRadius: t.layout.radius.sm, fontWeight: 750, '&:focus-visible': { boxShadow: shadow.focus } } } },
+    MuiDialog: { styleOverrides: { paper: { backgroundImage: 'none', backgroundColor: c.surface, border: `1px solid ${c.border}`, boxShadow: shadow.lg } } },
     MuiDrawer: { styleOverrides: { paper: { backgroundImage: 'none', borderColor: c.border } } },
-    MuiTooltip: { styleOverrides: { tooltip: { backgroundColor: c.surfaceOverlay, border: `1px solid ${c.border}`, boxShadow: t.layout.shadow.md } } },
+    MuiTooltip: { styleOverrides: { tooltip: { backgroundColor: c.surfaceOverlay, border: `1px solid ${c.border}`, boxShadow: shadow.md } } },
     MuiTableCell: { styleOverrides: { root: { borderBottomColor: c.divider } } },
-    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: t.layout.radius.md, '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: c.focus, boxShadow: t.layout.shadow.focus } } } },
+    MuiOutlinedInput: { styleOverrides: { root: { borderRadius: t.layout.radius.md, '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: c.focus, boxShadow: shadow.focus } } } },
     MuiMenuItem: { styleOverrides: { root: { borderRadius: t.layout.radius.sm, '&.Mui-focusVisible': { backgroundColor: c.surfaceElevated } } } },
   },
   });
