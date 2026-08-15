@@ -38,7 +38,6 @@ python -m venv venv    # Windows
 
 pip install -r requirements.txt
 python seed_data.py       # Datenbank initialisieren
-python seed_data.py 
 ```
 
 #### Frontend
@@ -46,7 +45,7 @@ python seed_data.py
 ```bash
 # Im Hauptverzeichnis
 pnpm install
-cp .env.example .env
+cp incoming.env.example .env
 pnpm run dev
 ```
 
@@ -56,10 +55,11 @@ pnpm run dev
 .
 ├── backend/
 │   ├── app.py              # Flask Backend mit allen API Endpoints
+│   ├── models.py           # Persistenzmodelle
 │   ├── seed_data.py        # Datenbank-Initialisierung mit Beispieldaten
 │   ├── requirements.txt
 │   ├── Dockerfile
-│   └── freestyle_wm.db     # SQLite Datenbank (erstellt beim Start)
+│   └── data/               # Persistente SQLite-Daten im Container
 ├── src/
 │   ├── app/
 │   │   ├── components/
@@ -81,6 +81,9 @@ pnpm run dev
 ├── Dockerfile.frontend
 └── README.md
 ```
+
+Die Verantwortlichkeiten und Abhängigkeitsregeln der Module sind in
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) dokumentiert.
 
 ## 🔌 API Endpoints
 
