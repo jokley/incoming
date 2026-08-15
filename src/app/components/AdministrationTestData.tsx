@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, Check, Database, Download, FlaskConical } from 'lucide-react';
 import { Dialog, DialogContent } from './ui/dialog';
-import { ContentCard, DialogFooter, DialogHeader, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, DialogFooter, DialogHeader, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
 
 type Scope = 'imports' | 'athletes' | 'assignments' | 'all';
@@ -59,7 +59,7 @@ export function AdministrationTestData() {
     } finally { setSaving(false); }
   };
 
-  return <PageLayout>
+  return <SplitPageLayout className="overflow-y-auto">
     <PageHeader eyebrow="Administration" title="Testdaten" subtitle="Dynamische Daten kontrolliert zurücksetzen und reproduzierbare Tests vorbereiten." meta={<StatusChip tone="warning">Nur für Administratoren</StatusChip>} />
     {message && <InfoPanel tone={message.tone} title={message.tone === 'success' ? 'Reset abgeschlossen' : 'Reset fehlgeschlagen'}>{message.text}</InfoPanel>}
     <ContentCard className="p-5">
@@ -98,7 +98,7 @@ export function AdministrationTestData() {
         <div className="mt-5 grid gap-5 md:grid-cols-2"><DataList title="Folgende Daten werden gelöscht:" items={selected.deletes} /><DataList title="Folgende Daten bleiben erhalten:" items={preserved} /></div>
       </div><DialogFooter><OpsButton disabled={saving} onClick={() => setSelected(null)}>Abbrechen</OpsButton><OpsButton disabled={saving} className="border-red-400 bg-red-700 font-extrabold text-white hover:bg-red-600" onClick={reset}>{saving ? 'Reset wird ausgeführt …' : 'Endgültig zurücksetzen'}</OpsButton></DialogFooter></>}
     </DialogContent></Dialog>
-  </PageLayout>;
+  </SplitPageLayout>;
 }
 
 function DataList({ title, items }: { title: string; items: string[] }) {

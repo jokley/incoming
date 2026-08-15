@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { Building2, Download, FileSpreadsheet, NotebookPen, Search, Users } from 'lucide-react';
 import { api } from '../services/api';
 import type { Athlete, RoomBooking } from '../types';
-import { ContentCard, EmptyState, ErrorState, LoadingState, OpsButton, PageHeader, PageLayout, StatusChip, Toolbar } from '../design-system';
+import { ContentCard, EmptyState, ErrorState, LoadingState, OpsButton, PageHeader, SplitPageLayout, StatusChip, Toolbar } from '../design-system';
 import { createListRows, filterListRows, groupListRows, type ListFilters, type ListKind, type ListRow } from '../lists/listEngine';
 import { exportExcel } from '../lists/listExports';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
@@ -71,7 +71,7 @@ export function Lists() {
   const update = <K extends keyof ListFilters>(key: K, value: ListFilters[K]) => setFilters(current => ({ ...current, [key]: value }));
   const switchKind = (next: ListKind) => { setKind(next); setFilters(current => ({ ...current, selection: '' })); };
 
-  return <PageLayout density="compact">
+  return <SplitPageLayout density="compact">
     <PageHeader className="px-4 py-2 [&_h1]:text-lg [&_p]:text-[11px]" eyebrow="Informationszentrum" title="Listen" subtitle="Live-Daten filtern und in die operative Ansicht wechseln." meta={<StatusChip tone="neutral">Nur-Lese-Ansicht</StatusChip>} />
     {error && <ErrorState title="Listen konnten nicht geladen werden" description="Bitte laden Sie die Seite erneut." />}
     {!data && !error ? <LoadingState label="Live-Listen werden geladen…" /> : data && <>
@@ -112,5 +112,5 @@ export function Lists() {
         </div>
       </div>
     </>}
-  </PageLayout>;
+  </SplitPageLayout>;
 }

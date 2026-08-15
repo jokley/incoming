@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Dialog, DialogContent, DialogTitle } from '@mui/material';
 import { AlertTriangle, CheckCircle, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users } from 'lucide-react';
@@ -6,7 +6,7 @@ import { AlertTriangle, CheckCircle, ChevronRight, Clock3, FileCheck2, FileText,
 import { api } from '../services/api';
 import type { FisImportIssue, FisImportPreview } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
-import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, quotaViolationLabel, type OperationsTask } from './OperationsDecisionDialog';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
@@ -14,7 +14,6 @@ import { ActivitySummaryCard } from './activity';
 
 const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
 const workflowSteps = ['Entwurf', 'Technisch geprüft', 'Fachlich geprüft', 'Warten auf Nation', 'Erneut prüfen', 'Freigegeben', 'Importiert'];
-const theme = { '--ops-background':'#111d2e','--ops-surface':'#1a2a40','--ops-surface-raised':'#21334c','--ops-surface-elevated':'#2a3e59','--ops-surface-overlay':'#344b67','--ops-border':'#4b6380','--ops-divider':'#405773','--ops-text-muted':'#b7c4d4' } as CSSProperties;
 type Detail = { title: string; subtitle?: string; issues?: FisImportIssue[]; rows?: string[][]; headers?: string[] };
 
 export function DataImport() {
@@ -74,8 +73,8 @@ export function DataImport() {
   }) ?? [];
   const roomRows = preview?.rooms.map(r => [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—']) ?? [];
 
-  return <div style={theme} className="-m-6 h-[calc(100vh-0px)] min-h-[720px] bg-[var(--ops-background)] p-6 text-[var(--ops-text)]">
-    <PageLayout className="flex h-full min-h-0 flex-col gap-5 space-y-0">
+  return <div className="h-full min-h-0 bg-[var(--ops-background)] text-[var(--ops-text)]">
+    <SplitPageLayout className="flex h-full min-h-0 flex-col gap-5 space-y-0">
       <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="FIS-Import Sessions prüfen, entscheiden und kontrolliert abschließen." meta={selected ? <><StatusChip tone={selected.errors ? 'error' : selected.warnings ? 'warning' : 'success'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.nation} · {selected.discipline}</span></> : <StatusChip tone="primary">Neue Import Session</StatusChip>} />
       <div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
@@ -100,7 +99,7 @@ export function DataImport() {
           </div>
         </ContentCard>
       </div>
-    </PageLayout>
+    </SplitPageLayout>
     <DetailDialog detail={detail} onClose={() => setDetail(null)} />
     <OperationsDecisionDialog task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />

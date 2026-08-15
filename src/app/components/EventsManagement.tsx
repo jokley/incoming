@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import type { Event } from '../types';
-import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 import { OperationsTimeline, type TimelineRowData } from './timeline';
 import { ActivitySummaryCard } from './activity';
@@ -70,7 +70,7 @@ export function EventsManagement() {
     return { id: event.id, title: event.discipline, subtitle: `${inclusiveDays(event)} Tage`, segments: [{ id: `event-${event.id}`, start: event.startDate, end: event.endDate, label: event.discipline, color: event.id === selectedId ? 'var(--ops-primary-emphasis)' : 'var(--ops-info)', tooltipData: { title: event.discipline, description: <><div>Personenbedarf: {stats.people}</div><div>Berechnete Zimmer: {stats.rooms}</div><div>EZ-Anteil: {stats.singlePercentage} %</div><div>DZ-Anteil: {stats.doublePercentage} %</div></> } }] };
   });
   if (loading) return <div className="flex h-64 items-center justify-center text-sm text-slate-500">Events werden geladen …</div>;
-  return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-4 xl:space-y-0">
+  return <SplitPageLayout>
     <PageHeader eyebrow="Operations Center" title="Events & Bedarfsplanung" subtitle="Zeitplanung, Überschneidungen und automatisch berechneter Zimmerbedarf." meta={<><StatusChip tone="primary">{events.length} Events</StatusChip><StatusChip tone="info">{totalPeople} Personenbedarf</StatusChip></>} actions={<OpsButton onClick={() => setDialog({ open: true, event: null })} disabled={!permissions.canCreate} title={!permissions.canCreate ? READ_ONLY_TOOLTIP : undefined}><Plus className="mr-2 inline h-4 w-4" />Event hinzufügen</OpsButton>} />
     {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
     <div className="flex flex-col gap-4 xl:min-h-0 xl:flex-1 xl:flex-row">
@@ -81,5 +81,5 @@ export function EventsManagement() {
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4"><div className="shrink-0"><SectionHeader title="Bedarfsplanung" subtitle="Belegungsstrategie: automatisch berechneter EZ-/DZ-Bedarf" /><div className="mt-2"><PlanningSummary event={selected} /></div></div><div className="flex min-h-0 flex-1 flex-col"><SectionHeader title="Timeline" subtitle="Eventzeiträume im gesamten WM-Zeitraum · Start und Ende rechts" /><div className="mt-2 min-h-0 flex-1 overflow-y-auto"><OperationsTimeline startDate={WM_START} endDate={WM_END} rows={timelineRows} selectedRowId={selectedId || undefined} onRowClick={row => setSelectedId(row.id)} onSegmentClick={row => { const event = events.find(item => item.id === row.id); if (!event) return; setSelectedId(event.id); if (permissions.canEdit) setDialog({ open: true, event }); }} emptyMessage="Keine Eventzeiträume vorhanden." legend={[{ label: 'Ausgewähltes Event', color: 'var(--ops-primary-emphasis)' }, { label: 'Weitere Eventzeiträume', color: 'var(--ops-info)' }]} /></div></div></div></> : <div className="p-12"><EmptyState title="Kein Event ausgewählt" /></div>}</ContentCard>
     </div>
     <EventDialog open={dialog.open} event={dialog.event} onClose={() => setDialog({ open: false, event: null })} onSave={async value => { dialog.event ? await api.updateEvent(dialog.event.id, value) : await api.createEvent(value); await load(); }} />
-  </PageLayout>;
+  </SplitPageLayout>;
 }

@@ -6,7 +6,7 @@ import { clsx } from 'clsx';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import type { Hotel, HotelRoomInventory, RoomBooking, RoomType } from '../types';
-import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, PageLayout, SectionHeader, StatusChip } from '../design-system';
+import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 import { HotelContingentDialog } from './HotelContingentDialog';
 import type { HotelContingentValues } from './HotelContingentValidation';
@@ -36,7 +36,7 @@ export function HotelsManagement() {
  const timelineRows:TimelineRowData[]=(selected?.roomInventories||[]).map(i=>({id:i.id,title:i.roomType.name,subtitle:`${i.roomCount} Zimmer · ${i.roomCount*i.roomType.maxPersons} Betten`,segments:[{id:i.id,start:i.availableFrom,end:i.availableUntil,color:'var(--ops-primary-emphasis)',tooltip:<span><b>{i.roomType.name}</b><br/>{date(i.availableFrom)} – {date(i.availableUntil)}<br/>{i.roomCount} Zimmer{i.hasHalfBoard&&<><br/>Halbpension</>}{i.hasSR&&<><br/>Skiraum</>}</span>}]}));
  useEffect(()=>{detailScrollRef.current?.scrollTo({top:0});},[selectedId]);
  if(loading)return <div className="flex h-64 items-center justify-center"><CircularProgress/></div>;
- return <PageLayout className="[--ops-background:#111d2e] [--ops-surface:#1a2a40] [--ops-surface-raised:#21334c] [--ops-surface-elevated:#2a3e59] [--ops-surface-overlay:#344b67] [--ops-border:#4b6380] [--ops-divider:#405773] [--ops-text-muted:#b7c4d4] xl:flex xl:h-full xl:min-h-0 xl:flex-col xl:gap-5 xl:space-y-0">
+ return <SplitPageLayout>
   <ImportConflictNotice/>
   <PageHeader eyebrow="Operations Center" title="Hotels & Zimmerkontingente" subtitle="Hotelstruktur, Verfügbarkeit und Kontingente im operativen Überblick." meta={<><StatusChip tone="success">{totals.rooms} freie Zimmer</StatusChip><StatusChip tone="primary">{totals.beds} freie Betten</StatusChip></>} actions={<OpsButton onClick={()=>setHotelDialog({open:true,hotel:null})} disabled={!permissions.canCreate} title={!permissions.canCreate?READ_ONLY_TOOLTIP:undefined}><Plus className="mr-2 inline h-4 w-4"/>Hotel hinzufügen</OpsButton>}/>
   {error&&<InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
@@ -50,5 +50,5 @@ export function HotelsManagement() {
   <HotelDialog open={hotelDialog.open} hotel={hotelDialog.hotel} onClose={()=>setHotelDialog({open:false,hotel:null})} onSave={async v=>{hotelDialog.hotel?await api.updateHotel(hotelDialog.hotel.id,v):await api.createHotel(v);await load();}}/>
   <HotelContingentDialog open={contingentDialog.open} mode={contingentDialog.mode} hotel={selected} contingent={contingentDialog.item} roomTypes={roomTypes} onClose={()=>setContingentDialog({open:false,mode:'create',item:null})} onSubmit={async(v:HotelContingentValues)=>{if(!selected)return;const payload={...v,roomCount:Number(v.roomCount)};contingentDialog.mode==='edit'&&contingentDialog.item?await api.updateHotelInventory(selected.id,contingentDialog.item.id,payload):await api.addHotelInventory(selected.id,payload);await load();}}/>
   <Dialog open={Boolean(deleting)} onClose={()=>setDeleting(null)}><DialogTitle>Kontingent löschen?</DialogTitle><DialogContent>Das Kontingent <b>{deleting?.roomType.name}</b> wird dauerhaft entfernt.</DialogContent><DialogActions><Button onClick={()=>setDeleting(null)}>Abbrechen</Button><Button color="error" variant="contained" onClick={async()=>{if(selected&&deleting){await api.deleteHotelInventory(selected.id,deleting.id);setDeleting(null);await load();}}}>Löschen</Button></DialogActions></Dialog>
- </PageLayout>;
+ </SplitPageLayout>;
 }

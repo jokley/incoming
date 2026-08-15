@@ -36,6 +36,21 @@ export function PageLayout({ children, className = '', density = 'comfortable' }
   return <div className={clsx('mx-auto w-full max-w-[var(--ops-layout-max)]', density === 'compact' ? 'space-y-[calc(var(--ops-space)*2)]' : 'space-y-[calc(var(--ops-space)*3)]', className)}>{children}</div>;
 }
 
+/**
+ * Shared viewport shell for all master/detail workspaces.
+ *
+ * The application frame owns the viewport while this component owns the
+ * remaining height below the global navigation. Individual pages only define
+ * their content; spacing and overflow behavior stay consistent here.
+ */
+export function SplitPageLayout({ children, className = '', density = 'comfortable' }: { children: ReactNode; className?: string; density?: Density }) {
+  return <div className={clsx(
+    'ops-split-page mx-auto flex h-full min-h-0 w-full max-w-[var(--ops-layout-max)] flex-col',
+    density === 'compact' ? 'gap-[calc(var(--ops-space)*2)]' : 'gap-[calc(var(--ops-space)*2.5)]',
+    className,
+  )}>{children}</div>;
+}
+
 export function PageHeader({ title, subtitle, eyebrow, actions, meta, className = '' }: { title: ReactNode; subtitle?: ReactNode; eyebrow?: ReactNode; actions?: ReactNode; meta?: ReactNode; className?: string }) {
   return <header className={clsx('rounded-[var(--ops-radius-xxl)] border border-[var(--ops-border)] bg-[var(--ops-surface)] px-[calc(var(--ops-space)*2.5)] py-[calc(var(--ops-space)*2)] shadow-[var(--ops-shadow-sm)]', className)}><div className="flex flex-col gap-[calc(var(--ops-space)*2)] md:flex-row md:items-start md:justify-between"><div className="min-w-0">{eyebrow && <div className="mb-[var(--ops-space)] text-[var(--ops-type-label-size)] font-extrabold uppercase tracking-[0.14em] text-[var(--ops-text-subtle)]">{eyebrow}</div>}<h1 className="truncate text-[var(--ops-type-page-title-size)] font-bold leading-tight tracking-[-0.02em] text-[var(--ops-text)]">{title}</h1>{subtitle && <p className="mt-1 max-w-3xl text-[var(--ops-type-body-size)] leading-[var(--ops-type-body-line)] text-[var(--ops-text-muted)]">{subtitle}</p>}{meta && <div className="mt-3 flex flex-wrap items-center gap-2">{meta}</div>}</div>{actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}</div></header>;
 }

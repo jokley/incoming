@@ -59,4 +59,12 @@ export const opsThemeTokens = {
   },
 } as const;
 
+export const opsLightThemeTokens = {
+  color: {
+    background: '#F3F6FA', surface: '#FFFFFF', surfaceRaised: '#F8FAFC', surfaceElevated: '#EEF3F8', surfaceOverlay: '#E4ECF5',
+    border: '#C7D2E0', borderStrong: '#91A4BC', divider: '#D8E0EA', focus: '#2563EB', primary: '#2563EB', primaryEmphasis: '#1D4ED8',
+    secondary: '#0369A1', success: '#047857', warning: '#A16207', error: '#BE123C', info: '#0369A1', text: '#142033', textMuted: '#52647A', textSubtle: '#64748B', onAccent: '#FFFFFF',
+  },
+} as const;
+
 export type OpsThemeTokens = typeof opsThemeTokens;

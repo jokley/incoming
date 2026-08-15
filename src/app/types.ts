@@ -441,4 +441,3 @@ export interface FisImportConfirmResult {
     finishedAt: string | null;
   };
 }
-  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | null;
