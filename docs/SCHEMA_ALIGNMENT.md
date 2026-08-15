@@ -86,3 +86,11 @@ Check/FK, Default-Freiheit, `foreign_key_check` und Idempotenz geprüft.
 Sprint 3.3c kann beginnen, wenn diese Tests in CI grün sind und die Naming-
 Convention-Entscheidung gefallen ist. Die eigentliche Baseline bleibt ein
 separater, bewusst freizugebender Schritt.
+
+## Abschluss in Sprint 3.3c
+
+Die Gates wurden erfüllt und Revision `20260815_01` wurde als reine
+Leere-Datenbank-Baseline freigegeben. Die endgültige Constraint-Strategie und
+der künftige Workflow sind in `ADR-0001-PRODUCTION-BASELINE.md` dokumentiert.
+Dieser Alignment-Pfad bleibt ausschließlich die kontrollierte Vorstufe für
+Bestands-SQLite-Dateien und ist kein Bestandteil der Baseline.

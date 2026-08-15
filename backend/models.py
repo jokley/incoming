@@ -1,8 +1,20 @@
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import MetaData
 from datetime import datetime
 import json
 
-db = SQLAlchemy()
+NAMING_CONVENTION = {
+    'ix': 'ix_%(table_name)s_%(column_0_name)s',
+    'uq': 'uq_%(table_name)s_%(column_0_name)s',
+    'ck': 'ck_%(table_name)s_%(constraint_name)s',
+    'fk': 'fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s',
+    'pk': 'pk_%(table_name)s',
+}
+
+
+# Constraint names are part of the migration API: deterministic names make
+# ALTER/DROP operations portable between PostgreSQL and SQLite batch mode.
+db = SQLAlchemy(metadata=MetaData(naming_convention=NAMING_CONVENTION))
 
 
 class AuditEvent(db.Model):
@@ -87,7 +99,12 @@ class ImportSession(db.Model):
     nation = db.Column(db.String(10), nullable=False, unique=True, index=True)
     discipline = db.Column(db.String(100))
     status = db.Column(db.String(30), nullable=False, default='DRAFT', index=True)
-    current_version_id = db.Column(db.Integer, db.ForeignKey('import_session_version.id'))
+    # Break the session/version DDL cycle on PostgreSQL. SQLAlchemy keeps this
+    # inline on SQLite, whose ALTER TABLE support cannot add the constraint.
+    current_version_id = db.Column(
+        db.Integer,
+        db.ForeignKey('import_session_version.id', use_alter=True),
+    )
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     approved_at = db.Column(db.DateTime)
@@ -343,7 +360,7 @@ class Athlete(db.Model):
     __table_args__ = (
         db.CheckConstraint(
             "single_room_status IN ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')",
-            name='ck_athlete_single_room_status',
+            name='single_room_status',
         ),
     )
 

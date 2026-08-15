@@ -32,8 +32,8 @@ vorgesehen. CORS bleibt ohne `CORS_ORIGINS` deaktiviert.
 `DATABASE_BACKEND` akzeptiert `sqlite` (Standard) oder `postgresql`. SQLite
 verwendet weiterhin `DATABASE_PATH`. Für PostgreSQL ist zusätzlich eine
 `DATABASE_URL` mit `postgresql://` erforderlich; die Anwendung verwendet dafür
-den Psycopg-3-Treiber. Bis zur Alembic-Baseline führt die Anwendung ihre
-bestehenden automatischen Schema-Upgrades ausschließlich im SQLite-Modus aus.
+den Psycopg-3-Treiber. Für noch nicht übernommene Bestandsdateien führt die
+Anwendung ihre automatischen Schema-Upgrades ausschließlich im SQLite-Modus aus.
 Nach den fachlichen Backfills entfernt das idempotente Schema-Alignment
 verbliebene physische Abweichungen bei Constraints und temporären
 Server-Defaults. PostgreSQL wird von diesem Kompatibilitätspfad nie verändert.
@@ -54,20 +54,31 @@ cd backend
 # Freigegebene Revisionskette als SQL rendern (öffnet keine Datenbankverbindung)
 python -m alembic upgrade head --sql
 
-# Zukünftig: Revision nach einer bewussten Modelländerung erzeugen und prüfen
+# Revision nach einer bewussten Modelländerung erzeugen und prüfen
 python -m alembic revision --autogenerate -m "kurze beschreibung"
 
-# Zukünftig: freigegebene Revisionen anwenden bzw. zurückrollen
+# Freigegebene Revisionen anwenden bzw. zurückrollen
 python -m alembic upgrade head
 python -m alembic downgrade -1
 ```
+
+Die Revision `20260815_01` ist die Produktions-Baseline für **leere** SQLite-
+und PostgreSQL-Datenbanken. Eine angeglichene Bestandsdatenbank darf erst nach
+einem belegten `compare_metadata()`-Null-Diff auf diese Revision gestempelt
+werden; die Baseline enthält absichtlich weder Backfills noch Legacy-Logik.
+
+Constraints werden deterministisch benannt: `pk_<table>`,
+`fk_<table>_<column>_<referred_table>`, `uq_<table>_<first_column>`,
+`ck_<table>_<semantic_name>` und `ix_<table>_<column>`. Explizite Namen für
+mehrspaltige Constraints bleiben stabil. Der zyklische FK
+`import_session.current_version_id` wird auf PostgreSQL nach den Tabellen
+angelegt und auf SQLite wegen dessen eingeschränktem `ALTER TABLE` inline.
 
 Autogenerierte Revisionen sind immer manuell auf Dialektunterschiede,
 Constraint-Namen, Datenverlust und eine belastbare `downgrade()`-Operation zu
 prüfen. Vor `upgrade` ist ein Backup vorgeschrieben. Migrationen werden nicht
 beim Anwendungsstart ausgeführt, damit Deployment und Schemaänderung getrennte,
-beobachtbare Schritte bleiben. Der Ordner `migrations/versions/` ist in diesem
-Sprint absichtlich leer; Baseline und Schemaänderungen gehören in Folgesprints.
+beobachtbare Schritte bleiben.
 
 ## Logging und Fehler
 

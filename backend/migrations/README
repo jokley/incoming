@@ -1,4 +1,5 @@
 This directory contains Alembic's migration environment.
 
-Revision files will live in versions/. Sprint 3.2 intentionally contains no
-revision or baseline; see ../README.md for the controlled workflow.
+`versions/20260815_01_production_baseline.py` is the first production revision.
+It creates only the canonical empty-database schema. It never upgrades, stamps,
+or copies a legacy database; see ../README.md for the controlled workflow.
