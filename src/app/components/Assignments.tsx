@@ -371,7 +371,7 @@ export function Assignments() {
     const validationKey = getValidationKey(unitId, athleteIds);
     const validSlot = findFirstValidSlot(validationByUnit[validationKey] || [], allHotels, hotelId);
     if (!validSlot) {
-      setError('Für dieses Hotel gibt es keinen gültigen Slot für die ausgewählte Einheit.');
+      setError('Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
       return;
     }
     await assignUnitToSlot(unitId, validSlot, athleteIds);
@@ -385,7 +385,7 @@ export function Assignments() {
     const validationKey = getValidationKey(unitId, athleteIds);
     const slot = findFirstValidSlotForRoomType(validationByUnit[validationKey] || [], allHotels, hotelId, roomTypeId);
     if (!slot) {
-      setError('Für diesen Zimmertyp gibt es keinen gültigen freien Slot.');
+      setError('Für diesen Zimmertyp gibt es kein gültiges freies Zimmer.');
       return;
     }
     await assignUnitToSlot(unitId, slot, athleteIds);
@@ -1849,7 +1849,7 @@ function HotelDetailView({
                           </span>
                           <div className="min-w-0">
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
-                              {entry.slot.roomNumber ? `Zimmer ${entry.slot.roomNumber}` : `${group.roomTypeName} · Slot ${String(entry.slot.slotIndex).padStart(2, '0')}`}
+                              {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
                             <div className="mt-0.5 truncate text-sm font-extrabold text-white">
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
@@ -2344,7 +2344,7 @@ function DetailPanel({
               <div>
                 <div className="text-xs font-bold text-emerald-300">{hotel.hotelName}</div>
                 <div className="mt-0.5 text-[10px] font-mono text-emerald-500">
-                  {slot.roomTypeName} · {slot.roomNumber || `Slot ${String(slot.slotIndex).padStart(2, '0')}`}
+                  {slot.roomTypeName} · {slot.roomNumber || `Zimmer ${String(slot.slotIndex).padStart(2, '0')}`}
                 </div>
               </div>
             </div>

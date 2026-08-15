@@ -23,7 +23,6 @@ export interface ListRow {
   roommate: string;
   remark: string;
   assigned: boolean;
-  active: boolean;
 }
 
 export interface ListFilters {
@@ -31,11 +30,11 @@ export interface ListFilters {
   selection: string;
   discipline: string;
   assignedOnly: boolean;
-  activeOnly: boolean;
 }
 
 const value = (entry?: string | null) => entry?.trim() || '—';
 const iso = (entry?: string | null) => entry?.slice(0, 10) || '';
+const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)$/i, 'Zimmer $1');
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
 export function createListRows(athletes: Athlete[], bookings: RoomBooking[]): ListRow[] {
@@ -56,7 +55,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[]): Li
       hotelId: booking?.hotel.id || '',
       bookingId: booking?.id || '',
       hotel: value(booking?.hotel.name),
-      room: value(booking?.roomNumber),
+      room: roomLabel(booking?.roomNumber),
       roomType: value(booking?.roomType.name || athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
@@ -72,7 +71,6 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[]): Li
       roommate: value(assignment?.roommate || athlete.sharedWithName),
       remark: value(athlete.additionalItems),
       assigned: Boolean(booking),
-      active: !athlete.missingFromLatestAthletesImport && !athlete.missingFromLatestRoomlistImport,
     };
   });
 }
@@ -81,7 +79,6 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
   const query = filters.search.trim().toLocaleLowerCase('de');
   return rows.filter((row) => {
     if (filters.assignedOnly && !row.assigned) return false;
-    if (filters.activeOnly && !row.active) return false;
     if (filters.selection && (kind === 'hotels' ? row.hotel : row.nation) !== filters.selection) return false;
     if (filters.discipline && row.discipline !== filters.discipline) return false;
     return !query || Object.values(row).some((item) => String(item).toLocaleLowerCase('de').includes(query));

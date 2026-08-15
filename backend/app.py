@@ -6,6 +6,7 @@ from quota_service import evaluate_quota_usage
 from datetime import datetime
 import hashlib
 import os
+import re
 import csv
 import io
 import tempfile
@@ -298,7 +299,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
             title = 'Zimmer zugewiesen'
         if hotel.get('name'):
             details.append(f"Hotel: {hotel['name']}")
-        room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber') and f"Slot {booking['roomNumber']}"]))
+        room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber')]))
         if room:
             details.append(f'Zimmer: {room}')
 
@@ -672,11 +673,11 @@ def _calculate_unit_validation(unit, slot, existing_bookings):
     occupant_count = len(unit.get('occupants', []))
 
     if occupant_count <= 1 and slot['capacity'] < 1:
-        blocking_messages.append('Slot hat keine Kapazität')
+        blocking_messages.append('Zimmer hat keine Kapazität')
     elif occupant_count == 2 and slot['capacity'] < 2:
-        blocking_messages.append('Slot passt nicht für DZ-Einheit')
+        blocking_messages.append('Zimmer passt nicht für DZ-Einheit')
     elif unit_room_type == 'appartment' and slot['capacity'] < max(1, occupant_count):
-        blocking_messages.append('Slot passt nicht für Apartment-Einheit')
+        blocking_messages.append('Zimmer passt nicht für Apartment-Einheit')
 
     if unit_room_type and slot_room_type and slot_room_type not in allowed_room_type_labels and not (unit_room_type == 'appartment' and slot_room_type == 'appartment'):
         blocking_messages.append(f'{unit["roomType"]} passt nicht auf {slot["roomTypeName"]}')
@@ -689,7 +690,7 @@ def _calculate_unit_validation(unit, slot, existing_bookings):
             continue
         if str(booking.hotel_id) != str(slot['hotelId']) or str(booking.room_type_id) != str(slot['roomTypeId']):
             continue
-        if (booking.room_number or '') != (slot['roomNumber'] or ''):
+        if (_planned_room_key(booking.room_number) or booking.room_number or '') != (slot['roomNumber'] or ''):
             continue
         if _dates_overlap(
             booking.check_in_date,
@@ -716,6 +717,17 @@ def _calculate_unit_validation(unit, slot, existing_bookings):
     }
 
 
+def _planned_room_number(index):
+    """Return the stable, user-facing identifier for an inventory room."""
+    return f'Zimmer {index:02d}'
+
+
+def _planned_room_key(room_number):
+    """Match legacy Slot labels to their Zimmer successor during replanning."""
+    match = re.fullmatch(r'(?:Slot|Zimmer)\s+(\d+)', (room_number or '').strip(), re.IGNORECASE)
+    return _planned_room_number(int(match.group(1))) if match else None
+
+
 def _build_virtual_slots(hotel, room_type, inventories, bookings):
     slot_count = sum(inv.room_count for inv in inventories)
     relevant_bookings = [
@@ -725,14 +737,14 @@ def _build_virtual_slots(hotel, room_type, inventories, bookings):
     bookings_by_room_number = {}
     unmatched_bookings = []
     for booking in relevant_bookings:
-        key = booking.room_number or ''
-        if key.startswith('Slot '):
+        key = _planned_room_key(booking.room_number)
+        if key:
             bookings_by_room_number.setdefault(key, []).append(booking)
         else:
             unmatched_bookings.append(booking)
     slots = []
     for index in range(slot_count):
-        room_number = f"Slot {index + 1:02d}"
+        room_number = _planned_room_number(index + 1)
         slot_bookings = bookings_by_room_number.get(room_number, [])
         if not slot_bookings and unmatched_bookings:
             slot_bookings = [unmatched_bookings.pop(0)]
@@ -989,7 +1001,7 @@ def _build_assignment_planning_view():
     for booking in bookings:
         hotel_room_type_key = (booking.hotel_id, booking.room_type_id)
         bookings_by_hotel_room_type.setdefault(hotel_room_type_key, []).append(booking)
-        slot_key = (str(booking.hotel_id), str(booking.room_type_id), booking.room_number or '')
+        slot_key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
         bookings_by_slot.setdefault(slot_key, []).append(booking)
 
     hotel_sections = []
@@ -1015,7 +1027,7 @@ def _build_assignment_planning_view():
                     'bookings': [
                         {
                             'bookingId': str(booking.id),
-                            'roomNumber': booking.room_number or slot['roomNumber'],
+                            'roomNumber': slot['roomNumber'],
                             'hotelId': str(booking.hotel_id),
                             'roomTypeId': str(booking.room_type_id),
                             'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,

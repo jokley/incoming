@@ -145,6 +145,36 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             for booking in slot['bookings']
         ]
         self.assertEqual(grid_bookings[0]['bookingId'], booking_id)
+        self.assertEqual(grid_bookings[0]['roomNumber'], 'Zimmer 01')
+
+    def test_room_label_survives_unassign_and_replanning(self):
+        with app.app_context():
+            athlete = self.athlete('Lina', 'Frei')
+            db.session.add(athlete)
+            db.session.commit()
+            athlete_id = str(athlete.id)
+            hotel_id = str(Hotel.query.one().id)
+            room_type_id = str(RoomType.query.one().id)
+
+        client = app.test_client()
+        created = client.post('/api/assignments/bookings', json={
+            'athleteIds': [athlete_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
+            'roomNumber': 'Zimmer 01', 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
+        })
+        self.assertEqual(created.status_code, 201)
+        booking_id = created.get_json()['id']
+        self.assertEqual(client.post(f'/api/assignments/bookings/{booking_id}/unassign').status_code, 200)
+
+        replanned = self.planning()
+        room = replanned['hotels'][0]['slots'][0]
+        self.assertEqual(room['roomNumber'], 'Zimmer 01')
+
+        reassigned = client.post('/api/assignments/bookings', json={
+            'athleteIds': [athlete_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
+            'roomNumber': room['roomNumber'], 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
+        })
+        self.assertEqual(reassigned.status_code, 201)
+        self.assertEqual(reassigned.get_json()['roomNumber'], 'Zimmer 01')
 
     def test_booking_creation_accepts_athlete_ids_without_unit_id(self):
         with app.app_context():
