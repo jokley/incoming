@@ -37,8 +37,21 @@ if settings.cors_origins:
 mock_files_dir = str(settings.mock_files_dir)
 database_path = str(settings.database_path)
 
-migrate_import_sessions(database_path)
+if settings.database_backend == 'sqlite':
+    migrate_import_sessions(database_path)
 db.init_app(app)
+
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Report application and selected database connectivity for orchestration."""
+    try:
+        db.session.execute(text('SELECT 1'))
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Database health check failed')
+        return jsonify({'status': 'unhealthy', 'databaseBackend': settings.database_backend}), 503
+    return jsonify({'status': 'healthy', 'databaseBackend': settings.database_backend})
 
 
 def _is_assignment_request():
@@ -1330,165 +1343,168 @@ CRITICAL_ROUTE_ALIASES = [
     '/api/official-quotas/',
 ]
 
-# Initialize database
-with app.app_context():
-    db.create_all()
+# Initialize the legacy schema only for SQLite. PostgreSQL schema management
+# is introduced separately with the Alembic baseline.
+if settings.database_backend == 'sqlite':
+    with app.app_context():
+        db.create_all()
 
-    def ensure_audit_event_columns():
-        """Add semantic activity data without invalidating existing histories."""
-        existing = {column[1] for column in db.session.execute(text("PRAGMA table_info(audit_event)"))}
-        needed = {
-            'activity': 'VARCHAR(200)', 'category': 'VARCHAR(50)',
-            'entity_label': 'VARCHAR(300)', 'details_json': 'TEXT',
-            'entity_refs_json': "TEXT NOT NULL DEFAULT '{}'",
-        }
-        for name, sql_type in needed.items():
-            if name not in existing:
-                db.session.execute(text(f'ALTER TABLE audit_event ADD COLUMN {name} {sql_type}'))
-        db.session.commit()
-
-    ensure_audit_event_columns()
-
-    # Lightweight SQLite migration for added columns (no Alembic in this repo)
-    def ensure_athlete_columns():
-        cols = db.session.execute(text("PRAGMA table_info(athlete)")).fetchall()
-        existing = {c[1] for c in cols}  # (cid, name, type, notnull, dflt, pk)
-        if "single_room_entitlement" not in existing:
-            db.session.execute(text("ALTER TABLE athlete ADD COLUMN single_room_entitlement VARCHAR(30)"))
-
-        needed = {
-            "athletes_last_seen_at": "DATETIME",
-            "roomlist_last_seen_at": "DATETIME",
-            "roomlist_changed_at": "DATETIME",
-            "roomlist_change_summary": "VARCHAR(500)",
-            "import_change_types_json": "TEXT",
-            "roomlist_change_acknowledged_at": "DATETIME",
-            "roomlist_change_acknowledged_summary": "VARCHAR(500)",
-            "present": "BOOLEAN",
-            "arrival_airport_name": "VARCHAR(100)",
-            "departure_airport_name": "VARCHAR(100)",
-            "additional_items": "VARCHAR(200)",
-            "entry_date": "DATETIME",
-            "last_update": "DATETIME",
-            "entries_sent_date": "DATETIME",
-        }
-
-        for name, sql_type in needed.items():
-            if name not in existing:
-                db.session.execute(text(f"ALTER TABLE athlete ADD COLUMN {name} {sql_type}"))
-
-        db.session.commit()
-
-    ensure_athlete_columns()
-    migrate_single_room_status(db)
-
-    def ensure_room_booking_columns():
-        cols = db.session.execute(text("PRAGMA table_info(room_booking)")).fetchall()
-        existing = {c[1] for c in cols}
-        needed = {
-            "counts_as_single": "BOOLEAN DEFAULT 0",
-        }
-        for name, sql_type in needed.items():
-            if name not in existing:
-                db.session.execute(text(f"ALTER TABLE room_booking ADD COLUMN {name} {sql_type}"))
-        db.session.commit()
-
-    ensure_room_booking_columns()
-
-    def ensure_import_approval_columns():
-        cols = db.session.execute(text("PRAGMA table_info(import_approval)")).fetchall()
-        existing = {c[1] for c in cols}
-        needed = {
-            "approval_method": "VARCHAR(20)", "approval_by": "VARCHAR(200)",
-            "approval_date": "DATETIME", "contact_subject": "VARCHAR(300)",
-            "deadline_at": "DATETIME",
-            "approved_person_keys_json": "TEXT",
-            "quota_details_json": "TEXT",
-            "cost_coverage": "VARCHAR(300)",
-        }
-        for name, sql_type in needed.items():
-            if name not in existing:
-                db.session.execute(text(f"ALTER TABLE import_approval ADD COLUMN {name} {sql_type}"))
-        db.session.commit()
-
-    ensure_import_approval_columns()
-
-    def ensure_import_history_columns():
-        cols = db.session.execute(text("PRAGMA table_info(import_session_event)")).fetchall()
-        if "approval_id" not in {c[1] for c in cols}:
-            db.session.execute(text("ALTER TABLE import_session_event ADD COLUMN approval_id INTEGER"))
+        def ensure_audit_event_columns():
+            """Add semantic activity data without invalidating existing histories."""
+            existing = {column[1] for column in db.session.execute(text("PRAGMA table_info(audit_event)"))}
+            needed = {
+                'activity': 'VARCHAR(200)', 'category': 'VARCHAR(50)',
+                'entity_label': 'VARCHAR(300)', 'details_json': 'TEXT',
+                'entity_refs_json': "TEXT NOT NULL DEFAULT '{}'",
+            }
+            for name, sql_type in needed.items():
+                if name not in existing:
+                    db.session.execute(text(f'ALTER TABLE audit_event ADD COLUMN {name} {sql_type}'))
             db.session.commit()
 
-    ensure_import_history_columns()
+        ensure_audit_event_columns()
 
-    def ensure_event_planning_columns():
-        """Keep existing SQLite installations compatible with person-based planning."""
-        cols = db.session.execute(text("PRAGMA table_info(event)")).fetchall()
-        existing = {c[1] for c in cols}
-        if "person_demand" not in existing:
-            db.session.execute(text("ALTER TABLE event ADD COLUMN person_demand INTEGER NOT NULL DEFAULT 0"))
-        if "single_room_percentage" not in existing:
-            db.session.execute(text("ALTER TABLE event ADD COLUMN single_room_percentage INTEGER NOT NULL DEFAULT 50"))
-        # The ORM-based reference-data setup must only run after every mapped
-        # Event column exists in an older database.
-        db.session.commit()
-        ensure_reference_data()
-        # Preserve the capacity represented by legacy room demands as the initial input.
-        db.session.execute(text("""
-            UPDATE event SET person_demand = COALESCE((
-                SELECT SUM(d.room_count * rt.max_persons)
-                FROM event_room_demand d JOIN room_type rt ON rt.id = d.room_type_id
-                WHERE d.event_id = event.id
-            ), 0) WHERE person_demand = 0
-        """))
-        db.session.commit()
+        # Lightweight SQLite migration for added columns (no Alembic in this repo)
+        def ensure_athlete_columns():
+            cols = db.session.execute(text("PRAGMA table_info(athlete)")).fetchall()
+            existing = {c[1] for c in cols}  # (cid, name, type, notnull, dflt, pk)
+            if "single_room_entitlement" not in existing:
+                db.session.execute(text("ALTER TABLE athlete ADD COLUMN single_room_entitlement VARCHAR(30)"))
 
-    ensure_event_planning_columns()
+            needed = {
+                "athletes_last_seen_at": "DATETIME",
+                "roomlist_last_seen_at": "DATETIME",
+                "roomlist_changed_at": "DATETIME",
+                "roomlist_change_summary": "VARCHAR(500)",
+                "import_change_types_json": "TEXT",
+                "roomlist_change_acknowledged_at": "DATETIME",
+                "roomlist_change_acknowledged_summary": "VARCHAR(500)",
+                "present": "BOOLEAN",
+                "arrival_airport_name": "VARCHAR(100)",
+                "departure_airport_name": "VARCHAR(100)",
+                "additional_items": "VARCHAR(200)",
+                "entry_date": "DATETIME",
+                "last_update": "DATETIME",
+                "entries_sent_date": "DATETIME",
+            }
 
-    def backfill_room_bookings():
-        existing_booking = RoomBooking.query.first()
-        if existing_booking:
-            return
+            for name, sql_type in needed.items():
+                if name not in existing:
+                    db.session.execute(text(f"ALTER TABLE athlete ADD COLUMN {name} {sql_type}"))
 
-        assignments = RoomAssignment.query.all()
-        booking_map = {}
+            db.session.commit()
 
-        for assignment in assignments:
-            key = (
-                assignment.hotel_id,
-                assignment.room_type_id,
-                assignment.room_number or '',
-                assignment.check_in_date,
-                assignment.check_out_date
-            )
-            booking = booking_map.get(key)
-            if booking is None:
-                booking = RoomBooking(
-                    hotel_id=assignment.hotel_id,
-                    room_type_id=assignment.room_type_id,
-                    room_number=assignment.room_number,
-                    check_in_date=assignment.check_in_date,
-                    check_out_date=assignment.check_out_date
+        ensure_athlete_columns()
+        migrate_single_room_status(db)
+
+        def ensure_room_booking_columns():
+            cols = db.session.execute(text("PRAGMA table_info(room_booking)")).fetchall()
+            existing = {c[1] for c in cols}
+            needed = {
+                "counts_as_single": "BOOLEAN DEFAULT 0",
+            }
+            for name, sql_type in needed.items():
+                if name not in existing:
+                    db.session.execute(text(f"ALTER TABLE room_booking ADD COLUMN {name} {sql_type}"))
+            db.session.commit()
+
+        ensure_room_booking_columns()
+
+        def ensure_import_approval_columns():
+            cols = db.session.execute(text("PRAGMA table_info(import_approval)")).fetchall()
+            existing = {c[1] for c in cols}
+            needed = {
+                "approval_method": "VARCHAR(20)", "approval_by": "VARCHAR(200)",
+                "approval_date": "DATETIME", "contact_subject": "VARCHAR(300)",
+                "deadline_at": "DATETIME",
+                "approved_person_keys_json": "TEXT",
+                "quota_details_json": "TEXT",
+                "cost_coverage": "VARCHAR(300)",
+            }
+            for name, sql_type in needed.items():
+                if name not in existing:
+                    db.session.execute(text(f"ALTER TABLE import_approval ADD COLUMN {name} {sql_type}"))
+            db.session.commit()
+
+        ensure_import_approval_columns()
+
+        def ensure_import_history_columns():
+            cols = db.session.execute(text("PRAGMA table_info(import_session_event)")).fetchall()
+            if "approval_id" not in {c[1] for c in cols}:
+                db.session.execute(text("ALTER TABLE import_session_event ADD COLUMN approval_id INTEGER"))
+                db.session.commit()
+
+        ensure_import_history_columns()
+
+        def ensure_event_planning_columns():
+            """Keep existing SQLite installations compatible with person-based planning."""
+            cols = db.session.execute(text("PRAGMA table_info(event)")).fetchall()
+            existing = {c[1] for c in cols}
+            if "person_demand" not in existing:
+                db.session.execute(text("ALTER TABLE event ADD COLUMN person_demand INTEGER NOT NULL DEFAULT 0"))
+            if "single_room_percentage" not in existing:
+                db.session.execute(text("ALTER TABLE event ADD COLUMN single_room_percentage INTEGER NOT NULL DEFAULT 50"))
+            # The ORM-based reference-data setup must only run after every mapped
+            # Event column exists in an older database.
+            db.session.commit()
+            ensure_reference_data()
+            # Preserve the capacity represented by legacy room demands as the initial input.
+            db.session.execute(text("""
+                UPDATE event SET person_demand = COALESCE((
+                    SELECT SUM(d.room_count * rt.max_persons)
+                    FROM event_room_demand d JOIN room_type rt ON rt.id = d.room_type_id
+                    WHERE d.event_id = event.id
+                ), 0) WHERE person_demand = 0
+            """))
+            db.session.commit()
+
+        ensure_event_planning_columns()
+
+        def backfill_room_bookings():
+            existing_booking = RoomBooking.query.first()
+            if existing_booking:
+                return
+
+            assignments = RoomAssignment.query.all()
+            booking_map = {}
+
+            for assignment in assignments:
+                key = (
+                    assignment.hotel_id,
+                    assignment.room_type_id,
+                    assignment.room_number or '',
+                    assignment.check_in_date,
+                    assignment.check_out_date
                 )
-                db.session.add(booking)
-                db.session.flush()
-                booking_map[key] = booking
+                booking = booking_map.get(key)
+                if booking is None:
+                    booking = RoomBooking(
+                        hotel_id=assignment.hotel_id,
+                        room_type_id=assignment.room_type_id,
+                        room_number=assignment.room_number,
+                        check_in_date=assignment.check_in_date,
+                        check_out_date=assignment.check_out_date
+                    )
+                    db.session.add(booking)
+                    db.session.flush()
+                    booking_map[key] = booking
 
-            athlete_ids = {assignment.athlete_id}
-            if assignment.shared_with_athlete_id:
-                athlete_ids.add(assignment.shared_with_athlete_id)
+                athlete_ids = {assignment.athlete_id}
+                if assignment.shared_with_athlete_id:
+                    athlete_ids.add(assignment.shared_with_athlete_id)
 
-            for athlete_id in athlete_ids:
-                exists = RoomBookingOccupant.query.filter_by(
-                    room_booking_id=booking.id,
-                    athlete_id=athlete_id
-                ).first()
-                if not exists:
-                    db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
+                for athlete_id in athlete_ids:
+                    exists = RoomBookingOccupant.query.filter_by(
+                        room_booking_id=booking.id,
+                        athlete_id=athlete_id
+                    ).first()
+                    if not exists:
+                        db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
 
-        db.session.commit()
+            db.session.commit()
 
-    backfill_room_bookings()
+        backfill_room_bookings()
+
 
 
 # ============================================================================

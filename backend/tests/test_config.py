@@ -18,6 +18,7 @@ class RuntimeSettingsTest(unittest.TestCase):
             settings = RuntimeSettings.from_environment(Path(directory))
 
         self.assertEqual(settings.data_dir, Path(directory) / 'data')
+        self.assertEqual(settings.database_backend, 'sqlite')
         self.assertEqual(settings.database_path, Path(directory) / 'data' / 'freestyle_wm_new.db')
         self.assertEqual(settings.cors_origins, ())
         self.assertEqual(settings.log_level, 'INFO')
@@ -40,6 +41,32 @@ class RuntimeSettingsTest(unittest.TestCase):
         self.assertEqual(app.config['LOG_LEVEL'], 'WARNING')
         self.assertEqual(app.config['RUNTIME_ENV'], 'production')
         self.assertTrue(app.config['SQLALCHEMY_DATABASE_URI'].endswith('/database.sqlite'))
+        self.assertEqual(app.config['DATABASE_BACKEND'], 'sqlite')
+
+    def test_postgresql_database_url_is_normalized_for_psycopg(self):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(os.environ, {
+            'DATABASE_BACKEND': 'postgresql',
+            'DATABASE_URL': 'postgresql://incoming:secret@postgres/incoming',
+        }, clear=True):
+            settings = RuntimeSettings.from_environment(Path(directory))
+            app = ConfigTarget()
+            settings.apply(app)
+
+        self.assertEqual(settings.database_backend, 'postgresql')
+        self.assertEqual(
+            app.config['SQLALCHEMY_DATABASE_URI'],
+            'postgresql+psycopg://incoming:secret@postgres/incoming',
+        )
+
+    def test_postgresql_requires_database_url(self):
+        with patch.dict(os.environ, {'DATABASE_BACKEND': 'postgresql'}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'DATABASE_URL is required'):
+                RuntimeSettings.from_environment()
+
+    def test_unknown_database_backend_is_rejected(self):
+        with patch.dict(os.environ, {'DATABASE_BACKEND': 'mysql'}, clear=True):
+            with self.assertRaisesRegex(ValueError, 'DATABASE_BACKEND'):
+                RuntimeSettings.from_environment()
 
 
 if __name__ == '__main__':
