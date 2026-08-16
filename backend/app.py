@@ -171,11 +171,20 @@ def reset_test_data():
             for label, model in models:
                 counts[label] = model.query.delete(synchronize_session=False)
         if scope in {'imports', 'all'}:
-            counts['Import-Läufe'] = ImportRun.query.delete(synchronize_session=False)
-            counts['Genehmigungen'] = ImportApproval.query.delete(synchronize_session=False)
+            # PostgreSQL enforces these references during bulk deletes (SQLite
+            # historically did not in every development setup).  Break the
+            # nullable links first, then delete children before their parents.
+            ImportSession.query.update(
+                {ImportSession.current_version_id: None}, synchronize_session=False)
+            Athlete.query.update(
+                {Athlete.single_room_decision_id: None}, synchronize_session=False)
+            FisRoomAssignment.query.update(
+                {FisRoomAssignment.import_run_id: None}, synchronize_session=False)
             counts['Import Historie'] = ImportSessionEvent.query.delete(synchronize_session=False)
+            counts['Genehmigungen'] = ImportApproval.query.delete(synchronize_session=False)
             counts['Import Versionen'] = ImportSessionVersion.query.delete(synchronize_session=False)
             counts['Import Sessions'] = ImportSession.query.delete(synchronize_session=False)
+            counts['Import-Läufe'] = ImportRun.query.delete(synchronize_session=False)
         db.session.commit()
     except Exception:
         db.session.rollback()
