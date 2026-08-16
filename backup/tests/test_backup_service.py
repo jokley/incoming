@@ -20,10 +20,9 @@ class Result:
 
 
 class BackupServiceTest(unittest.TestCase):
-    def environment(self, directory, retention='30'):
+    def environment(self, directory):
         return patch.dict(os.environ, {'POSTGRES_DB': 'incoming', 'POSTGRES_USER': 'incoming',
-            'POSTGRES_PASSWORD': 'secret', 'BACKUP_DIR': directory,
-            'BACKUP_RETENTION': retention}, clear=True)
+            'POSTGRES_PASSWORD': 'secret', 'BACKUP_DIR': directory}, clear=True)
 
     def fake_run(self, command, **kwargs):
         if command[0] == 'pg_dump':
@@ -34,25 +33,28 @@ class BackupServiceTest(unittest.TestCase):
     def test_creates_postgresql_custom_dump_without_additional_compression(self):
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.subprocess.run', side_effect=self.fake_run):
-            payload = backup_service.create_backup()
-            dump = Path(directory, payload['filename'])
+            payload = backup_service.create_backup('manual')
+            dump = Path(directory, 'manual', payload['filename'])
             self.assertEqual(dump.read_bytes(), b'PGDMP-dump-content')
             self.assertEqual(json.loads(Path(directory, 'last-backup.json').read_text())['status'], 'success')
 
-    def test_retention_keeps_configured_number_of_dumps(self):
-        with tempfile.TemporaryDirectory() as directory, self.environment(directory, '2'):
+    def test_each_category_keeps_only_its_two_newest_dumps(self):
+        with tempfile.TemporaryDirectory() as directory, self.environment(directory):
+            category = Path(directory, 'automatic')
+            category.mkdir()
             for number in range(4):
-                path = Path(directory, f'incoming-{number}.dump.gz')
+                path = category / f'incoming-{number}.dump.gz'
                 path.write_bytes(b'x')
                 os.utime(path, (number, number))
-            backup_service.apply_retention(Path(directory), 2)
-            self.assertEqual(len(list(Path(directory).glob('*.dump.gz'))), 2)
+            backup_service.keep_latest_backups(category)
+            self.assertEqual(sorted(path.name for path in category.glob('*.dump.gz')),
+                             ['incoming-2.dump.gz', 'incoming-3.dump.gz'])
 
     def test_failure_writes_error_status(self):
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.subprocess.run', side_effect=OSError('unavailable')):
             with self.assertRaises(OSError):
-                backup_service.create_backup()
+                backup_service.create_backup('automatic')
             status = json.loads(Path(directory, 'last-backup.json').read_text())
             self.assertEqual(status['status'], 'error')
             self.assertIn('unavailable', status['error'])
@@ -86,14 +88,14 @@ class BackupServiceTest(unittest.TestCase):
             events.append(command[0])
             return integrity
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
-                patch('backup_service.create_backup', side_effect=lambda: events.append('backup') or {'filename': 'safety.dump.gz'}), \
+                patch('backup_service.create_backup', side_effect=lambda category: events.append(f'backup:{category}') or {'filename': 'safety.dump.gz'}), \
                 patch('backup_service.validate_dump', side_effect=lambda *_: events.append('validation')), \
                 patch('backup_service.subprocess.run', side_effect=run):
             imported = Path(directory, '.imports', 'a' * 32 + '.dump')
             imported.parent.mkdir()
             imported.write_bytes(b'PGDMP-valid')
             result = backup_service.restore_backup({'token': 'a' * 32})
-            self.assertEqual(events, ['validation', 'backup', 'psql', 'pg_restore', 'psql'])
+            self.assertEqual(events, ['validation', 'backup:pre-restore', 'psql', 'pg_restore', 'psql'])
             self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
             self.assertFalse(imported.exists())
 
@@ -109,10 +111,11 @@ class BackupServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.create_backup', return_value={'filename': 'safety.dump.gz'}), \
                 patch('backup_service.subprocess.run', side_effect=run):
-            dump = Path(directory, 'incoming-2026-08-16_152043.dump.gz')
+            dump = Path(directory, 'manual', 'incoming-2026-08-16_152043.dump.gz')
+            dump.parent.mkdir()
             dump.write_bytes(b'PGDMP-valid')
 
-            backup_service.restore_backup({'filename': dump.name, 'token': None})
+            backup_service.restore_backup({'category': 'manual', 'filename': dump.name, 'token': None})
 
             restore = next(command for command in commands if command[0] == 'pg_restore'
                            and '--list' not in command)

@@ -16,6 +16,8 @@ from urllib.parse import unquote
 BACKUP_LOCK = threading.Lock()
 RESTORE_LOCK = threading.Lock()
 MAX_IMPORT_SIZE = 10 * 1024 * 1024 * 1024
+BACKUP_CATEGORIES = ("automatic", "manual", "pre-restore")
+BACKUPS_PER_CATEGORY = 2
 
 
 class LimitedReader:
@@ -94,7 +96,6 @@ def config():
         "password": os.environ["POSTGRES_PASSWORD"],
         "host": os.environ.get("POSTGRES_HOST", "postgres"),
         "port": os.environ.get("POSTGRES_PORT", "5432"),
-        "retention": max(1, int(os.environ.get("BACKUP_RETENTION", "30"))),
     }
 
 
@@ -104,12 +105,14 @@ def write_status(directory, payload):
     temporary.replace(directory / "last-backup.json")
 
 
-def apply_retention(directory, keep):
+def keep_latest_backups(directory):
+    """Keep only the two newest timestamped dumps in one category."""
     dumps = sorted(directory.glob("*.dump.gz"), key=lambda item: item.stat().st_mtime,
                    reverse=True)
-    for expired in dumps[keep:]:
+    for expired in dumps[BACKUPS_PER_CATEGORY:]:
         expired.unlink()
-        log("backup_deleted", filename=expired.name, reason="retention")
+        log("backup_deleted", category=directory.name, filename=expired.name,
+            reason="category_limit")
 
 
 def postgres_version(settings):
@@ -122,14 +125,16 @@ def postgres_version(settings):
     return process.stdout.strip().split(".")[0]
 
 
-def create_backup(now=None):
+def create_backup(category, now=None):
+    if category not in BACKUP_CATEGORIES:
+        raise ValueError(f"Unknown backup category: {category}")
     if not BACKUP_LOCK.acquire(blocking=False):
         raise RuntimeError("A backup is already running")
     started = time.monotonic()
     settings = None
     try:
         settings = config()
-        directory = settings["directory"]
+        directory = settings["directory"] / category
         directory.mkdir(parents=True, exist_ok=True)
         created = now or datetime.now(timezone.utc)
         safe_db = re.sub(r"[^A-Za-z0-9_.-]", "_", settings["database"])
@@ -148,10 +153,11 @@ def create_backup(now=None):
         duration = round(time.monotonic() - started, 3)
         payload = {"status": "success", "created": created.isoformat().replace("+00:00", "Z"),
                    "filename": filename, "size": target.stat().st_size,
+                   "category": category,
                    "durationSeconds": duration, "database": settings["database"],
                    "postgresVersion": postgres_version(settings)}
-        write_status(directory, payload)
-        apply_retention(directory, settings["retention"])
+        write_status(settings["directory"], payload)
+        keep_latest_backups(directory)
         log("backup_succeeded", **payload)
         return payload
     except Exception as error:
@@ -213,9 +219,12 @@ def resolve_restore_source(payload, settings):
         path = imported_directory(settings) / f"{token}.dump"
         return path, True
     filename = payload.get("filename", "")
+    category = payload.get("category", "")
     if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+\.dump\.gz", filename):
         raise FileNotFoundError
-    return settings["directory"] / filename, False
+    if category not in BACKUP_CATEGORIES:
+        raise FileNotFoundError
+    return settings["directory"] / category / filename, False
 
 
 def disconnect_application(settings):
@@ -243,7 +252,7 @@ def restore_backup(payload):
             raise FileNotFoundError
         validate_dump(source, settings)
         # This must finish successfully before pg_restore is ever invoked.
-        safety_backup = create_backup()
+        safety_backup = create_backup("pre-restore")
         disconnect_application(settings)
         command = ["pg_restore", "-h", settings["host"], "-p", settings["port"],
                    "-U", settings["user"], "-d", settings["database"], "--clean",
@@ -284,7 +293,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/backup":
             if BACKUP_LOCK.locked() or RESTORE_LOCK.locked():
                 return self._reply(409, {"error": "backup already running"})
-            threading.Thread(target=_background_backup, daemon=True).start()
+            threading.Thread(target=_background_backup, args=("manual",), daemon=True).start()
             return self._reply(202, {"status": "accepted"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -312,9 +321,9 @@ class Handler(BaseHTTPRequestHandler):
         log("http_request", client=self.client_address[0], message=format % args)
 
 
-def _background_backup():
+def _background_backup(category):
     try:
-        create_backup()
+        create_backup(category)
     except Exception:
         pass
 
@@ -327,7 +336,7 @@ def scheduler():
         now = datetime.now(timezone.utc)
         delay = max(0, (parsed.next(now) - now).total_seconds())
         time.sleep(delay)
-        _background_backup()
+        _background_backup("automatic")
 
 
 def serve():
@@ -342,7 +351,7 @@ def serve():
 if __name__ == "__main__":
     action = sys.argv[1] if len(sys.argv) > 1 else "serve"
     if action == "now":
-        create_backup()
+        create_backup("manual")
     elif action == "serve":
         serve()
     else:

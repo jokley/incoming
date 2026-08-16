@@ -154,11 +154,11 @@ class ApiService {
     // Imported and server-side backups deliberately use the exact same request
     // shape and endpoint. The backup service chooses the token when present and
     // otherwise resolves the server-side filename.
-    const restoreRequest = { filename: backup.filename, token: backup.token ?? null };
+    const restoreRequest = { filename: backup.filename, category: backup.category ?? null, token: backup.token ?? null };
     return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(restoreRequest) });
   }
-  async downloadDatabaseBackup(filename: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/admin/database/backups/${encodeURIComponent(filename)}`);
+  async downloadDatabaseBackup(filename: string, category: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/admin/database/backups/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
     if (!response.ok) throw new Error('Das Backup konnte nicht heruntergeladen werden.');
     await downloadResponse(response, filename);
   }
@@ -916,4 +916,4 @@ class ApiService {
 export const api = new ApiService();
 
 export interface DatabaseStatus { postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string } | null; backupSize: number | null; backupCount: number; }
-export interface DatabaseBackup { filename: string; size: number; modified: number; token?: string; local?: boolean; localFile?: File; }
+export interface DatabaseBackup { filename: string; size: number; modified: number; category?: 'automatic' | 'manual' | 'pre-restore'; token?: string; local?: boolean; localFile?: File; }
