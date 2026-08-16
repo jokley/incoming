@@ -27,10 +27,27 @@ from logging_config import configure_logging  # noqa: E402
 LOG = logging.getLogger("etl.sqlite_to_postgres")
 
 
-def _legacy_athlete_status(row: dict) -> str:
-    """Reproduce the Release 1 SQLite backfill without modifying the snapshot."""
-    entitlement = row.get("single_room_entitlement")
-    return entitlement if entitlement in {"IN_QUOTA", "APPROVED_EXTRA"} else "NONE"
+def _legacy_athlete_status(_source: Connection):
+    """Build the released athlete-status backfill as an in-memory transform."""
+    def derive(row: dict) -> str:
+        entitlement = row.get("single_room_entitlement")
+        return entitlement if entitlement in {"IN_QUOTA", "APPROVED_EXTRA"} else "NONE"
+    return derive
+
+
+def _legacy_event_person_demand(source: Connection):
+    """Build the released room-capacity backfill without writing to SQLite."""
+    totals = dict(source.exec_driver_sql("""
+        SELECT d.event_id, SUM(d.room_count * rt.max_persons)
+        FROM event_room_demand d JOIN room_type rt ON rt.id = d.room_type_id
+        GROUP BY d.event_id
+    """).all())
+    return lambda row: totals.get(row["id"], 0)
+
+
+def _legacy_event_single_room_percentage(_source: Connection):
+    """Return the default used when Release 1 gained event planning columns."""
+    return lambda _row: 50
 
 
 # Compatibility transforms are deliberately explicit rather than inferred from
@@ -38,6 +55,10 @@ def _legacy_athlete_status(row: dict) -> str:
 # input snapshot immutable and making the resulting PostgreSQL rows repeatable.
 LEGACY_DERIVED_COLUMNS = {
     "athlete": {"single_room_status": _legacy_athlete_status},
+    "event": {
+        "person_demand": _legacy_event_person_demand,
+        "single_room_percentage": _legacy_event_single_room_percentage,
+    },
 }
 
 
@@ -149,8 +170,8 @@ class Migrator:
                 target_columns = set(tm.tables[name].c.keys())
                 if source_columns - target_columns:
                     raise RuntimeError(f"target {name} is missing columns: {sorted(source_columns-target_columns)}")
-                derivations = LEGACY_DERIVED_COLUMNS.get(name, {})
-                derived_columns = set(derivations) - source_columns
+                derivation_factories = LEGACY_DERIVED_COLUMNS.get(name, {})
+                derived_columns = set(derivation_factories) - source_columns
                 required = [column.name for column in tm.tables[name].columns
                             if column.name not in source_columns and not column.nullable
                             and column.default is None and column.server_default is None
@@ -159,8 +180,9 @@ class Migrator:
                     raise RuntimeError(f"source {name} cannot populate required target columns: {required}")
                 data = [dict(row._mapping) for row in source.execute(select(sm.tables[name])).all()]
                 for column in sorted(derived_columns):
+                    derive = derivation_factories[column](source)
                     for row in data:
-                        row[column] = derivations[column](row)
+                        row[column] = derive(row)
                 if derived_columns:
                     message = f"source {name} legacy columns derived in memory: {sorted(derived_columns)}"
                     if message not in self.report.warnings:
