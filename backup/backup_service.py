@@ -11,8 +11,28 @@ import subprocess
 import sys
 import threading
 import time
+import uuid
+from urllib.parse import unquote
 
 BACKUP_LOCK = threading.Lock()
+RESTORE_LOCK = threading.Lock()
+MAX_IMPORT_SIZE = 10 * 1024 * 1024 * 1024
+
+
+class LimitedReader:
+    """Expose exactly one HTTP request body instead of waiting for socket EOF."""
+
+    def __init__(self, source, length):
+        self.source = source
+        self.remaining = length
+
+    def read(self, size=-1):
+        if self.remaining <= 0:
+            return b""
+        requested = self.remaining if size < 0 else min(size, self.remaining)
+        chunk = self.source.read(requested)
+        self.remaining -= len(chunk)
+        return chunk
 
 
 class CronSchedule:
@@ -147,6 +167,121 @@ def create_backup(now=None):
         BACKUP_LOCK.release()
 
 
+def imported_directory(settings):
+    directory = settings["directory"] / ".imports"
+    directory.mkdir(parents=True, exist_ok=True)
+    return directory
+
+
+def validate_dump(path, settings):
+    """Validate the archive with PostgreSQL tooling without touching the database."""
+    with path.open("rb") as archive:
+        if archive.read(5) != b"PGDMP":
+            raise ValueError("Die Datei ist kein gültiges PostgreSQL-Custom-Backup.")
+    process = subprocess.run(
+        ["pg_restore", "--list", str(path)], capture_output=True, text=True,
+    )
+    if process.returncode:
+        raise ValueError("Die Datei ist kein gültiges PostgreSQL-Custom-Backup.")
+
+
+def import_dump(source, original_name):
+    settings = config()
+    token = uuid.uuid4().hex
+    target = imported_directory(settings) / f"{token}.dump"
+    try:
+        with target.open("wb") as output:
+            while chunk := source.read(1024 * 1024):
+                output.write(chunk)
+                if output.tell() > MAX_IMPORT_SIZE:
+                    raise ValueError("Die Backupdatei ist zu groß.")
+        if not target.stat().st_size:
+            raise ValueError("Die ausgewählte Datei ist leer.")
+        validate_dump(target, settings)
+        log("backup_imported", token=token, size=target.stat().st_size)
+        return {"token": token, "filename": original_name, "size": target.stat().st_size,
+                "modified": datetime.now(timezone.utc).timestamp(), "local": True}
+    except Exception:
+        target.unlink(missing_ok=True)
+        raise
+
+
+def resolve_restore_source(payload, settings):
+    if payload.get("token"):
+        token = payload["token"]
+        if not isinstance(token, str) or not re.fullmatch(r"[a-f0-9]{32}", token):
+            raise FileNotFoundError
+        path = imported_directory(settings) / f"{token}.dump"
+        return path, True
+    filename = payload.get("filename", "")
+    if not isinstance(filename, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+\.dump\.gz", filename):
+        raise FileNotFoundError
+    return settings["directory"] / filename, False
+
+
+def disconnect_application(settings):
+    """Release application locks immediately before the short restore window."""
+    command = ["psql", "-h", settings["host"], "-p", settings["port"], "-U", settings["user"],
+               "-d", settings["database"], "-v", "ON_ERROR_STOP=1", "-Atc",
+               "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+               "WHERE datname = current_database() AND pid <> pg_backend_pid()"]
+    process = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
+                             capture_output=True, text=True)
+    if process.returncode:
+        raise RuntimeError("Die Datenbank konnte nicht für die Wiederherstellung vorbereitet werden.")
+
+
+def restore_backup(payload):
+    """Run the one restore workflow, including its mandatory safety backup."""
+    if not RESTORE_LOCK.acquire(blocking=False):
+        raise RuntimeError("Eine Wiederherstellung läuft bereits.")
+    imported = False
+    source = None
+    unpacked = None
+    try:
+        settings = config()
+        source, imported = resolve_restore_source(payload, settings)
+        if not source.is_file():
+            raise FileNotFoundError
+        restore_source = source
+        if not imported:
+            # Preserve the selected archive before retention runs for the safety backup.
+            unpacked = imported_directory(settings) / f"restore-{uuid.uuid4().hex}.dump"
+            with gzip.open(source, "rb") as archive, unpacked.open("wb") as output:
+                while chunk := archive.read(1024 * 1024):
+                    output.write(chunk)
+            validate_dump(unpacked, settings)
+            restore_source = unpacked
+        else:
+            validate_dump(source, settings)
+        # This must finish successfully before pg_restore is ever invoked.
+        safety_backup = create_backup()
+        disconnect_application(settings)
+        command = ["pg_restore", "-h", settings["host"], "-p", settings["port"],
+                   "-U", settings["user"], "-d", settings["database"], "--clean",
+                   "--if-exists", "--no-owner", "--no-privileges", "--exit-on-error",
+                   str(restore_source)]
+        result = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
+                                capture_output=True, text=True)
+        if result.returncode:
+            raise RuntimeError(result.stderr.strip() or "Wiederherstellung fehlgeschlagen.")
+        # A successful query verifies connectivity and the restored Alembic schema.
+        integrity = subprocess.run(
+            ["psql", "-h", settings["host"], "-p", settings["port"], "-U", settings["user"],
+             "-d", settings["database"], "-Atc", "SELECT version_num FROM alembic_version"],
+            env={**os.environ, "PGPASSWORD": settings["password"]}, capture_output=True, text=True)
+        if integrity.returncode or not integrity.stdout.strip():
+            raise RuntimeError("Die Integritätsprüfung des Backups ist fehlgeschlagen.")
+        if imported:
+            source.unlink(missing_ok=True)
+        log("restore_succeeded", safetyBackup=safety_backup["filename"])
+        return {"status": "success", "safetyBackup": safety_backup["filename"]}
+    finally:
+        if unpacked:
+            unpacked.unlink(missing_ok=True)
+        RESTORE_LOCK.release()
+
+
 class Handler(BaseHTTPRequestHandler):
     def _reply(self, status, payload):
         body = json.dumps(payload).encode()
@@ -160,12 +295,32 @@ class Handler(BaseHTTPRequestHandler):
         self._reply(200, {"status": "healthy"}) if self.path == "/health" else self._reply(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path != "/backup":
-            return self._reply(404, {"error": "not found"})
-        if BACKUP_LOCK.locked():
-            return self._reply(409, {"error": "backup already running"})
-        threading.Thread(target=_background_backup, daemon=True).start()
-        self._reply(202, {"status": "accepted"})
+        if self.path == "/backup":
+            if BACKUP_LOCK.locked() or RESTORE_LOCK.locked():
+                return self._reply(409, {"error": "backup already running"})
+            threading.Thread(target=_background_backup, daemon=True).start()
+            return self._reply(202, {"status": "accepted"})
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            if self.path == "/import":
+                if length <= 0 or length > MAX_IMPORT_SIZE:
+                    return self._reply(400, {"error": "INVALID_BACKUP", "message": "Die ausgewählte Backupdatei ist ungültig oder zu groß."})
+                body = LimitedReader(self.rfile, length)
+                return self._reply(201, import_dump(body, unquote(self.headers.get("X-Filename", "Lokales Backup"))))
+            if self.path == "/restore":
+                payload = json.loads(self.rfile.read(length))
+                return self._reply(200, restore_backup(payload))
+        except (ValueError, gzip.BadGzipFile) as error:
+            return self._reply(400, {"error": "INVALID_BACKUP", "message": str(error)})
+        except FileNotFoundError:
+            return self._reply(404, {"error": "BACKUP_NOT_FOUND", "message": "Das Backup wurde nicht gefunden."})
+        except RuntimeError as error:
+            log("restore_failed", level="error", error=str(error))
+            return self._reply(409, {"error": "RESTORE_FAILED", "message": str(error)})
+        except Exception:
+            log("restore_failed", level="error", error="unexpected error")
+            return self._reply(500, {"error": "RESTORE_FAILED", "message": "Die Aktion konnte nicht abgeschlossen werden."})
+        return self._reply(404, {"error": "not found"})
 
     def log_message(self, format, *args):
         log("http_request", client=self.client_address[0], message=format % args)

@@ -4,9 +4,10 @@ import json
 from pathlib import Path
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
-from flask import Blueprint, current_app, jsonify, send_file
+from flask import Blueprint, current_app, jsonify, request, send_file
 from sqlalchemy import text
 
 from models import db
@@ -69,6 +70,46 @@ def trigger_backup():
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
         current_app.logger.exception('Backup service request failed')
         return jsonify({'error': 'BACKUP_SERVICE_UNAVAILABLE'}), 503
+
+
+def delegate(path, body, headers=None, timeout=5):
+    upstream = urllib.request.Request(
+        current_app.config['BACKUP_SERVICE_URL'].rstrip('/') + path,
+        method='POST', data=body, headers=headers or {})
+    try:
+        with urllib.request.urlopen(upstream, timeout=timeout) as response:
+            return jsonify(json.loads(response.read())), response.status
+    except urllib.error.HTTPError as error:
+        try:
+            payload = json.loads(error.read())
+        except json.JSONDecodeError:
+            payload = {'error': 'BACKUP_SERVICE_ERROR', 'message': 'Die Aktion konnte nicht abgeschlossen werden.'}
+        return jsonify(payload), error.code
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError):
+        current_app.logger.exception('Backup service request failed')
+        return jsonify({'error': 'BACKUP_SERVICE_UNAVAILABLE',
+                        'message': 'Der Backup-Service ist derzeit nicht erreichbar.'}), 503
+
+
+@database_admin.post('/api/admin/database/import')
+def import_backup():
+    upload = request.files.get('file')
+    if upload is None or not upload.filename:
+        return jsonify({'error': 'INVALID_BACKUP', 'message': 'Bitte wählen Sie eine Backupdatei aus.'}), 400
+    upload.stream.seek(0, 2)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    return delegate('/import', upload.stream,
+                    {'Content-Length': str(size),
+                     'X-Filename': urllib.parse.quote(upload.filename)}, timeout=60)
+
+
+@database_admin.post('/api/admin/database/restore')
+def restore_backup():
+    payload = request.get_json(silent=True) or {}
+    if not payload.get('filename') and not payload.get('token'):
+        return jsonify({'error': 'BACKUP_REQUIRED', 'message': 'Bitte wählen Sie ein Backup aus.'}), 400
+    return delegate('/restore', json.dumps(payload).encode(), {'Content-Type': 'application/json'}, timeout=3600)
 
 
 @database_admin.get('/api/admin/database/backups')

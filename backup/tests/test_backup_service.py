@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import sys
+import io
 from datetime import datetime, timezone
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -61,6 +62,41 @@ class BackupServiceTest(unittest.TestCase):
         schedule = backup_service.CronSchedule('0 3 * * *')
         self.assertEqual(schedule.next(datetime(2026, 8, 16, 2, 59, tzinfo=timezone.utc)),
                          datetime(2026, 8, 16, 3, 0, tzinfo=timezone.utc))
+
+    def test_import_accepts_only_custom_dump_and_removes_invalid_upload(self):
+        with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
+                patch('backup_service.subprocess.run', return_value=Result()):
+            imported = backup_service.import_dump(io.BytesIO(b'PGDMP-valid'), 'extern.dump')
+            self.assertTrue(Path(directory, '.imports', imported['token'] + '.dump').is_file())
+            with self.assertRaisesRegex(ValueError, 'PostgreSQL-Custom-Backup'):
+                backup_service.import_dump(io.BytesIO(b'plain sql'), 'invalid.sql')
+            self.assertEqual(len(list(Path(directory, '.imports').glob('*.dump'))), 1)
+
+    def test_limited_reader_stops_at_http_content_length(self):
+        source = io.BytesIO(b'PGDMP-next-request')
+        body = backup_service.LimitedReader(source, 5)
+        self.assertEqual(body.read(1024), b'PGDMP')
+        self.assertEqual(body.read(1024), b'')
+        self.assertEqual(source.read(), b'-next-request')
+
+    def test_restore_creates_safety_backup_first_and_deletes_successful_import(self):
+        events = []
+        integrity = Result()
+        integrity.stdout = '20260815_01\n'
+        def run(command, **kwargs):
+            events.append(command[0])
+            return integrity
+        with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
+                patch('backup_service.create_backup', side_effect=lambda: events.append('backup') or {'filename': 'safety.dump.gz'}), \
+                patch('backup_service.validate_dump', side_effect=lambda *_: events.append('validation')), \
+                patch('backup_service.subprocess.run', side_effect=run):
+            imported = Path(directory, '.imports', 'a' * 32 + '.dump')
+            imported.parent.mkdir()
+            imported.write_bytes(b'PGDMP-valid')
+            result = backup_service.restore_backup({'token': 'a' * 32})
+            self.assertEqual(events, ['validation', 'backup', 'psql', 'pg_restore', 'psql'])
+            self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
+            self.assertFalse(imported.exists())
 
 
 if __name__ == '__main__':
