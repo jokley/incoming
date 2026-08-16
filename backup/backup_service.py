@@ -19,6 +19,22 @@ RESTORE_LOCK = threading.Lock()
 MAX_IMPORT_SIZE = 10 * 1024 * 1024 * 1024
 
 
+class LimitedReader:
+    """Expose exactly one HTTP request body instead of waiting for socket EOF."""
+
+    def __init__(self, source, length):
+        self.source = source
+        self.remaining = length
+
+    def read(self, size=-1):
+        if self.remaining <= 0:
+            return b""
+        requested = self.remaining if size < 0 else min(size, self.remaining)
+        chunk = self.source.read(requested)
+        self.remaining -= len(chunk)
+        return chunk
+
+
 class CronSchedule:
     """Small strict five-field UTC cron parser (lists, ranges and steps)."""
 
@@ -203,6 +219,18 @@ def resolve_restore_source(payload, settings):
     return settings["directory"] / filename, False
 
 
+def disconnect_application(settings):
+    """Release application locks immediately before the short restore window."""
+    command = ["psql", "-h", settings["host"], "-p", settings["port"], "-U", settings["user"],
+               "-d", settings["database"], "-v", "ON_ERROR_STOP=1", "-Atc",
+               "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+               "WHERE datname = current_database() AND pid <> pg_backend_pid()"]
+    process = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
+                             capture_output=True, text=True)
+    if process.returncode:
+        raise RuntimeError("Die Datenbank konnte nicht für die Wiederherstellung vorbereitet werden.")
+
+
 def restore_backup(payload):
     """Run the one restore workflow, including its mandatory safety backup."""
     if not RESTORE_LOCK.acquire(blocking=False):
@@ -228,6 +256,7 @@ def restore_backup(payload):
             validate_dump(source, settings)
         # This must finish successfully before pg_restore is ever invoked.
         safety_backup = create_backup()
+        disconnect_application(settings)
         command = ["pg_restore", "-h", settings["host"], "-p", settings["port"],
                    "-U", settings["user"], "-d", settings["database"], "--clean",
                    "--if-exists", "--no-owner", "--no-privileges", "--exit-on-error",
@@ -276,7 +305,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/import":
                 if length <= 0 or length > MAX_IMPORT_SIZE:
                     return self._reply(400, {"error": "INVALID_BACKUP", "message": "Die ausgewählte Backupdatei ist ungültig oder zu groß."})
-                return self._reply(201, import_dump(self.rfile, unquote(self.headers.get("X-Filename", "Lokales Backup"))))
+                body = LimitedReader(self.rfile, length)
+                return self._reply(201, import_dump(body, unquote(self.headers.get("X-Filename", "Lokales Backup"))))
             if self.path == "/restore":
                 payload = json.loads(self.rfile.read(length))
                 return self._reply(200, restore_backup(payload))

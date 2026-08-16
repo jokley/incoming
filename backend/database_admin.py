@@ -96,8 +96,12 @@ def import_backup():
     upload = request.files.get('file')
     if upload is None or not upload.filename:
         return jsonify({'error': 'INVALID_BACKUP', 'message': 'Bitte wählen Sie eine Backupdatei aus.'}), 400
-    return delegate('/import', upload.stream.read(),
-                    {'X-Filename': urllib.parse.quote(upload.filename)}, timeout=60)
+    upload.stream.seek(0, 2)
+    size = upload.stream.tell()
+    upload.stream.seek(0)
+    return delegate('/import', upload.stream,
+                    {'Content-Length': str(size),
+                     'X-Filename': urllib.parse.quote(upload.filename)}, timeout=60)
 
 
 @database_admin.post('/api/admin/database/restore')

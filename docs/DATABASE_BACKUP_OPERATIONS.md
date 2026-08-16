@@ -36,7 +36,17 @@ Die Admin-API bietet Status, Liste und Download unter
 internen Backup-Service und antwortet mit HTTP 202; es wird kein Dump im
 Backend erzeugt.
 
-## Manueller Restore (niemals automatisch)
+## Wiederherstellung (niemals automatisch)
+
+Die Administration delegiert Import und Wiederherstellung über
+`POST /api/admin/database/import` und `POST /api/admin/database/restore` an
+denselben internen Backup-Service. Der Service validiert PostgreSQL-Custom-Dumps,
+erstellt zwingend ein Sicherheitsbackup, beendet blockierende
+Anwendungsverbindungen, führt `pg_restore` aus und prüft danach die
+Alembic-Version. Temporäre Imports werden ausschließlich nach einem vollständig
+erfolgreichen Ablauf gelöscht.
+
+Der folgende CLI-Ablauf bleibt für betriebliche Notfälle verfügbar:
 
 1. Wartungsfenster ankündigen, schreibenden Zugriff stoppen und den gewünschten
    Dump anhand der Statusdatei sowie Größe auswählen.
@@ -57,9 +67,9 @@ docker compose start backend
 4. `alembic current`, Anwendungsgesundheit und fachliche Stichproben prüfen.
    Bei einer Prüf-Datenbank `--dbname` entsprechend ändern.
 
-Restore bleibt absichtlich ohne API-Endpunkt, Scheduler oder Startautomatik.
-Für externes Storage kann später die Volume-/Storage-Schicht ersetzt werden,
-ohne die fachliche Anwendung oder das Dump-Format zu ändern.
+Restore bleibt absichtlich ohne Scheduler oder Startautomatik. Für externes
+Storage kann später die Volume-/Storage-Schicht ersetzt werden, ohne die
+fachliche Anwendung oder das Dump-Format zu ändern.
 
 ## Überwachung
 

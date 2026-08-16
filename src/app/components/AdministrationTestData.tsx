@@ -13,7 +13,7 @@ const actions: Array<{ scope: Scope; title: string; description: string; deletes
   { scope: 'all', title: 'Alles zurücksetzen', description: 'Stellt den Ausgangszustand für alle Testdaten wieder her.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen', 'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus', 'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'] },
 ];
 
-export function AdministrationTestData() {
+export function AdministrationTestData({ embedded = false }: { embedded?: boolean }) {
   const [selected, setSelected] = useState<(typeof actions)[number] | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
@@ -60,7 +60,7 @@ export function AdministrationTestData() {
   };
 
   return <SplitPageLayout className="overflow-y-auto">
-    <PageHeader eyebrow="Administration" title="Testdaten" subtitle="Dynamische Daten kontrolliert zurücksetzen und reproduzierbare Tests vorbereiten." meta={<StatusChip tone="warning">Nur für Administratoren</StatusChip>} />
+    {!embedded && <PageHeader eyebrow="Administration" title="Testdaten" subtitle="Dynamische Daten kontrolliert zurücksetzen und reproduzierbare Tests vorbereiten." meta={<StatusChip tone="warning">Nur für Administratoren</StatusChip>} />}
     {message && <InfoPanel tone={message.tone} title={message.tone === 'success' ? 'Reset abgeschlossen' : 'Reset fehlgeschlagen'}>{message.text}</InfoPanel>}
     <ContentCard className="p-5">
       <SectionHeader title="Daten zurücksetzen" subtitle="Stammdaten bleiben bei jeder Aktion vollständig erhalten." />

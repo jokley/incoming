@@ -72,7 +72,8 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         request = urlopen.call_args_list[0].args[0]
         self.assertEqual(request.full_url, 'http://backup:8080/import')
-        self.assertEqual(request.data, b'PGDMP')
+        self.assertEqual(request.headers['Content-length'], '5')
+        self.assertEqual(request.data.read(), b'PGDMP')
         response = self.client.post('/api/admin/database/restore', json={'token': 'abc'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(urlopen.call_args_list[1].args[0].full_url, 'http://backup:8080/restore')

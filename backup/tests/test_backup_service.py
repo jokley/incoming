@@ -72,6 +72,13 @@ class BackupServiceTest(unittest.TestCase):
                 backup_service.import_dump(io.BytesIO(b'plain sql'), 'invalid.sql')
             self.assertEqual(len(list(Path(directory, '.imports').glob('*.dump'))), 1)
 
+    def test_limited_reader_stops_at_http_content_length(self):
+        source = io.BytesIO(b'PGDMP-next-request')
+        body = backup_service.LimitedReader(source, 5)
+        self.assertEqual(body.read(1024), b'PGDMP')
+        self.assertEqual(body.read(1024), b'')
+        self.assertEqual(source.read(), b'-next-request')
+
     def test_restore_creates_safety_backup_first_and_deletes_successful_import(self):
         events = []
         integrity = Result()
@@ -87,7 +94,7 @@ class BackupServiceTest(unittest.TestCase):
             imported.parent.mkdir()
             imported.write_bytes(b'PGDMP-valid')
             result = backup_service.restore_backup({'token': 'a' * 32})
-            self.assertEqual(events, ['validation', 'backup', 'pg_restore', 'psql'])
+            self.assertEqual(events, ['validation', 'backup', 'psql', 'pg_restore', 'psql'])
             self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
             self.assertFalse(imported.exists())
 
