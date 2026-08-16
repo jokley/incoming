@@ -8,6 +8,22 @@ that schema and transfers data only. SQLite is opened with `mode=ro` and
 `PRAGMA query_only=ON`; always give the tool a filesystem snapshot, never the
 live application database.
 
+The snapshot does **not** need to have passed through the writable Sprint 3.3b
+SQLite startup alignment. For an unaligned Release 1 snapshot, the importer
+reproduces the released `athlete.single_room_status` backfill in memory:
+`IN_QUOTA` and `APPROVED_EXTRA` retain those values and every other legacy
+`single_room_entitlement` value maps to `NONE`. An already present status is
+always preserved. The nullable `single_room_decision_id` may be absent and is
+then imported as `NULL` by PostgreSQL. This compatibility step changes neither
+the source schema nor its rows and is reported as a warning in the JSON report.
+
+The same in-memory compatibility layer supplies missing Release 1 event
+planning columns. `event.person_demand` is the sum of each legacy room demand's
+`room_count * room_type.max_persons`, or `0` when an event has no room demands;
+`event.single_room_percentage` is `50`. These are the exact Sprint 3.3b
+backfill and initial-default rules. If either column already exists, its stored
+value is preserved independently and only a missing column is derived.
+
 The normal run replaces the contents of every source table in one PostgreSQL
 transaction. It deletes in reverse dependency order and imports in
 foreign-key dependency order. Nullable foreign keys in cycles are restored in
