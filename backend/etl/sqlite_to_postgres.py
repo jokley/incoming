@@ -27,6 +27,20 @@ from logging_config import configure_logging  # noqa: E402
 LOG = logging.getLogger("etl.sqlite_to_postgres")
 
 
+def _legacy_athlete_status(row: dict) -> str:
+    """Reproduce the Release 1 SQLite backfill without modifying the snapshot."""
+    entitlement = row.get("single_room_entitlement")
+    return entitlement if entitlement in {"IN_QUOTA", "APPROVED_EXTRA"} else "NONE"
+
+
+# Compatibility transforms are deliberately explicit rather than inferred from
+# target defaults.  They mirror released SQLite backfills while keeping the
+# input snapshot immutable and making the resulting PostgreSQL rows repeatable.
+LEGACY_DERIVED_COLUMNS = {
+    "athlete": {"single_room_status": _legacy_athlete_status},
+}
+
+
 @dataclass
 class TableResult:
     source_rows: int = 0
@@ -135,14 +149,24 @@ class Migrator:
                 target_columns = set(tm.tables[name].c.keys())
                 if source_columns - target_columns:
                     raise RuntimeError(f"target {name} is missing columns: {sorted(source_columns-target_columns)}")
+                derivations = LEGACY_DERIVED_COLUMNS.get(name, {})
+                derived_columns = set(derivations) - source_columns
                 required = [column.name for column in tm.tables[name].columns
                             if column.name not in source_columns and not column.nullable
-                            and column.default is None and column.server_default is None]
+                            and column.default is None and column.server_default is None
+                            and column.name not in derived_columns]
                 if required:
                     raise RuntimeError(f"source {name} cannot populate required target columns: {required}")
                 data = [dict(row._mapping) for row in source.execute(select(sm.tables[name])).all()]
+                for column in sorted(derived_columns):
+                    for row in data:
+                        row[column] = derivations[column](row)
+                if derived_columns:
+                    message = f"source {name} legacy columns derived in memory: {sorted(derived_columns)}"
+                    if message not in self.report.warnings:
+                        self.report.warnings.append(message)
                 null_violations = [column.name for column in tm.tables[name].columns
-                                   if not column.nullable and column.name in source_columns
+                                   if not column.nullable and column.name in source_columns | derived_columns
                                    and any(row[column.name] is None for row in data)]
                 if null_violations:
                     raise RuntimeError(f"source {name} has NULL in required columns: {null_violations}")
