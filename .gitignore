@@ -18,3 +18,6 @@ backend/mock_fis_files/*.xls
 incoming.env
 
 backend/**/__pycache__/
+
+backup/**/__pycache__/
+backup/**/*.pyc

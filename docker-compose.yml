@@ -9,11 +9,17 @@ services:
     volumes:
       - ./backend:/app
       - backend-data:/app/data
+      - postgres-backups:/backups:ro
     env_file:
       - incoming.env
     networks:
       - freestyle-network
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      backup:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
       interval: 10s
@@ -36,6 +42,26 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  backup:
+    build: ./backup
+    container_name: freestyle-wm-backup
+    env_file:
+      - incoming.env
+    volumes:
+      - postgres-backups:/backups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - freestyle-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   # Manually invoked one-shot tool; never starts with the normal application.
   etl:
@@ -83,3 +109,4 @@ networks:
 volumes:
   backend-data:
   postgres-data:
+  postgres-backups:

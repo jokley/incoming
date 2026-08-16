@@ -10,7 +10,8 @@ Event-Management-Software für die Organisation der Freestyle-Weltmeisterschaft 
 
 - **Frontend**: React + TypeScript + Tailwind CSS + Vite
 - **Backend**: Flask (Python) + SQLAlchemy
-- **Datenbank**: SQLite
+- **Datenbank**: PostgreSQL 17 (einzige produktive Datenbank)
+- **Operations**: separater PostgreSQL-Backup-Service
 - **Deployment**: Docker Compose
 
 ## 🚀 Installation & Start
@@ -153,17 +154,22 @@ Die Verantwortlichkeiten und Abhängigkeitsregeln der Module sind in
 ### Backend
 - Flask 3.0
 - SQLAlchemy (ORM)
-- SQLite
+- PostgreSQL 17
 - Flask-CORS
 
 ## 📦 Docker
 
-Die Anwendung läuft in zwei Containern im gleichen Docker-Netzwerk:
+Die Anwendung läuft in vier getrennten Services im gleichen Docker-Netzwerk:
 
 - **backend**: Flask API (Port 5000)
 - **frontend**: Vite Dev Server (Port 5173)
+- **postgres**: PostgreSQL 17 mit persistentem Daten-Volume
+- **backup**: zeitgesteuerte und manuelle `pg_dump`-Sicherungen
 
-Persistente Daten werden im Volume `backend-data` gespeichert.
+PostgreSQL-Daten und Sicherungen liegen in getrennten persistenten Volumes.
+Konfiguration, Sofort-Backup, Monitoring und der ausschließlich manuelle
+Restore sind im [Backup-Betriebshandbuch](docs/DATABASE_BACKUP_OPERATIONS.md)
+beschrieben.
 
 ## 🔧 Konfiguration
 
