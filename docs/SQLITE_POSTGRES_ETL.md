@@ -38,14 +38,21 @@ Dry-run opens both databases, runs SQLite integrity and FK checks, compares
 table coverage, derives the FK order, reads every source row, checks cyclic FK
 feasibility, and records current target counts. It performs no target DML.
 
-The Compose equivalent mounts the deliberately selected snapshot read-only:
+The Compose service has a dedicated read-only bind mount for the snapshot.
+Select the reviewed file with `SQLITE_SNAPSHOT_PATH`; use an absolute host path
+that is accessible to the Docker daemon. If the variable is omitted, Compose
+uses the staging-only path `./migration-snapshots/source.db` and never falls
+back to the application's live database:
 
 ```bash
-docker compose --profile etl run --rm \
-  -v /secure/staging/incoming.db:/snapshot/source.db:ro etl \
+SQLITE_SNAPSHOT_PATH=/secure/staging/incoming.db \
+docker compose --profile etl run --rm etl \
   --source /snapshot/source.db --target "$DATABASE_URL" \
   --dry-run --report /reports/dry-run.json
 ```
+
+The same `SQLITE_SNAPSHOT_PATH` prefix must be used for the controlled real
+import. Do not replace the `:ro` service mount with an ad-hoc writable mount.
 
 ## Controlled import
 

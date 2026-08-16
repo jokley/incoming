@@ -45,6 +45,9 @@ services:
       - incoming.env
     volumes:
       - ./backend:/app:ro
+      # Override SQLITE_SNAPSHOT_PATH with the reviewed snapshot's absolute
+      # host path. The fallback is a staging location, never the runtime DB.
+      - ${SQLITE_SNAPSHOT_PATH:-./migration-snapshots/source.db}:/snapshot/source.db:ro
       - ./migration-reports:/reports
     depends_on:
       postgres:
