@@ -15,8 +15,7 @@ class DatabaseAdminTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.app = Flask(__name__)
         self.app.config.update(BACKUP_DIR=self.temporary.name,
-                               BACKUP_SERVICE_URL='http://backup:8080',
-                               DATABASE_BACKEND='postgresql')
+                               BACKUP_SERVICE_URL='http://backup:8080')
         self.app.register_blueprint(database_admin)
         self.client = self.app.test_client()
 

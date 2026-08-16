@@ -8,7 +8,6 @@ services:
       - "5000:5000"
     volumes:
       - ./backend:/app
-      - backend-data:/app/data
       - postgres-backups:/backups:ro
     env_file:
       - incoming.env
@@ -105,6 +104,5 @@ networks:
     driver: bridge
 
 volumes:
-  backend-data:
   postgres-data:
   postgres-backups:

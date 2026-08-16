@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta
-import sqlite3
 from pathlib import Path
 from xml.sax.saxutils import escape
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo
 
 OUTPUT_DIR = Path(__file__).resolve().parent / 'mock_fis_files'
-DB_PATH = Path(__file__).resolve().parent / 'freestyle_wm_new.db'
 
 DISCIPLINES = [
     {
@@ -404,34 +402,23 @@ def generate_mock_files(output_dir: Path) -> list[dict]:
 
 
 def reset_athlete_related_data() -> dict:
-    if not DB_PATH.exists():
-        return {
-            'athletesDeleted': 0,
-            'fisAssignmentsDeleted': 0,
-            'legacyAssignmentsDeleted': 0,
-            'roomBookingsDeleted': 0,
-            'importRunsDeleted': 0,
+    from app import app
+    from models import (Athlete, FisRoomAssignment, ImportRun, RoomAssignment,
+                        RoomBooking, RoomBookingOccupant, db)
+
+    with app.app_context():
+        stats = {
+            'athletesDeleted': Athlete.query.count(),
+            'fisAssignmentsDeleted': FisRoomAssignment.query.count(),
+            'legacyAssignmentsDeleted': RoomAssignment.query.count(),
+            'roomBookingsDeleted': RoomBooking.query.count(),
+            'importRunsDeleted': ImportRun.query.count(),
         }
-
-    connection = sqlite3.connect(DB_PATH)
-    cursor = connection.cursor()
-    stats = {
-        'athletesDeleted': cursor.execute('SELECT COUNT(*) FROM athlete').fetchone()[0],
-        'fisAssignmentsDeleted': cursor.execute('SELECT COUNT(*) FROM fis_room_assignment').fetchone()[0],
-        'legacyAssignmentsDeleted': cursor.execute('SELECT COUNT(*) FROM room_assignment').fetchone()[0],
-        'roomBookingsDeleted': cursor.execute('SELECT COUNT(*) FROM room_booking').fetchone()[0],
-        'importRunsDeleted': cursor.execute('SELECT COUNT(*) FROM import_run').fetchone()[0],
-    }
-
-    cursor.execute('DELETE FROM room_booking_occupant')
-    cursor.execute('DELETE FROM room_booking')
-    cursor.execute('DELETE FROM fis_room_assignment')
-    cursor.execute('DELETE FROM room_assignment')
-    cursor.execute('DELETE FROM athlete')
-    cursor.execute('DELETE FROM import_run')
-    connection.commit()
-    connection.close()
-    return stats
+        for model in (RoomBookingOccupant, RoomBooking, FisRoomAssignment,
+                      RoomAssignment, Athlete, ImportRun):
+            model.query.delete(synchronize_session=False)
+        db.session.commit()
+        return stats
 
 
 def import_mock_pair(entries_path: Path, room_path: Path) -> dict:

@@ -17,10 +17,7 @@ def _csv(value: str) -> tuple[str, ...]:
 @dataclass(frozen=True)
 class RuntimeSettings:
     base_dir: Path
-    data_dir: Path
-    database_backend: str
-    database_path: Path
-    database_url: str | None
+    database_url: str
     mock_files_dir: Path
     cors_origins: tuple[str, ...]
     auth_proxy_secret: str
@@ -34,24 +31,15 @@ class RuntimeSettings:
     @classmethod
     def from_environment(cls, base_dir: Path | None = None):
         base = (base_dir or Path(__file__).resolve().parent).resolve()
-        data = Path(os.environ.get('APP_DATA_DIR', base / 'data')).resolve()
-        database = Path(os.environ.get('DATABASE_PATH', data / 'freestyle_wm_new.db')).resolve()
-        database_backend = os.environ.get('DATABASE_BACKEND', 'sqlite').strip().lower()
-        if database_backend not in {'sqlite', 'postgresql'}:
-            raise ValueError("DATABASE_BACKEND must be 'sqlite' or 'postgresql'")
-        database_url = os.environ.get('DATABASE_URL', '').strip() or None
-        if database_backend == 'postgresql':
-            if database_url is None:
-                raise ValueError('DATABASE_URL is required when DATABASE_BACKEND=postgresql')
-            if database_url.startswith('postgresql://'):
-                database_url = database_url.replace('postgresql://', 'postgresql+psycopg://', 1)
-            elif not database_url.startswith('postgresql+psycopg://'):
-                raise ValueError('DATABASE_URL must use the postgresql:// scheme')
+        database_url = os.environ.get('DATABASE_URL', '').strip()
+        if not database_url:
+            raise ValueError('DATABASE_URL is required')
+        if database_url.startswith('postgresql://'):
+            database_url = database_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+        elif not database_url.startswith('postgresql+psycopg://'):
+            raise ValueError('DATABASE_URL must use the postgresql:// scheme')
         return cls(
             base_dir=base,
-            data_dir=data,
-            database_backend=database_backend,
-            database_path=database,
             database_url=database_url,
             mock_files_dir=base / 'mock_fis_files',
             cors_origins=_csv(os.environ.get('CORS_ORIGINS', '')),
@@ -66,13 +54,9 @@ class RuntimeSettings:
 
     def apply(self, app):
         """Apply settings at the composition root without hiding side effects."""
-        self.data_dir.mkdir(parents=True, exist_ok=True)
-        database_uri = (f'sqlite:///{self.database_path}' if self.database_backend == 'sqlite'
-                        else self.database_url)
         app.config.update(
-            SQLALCHEMY_DATABASE_URI=database_uri,
+            SQLALCHEMY_DATABASE_URI=self.database_url,
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
-            DATABASE_BACKEND=self.database_backend,
             AUTH_PROXY_SECRET=self.auth_proxy_secret,
             AUTH_DEV_USER=self.auth_dev_user,
             AUTH_DEV_GROUPS=self.auth_dev_groups,

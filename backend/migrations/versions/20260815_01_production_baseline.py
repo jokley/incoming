@@ -123,7 +123,6 @@ def upgrade() -> None:
         sa.Column('replaced_by_id', sa.Integer),
         sa.Column('error_message', sa.Text),
         sa.ForeignKeyConstraint(['replaced_by_id'], ['import_session.id'], name='fk_import_session_replaced_by_id_import_session'),
-        *([sa.ForeignKeyConstraint(['current_version_id'], ['import_session_version.id'], name='fk_import_session_current_version_id_import_session_version')] if op.get_bind().dialect.name == 'sqlite' else []),
     )
     op.create_table(
         'import_session_version',
@@ -304,17 +303,15 @@ def upgrade() -> None:
     op.create_index('ix_import_session_event_approval_id', 'import_session_event', ['approval_id'], unique=False)
     op.create_index('ix_import_approval_session_id', 'import_approval', ['session_id'], unique=False)
     op.create_index('ix_import_approval_version_id', 'import_approval', ['version_id'], unique=False)
-    if op.get_bind().dialect.name != 'sqlite':
-        op.create_foreign_key('fk_import_session_current_version_id_import_session_version', 'import_session', 'import_session_version', ['current_version_id'], ['id'])
+    op.create_foreign_key('fk_import_session_current_version_id_import_session_version', 'import_session', 'import_session_version', ['current_version_id'], ['id'])
 
 
 def downgrade() -> None:
-    if op.get_bind().dialect.name != 'sqlite':
-        op.drop_constraint(
-            'fk_import_session_current_version_id_import_session_version',
-            'import_session',
-            type_='foreignkey',
-        )
+    op.drop_constraint(
+        'fk_import_session_current_version_id_import_session_version',
+        'import_session',
+        type_='foreignkey',
+    )
     op.drop_index('ix_import_approval_version_id', table_name='import_approval')
     op.drop_index('ix_import_approval_session_id', table_name='import_approval')
     op.drop_index('ix_import_session_event_approval_id', table_name='import_session_event')

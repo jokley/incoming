@@ -1,10 +1,12 @@
 import os
 import sys
-import tempfile
 import unittest
 
-DB_FILE = tempfile.NamedTemporaryFile(suffix='.db', delete=False).name
-os.environ['DATABASE_PATH'] = DB_FILE
+database_url = os.environ.get('TEST_DATABASE_URL')
+if not database_url:
+    raise unittest.SkipTest('TEST_DATABASE_URL is required for database integration tests')
+os.environ['DATABASE_URL'] = database_url
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app import app  # noqa: E402

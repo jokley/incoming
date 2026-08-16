@@ -1,251 +1,162 @@
-# Freestyle WM 2027 - Event Management System
+# Incoming Software
 
-⛷️ Event-Management-Software für die Organisation der Freestyle-Weltmeisterschaft 2027 🏂
+## Projektübersicht
 
-Event-Management-Software für die Organisation der Freestyle-Weltmeisterschaft mit Athletenverwaltung, Hotelzuweisungen, CSV-Import und professionellen Analysen.
+Incoming unterstützt die operative Planung von Athleten, Kontingenten, Hotels,
+Zimmern, Events und FIS-Importen. Die Webanwendung besteht aus einem
+React-Frontend, einer Flask-API und PostgreSQL. Datenbankschemata werden
+versioniert mit Alembic ausgerollt; Sicherung und Wiederherstellung übernimmt
+ein separater Backup-Service.
 
-⚠️ **WICHTIG**: Dieses System wurde komplett neu strukturiert basierend auf der Tabellenstruktur aus `hotel-zimmer-preise.csv`. Siehe `docs/SETUP.md` für Details.
+## Architektur
 
-## 🏗️ Architektur
+### Frontend
 
-- **Frontend**: React + TypeScript + Tailwind CSS + Vite
-- **Backend**: Flask (Python) + SQLAlchemy
-- **Datenbank**: PostgreSQL 17 (einzige produktive Datenbank)
-- **Operations**: separater PostgreSQL-Backup-Service
-- **Deployment**: Docker Compose
+Das TypeScript-Frontend unter `src/` wird mit React und Vite gebaut. Es greift
+über `/api` auf das Backend zu. Wiederverwendbare UI-Bausteine liegen in
+`src/app/components/ui`, fachliche Ansichten in `src/app/components` und
+API-Zugriffe in `src/app/services`.
 
-## 🚀 Installation & Start
+### Backend
 
-### Mit Docker Compose (empfohlen)
+Die Flask-Anwendung unter `backend/` stellt REST-Endpunkte, Authentisierung,
+Import-, Planungs- und Administrationslogik bereit. SQLAlchemy bildet das
+Datenmodell ab. `DATABASE_URL` ist die einzige Datenbankkonfiguration und muss
+auf PostgreSQL zeigen.
 
-```bash
-# Alle Services starten
-docker-compose up --build
+### PostgreSQL und Alembic
 
-# Frontend: http://localhost:5173
-# Backend API: http://localhost:5000/api
+PostgreSQL 17 ist der persistente Datenspeicher. Schemaänderungen werden
+ausschließlich als Alembic-Revisionen in `backend/migrations/versions`
+versioniert und vor dem Start einer neuen Anwendungsversion ausgeführt.
+
+### Backup-Service
+
+Der Dienst unter `backup/` erstellt komprimierte `pg_dump`-Sicherungen, verwaltet
+die Aufbewahrung und stellt kontrollierte Import- und Restore-Endpunkte für die
+Admin-Datenbankseite bereit. Details stehen im
+[Betriebshandbuch](docs/DATABASE_BACKUP_OPERATIONS.md).
+
+### ETL
+
+`backend/etl/` ist ein eigenständiges Werkzeug zur einmaligen Übernahme
+historischer Daten. Es gehört nicht zum Anwendungsstart und wird durch das
+Compose-Profil `etl` ausschließlich manuell aktiviert. Das archivierte
+Migrations-Runbook liegt unter `docs/migration/`.
+
+## Projektstruktur
+
+```text
+backend/                 Flask-API, Modelle und Alembic
+  etl/                   separat gestartetes Migrationswerkzeug
+  migrations/            Schema-Revisionen
+  tests/                 Backend-Tests
+backup/                  Backup-, Import- und Restore-Service
+  tests/                 Service-Tests
+docs/                    aktuelle Architektur- und Betriebsdokumentation
+  archive/               historische, nicht operative Dokumente
+  migration/             Runbooks für einmalige Datenübernahmen
+src/                     React-/TypeScript-Frontend
 ```
 
-### Lokale Entwicklung
+## Entwicklung
 
-#### Backend
+### Voraussetzungen
+
+- Docker Engine mit Docker Compose
+- alternativ: Python 3.12+, Node.js 20+ und pnpm
+
+### Docker Compose
+
+```bash
+cp incoming.env.example incoming.env
+# Kennwörter und AUTH_PROXY_SECRET in incoming.env ersetzen
+docker compose up --build postgres backup backend frontend
+```
+
+Frontend: `http://localhost:5173`, Backend-Healthcheck:
+`http://localhost:5000/health`.
+
+### Backend
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# oder
-python -m venv venv    # Windows
-
+python -m venv .venv
+. .venv/bin/activate
 pip install -r requirements.txt
-python seed_data.py       # Datenbank initialisieren
+export DATABASE_URL=postgresql://incoming:secret@localhost:5432/incoming
+flask --app app run --debug
 ```
-
-#### Frontend
-
-```bash
-# Im Hauptverzeichnis
-pnpm install
-cp incoming.env.example .env
-pnpm run dev
-```
-
-## 📁 Projektstruktur
-
-```
-.
-├── backend/
-│   ├── app.py              # Flask Backend mit allen API Endpoints
-│   ├── models.py           # Persistenzmodelle
-│   ├── seed_data.py        # Datenbank-Initialisierung mit Beispieldaten
-│   ├── requirements.txt
-│   ├── Dockerfile
-│   └── data/               # Persistente SQLite-Daten im Container
-├── src/
-│   ├── app/
-│   │   ├── components/
-│   │   │   ├── Dashboard.tsx       # Haupt-Dashboard
-│   │   │   ├── Athletes.tsx        # Athletenverwaltung
-│   │   │   ├── Hotels.tsx          # Hotelverwaltung
-│   │   │   ├── Assignments.tsx     # Zuweisungen
-│   │   │   ├── Events.tsx          # Events & Gantt Chart
-│   │   │   ├── RoomOccupancy.tsx   # Zimmerbelegung
-│   │   │   └── Layout.tsx          # Navigation
-│   │   ├── services/
-│   │   │   └── api.ts             # API Service Layer
-│   │   ├── data/
-│   │   │   └── mockData.ts        # Mock-Daten (falls Backend offline)
-│   │   ├── types.ts               # TypeScript Typen
-│   │   └── routes.tsx             # React Router Konfiguration
-│   └── styles/
-├── docker-compose.yml
-├── Dockerfile.frontend
-└── README.md
-```
-
-Die Verantwortlichkeiten und Abhängigkeitsregeln der Module sind in
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) dokumentiert.
-
-## 🔌 API Endpoints
-
-### Athleten
-- `GET /api/athletes` - Alle Athleten abrufen
-- `POST /api/athletes` - Neuen Athleten erstellen (Body: name, nation, discipline)
-- `PUT /api/athletes/:id` - Athlet aktualisieren
-- `DELETE /api/athletes/:id` - Athlet löschen
-
-### Hotels
-- `GET /api/hotels` - Alle Hotels abrufen
-- `POST /api/hotels` - Neues Hotel erstellen (Body: name, location, region, singleRooms, doubleRooms, roomCategories)
-- `PUT /api/hotels/:id` - Hotel aktualisieren
-- `DELETE /api/hotels/:id` - Hotel löschen
-
-### Zuweisungen
-- `POST /api/assignments` - Athlet einem Hotel zuweisen (Body: athleteId, hotelId, roomType)
-- `DELETE /api/assignments/:athleteId` - Zuweisung entfernen
-
-### Events
-- `GET /api/events` - Alle Events abrufen
-- `POST /api/events` - Neues Event erstellen (Body: name, discipline, startDate, endDate, targetQuota)
-- `PUT /api/events/:id` - Event aktualisieren
-- `DELETE /api/events/:id` - Event löschen
-
-### Statistiken
-- `GET /api/statistics` - Dashboard-Statistiken abrufen (inkl. Zimmerbelegung)
-
-## 🌐 Features
-
-- **Dashboard**: 
-  - Übersicht mit Statistiken, Charts nach Nation/Disziplin
-  - Detaillierte Zimmerbelegung (EZ/DZ) mit Auslastungsvisualisierung
-  - Hotel-Auslastung mit Kapazitätsübersicht
-  
-- **Athletenverwaltung**: 
-  - CRUD-Operationen, Suche, Filterung
-  - Zuordnung zu Einzelzimmern (EZ) oder Doppelzimmern (DZ)
-  
-- **Hotelverwaltung**: 
-  - Getrennte Verwaltung von Einzelzimmern und Doppelzimmern
-  - Ort und Region Attribute
-  - Zimmerkategorien (z.B. "1x DZ + DU", "2x DZ + 2x DU")
-  - Auslastungsanzeige und Kapazitätsmanagement
-  
-- **Zuweisungen**: 
-  - Zimmertyp-basierte Zuweisung (50/50 Regel: EZ/DZ)
-  - Kapazitätsprüfung nach Zimmertyp
-  - Übersicht aller Zuweisungen
-  
-- **Events & Timeline**:
-  - Gantt Chart für zeitlichen Verlauf der Veranstaltungen
-  - Soll/Ist-Kontingente nach Disziplin
-  - Farbcodierte Status-Anzeige (grün ≥100%, gelb 75-99%, orange 50-74%, rot <50%)
-  - Event-Verwaltung mit Start/End-Datum
-
-## 🛠️ Technologie-Stack
 
 ### Frontend
-- React 18
-- TypeScript
-- Tailwind CSS v4
-- React Router v7
-- Recharts (Diagramme)
-- Lucide React (Icons)
 
-### Backend
-- Flask 3.0
-- SQLAlchemy (ORM)
-- PostgreSQL 17
-- Flask-CORS
-
-## 📦 Docker
-
-Die Anwendung läuft in vier getrennten Services im gleichen Docker-Netzwerk:
-
-- **backend**: Flask API (Port 5000)
-- **frontend**: Vite Dev Server (Port 5173)
-- **postgres**: PostgreSQL 17 mit persistentem Daten-Volume
-- **backup**: zeitgesteuerte und manuelle `pg_dump`-Sicherungen
-
-PostgreSQL-Daten und Sicherungen liegen in getrennten persistenten Volumes.
-Konfiguration, Sofort-Backup, Monitoring und der ausschließlich manuelle
-Restore sind im [Backup-Betriebshandbuch](docs/DATABASE_BACKUP_OPERATIONS.md)
-beschrieben.
-
-## 🔧 Konfiguration
-
-### Environment Variables
-
-Das System nutzt Vite Environment Variables:
-
-**Lokal (Development):**
-```env
-VITE_API_URL=http://localhost:5000/api
+```bash
+pnpm install
+pnpm dev
 ```
 
-**Production:**
-```env
-VITE_API_URL=https://incoming.jokley.at/api
+### Migrationen
+
+```bash
+cd backend
+alembic upgrade head
+alembic current
 ```
 
-Dateien:
-- `.env.development` - Lokale Entwicklung
-- `.env.production` - Production Build
-- `.env` - Fallback (Production)
+Neue Schemaänderungen benötigen eine geprüfte Alembic-Revision. Die Anwendung
+erzeugt oder verändert Tabellen beim Start nicht selbst.
 
-Siehe `docs/DEPLOYMENT.md` für Details zum Production-Setup.
+### Tests
 
-## 💡 Zimmerverwaltung - 50/50 Regel
+```bash
+cd backend && python -m unittest discover -s tests
+cd backup && python -m unittest discover -s tests
+pnpm build
+```
 
-Die Anwendung unterstützt die 50/50 Regel für Zimmerbelegung:
+Datenbank-Integrationstests benötigen eine isolierte PostgreSQL-Testdatenbank.
+Produktionsdaten dürfen niemals als Testziel verwendet werden.
 
-- **Einzelzimmer (EZ)**: 1 Athlet pro Zimmer
-- **Doppelzimmer (DZ)**: Bis zu 2 Athleten pro Zimmer
+## Backup
 
-**Beispielrechnung:**
-- 50 Doppelzimmer = bis zu 100 Athleten
-- 25 Einzelzimmer = 25 Athleten
-- **Gesamt: 125 Athleten Kapazität**
+Automatische Sicherungen werden mit `BACKUP_SCHEDULE` geplant. Manuelle
+Sicherungen können über die Admin-Datenbankseite ausgelöst werden. Das
+Backup-Volume ist für das Backend nur lesbar; Datenbankwerkzeuge und
+Schreibzugriff liegen ausschließlich beim Backup-Service.
 
-Pro Nation und Disziplin wird eine 50/50 Verteilung (EZ/DZ) angestrebt.
+## Restore
 
-## 📊 Zimmerkategorien
+1. Wartungsfenster aktivieren und Schreibzugriffe stoppen.
+2. Sicherungsdatei in der Admin-Datenbankseite prüfen/importieren.
+3. Restore mit der angezeigten Bestätigung starten.
+4. Alembic-Stand, Healthcheck und fachliche Stichproben kontrollieren.
+5. Anwendung erst danach wieder freigeben.
 
-Hotels können verschiedene Zimmerkategorien definieren:
+Der Restore ersetzt den Zielbestand vollständig. Das detaillierte Verfahren und
+die Sicherheitsprüfungen beschreibt das
+[Backup-Handbuch](docs/DATABASE_BACKUP_OPERATIONS.md).
 
-- `1x DZ + DU` - 1 Doppelzimmer mit 1 Dusche
-- `2x DZ + 2x DU` - 2 Doppelzimmer mit 2 Duschen
-- `1x EZ + DU` - 1 Einzelzimmer mit 1 Dusche
+## Deployment
 
-Jede Kategorie kann Ausstattungsmerkmale haben (TV, WLAN, Balkon, etc.).
+1. Secrets über die Zielplattform bereitstellen; `incoming.env` nicht committen.
+2. PostgreSQL und Backup-Service starten und deren Healthchecks abwarten.
+3. `alembic upgrade head` mit dem Release-Artefakt ausführen.
+4. Backend und Frontend aus unveränderlichen Images ausrollen.
+5. `/health`, Admin-Datenbankstatus und zentrale Benutzerabläufe prüfen.
 
-## 🆕 Neue Architektur (v2.0)
+Reverse-Proxy- und Authentisierungsdetails stehen in
+[`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md) und
+[`docs/AUTHENTICATION.md`](docs/AUTHENTICATION.md).
 
-Das System wurde komplett neu strukturiert:
+## Troubleshooting
 
-### Datenbankmodell
-- **RoomType** - Zimmertypen mit MaxPersonen
-- **Hotel + HotelRoomInventory** - Hotels mit Zimmern pro Zeitraum
-- **Event + EventRoomDemand** - Events mit Bedarf
-- **Athlete** - Athleten mit allen Details
-- **RoomAssignment** - Zimmerzuteilungen
-
-### CSV Import
-Importieren Sie alle Daten aus einer CSV-Datei über `/import`
-
-### Analysen
-Detaillierte Auswertungen unter `/analytics`:
-- Verfügbarkeit vs. Bedarf pro Zimmertyp
-- Betten-Kapazität Berechnungen
-- Status-Übersicht (ausreichend/fehlend)
-
-Siehe `docs/SETUP.md` für vollständige Dokumentation!
-
-## SQLite → PostgreSQL ETL
-
-Der manuelle, transaktionale Datenimport inklusive Dry Run, Backup-, Cutover-
-und Rollback-Verfahren ist in [`docs/SQLITE_POSTGRES_ETL.md`](docs/SQLITE_POSTGRES_ETL.md)
-dokumentiert. Er wird niemals beim Anwendungsstart ausgeführt.
-
-## 📝 Lizenz
-
-MIT
+- **Backend startet nicht:** `DATABASE_URL`, Erreichbarkeit, Zugangsdaten und
+  PostgreSQL-Healthcheck prüfen.
+- **Schemafehler:** `cd backend && alembic current` und `alembic history`
+  vergleichen; niemals Tabellen manuell anpassen.
+- **Frontend erreicht die API nicht:** Vite-Proxy beziehungsweise
+  `VITE_API_URL`, Reverse Proxy und CORS-Konfiguration prüfen.
+- **Backup fehlgeschlagen:** Status und Logs des `backup`-Containers sowie
+  freien Platz im Backup-Volume prüfen.
+- **Restore abgelehnt:** Dateiname, Format, Prüfsumme, Bestätigungstext und
+  laufende Datenbankverbindungen anhand des Betriebshandbuchs prüfen.

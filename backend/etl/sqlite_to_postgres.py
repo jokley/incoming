@@ -288,7 +288,7 @@ class Migrator:
 
 def upgrade_schema(target_url: str):
     env = os.environ.copy()
-    env.update(DATABASE_BACKEND="postgresql", DATABASE_URL=target_url)
+    env.update(DATABASE_URL=target_url)
     subprocess.run([sys.executable, "-m", "alembic", "-c", "alembic.ini", "upgrade", "head"],
                    cwd=Path(__file__).resolve().parents[1], env=env, check=True)
 

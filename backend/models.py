@@ -12,8 +12,7 @@ NAMING_CONVENTION = {
 }
 
 
-# Constraint names are part of the migration API: deterministic names make
-# ALTER/DROP operations portable between PostgreSQL and SQLite batch mode.
+# Constraint names are part of the migration API and must remain deterministic.
 db = SQLAlchemy(metadata=MetaData(naming_convention=NAMING_CONVENTION))
 
 
@@ -100,7 +99,6 @@ class ImportSession(db.Model):
     discipline = db.Column(db.String(100))
     status = db.Column(db.String(30), nullable=False, default='DRAFT', index=True)
     # Break the session/version DDL cycle on PostgreSQL. SQLAlchemy keeps this
-    # inline on SQLite, whose ALTER TABLE support cannot add the constraint.
     current_version_id = db.Column(
         db.Integer,
         db.ForeignKey('import_session_version.id', use_alter=True),
