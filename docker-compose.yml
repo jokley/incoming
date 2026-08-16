@@ -37,6 +37,27 @@ services:
       timeout: 5s
       retries: 5
 
+  # Manually invoked one-shot tool; never starts with the normal application.
+  etl:
+    profiles: ["etl"]
+    build: ./backend
+    env_file:
+      - incoming.env
+    volumes:
+      - ./backend:/app:ro
+      # Override SQLITE_SNAPSHOT_PATH with the reviewed snapshot's absolute
+      # host path. The fallback is a staging location, never the runtime DB.
+      - ${SQLITE_SNAPSHOT_PATH:-./migration-snapshots/source.db}:/snapshot/source.db:ro
+      - ./migration-reports:/reports
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - freestyle-network
+    restart: "no"
+    entrypoint: ["python", "-m", "etl.sqlite_to_postgres"]
+    command: ["--help"]
+
   frontend:
     build:
       context: .

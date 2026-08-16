@@ -234,6 +234,12 @@ Detaillierte Auswertungen unter `/analytics`:
 
 Siehe `docs/SETUP.md` für vollständige Dokumentation!
 
+## SQLite → PostgreSQL ETL
+
+Der manuelle, transaktionale Datenimport inklusive Dry Run, Backup-, Cutover-
+und Rollback-Verfahren ist in [`docs/SQLITE_POSTGRES_ETL.md`](docs/SQLITE_POSTGRES_ETL.md)
+dokumentiert. Er wird niemals beim Anwendungsstart ausgeführt.
+
 ## 📝 Lizenz
 
 MIT
