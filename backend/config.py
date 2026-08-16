@@ -28,6 +28,8 @@ class RuntimeSettings:
     auth_dev_groups: str
     log_level: str
     environment: str
+    backup_dir: Path
+    backup_service_url: str
 
     @classmethod
     def from_environment(cls, base_dir: Path | None = None):
@@ -58,6 +60,8 @@ class RuntimeSettings:
             auth_dev_groups=os.environ.get('AUTH_DEV_GROUPS', 'incoming-admin'),
             log_level=os.environ.get('LOG_LEVEL', 'INFO').upper(),
             environment=os.environ.get('FLASK_ENV', ''),
+            backup_dir=Path(os.environ.get('BACKUP_DIR', '/backups')),
+            backup_service_url=os.environ.get('BACKUP_SERVICE_URL', 'http://backup:8080'),
         )
 
     def apply(self, app):
@@ -74,4 +78,6 @@ class RuntimeSettings:
             AUTH_DEV_GROUPS=self.auth_dev_groups,
             LOG_LEVEL=self.log_level,
             RUNTIME_ENV=self.environment,
+            BACKUP_DIR=str(self.backup_dir),
+            BACKUP_SERVICE_URL=self.backup_service_url,
         )

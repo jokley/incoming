@@ -27,6 +27,7 @@ from single_room_status_migration import migrate_single_room_status
 from schema_alignment import align_sqlite_schema
 from config import RuntimeSettings
 from logging_config import configure_logging
+from database_admin import database_admin
 
 settings = RuntimeSettings.from_environment()
 configure_logging(settings.log_level)
@@ -41,6 +42,7 @@ database_path = str(settings.database_path)
 if settings.database_backend == 'sqlite':
     migrate_import_sessions(database_path)
 db.init_app(app)
+app.register_blueprint(database_admin)
 
 
 @app.route('/health', methods=['GET'])
