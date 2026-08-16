@@ -133,4 +133,4 @@ def download_backup(filename):
     if not path.is_file():
         return jsonify({'error': 'BACKUP_NOT_FOUND'}), 404
     return send_file(path, as_attachment=True, download_name=filename,
-                     mimetype='application/gzip', conditional=True)
+                     mimetype='application/octet-stream', conditional=True)

@@ -57,10 +57,10 @@ Der folgende CLI-Ablauf bleibt für betriebliche Notfälle verfügbar:
 ```bash
 docker compose stop backend
 docker compose run --rm --entrypoint sh backup -c \
-  'gzip -dc /backups/incoming-2026-08-16_030000.dump.gz | \
-   PGPASSWORD="$POSTGRES_PASSWORD" pg_restore \
+  'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore \
    --host=postgres --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" \
-   --clean --if-exists --no-owner --exit-on-error'
+   --clean --if-exists --no-owner --exit-on-error \
+   /backups/incoming-2026-08-16_030000.dump.gz'
 docker compose start backend
 ```
 
