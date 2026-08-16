@@ -175,7 +175,12 @@ def reset_test_data():
             # historically did not in every development setup).  Break the
             # nullable links first, then delete children before their parents.
             ImportSession.query.update(
-                {ImportSession.current_version_id: None}, synchronize_session=False)
+                {ImportSession.current_version_id: None},
+                synchronize_session=False,
+            )
+            # Establish the session/version cycle break in PostgreSQL before
+            # any dependent bulk DELETE is issued.
+            db.session.flush()
             Athlete.query.update(
                 {Athlete.single_room_decision_id: None}, synchronize_session=False)
             FisRoomAssignment.query.update(
