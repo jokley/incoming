@@ -109,7 +109,14 @@ def restore_backup():
     payload = request.get_json(silent=True) or {}
     if not payload.get('filename') and not payload.get('token'):
         return jsonify({'error': 'BACKUP_REQUIRED', 'message': 'Bitte wählen Sie ein Backup aus.'}), 400
-    return delegate('/restore', json.dumps(payload).encode(), {'Content-Type': 'application/json'}, timeout=3600)
+    # Always forward one canonical request shape, irrespective of whether the
+    # selected backup was imported or already resides on the server.
+    restore_request = {
+        'filename': payload.get('filename'),
+        'token': payload.get('token'),
+    }
+    return delegate('/restore', json.dumps(restore_request).encode(),
+                    {'Content-Type': 'application/json'}, timeout=3600)
 
 
 @database_admin.get('/api/admin/database/backups')
@@ -126,4 +133,4 @@ def download_backup(filename):
     if not path.is_file():
         return jsonify({'error': 'BACKUP_NOT_FOUND'}), 404
     return send_file(path, as_attachment=True, download_name=filename,
-                     mimetype='application/gzip', conditional=True)
+                     mimetype='application/octet-stream', conditional=True)

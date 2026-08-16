@@ -1,4 +1,3 @@
-import gzip
 import json
 import os
 from pathlib import Path
@@ -28,16 +27,16 @@ class BackupServiceTest(unittest.TestCase):
 
     def fake_run(self, command, **kwargs):
         if command[0] == 'pg_dump':
-            kwargs['stdout'].write(b'dump-content')
+            kwargs['stdout'].write(b'PGDMP-dump-content')
             return Result()
         return Result()
 
-    def test_creates_compressed_dump_and_success_status(self):
+    def test_creates_postgresql_custom_dump_without_additional_compression(self):
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.subprocess.run', side_effect=self.fake_run):
             payload = backup_service.create_backup()
             dump = Path(directory, payload['filename'])
-            self.assertEqual(gzip.decompress(dump.read_bytes()), b'dump-content')
+            self.assertEqual(dump.read_bytes(), b'PGDMP-dump-content')
             self.assertEqual(json.loads(Path(directory, 'last-backup.json').read_text())['status'], 'success')
 
     def test_retention_keeps_configured_number_of_dumps(self):
@@ -97,6 +96,27 @@ class BackupServiceTest(unittest.TestCase):
             self.assertEqual(events, ['validation', 'backup', 'psql', 'pg_restore', 'psql'])
             self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
             self.assertFalse(imported.exists())
+
+    def test_server_restore_uses_custom_dump_directly_without_decompression(self):
+        commands = []
+        integrity = Result()
+        integrity.stdout = '20260815_01\n'
+
+        def run(command, **kwargs):
+            commands.append(command)
+            return integrity
+
+        with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
+                patch('backup_service.create_backup', return_value={'filename': 'safety.dump.gz'}), \
+                patch('backup_service.subprocess.run', side_effect=run):
+            dump = Path(directory, 'incoming-2026-08-16_152043.dump.gz')
+            dump.write_bytes(b'PGDMP-valid')
+
+            backup_service.restore_backup({'filename': dump.name, 'token': None})
+
+            restore = next(command for command in commands if command[0] == 'pg_restore'
+                           and '--list' not in command)
+            self.assertEqual(restore[-1], str(dump))
 
 
 if __name__ == '__main__':

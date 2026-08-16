@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import gzip
 import json
 import os
 from pathlib import Path
@@ -139,7 +138,7 @@ def create_backup(now=None):
         command = ["pg_dump", "-h", settings["host"], "-p", settings["port"], "-U",
                    settings["user"], "--format=custom", "--no-password", settings["database"]]
         log("backup_started", database=settings["database"], filename=filename)
-        with temporary.open("wb") as raw, gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as output:
+        with temporary.open("wb") as output:
             result = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
                                     stdout=output, stderr=subprocess.PIPE)
         if result.returncode:
@@ -237,30 +236,19 @@ def restore_backup(payload):
         raise RuntimeError("Eine Wiederherstellung läuft bereits.")
     imported = False
     source = None
-    unpacked = None
     try:
         settings = config()
         source, imported = resolve_restore_source(payload, settings)
         if not source.is_file():
             raise FileNotFoundError
-        restore_source = source
-        if not imported:
-            # Preserve the selected archive before retention runs for the safety backup.
-            unpacked = imported_directory(settings) / f"restore-{uuid.uuid4().hex}.dump"
-            with gzip.open(source, "rb") as archive, unpacked.open("wb") as output:
-                while chunk := archive.read(1024 * 1024):
-                    output.write(chunk)
-            validate_dump(unpacked, settings)
-            restore_source = unpacked
-        else:
-            validate_dump(source, settings)
+        validate_dump(source, settings)
         # This must finish successfully before pg_restore is ever invoked.
         safety_backup = create_backup()
         disconnect_application(settings)
         command = ["pg_restore", "-h", settings["host"], "-p", settings["port"],
                    "-U", settings["user"], "-d", settings["database"], "--clean",
                    "--if-exists", "--no-owner", "--no-privileges", "--exit-on-error",
-                   str(restore_source)]
+                   str(source)]
         result = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
                                 capture_output=True, text=True)
         if result.returncode:
@@ -277,8 +265,6 @@ def restore_backup(payload):
         log("restore_succeeded", safetyBackup=safety_backup["filename"])
         return {"status": "success", "safetyBackup": safety_backup["filename"]}
     finally:
-        if unpacked:
-            unpacked.unlink(missing_ok=True)
         RESTORE_LOCK.release()
 
 
@@ -310,7 +296,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == "/restore":
                 payload = json.loads(self.rfile.read(length))
                 return self._reply(200, restore_backup(payload))
-        except (ValueError, gzip.BadGzipFile) as error:
+        except ValueError as error:
             return self._reply(400, {"error": "INVALID_BACKUP", "message": str(error)})
         except FileNotFoundError:
             return self._reply(404, {"error": "BACKUP_NOT_FOUND", "message": "Das Backup wurde nicht gefunden."})
