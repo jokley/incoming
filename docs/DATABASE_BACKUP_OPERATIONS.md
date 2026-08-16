@@ -8,9 +8,8 @@ Compose-Netzwerk. Es führt weder `pg_dump` noch einen Scheduler aus.
 ## Konfiguration und Betrieb
 
 Alle Werte stehen in `incoming.env`. `BACKUP_ENABLED` aktiviert den UTC-Zeitplan,
-`BACKUP_SCHEDULE` ist ein fünfstelliges Cron-Schema (Standard `0 3 * * *`),
-`BACKUP_RETENTION` ist die maximale Anzahl Dumps (Standard 30), und `BACKUP_DIR`
-ist im Container `/backups`. Der Service verwendet unverändert `POSTGRES_DB`,
+`BACKUP_SCHEDULE` ist ein fünfstelliges Cron-Schema (Standard `0 3 * * *`) und
+`BACKUP_DIR` ist im Container `/backups`. Der Service verwendet unverändert `POSTGRES_DB`,
 `POSTGRES_USER` und `POSTGRES_PASSWORD`; Zugangsdaten werden nicht dupliziert.
 
 ```bash
@@ -20,7 +19,9 @@ docker compose ps
 docker compose logs -f backup
 ```
 
-Logs sind zeilenweise JSON. Dumps heißen
+Logs sind zeilenweise JSON. Automatische, manuelle und vor einer Wiederherstellung
+erstellte Dumps liegen getrennt in `automatic/`, `manual/` und `pre-restore/`.
+Jede Kategorie behält ausschließlich ihre zwei neuesten Dateien. Dumps heißen
 `<database>-YYYY-MM-DD_HHMMSS.dump.gz`; `last-backup.json` enthält Erfolg oder
 Fehler des letzten Versuchs. Dump und Statusdatei werden atomar ersetzt. Das
 benannte Volume `postgres-backups` überlebt Container-Neustarts.
@@ -60,7 +61,7 @@ docker compose run --rm --entrypoint sh backup -c \
   'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore \
    --host=postgres --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" \
    --clean --if-exists --no-owner --exit-on-error \
-   /backups/incoming-2026-08-16_030000.dump.gz'
+   /backups/automatic/incoming-2026-08-16_030000.dump.gz'
 docker compose start backend
 ```
 

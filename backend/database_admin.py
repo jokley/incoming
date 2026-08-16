@@ -15,6 +15,7 @@ from models import db
 
 database_admin = Blueprint('database_admin', __name__)
 BACKUP_PATTERN = re.compile(r'^[A-Za-z0-9_.-]+\.dump\.gz$')
+BACKUP_CATEGORIES = ('automatic', 'manual', 'pre-restore')
 
 
 def backup_directory():
@@ -23,11 +24,9 @@ def backup_directory():
 
 def backup_files():
     directory = backup_directory()
-    if not directory.is_dir():
-        return []
-    return sorted((item for item in directory.iterdir()
-                   if item.is_file() and BACKUP_PATTERN.fullmatch(item.name)),
-                  key=lambda item: item.stat().st_mtime, reverse=True)
+    return [(category, item) for category in BACKUP_CATEGORIES
+            for item in sorted((directory / category).glob('*.dump.gz'),
+                               key=lambda path: path.stat().st_mtime, reverse=True)]
 
 
 def last_status():
@@ -113,6 +112,7 @@ def restore_backup():
     # selected backup was imported or already resides on the server.
     restore_request = {
         'filename': payload.get('filename'),
+        'category': payload.get('category'),
         'token': payload.get('token'),
     }
     return delegate('/restore', json.dumps(restore_request).encode(),
@@ -121,15 +121,16 @@ def restore_backup():
 
 @database_admin.get('/api/admin/database/backups')
 def list_backups():
-    return jsonify([{'filename': item.name, 'size': item.stat().st_size,
-                     'modified': item.stat().st_mtime} for item in backup_files()])
+    return jsonify([{'category': category, 'filename': item.name,
+                     'size': item.stat().st_size, 'modified': item.stat().st_mtime}
+                    for category, item in backup_files()])
 
 
-@database_admin.get('/api/admin/database/backups/<filename>')
-def download_backup(filename):
-    if not BACKUP_PATTERN.fullmatch(filename):
+@database_admin.get('/api/admin/database/backups/<category>/<filename>')
+def download_backup(category, filename):
+    if category not in BACKUP_CATEGORIES or not BACKUP_PATTERN.fullmatch(filename):
         return jsonify({'error': 'BACKUP_NOT_FOUND'}), 404
-    path = backup_directory() / filename
+    path = backup_directory() / category / filename
     if not path.is_file():
         return jsonify({'error': 'BACKUP_NOT_FOUND'}), 404
     return send_file(path, as_attachment=True, download_name=filename,

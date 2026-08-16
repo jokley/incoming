@@ -24,12 +24,15 @@ class DatabaseAdminTest(unittest.TestCase):
         self.temporary.cleanup()
 
     def test_lists_and_downloads_only_dump_files(self):
-        Path(self.temporary.name, 'incoming-1.dump.gz').write_bytes(b'dump')
+        category = Path(self.temporary.name, 'manual')
+        category.mkdir()
+        Path(category, 'incoming-1.dump.gz').write_bytes(b'dump')
         Path(self.temporary.name, 'ignore.txt').write_text('no')
         response = self.client.get('/api/admin/database/backups')
         self.assertEqual([item['filename'] for item in response.get_json()], ['incoming-1.dump.gz'])
-        self.assertEqual(self.client.get('/api/admin/database/backups/incoming-1.dump.gz').data, b'dump')
-        self.assertEqual(self.client.get('/api/admin/database/backups/ignore.txt').status_code, 404)
+        self.assertEqual(response.get_json()[0]['category'], 'manual')
+        self.assertEqual(self.client.get('/api/admin/database/backups/manual/incoming-1.dump.gz').data, b'dump')
+        self.assertEqual(self.client.get('/api/admin/database/backups/manual/ignore.txt').status_code, 404)
 
     @patch('database_admin.urllib.request.urlopen')
     def test_trigger_delegates_to_backup_service(self, urlopen):
@@ -50,7 +53,9 @@ class DatabaseAdminTest(unittest.TestCase):
             result.scalar_one_or_none.return_value = value
             values.append(result)
         execute.side_effect = values
-        Path(self.temporary.name, 'incoming-1.dump.gz').write_bytes(b'dump')
+        automatic = Path(self.temporary.name, 'automatic')
+        automatic.mkdir()
+        Path(automatic, 'incoming-1.dump.gz').write_bytes(b'dump')
         Path(self.temporary.name, 'last-backup.json').write_text(json.dumps({
             'status': 'success', 'filename': 'incoming-1.dump.gz', 'size': 4}))
         payload = self.client.get('/api/admin/database/status').get_json()
@@ -78,7 +83,8 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         restore_request = urlopen.call_args_list[1].args[0]
         self.assertEqual(restore_request.full_url, 'http://backup:8080/restore')
-        self.assertEqual(json.loads(restore_request.data), {'filename': None, 'token': 'abc'})
+        self.assertEqual(json.loads(restore_request.data),
+                         {'filename': None, 'category': None, 'token': 'abc'})
 
     @patch('database_admin.urllib.request.urlopen')
     def test_server_and_imported_backups_use_same_restore_request_shape(self, urlopen):
@@ -92,11 +98,11 @@ class DatabaseAdminTest(unittest.TestCase):
                          json={'filename': 'import.dump', 'token': 'a' * 32})
         imported_payload = json.loads(urlopen.call_args_list[1].args[0].data)
 
-        self.assertEqual(set(server_payload), {'filename', 'token'})
-        self.assertEqual(set(imported_payload), {'filename', 'token'})
-        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'token': None})
+        self.assertEqual(set(server_payload), {'filename', 'category', 'token'})
+        self.assertEqual(set(imported_payload), {'filename', 'category', 'token'})
+        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'category': None, 'token': None})
         self.assertEqual(imported_payload,
-                         {'filename': 'import.dump', 'token': 'a' * 32})
+                         {'filename': 'import.dump', 'category': None, 'token': 'a' * 32})
 
 
 if __name__ == '__main__':
