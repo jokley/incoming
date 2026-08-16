@@ -324,24 +324,6 @@ docker-compose logs -f
 
 ### Datenbank sichern
 ```bash
-# SQLite Datenbank kopieren
-docker exec freestyle-wm-backend cp /app/freestyle_wm_new.db /app/backup_$(date +%Y%m%d).db
-
-# Auf Host kopieren
-docker cp freestyle-wm-backend:/app/backup_*.db ./backups/
-```
-
-### Restore
-```bash
-# Backup einspielen
-docker cp ./backups/backup_20270427.db freestyle-wm-backend:/app/freestyle_wm_new.db
-
-# Container neu starten
-docker-compose restart backend
-```
-
----
-
 ## 📞 Support
 
 Bei Problemen:

@@ -14,11 +14,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 settings = RuntimeSettings.from_environment()
-database_url = (
-    f"sqlite:///{settings.database_path}"
-    if settings.database_backend == "sqlite"
-    else settings.database_url
-)
+database_url = settings.database_url
 # ConfigParser treats percent signs in escaped credentials as interpolation.
 config.set_main_option("sqlalchemy.url", database_url.replace("%", "%%"))
 target_metadata = db.metadata
@@ -53,7 +49,6 @@ def run_migrations_online() -> None:
             target_metadata=target_metadata,
             compare_type=True,
             compare_server_default=True,
-            render_as_batch=settings.database_backend == "sqlite",
         )
 
         with context.begin_transaction():

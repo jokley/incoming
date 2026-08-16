@@ -38,8 +38,6 @@ def last_status():
 
 @database_admin.get('/api/admin/database/status')
 def database_status():
-    if current_app.config['DATABASE_BACKEND'] != 'postgresql':
-        return jsonify({'error': 'POSTGRESQL_REQUIRED'}), 503
     version = db.session.execute(text('SHOW server_version')).scalar_one()
     size = db.session.execute(text('SELECT pg_database_size(current_database())')).scalar_one()
     alembic = db.session.execute(text('SELECT version_num FROM alembic_version')).scalar_one_or_none()

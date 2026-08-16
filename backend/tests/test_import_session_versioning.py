@@ -13,8 +13,11 @@ from models import db, ImportSession, ImportSessionEvent, ImportSessionVersion
 class ImportSessionVersioningTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        database_url = os.environ.get('TEST_DATABASE_URL')
+        if not database_url:
+            raise unittest.SkipTest('TEST_DATABASE_URL is required for database integration tests')
         cls.app = Flask(__name__)
-        cls.app.config.update(SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
+        cls.app.config.update(SQLALCHEMY_DATABASE_URI=database_url,
                               SQLALCHEMY_TRACK_MODIFICATIONS=False)
         db.init_app(cls.app)
 
