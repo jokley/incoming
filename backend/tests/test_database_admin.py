@@ -76,7 +76,27 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(request.data.read(), b'PGDMP')
         response = self.client.post('/api/admin/database/restore', json={'token': 'abc'})
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(urlopen.call_args_list[1].args[0].full_url, 'http://backup:8080/restore')
+        restore_request = urlopen.call_args_list[1].args[0]
+        self.assertEqual(restore_request.full_url, 'http://backup:8080/restore')
+        self.assertEqual(json.loads(restore_request.data), {'filename': None, 'token': 'abc'})
+
+    @patch('database_admin.urllib.request.urlopen')
+    def test_server_and_imported_backups_use_same_restore_request_shape(self, urlopen):
+        restored = MagicMock(status=200)
+        restored.read.return_value = json.dumps({'status': 'success'}).encode()
+        urlopen.return_value.__enter__.return_value = restored
+
+        self.client.post('/api/admin/database/restore', json={'filename': 'server.dump.gz'})
+        server_payload = json.loads(urlopen.call_args_list[0].args[0].data)
+        self.client.post('/api/admin/database/restore',
+                         json={'filename': 'import.dump', 'token': 'a' * 32})
+        imported_payload = json.loads(urlopen.call_args_list[1].args[0].data)
+
+        self.assertEqual(set(server_payload), {'filename', 'token'})
+        self.assertEqual(set(imported_payload), {'filename', 'token'})
+        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'token': None})
+        self.assertEqual(imported_payload,
+                         {'filename': 'import.dump', 'token': 'a' * 32})
 
 
 if __name__ == '__main__':

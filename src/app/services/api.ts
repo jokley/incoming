@@ -151,7 +151,11 @@ class ApiService {
     return { ...payload, localFile: file };
   }
   async restoreDatabaseBackup(backup: DatabaseBackup): Promise<{ status: string }> {
-    return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(backup.token ? { token: backup.token } : { filename: backup.filename }) });
+    // Imported and server-side backups deliberately use the exact same request
+    // shape and endpoint. The backup service chooses the token when present and
+    // otherwise resolves the server-side filename.
+    const restoreRequest = { filename: backup.filename, token: backup.token ?? null };
+    return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(restoreRequest) });
   }
   async downloadDatabaseBackup(filename: string): Promise<void> {
     const response = await fetch(`${API_BASE_URL}/admin/database/backups/${encodeURIComponent(filename)}`);

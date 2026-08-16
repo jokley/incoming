@@ -6,22 +6,55 @@ import { api, DatabaseBackup, DatabaseStatus } from '../services/api';
 const bytes = (n?: number | null) => n == null ? '–' : `${(n / (n >= 1e9 ? 1e9 : 1e6)).toLocaleString('de-AT', { maximumFractionDigits: 1 })} ${n >= 1e9 ? 'GB' : 'MB'}`;
 const errorMessage = (error: unknown, fallback: string) => typeof error === 'object' && error && 'message' in error && typeof error.message === 'string' ? error.message : fallback;
 const date = (value?: string | number) => value == null ? 'Noch kein Backup' : new Intl.DateTimeFormat('de-AT', { dateStyle: 'medium', timeStyle: 'short' }).format(typeof value === 'number' ? new Date(value * 1000) : new Date(value));
+const wait = (milliseconds: number) => new Promise(resolve => window.setTimeout(resolve, milliseconds));
 
 export function DatabaseBackups({ embedded = false }: { embedded?: boolean }) {
   const input = useRef<HTMLInputElement>(null);
   const [status, setStatus] = useState<DatabaseStatus | null>(null); const [backups, setBackups] = useState<DatabaseBackup[]>([]); const [local, setLocal] = useState<DatabaseBackup | null>(null); const [selected, setSelected] = useState<DatabaseBackup | null>(null);
-  const [busy, setBusy] = useState<'load' | 'backup' | 'import' | 'restore' | null>('load'); const [notice, setNotice] = useState<{ severity: 'success' | 'error'; text: string } | null>(null);
+  const [busy, setBusy] = useState<'load' | 'backup' | 'import' | 'restore' | 'reload' | null>('load'); const [notice, setNotice] = useState<{ severity: 'success' | 'error'; text: string } | null>(null);
   const load = useCallback(async () => { try { const [s, b] = await Promise.all([api.getDatabaseStatus(), api.getDatabaseBackups()]); setStatus(s); setBackups(b); } catch { setNotice({ severity: 'error', text: 'Datenbankinformationen konnten nicht geladen werden.' }); } finally { setBusy(v => v === 'load' ? null : v); } }, []);
   useEffect(() => { void load(); }, [load]);
   const create = async () => { setBusy('backup'); setNotice(null); try { await api.createDatabaseBackup(); setNotice({ severity: 'success', text: 'Das Backup wird erstellt.' }); window.setTimeout(load, 1800); } catch { setNotice({ severity: 'error', text: 'Das Backup konnte nicht gestartet werden.' }); } finally { setBusy(null); } };
   const upload = async (event: ChangeEvent<HTMLInputElement>) => { const file = event.target.files?.[0]; event.target.value = ''; if (!file) return; setBusy('import'); setNotice(null); try { const imported = await api.importDatabaseBackup(file); setLocal(imported); setSelected(imported); setNotice({ severity: 'success', text: 'Das lokale Backup wurde geprüft und kann wiederhergestellt werden.' }); } catch (e) { setNotice({ severity: 'error', text: errorMessage(e, 'Die Datei ist kein gültiges PostgreSQL-Custom-Backup.') }); } finally { setBusy(null); } };
-  const restore = async () => { if (!selected) return; setBusy('restore'); setNotice(null); try { await api.restoreDatabaseBackup(selected); if (selected.local) setLocal(null); setSelected(null); setNotice({ severity: 'success', text: 'Das Backup wurde erfolgreich wiederhergestellt.' }); await load(); } catch (e) { setNotice({ severity: 'error', text: errorMessage(e, 'Die Wiederherstellung ist fehlgeschlagen.') }); } finally { setBusy(null); } };
+  const reloadAfterRestore = async () => {
+    let delay = 500;
+    for (;;) {
+      try {
+        const currentStatus = await api.getDatabaseStatus();
+        setStatus(currentStatus);
+        setBackups(await api.getDatabaseBackups());
+        return;
+      } catch {
+        // PostgreSQL terminates existing connections during a restore. This is
+        // expected, so keep the success/loading state and retry silently.
+        await wait(delay);
+        delay = Math.min(delay * 2, 5000);
+      }
+    }
+  };
+  const restore = async () => {
+    if (!selected) return;
+    setBusy('restore');
+    setNotice(null);
+    try {
+      await api.restoreDatabaseBackup(selected);
+      if (selected.local) setLocal(null);
+      setSelected(null);
+      setNotice({ severity: 'success', text: '✓ Backup erfolgreich wiederhergestellt.' });
+      setBusy('reload');
+      await reloadAfterRestore();
+      setBusy(null);
+    } catch (e) {
+      setNotice({ severity: 'error', text: errorMessage(e, 'Die Wiederherstellung ist fehlgeschlagen.') });
+      setBusy(null);
+    }
+  };
   const download = (row: DatabaseBackup) => { if (!row.localFile) { void api.downloadDatabaseBackup(row.filename).catch(() => setNotice({ severity: 'error', text: 'Das Backup konnte nicht heruntergeladen werden.' })); return; } const url = URL.createObjectURL(row.localFile); const anchor = document.createElement('a'); anchor.href = url; anchor.download = row.filename; anchor.click(); URL.revokeObjectURL(url); };
   const rows = local ? [local, ...backups] : backups;
   const cards = [['PostgreSQL Status', status ? 'Bereit' : '–'], ['PostgreSQL Version', status?.postgresVersion ?? '–'], ['Alembic Version', status?.alembicVersion ?? '–'], ['Datenbankgröße', bytes(status?.databaseSize)], ['Letztes erfolgreiches Backup', date(status?.lastBackup?.created)], ['Größe des letzten Backups', bytes(status?.backupSize)], ['Vorhandene Backups', status?.backupCount?.toString() ?? '–']];
   return <Box sx={{ height: '100%', overflowY: 'auto', pb: 3 }}>
     {!embedded && <Box sx={{ mb: 3 }}><Typography variant="overline" color="primary" fontWeight={700}>Administration</Typography><Typography variant="h4" fontWeight={750}>Datenbank &amp; Backups</Typography><Typography color="text.secondary">Datenbankstatus prüfen und Backups sicher verwalten.</Typography></Box>}
-    {notice && <Alert severity={notice.severity} sx={{ mb: 2 }} onClose={() => setNotice(null)}>{notice.text}</Alert>}
+    {notice && <Alert severity={notice.severity} sx={{ mb: 2 }} onClose={busy === 'reload' ? undefined : () => setNotice(null)}><Typography component="div">{notice.text}</Typography>{busy === 'reload' && <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mt: 1 }}><CircularProgress size={18} color="inherit" /><Typography component="div">Datenbankinformationen werden aktualisiert...</Typography></Box>}</Alert>}
     <Paper variant="outlined" sx={{ p: 2.5, mb: 2, borderRadius: 3 }}><Typography variant="h6" fontWeight={700} mb={2}>Datenbankstatus</Typography><Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2,1fr)', xl: 'repeat(4,1fr)' }, gap: 1.5 }}>{cards.map(([label, value]) => <Box key={label} sx={{ p: 1.5, borderRadius: 2, bgcolor: 'action.hover' }}><Typography variant="caption" color="text.secondary">{label}</Typography><Typography fontWeight={650}>{value}</Typography></Box>)}</Box></Paper>
     <Paper variant="outlined" sx={{ p: 2.5, mb: 2, borderRadius: 3 }}><Typography variant="h6" fontWeight={700} mb={2}>Aktionen</Typography><Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1.5 }}><Button variant="contained" startIcon={busy === 'backup' ? <CircularProgress size={18} color="inherit" /> : <HardDrive size={18} />} disabled={Boolean(busy)} onClick={create}>Backup jetzt erstellen</Button><Button variant="outlined" startIcon={busy === 'import' ? <CircularProgress size={18} /> : <Upload size={18} />} disabled={Boolean(busy)} onClick={() => input.current?.click()}>Backup importieren</Button><input ref={input} hidden type="file" onChange={upload} /></Box></Paper>
     <Paper variant="outlined" sx={{ borderRadius: 3, overflow: 'hidden' }}><Box sx={{ p: 2.5, pb: 1 }}><Typography variant="h6" fontWeight={700}>Backups</Typography></Box><TableContainer><Table><TableHead><TableRow><TableCell>Datum</TableCell><TableCell>Größe</TableCell><TableCell align="right">Aktionen</TableCell></TableRow></TableHead><TableBody>{rows.map(row => <TableRow key={row.token ?? row.filename} hover><TableCell><Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}><Database size={18} /><Box><Typography variant="body2" fontWeight={650}>{date(row.modified)}</Typography>{row.local && <Typography variant="caption" color="primary">Lokales Backup</Typography>}</Box></Box></TableCell><TableCell>{bytes(row.size)}</TableCell><TableCell align="right"><Tooltip title="Herunterladen"><IconButton aria-label={`${row.filename} herunterladen`} onClick={() => download(row)}><ArrowDownToLine size={19} /></IconButton></Tooltip><Tooltip title="Wiederherstellen"><IconButton aria-label={`${row.filename} wiederherstellen`} onClick={() => setSelected(row)}><RotateCcw size={19} /></IconButton></Tooltip></TableCell></TableRow>)}{!rows.length && busy !== 'load' && <TableRow><TableCell colSpan={3} align="center" sx={{ py: 5, color: 'text.secondary' }}>Noch keine Backups vorhanden.</TableCell></TableRow>}</TableBody></Table></TableContainer></Paper>
