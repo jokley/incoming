@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import tempfile
+import io
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -58,6 +59,23 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(payload['alembicVersion'], '20260815_01')
         self.assertEqual(payload['backupCount'], 1)
         self.assertEqual(payload['backupStatus'], 'success')
+
+    @patch('database_admin.urllib.request.urlopen')
+    def test_import_and_restore_delegate_without_backend_restore_logic(self, urlopen):
+        imported = MagicMock(status=201)
+        imported.read.return_value = json.dumps({'token': 'abc', 'local': True}).encode()
+        restored = MagicMock(status=200)
+        restored.read.return_value = json.dumps({'status': 'success'}).encode()
+        urlopen.return_value.__enter__.side_effect = [imported, restored]
+        response = self.client.post('/api/admin/database/import',
+                                    data={'file': (io.BytesIO(b'PGDMP'), 'lokal.dump')})
+        self.assertEqual(response.status_code, 201)
+        request = urlopen.call_args_list[0].args[0]
+        self.assertEqual(request.full_url, 'http://backup:8080/import')
+        self.assertEqual(request.data, b'PGDMP')
+        response = self.client.post('/api/admin/database/restore', json={'token': 'abc'})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(urlopen.call_args_list[1].args[0].full_url, 'http://backup:8080/restore')
 
 
 if __name__ == '__main__':

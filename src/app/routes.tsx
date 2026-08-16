@@ -13,6 +13,7 @@ import { AuditLog } from "./components/AuditLog";
 import { AdminRoute } from "./auth/AdminRoute";
 import { AdministrationTestData } from "./components/AdministrationTestData";
 import { Lists } from "./components/Lists";
+import { DatabaseBackups } from "./components/DatabaseBackups";
 
 export const router = createBrowserRouter([
   {
@@ -31,6 +32,7 @@ export const router = createBrowserRouter([
       { path: "lists", Component: Lists },
       { path: "audit", Component: AuditLog },
       { path: "administration/test-data", element: <AdminRoute><AdministrationTestData /></AdminRoute> },
+      { path: "administration/database", element: <AdminRoute><DatabaseBackups /></AdminRoute> },
     ],
   },
 ]);

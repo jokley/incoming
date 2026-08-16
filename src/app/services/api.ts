@@ -140,6 +140,25 @@ class ApiService {
     await downloadResponse(response, 'Kompletter_Testordner.zip');
   }
 
+  async getDatabaseStatus(): Promise<DatabaseStatus> { return this.request('/admin/database/status'); }
+  async getDatabaseBackups(): Promise<DatabaseBackup[]> { return this.request('/admin/database/backups'); }
+  async createDatabaseBackup(): Promise<{ status: string }> { return this.request('/admin/database/backup', { method: 'POST' }); }
+  async importDatabaseBackup(file: File): Promise<DatabaseBackup> {
+    const form = new FormData(); form.append('file', file);
+    const response = await fetch(`${API_BASE_URL}/admin/database/import`, { method: 'POST', body: form });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(payload.message || 'Das Backup konnte nicht validiert werden.');
+    return { ...payload, localFile: file };
+  }
+  async restoreDatabaseBackup(backup: DatabaseBackup): Promise<{ status: string }> {
+    return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(backup.token ? { token: backup.token } : { filename: backup.filename }) });
+  }
+  async downloadDatabaseBackup(filename: string): Promise<void> {
+    const response = await fetch(`${API_BASE_URL}/admin/database/backups/${encodeURIComponent(filename)}`);
+    if (!response.ok) throw new Error('Das Backup konnte nicht heruntergeladen werden.');
+    await downloadResponse(response, filename);
+  }
+
   // ============================================================================
   // ROOM TYPES
   // ============================================================================
@@ -891,3 +910,6 @@ class ApiService {
 }
 
 export const api = new ApiService();
+
+export interface DatabaseStatus { postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string } | null; backupSize: number | null; backupCount: number; }
+export interface DatabaseBackup { filename: string; size: number; modified: number; token?: string; local?: boolean; localFile?: File; }
