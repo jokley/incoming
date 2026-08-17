@@ -132,7 +132,7 @@ function TooltipContent({ data }: { data: TimelineTooltipData }) {
     {data.duration && <div className="mt-0.5 opacity-80">Dauer: {data.duration}</div>}
     {data.status && <div className="mt-1">Status: {data.status}</div>}
     {data.badges?.length ? <div className="mt-2 flex flex-wrap gap-1">{data.badges.map((badge, index) => <span key={index}>{badge}</span>)}</div> : null}
-    {data.description && <div className="mt-2 border-t border-white/20 pt-2 opacity-90">{data.description}</div>}
+    {data.description && <div className="mt-2 border-t border-[var(--ops-divider)] pt-2 opacity-90">{data.description}</div>}
   </div>;
 }
 
@@ -147,7 +147,7 @@ const TimelineBar = memo(function TimelineBar({ segment, timelineStart, timeline
     {segment.label && <span className="relative block truncate px-2 text-[10px] font-extrabold text-[var(--ops-on-accent)]">{segment.label}</span>}
   </button>;
   const content = segment.tooltip ?? <TooltipContent data={tooltipData} />;
-  return <Tooltip title={content} arrow placement="top">{bar}</Tooltip>;
+  return <Tooltip title={content} arrow placement="top" slotProps={{ tooltip: { sx: { bgcolor: 'var(--ops-surface)', color: 'var(--ops-text)', border: '1px solid var(--ops-border-strong)', boxShadow: 'var(--ops-shadow-md)' } }, arrow: { sx: { color: 'var(--ops-surface)', '&::before': { border: '1px solid var(--ops-border-strong)' } } } }}>{bar}</Tooltip>;
 });
 
 const TimelineRow = memo(function TimelineRow({ row, start, end, onRowClick, onSegmentClick, selectedRowId, selectedSegmentId, todayLeft }: { row: TimelineRowData; start: Date; end: Date; onRowClick?: OperationsTimelineProps['onRowClick']; onSegmentClick?: OperationsTimelineProps['onSegmentClick']; selectedRowId?: string; selectedSegmentId?: string; todayLeft?: number }) {

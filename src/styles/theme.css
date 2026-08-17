@@ -369,6 +369,13 @@
   color: #854d0e;
 }
 
+/* Legacy operational utilities still encode dark-canvas foregrounds. In light
+   mode they inherit the semantic state palette; dark mode remains untouched. */
+:root[data-theme='light'] :is(.text-blue-100, .text-blue-200, .text-blue-300) { color: var(--ops-tone-primary-text) !important; }
+:root[data-theme='light'] :is(.text-emerald-300, .text-emerald-400, .text-emerald-500) { color: var(--ops-tone-success-text) !important; }
+:root[data-theme='light'] :is(.text-amber-100, .text-amber-200, .text-amber-300, .text-amber-400) { color: var(--ops-tone-warning-text) !important; }
+:root[data-theme='light'] :is(.text-red-200, .text-red-300, .text-red-400, .text-red-500) { color: var(--ops-tone-error-text) !important; }
+
 @layer base {
   html, body, #root { height: 100%; }
   :focus-visible {
