@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Boxes, Building2, Download, FileSpreadsheet, NotebookPen, Search, Users } from 'lucide-react';
+import { Boxes, Building2, Check, Download, FileSpreadsheet, Minus, NotebookPen, Search, Users } from 'lucide-react';
 import { api } from '../services/api';
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import { ContentCard, EmptyState, ErrorState, LoadingState, OpsButton, PageHeader, SplitPageLayout, StatusChip, Toolbar } from '../design-system';
-import { createListRows, filterListRows, groupListRows, type ListFilters, type ListKind, type ListRow } from '../lists/listEngine';
-import { exportExcel } from '../lists/listExports';
+import { createContingentRows, createListRows, filterContingentRows, filterListRows, groupListRows, type ContingentFilters, type ContingentRow, type ListFilters, type ListKind, type ListRow } from '../lists/listEngine';
+import { exportContingentsExcel, exportExcel } from '../lists/listExports';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 
@@ -13,6 +13,7 @@ const initialFilters: ListFilters = { search: '', selection: '', discipline: '',
 const formatDate = (date: string) => date ? new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'UTC' }) : '—';
 const roomCode = (value: string) => value.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || value;
 const columns = ['Zimmer', 'Art', 'Name', 'Nation', 'Disziplin / Event', 'Funktion', 'Anreise', 'Abreise', 'First Meal', 'Last Meal', 'Special Meal', 'Late Checkout', 'Mehrpreis', 'Zimmerpartner', 'Bemerkung'];
+const initialContingentFilters: ContingentFilters = { search: '', hotel: '', roomType: '', region: '', halfBoard: false, skiRoom: false, availability: '' };
 
 type Group = ReturnType<typeof groupListRows>[number];
 function GroupSummary({ group, kind }: { group: Group; kind: ListKind }) {
@@ -53,6 +54,40 @@ function DataRows({ rows, kind, navigate }: { rows: ListRow[]; kind: ListKind; n
   })}</>;
 }
 
+function ContingentView({ hotels, bookings, navigate }: { hotels: Hotel[]; bookings: RoomBooking[]; navigate: ReturnType<typeof useNavigate> }) {
+  const [filters, setFilters] = useState(initialContingentFilters);
+  const allRows = useMemo(() => createContingentRows(hotels, bookings), [hotels, bookings]);
+  const rows = useMemo(() => filterContingentRows(allRows, filters), [allRows, filters]);
+  const options = (key: 'hotel' | 'roomType' | 'region') => [...new Set(allRows.map(row => row[key]))].sort((a, b) => a.localeCompare(b, 'de'));
+  const update = <K extends keyof ContingentFilters>(key: K, value: ContingentFilters[K]) => setFilters(current => ({ ...current, [key]: value }));
+  const availabilityLabel = filters.availability === 'available' ? 'Verfügbar' : filters.availability === 'occupied' ? 'Belegt' : 'Verfügbarkeit';
+  return <div className="min-w-0 space-y-3">
+    <ContentCard className="p-2.5"><Toolbar className="border-0 bg-transparent p-0 shadow-none">
+      <label className="flex min-w-[14rem] flex-1 items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-1.5"><Search size={15}/><input aria-label="Kontingente durchsuchen" className="w-full bg-transparent text-xs outline-none" placeholder="Hotel, Zimmerart oder Region" value={filters.search} onChange={event => update('search', event.target.value)}/></label>
+      {[['hotel', 'Hotel', 'Alle Hotels'], ['roomType', 'Zimmerart', 'Alle Zimmerarten'], ['region', 'Region', 'Alle Regionen']].map(([key, label, empty]) => <select key={key} aria-label={`${label} filtern`} className="rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-1.5 text-xs" value={filters[key as 'hotel' | 'roomType' | 'region']} onChange={event => update(key as 'hotel' | 'roomType' | 'region', event.target.value)}><option value="">{empty}</option>{options(key as 'hotel' | 'roomType' | 'region').map(value => <option key={value}>{value}</option>)}</select>)}
+      <select aria-label="Verfügbarkeit filtern" className="rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-1.5 text-xs" value={filters.availability} onChange={event => update('availability', event.target.value as ContingentFilters['availability'])}><option value="">{availabilityLabel}</option><option value="available">Verfügbar</option><option value="occupied">Belegt</option></select>
+      {[['halfBoard', 'HP'], ['skiRoom', 'SR']].map(([key, label]) => <label key={key} className="flex items-center gap-1.5 px-1 text-[11px] font-semibold"><input type="checkbox" checked={filters[key as 'halfBoard' | 'skiRoom']} onChange={event => update(key as 'halfBoard' | 'skiRoom', event.target.checked)}/>{label}</label>)}
+    </Toolbar></ContentCard>
+    <ContentCard className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ops-divider)] px-3 py-1.5"><div><h2 className="text-xs font-extrabold">Kontingent-Liste</h2><p className="text-[10px] text-[var(--ops-text-muted)]">{rows.length} Kontingente · aktuell gefilterte Live-Ansicht</p></div><OpsButton className="px-2.5 py-1 text-[10px]" onClick={() => exportContingentsExcel(rows)} disabled={!rows.length}><FileSpreadsheet className="mr-1.5 inline" size={13}/>Excel</OpsButton></div>
+      {!rows.length ? <div className="p-5"><EmptyState title="Keine Kontingente" description="Passen Sie die Filter an."/></div> : <div className="max-h-[68vh] overflow-auto"><table className="w-full min-w-[1120px] border-collapse text-left text-xs"><thead className="sticky top-0 z-30 bg-[var(--ops-surface)] shadow-sm"><tr className="border-y border-[var(--ops-divider)] text-[10px] uppercase tracking-wider text-[var(--ops-text-subtle)]">{['Hotel', 'Zimmerart', 'Zeitraum', 'Zimmer', 'Betten', 'Freie Zimmer', 'Freie Betten', 'Belegte Zimmer', 'Belegte Betten', 'Auslastung', 'HP', 'SR'].map(label => <th key={label} className="whitespace-nowrap px-2 py-1 font-extrabold">{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <ContingentDataRow key={row.id} row={row} alternate={index % 2 === 1} navigate={navigate}/>)}</tbody></table></div>}
+    </ContentCard><div className="flex items-center gap-2 px-1 text-xs text-[var(--ops-text-muted)]"><Download size={14}/>Excel übernimmt alle sichtbaren Filter und exportiert ausschließlich Kontingente.</div>
+  </div>;
+}
+
+function ContingentDataRow({ row, alternate, navigate }: { row: ContingentRow; alternate: boolean; navigate: ReturnType<typeof useNavigate> }) {
+  const openHotel = () => navigate(`/hotels?hotelId=${row.hotelId}`);
+  const openInventory = () => navigate(`/hotels?hotelId=${row.hotelId}&inventoryId=${row.id}`);
+  const yesNo = (enabled: boolean, label: string) => enabled ? <Check aria-label={`${label} vorhanden`} className="mx-auto text-[var(--ops-success)]" size={14}/> : <Minus aria-label={`${label} nicht vorhanden`} className="mx-auto text-[var(--ops-text-subtle)]" size={14}/>;
+  return <tr className={`${alternate ? 'bg-[var(--ops-surface-elevated)]/45' : 'bg-[var(--ops-surface)]'} border-b border-[var(--ops-divider)] text-[11px] leading-4 hover:bg-[var(--ops-surface-raised)]`}>
+    <td className="whitespace-nowrap px-2 py-1.5"><button className="font-bold hover:text-[var(--ops-primary)] hover:underline" onClick={openHotel}>{row.hotel}</button><span className="ml-2 text-[10px] text-[var(--ops-text-subtle)]">{row.region}</span></td>
+    <td className="px-2 py-1.5"><button className="font-bold text-[var(--ops-primary)] hover:underline" onClick={openInventory}>{row.roomType}</button></td>
+    <td className="whitespace-nowrap px-2 py-1.5 tabular-nums text-[var(--ops-text-muted)]">{formatDate(row.availableFrom)}–{formatDate(row.availableUntil)}</td>
+    {[row.totalRooms, row.totalBeds, row.freeRooms, row.freeBeds, row.occupiedRooms, row.occupiedBeds].map((value, index) => <td key={index} className="px-2 py-1.5 text-right font-mono tabular-nums">{value}</td>)}
+    <td className="px-2 py-1.5"><div className="flex items-center gap-2"><div className="h-1.5 w-12 overflow-hidden rounded-full bg-[var(--ops-background)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${row.occupancy}%` }}/></div><b className="w-8 text-right tabular-nums">{row.occupancy.toFixed(0)}%</b></div></td>
+    <td className="px-2 py-1.5 text-center">{yesNo(row.hasHalfBoard, 'HP')}</td><td className="px-2 py-1.5 text-center">{yesNo(row.hasSR, 'SR')}</td>
+  </tr>;
+}
+
 export function Lists() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<ListKind>('hotels');
@@ -68,6 +103,7 @@ export function Lists() {
   const selections = useMemo(() => [...new Set(allRows.map(row => kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent).filter(value => value !== '—'))].sort((a, b) => a.localeCompare(b, 'de')), [allRows, kind]);
   const disciplines = useMemo(() => [...new Set(allRows.map(row => row.discipline).filter(value => value !== '—'))].sort((a, b) => a.localeCompare(b, 'de')), [allRows]);
   const rooms = new Set(rows.filter(row => row.assigned).map(row => `${row.hotel}/${row.room}`)).size;
+  const contingentRows = useMemo(() => data ? createContingentRows(data.hotels, data.bookings) : [], [data]);
   const update = <K extends keyof ListFilters>(key: K, value: ListFilters[K]) => setFilters(current => ({ ...current, [key]: value }));
   const switchKind = (next: ListKind) => { setKind(next); setFilters(current => ({ ...current, selection: '' })); };
 
@@ -76,13 +112,11 @@ export function Lists() {
     {error && <ErrorState title="Listen konnten nicht geladen werden" description="Bitte laden Sie die Seite erneut." />}
     {!data && !error ? <LoadingState label="Live-Listen werden geladen…" /> : data && <>
       <div className="flex items-center gap-5 border-y border-[var(--ops-divider)] px-1 py-1.5 text-[11px] text-[var(--ops-text-muted)]" aria-label="Listenstatistik">
-        <span><b className="font-bold text-[var(--ops-text)]">{rows.length}</b> Personen</span>
-        <span><b className="font-bold text-[var(--ops-text)]">{rooms}</b> belegte Zimmer</span>
-        <span><b className="font-bold text-[var(--ops-text)]">{groups.length}</b> {kind === 'hotels' ? 'Hotels' : kind === 'nations' ? 'Nationen' : 'Kontingente'}</span>
+        {kind === 'contingents' ? <><span><b className="font-bold text-[var(--ops-text)]">{contingentRows.length}</b> Kontingente</span><span><b className="font-bold text-[var(--ops-text)]">{contingentRows.reduce((sum, row) => sum + row.freeRooms, 0)}</b> freie Zimmer</span><span><b className="font-bold text-[var(--ops-text)]">{new Set(contingentRows.map(row => row.hotelId)).size}</b> Hotels</span></> : <><span><b className="font-bold text-[var(--ops-text)]">{rows.length}</b> Personen</span><span><b className="font-bold text-[var(--ops-text)]">{rooms}</b> belegte Zimmer</span><span><b className="font-bold text-[var(--ops-text)]">{groups.length}</b> {kind === 'hotels' ? 'Hotels' : 'Nationen'}</span></>}
       </div>
       <div className="grid gap-4 lg:grid-cols-[14rem_minmax(0,1fr)]">
         <ContentCard className="h-fit overflow-hidden"><div className="border-b border-[var(--ops-divider)] px-3 py-2 text-[10px] font-extrabold uppercase tracking-[.14em] text-[var(--ops-text-subtle)]">Gruppierung</div><nav className="space-y-0.5 p-1.5" aria-label="Listen">{([{ id: 'hotels', label: 'Hotels', icon: Building2 }, { id: 'nations', label: 'Nationen', icon: Users }, { id: 'contingents', label: 'Kontingente', icon: Boxes }] as const).map(({ id, label, icon: Icon }) => <button key={id} onClick={() => switchKind(id)} className={`flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-xs font-bold transition ${kind === id ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><span className="flex items-center gap-2"><Icon size={15}/>{label}</span></button>)}</nav></ContentCard>
-        <div className="min-w-0 space-y-3">
+        {kind === 'contingents' ? <ContingentView hotels={data.hotels} bookings={data.bookings} navigate={navigate}/> : <div className="min-w-0 space-y-3">
           <ContentCard className="p-2.5"><Toolbar className="border-0 bg-transparent p-0 shadow-none"><label className="flex min-w-[15rem] flex-1 items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-1.5"><Search size={15}/><input aria-label="Liste durchsuchen" className="w-full bg-transparent text-xs outline-none" placeholder="Name, Zimmer, Disziplin suchen" value={filters.search} onChange={event => update('search', event.target.value)}/></label><select aria-label={kind === 'hotels' ? 'Hotel filtern' : kind === 'nations' ? 'Nation filtern' : 'Kontingent filtern'} className="rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-1.5 text-xs" value={filters.selection} onChange={event => update('selection', event.target.value)}><option value="">Alle {kind === 'hotels' ? 'Hotels' : kind === 'nations' ? 'Nationen' : 'Kontingente'}</option>{selections.map(selection => <option key={selection}>{selection}</option>)}</select><select aria-label="Disziplin filtern" className="rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-1.5 text-xs" value={filters.discipline} onChange={event => update('discipline', event.target.value)}><option value="">Alle Disziplinen</option>{disciplines.map(value => <option key={value}>{value}</option>)}</select><label className="flex items-center gap-1.5 px-1 text-[11px] font-semibold"><input type="checkbox" checked={filters.assignedOnly} onChange={event => update('assignedOnly', event.target.checked)}/>Nur disponierte</label></Toolbar></ContentCard>
           <ContentCard className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ops-divider)] px-3 py-1.5"><div><h2 className="text-xs font-extrabold">{kind === 'hotels' ? 'Hotel-Liste' : kind === 'nations' ? 'Nationen-Liste' : 'Kontingent-Liste'}</h2><p className="text-[10px] text-[var(--ops-text-muted)]">{rows.length} Personen · aktuell gefilterte Live-Ansicht</p></div><OpsButton className="px-2.5 py-1 text-[10px]" onClick={() => exportExcel(displayedRows, kind)} disabled={!rows.length}><FileSpreadsheet className="mr-1.5 inline" size={13}/>Excel</OpsButton></div>
             {!groups.length ? <div className="p-5"><EmptyState title="Keine Einträge" description="Passen Sie die Filter an."/></div> : <div className="max-h-[68vh] overflow-auto">
@@ -109,7 +143,7 @@ export function Lists() {
               </table>
             </div>}
           </ContentCard><div className="flex items-center gap-2 px-1 text-xs text-[var(--ops-text-muted)]"><Download size={14}/>Excel übernimmt alle sichtbaren Filter und enthält vollständige Klartextwerte.</div>
-        </div>
+        </div>}
       </div>
     </>}
   </SplitPageLayout>;

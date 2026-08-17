@@ -33,6 +33,35 @@ export interface ListFilters {
   assignedOnly: boolean;
 }
 
+export interface ContingentRow {
+  id: string;
+  hotelId: string;
+  hotel: string;
+  roomType: string;
+  region: string;
+  availableFrom: string;
+  availableUntil: string;
+  totalRooms: number;
+  totalBeds: number;
+  freeRooms: number;
+  freeBeds: number;
+  occupiedRooms: number;
+  occupiedBeds: number;
+  occupancy: number;
+  hasHalfBoard: boolean;
+  hasSR: boolean;
+}
+
+export interface ContingentFilters {
+  search: string;
+  hotel: string;
+  roomType: string;
+  region: string;
+  halfBoard: boolean;
+  skiRoom: boolean;
+  availability: '' | 'available' | 'occupied';
+}
+
 const value = (entry?: string | null) => entry?.trim() || '—';
 const iso = (entry?: string | null) => entry?.slice(0, 10) || '';
 const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)$/i, 'Zimmer $1');
@@ -110,4 +139,47 @@ export function groupListRows(rows: ListRow[], kind: ListKind) {
       return section || a.name.localeCompare(b.name, 'de');
     }),
   }));
+}
+
+/** Mirrors the capacity calculation used by the hotel detail for every inventory. */
+export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[]): ContingentRow[] {
+  return hotels.flatMap((hotel) => (hotel.roomInventories || []).map((inventory) => {
+    const matching = bookings.filter(booking => booking.hotel.id === hotel.id && booking.roomType.id === inventory.roomType.id);
+    const totalRooms = inventory.roomCount;
+    const totalBeds = totalRooms * inventory.roomType.maxPersons;
+    const occupiedRooms = matching.length;
+    const occupiedBeds = matching.reduce((sum, booking) => sum + Math.max(booking.occupants.length, booking.countsAsSingle ? 1 : 0), 0);
+    return {
+      id: inventory.id,
+      hotelId: hotel.id,
+      hotel: hotel.name,
+      roomType: inventory.roomType.name,
+      region: hotel.region || '—',
+      availableFrom: iso(inventory.availableFrom),
+      availableUntil: iso(inventory.availableUntil),
+      totalRooms,
+      totalBeds,
+      freeRooms: Math.max(0, totalRooms - occupiedRooms),
+      freeBeds: Math.max(0, totalBeds - occupiedBeds),
+      occupiedRooms,
+      occupiedBeds,
+      occupancy: totalRooms ? Math.min(100, occupiedRooms / totalRooms * 100) : 0,
+      hasHalfBoard: Boolean(inventory.hasHalfBoard),
+      hasSR: Boolean(inventory.hasSR),
+    };
+  })).sort((a, b) => a.hotel.localeCompare(b.hotel, 'de') || a.roomType.localeCompare(b.roomType, 'de') || a.availableFrom.localeCompare(b.availableFrom));
+}
+
+export function filterContingentRows(rows: ContingentRow[], filters: ContingentFilters) {
+  const query = filters.search.trim().toLocaleLowerCase('de');
+  return rows.filter(row => {
+    if (filters.hotel && row.hotel !== filters.hotel) return false;
+    if (filters.roomType && row.roomType !== filters.roomType) return false;
+    if (filters.region && row.region !== filters.region) return false;
+    if (filters.halfBoard && !row.hasHalfBoard) return false;
+    if (filters.skiRoom && !row.hasSR) return false;
+    if (filters.availability === 'available' && row.freeRooms === 0) return false;
+    if (filters.availability === 'occupied' && row.occupiedRooms === 0) return false;
+    return !query || [row.hotel, row.roomType, row.region].some(value => value.toLocaleLowerCase('de').includes(query));
+  });
 }
