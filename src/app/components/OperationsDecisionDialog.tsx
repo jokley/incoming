@@ -67,10 +67,10 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   const [approvedPersonKeys,setApprovedPersonKeys]=useState<string[]>([]);
   useEffect(() => { setDecision('nation'); setOrganizerApproval(false); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setCostCoverage(task?.approval.costCoverage??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); setApprovedPersonKeys(task?.approval.approvedPersonKeys??[]); }, [task]);
 
-  return <Dialog open={Boolean(task)} onClose={saving ? undefined : onClose} fullWidth maxWidth="md">
-    {task && <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]">
+  return <Dialog open={Boolean(task)} onClose={saving ? undefined : onClose} fullWidth maxWidth="md" slotProps={{ paper: { sx: { maxHeight: 'calc(100dvh - 32px)', display: 'flex', overflow: 'hidden' } } }}>
+    {task && <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--ops-surface)] text-[var(--ops-text)]">
       <DialogHeader title={taskTitle(task) || 'Aufgabe entscheiden'} subtitle="Eine Entscheidung nach der anderen · nach dem Speichern geht es automatisch weiter" />
-      <DialogContent dividers className="space-y-6">
+      <DialogContent dividers className="min-h-0 flex-1 space-y-6 overflow-y-auto">
         <section><SectionHeader title="Zusammenfassung" subtitle="Das ist jetzt zu klären" />
           <div className="mt-3 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-4">
             <div className="flex gap-3"><AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><p className="text-lg font-extrabold">{taskTitle(task)}</p></div>

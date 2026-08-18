@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router';
 import { Boxes, Building2, Check, Download, FileSpreadsheet, Minus, NotebookPen, Search, Users } from 'lucide-react';
 import { api } from '../services/api';
 import type { Athlete, Hotel, RoomBooking } from '../types';
-import { ContentCard, EmptyState, ErrorState, LoadingState, OpsButton, PageHeader, SplitPageLayout, StatusChip, Toolbar } from '../design-system';
+import { ContentCard, EmptyState, ErrorState, LoadingState, OpsButton, PageHeader, SortableTableHead, SplitPageLayout, StatusChip, Toolbar, sortTableRows, type SortState } from '../design-system';
 import { createContingentRows, createListRows, filterContingentRows, filterListRows, groupListRows, type ContingentFilters, type ContingentRow, type ListFilters, type ListKind, type ListRow } from '../lists/listEngine';
 import { exportContingentsExcel, exportExcel } from '../lists/listExports';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
@@ -56,8 +56,11 @@ function DataRows({ rows, kind, navigate }: { rows: ListRow[]; kind: ListKind; n
 
 function ContingentView({ hotels, bookings, navigate }: { hotels: Hotel[]; bookings: RoomBooking[]; navigate: ReturnType<typeof useNavigate> }) {
   const [filters, setFilters] = useState(initialContingentFilters);
+  const [sort, setSort] = useState<SortState<keyof ContingentRow & string>>({ key: 'hotel', direction: 'asc' });
   const allRows = useMemo(() => createContingentRows(hotels, bookings), [hotels, bookings]);
-  const rows = useMemo(() => filterContingentRows(allRows, filters), [allRows, filters]);
+  const filteredRows = useMemo(() => filterContingentRows(allRows, filters), [allRows, filters]);
+  const rows = useMemo(() => sortTableRows(filteredRows, sort, (row, key) => row[key]), [filteredRows, sort]);
+  const toggleSort = (key: keyof ContingentRow & string) => setSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }));
   const options = (key: 'hotel' | 'roomType' | 'region') => [...new Set(allRows.map(row => row[key]))].sort((a, b) => a.localeCompare(b, 'de'));
   const update = <K extends keyof ContingentFilters>(key: K, value: ContingentFilters[K]) => setFilters(current => ({ ...current, [key]: value }));
   const availabilityLabel = filters.availability === 'available' ? 'Verfügbar' : filters.availability === 'occupied' ? 'Belegt' : 'Verfügbarkeit';
@@ -69,7 +72,7 @@ function ContingentView({ hotels, bookings, navigate }: { hotels: Hotel[]; booki
       {[['halfBoard', 'HP'], ['skiRoom', 'SR']].map(([key, label]) => <label key={key} className="flex items-center gap-1.5 px-1 text-[11px] font-semibold"><input type="checkbox" checked={filters[key as 'halfBoard' | 'skiRoom']} onChange={event => update(key as 'halfBoard' | 'skiRoom', event.target.checked)}/>{label}</label>)}
     </Toolbar></ContentCard>
     <ContentCard className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--ops-divider)] px-3 py-1.5"><div><h2 className="text-xs font-extrabold">Kontingent-Liste</h2><p className="text-[10px] text-[var(--ops-text-muted)]">{rows.length} Kontingente · aktuell gefilterte Live-Ansicht</p></div><OpsButton className="px-2.5 py-1 text-[10px]" onClick={() => exportContingentsExcel(rows)} disabled={!rows.length}><FileSpreadsheet className="mr-1.5 inline" size={13}/>Excel</OpsButton></div>
-      {!rows.length ? <div className="p-5"><EmptyState title="Keine Kontingente" description="Passen Sie die Filter an."/></div> : <div className="max-h-[68vh] overflow-auto"><table className="w-full min-w-[1120px] border-collapse text-left text-xs"><thead className="sticky top-0 z-30 bg-[var(--ops-surface)] shadow-sm"><tr className="border-y border-[var(--ops-divider)] text-[10px] uppercase tracking-wider text-[var(--ops-text-subtle)]">{['Hotel', 'Zimmerart', 'Zeitraum', 'Zimmer', 'Betten', 'Freie Zimmer', 'Freie Betten', 'Belegte Zimmer', 'Belegte Betten', 'Auslastung', 'HP', 'SR'].map(label => <th key={label} className="whitespace-nowrap px-2 py-1 font-extrabold">{label}</th>)}</tr></thead><tbody>{rows.map((row, index) => <ContingentDataRow key={row.id} row={row} alternate={index % 2 === 1} navigate={navigate}/>)}</tbody></table></div>}
+      {!rows.length ? <div className="p-5"><EmptyState title="Keine Kontingente" description="Passen Sie die Filter an."/></div> : <div className="max-h-[68vh] overflow-auto"><table className="w-full min-w-[1120px] border-collapse text-left text-xs"><thead className="sticky top-0 z-30 bg-[var(--ops-surface)] shadow-sm"><tr className="border-y border-[var(--ops-divider)] text-[10px] uppercase tracking-wider text-[var(--ops-text-subtle)]">{([['hotel','Hotel'],['roomType','Zimmerart'],['availableFrom','Zeitraum'],['totalRooms','Zimmer'],['totalBeds','Betten'],['freeRooms','Freie Zimmer'],['freeBeds','Freie Betten'],['occupiedRooms','Belegte Zimmer'],['occupiedBeds','Belegte Betten'],['occupancy','Auslastung'],['hasHalfBoard','HP'],['hasSR','SR']] as const).map(([key,label]) => <SortableTableHead key={key} column={key} label={label} sort={sort} onSort={toggleSort} align={['totalRooms','totalBeds','freeRooms','freeBeds','occupiedRooms','occupiedBeds'].includes(key) ? 'right' : ['hasHalfBoard','hasSR'].includes(key) ? 'center' : 'left'}/>)}</tr></thead><tbody>{rows.map((row, index) => <ContingentDataRow key={row.id} row={row} alternate={index % 2 === 1} navigate={navigate}/>)}</tbody></table></div>}
     </ContentCard><div className="flex items-center gap-2 px-1 text-xs text-[var(--ops-text-muted)]"><Download size={14}/>Excel übernimmt alle sichtbaren Filter und exportiert ausschließlich Kontingente.</div>
   </div>;
 }

@@ -9,7 +9,7 @@ import { ActivitySummaryCard } from './activity';
 type Props = { open: boolean; mode: 'create' | 'edit'; hotel: Hotel | null; contingent?: HotelRoomInventory | null; roomTypes: RoomType[]; onClose: () => void; onSubmit: (values: HotelContingentValues) => Promise<void> };
 
 export function HotelContingentDialog({ open, mode, hotel, contingent, roomTypes, onClose, onSubmit }: Props) {
-  const initial = useMemo<HotelContingentValues>(() => mode === 'edit' && contingent ? { roomTypeId: contingent.roomType.id, roomCount: contingent.roomCount, availableFrom: contingent.availableFrom.slice(0, 10), availableUntil: contingent.availableUntil.slice(0, 10), hasHalfBoard: Boolean(contingent.hasHalfBoard), hasSR: Boolean(contingent.hasSR) } : emptyContingentValues, [mode, contingent]);
+  const initial = useMemo<HotelContingentValues>(() => mode === 'edit' && contingent ? { roomTypeId: contingent.roomType.id, roomCount: contingent.roomCount, availableFrom: contingent.availableFrom.slice(0, 10), availableUntil: contingent.availableUntil.slice(0, 10), hasHalfBoard: Boolean(contingent.hasHalfBoard), hasSR: Boolean(contingent.hasSR), comment: contingent.comment || '' } : emptyContingentValues, [mode, contingent]);
   const [values, setValues] = useState(initial); const [touched, setTouched] = useState(false); const [saving, setSaving] = useState(false);
   useEffect(() => { if (open) { setValues(initial); setTouched(false); } }, [open, initial]);
   const errors = validateHotelContingent(values); const dirty = JSON.stringify(values) !== JSON.stringify(initial); const valid = Object.keys(errors).length === 0;

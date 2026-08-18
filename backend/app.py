@@ -2094,7 +2094,10 @@ def create_hotel():
     hotel = Hotel(
         name=data['name'],
         location=data.get('location'),
-        region=data.get('region')
+        region=data.get('region'),
+        contact_person=data.get('contactPerson'),
+        email=data.get('email'),
+        phone=data.get('phone')
     )
     db.session.add(hotel)
     db.session.commit()
@@ -2115,6 +2118,12 @@ def update_hotel(hotel_id):
         hotel.location = data['location']
     if 'region' in data:
         hotel.region = data['region']
+    if 'contactPerson' in data:
+        hotel.contact_person = data['contactPerson']
+    if 'email' in data:
+        hotel.email = data['email']
+    if 'phone' in data:
+        hotel.phone = data['phone']
 
     db.session.commit()
     return jsonify(hotel.to_dict())
@@ -2147,7 +2156,8 @@ def add_hotel_inventory(hotel_id):
         available_until=datetime.fromisoformat(data['availableUntil']).date(),
         room_count=int(data['roomCount']),
         has_half_board=data.get('hasHalfBoard', False),
-        has_sr=data.get('hasSR', False)
+        has_sr=data.get('hasSR', False),
+        comment=data.get('comment')
     )
     db.session.add(inventory)
     db.session.commit()
@@ -2167,6 +2177,7 @@ def update_hotel_inventory(hotel_id, inventory_id):
     inventory.room_count = int(data['roomCount'])
     inventory.has_half_board = data.get('hasHalfBoard', False)
     inventory.has_sr = data.get('hasSR', False)
+    inventory.comment = data.get('comment')
     db.session.commit()
     return jsonify(inventory.to_dict())
 
