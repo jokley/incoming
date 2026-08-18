@@ -20,6 +20,7 @@ export interface Permissions {
   canManageRoomTypes: boolean;
   canManageAssignments: boolean;
   canManageImports: boolean;
+  canReadAudit: boolean;
   roleLabel: 'Admin' | 'Editor' | 'Viewer';
   isReadOnly: boolean;
 }
@@ -51,6 +52,7 @@ export function buildPermissions(user: AuthenticatedUser | null): Permissions {
     canManageRoomTypes: canWrite,
     canManageAssignments: canWrite,
     canManageImports: isAdmin || isEditor || permissions.includes('imports.write'),
+    canReadAudit: isAdmin || isEditor || permissions.includes('audit.read'),
     roleLabel: isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer',
     isReadOnly: !canWrite,
   };

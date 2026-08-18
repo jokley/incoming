@@ -5,12 +5,13 @@ export type HotelContingentValues = {
   availableUntil: string;
   hasHalfBoard: boolean;
   hasSR: boolean;
+  comment: string;
 };
 
 export type HotelContingentErrors = Partial<Record<keyof HotelContingentValues, string>>;
 
 export const emptyContingentValues: HotelContingentValues = {
-  roomTypeId: '', roomCount: '', availableFrom: '', availableUntil: '', hasHalfBoard: false, hasSR: false,
+  roomTypeId: '', roomCount: '', availableFrom: '', availableUntil: '', hasHalfBoard: false, hasSR: false, comment: '',
 };
 
 export function validateHotelContingent(values: HotelContingentValues): HotelContingentErrors {

@@ -40,6 +40,7 @@ export interface HotelRoomInventory {
   roomCount: number;
   hasHalfBoard?: boolean;
   hasSR?: boolean;
+  comment?: string;
 }
 
 export interface Hotel {
@@ -47,6 +48,9 @@ export interface Hotel {
   name: string;
   location?: string;
   region?: string;
+  contactPerson?: string;
+  email?: string;
+  phone?: string;
   roomInventories?: HotelRoomInventory[];
 }
 

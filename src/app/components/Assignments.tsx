@@ -1388,6 +1388,7 @@ function DispatchWorkspace({
 function HotelGridOrDetail({
   hotels,
   activeHotel,
+  allHotels,
   validationByUnit,
   draggingUnitId,
   draggingValidationKey,
@@ -1415,6 +1416,7 @@ function HotelGridOrDetail({
 }: {
   hotels: AssignmentGridHotel[];
   activeHotel: AssignmentGridHotel | null;
+  allHotels: AssignmentGridHotel[];
   validationByUnit: Record<string, AssignmentValidationResult[]>;
   draggingUnitId: string | null;
   draggingValidationKey: string | null;
@@ -1445,6 +1447,7 @@ function HotelGridOrDetail({
       {!activeHotel && <div>
         <HotelGridView
           hotels={hotels}
+          regionOptions={[...new Set(allHotels.map(hotel => hotel.region).filter((value): value is string => Boolean(value)))].sort((a, b) => a.localeCompare(b, 'de'))}
           hotelSearch={hotelSearch}
           onHotelSearch={onHotelSearch}
           regionFilter={regionFilter}
@@ -1487,6 +1490,7 @@ function HotelGridOrDetail({
 
 function HotelGridView({
   hotels,
+  regionOptions,
   hotelSearch,
   onHotelSearch,
   regionFilter,
@@ -1503,6 +1507,7 @@ function HotelGridView({
   pendingHotelId,
 }: {
   hotels: AssignmentGridHotel[];
+  regionOptions: string[];
   hotelSearch: string;
   onHotelSearch: (value: string) => void;
   regionFilter: string;
@@ -1526,7 +1531,7 @@ function HotelGridView({
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--ops-divider)] px-4 py-3">
         <SearchInput value={hotelSearch} onChange={onHotelSearch} placeholder="Hotels oder Orte suchen..." dark />
         <div className="flex items-center gap-1">
-          {['', 'Bludenz', 'Feldkirch', 'Montafon'].map((region) => (
+          {['', ...regionOptions].map((region) => (
             <button
               key={region || 'all'}
               onClick={() => onRegionFilter(region)}

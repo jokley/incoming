@@ -13,6 +13,7 @@ export function HotelContingentForm({ values, errors, touched, roomTypes, onChan
       {show('roomTypeId') && <FormHelperText>{show('roomTypeId')}</FormHelperText>}
     </FormControl>
     <TextField required fullWidth type="number" label="Anzahl Zimmer" value={values.roomCount} error={Boolean(show('roomCount'))} helperText={show('roomCount')} slotProps={{ htmlInput: { min: 1 } }} onChange={(event) => onChange({ ...values, roomCount: event.target.value === '' ? '' : Number(event.target.value) })} />
+    <TextField fullWidth multiline minRows={2} label="Kommentar" placeholder="Besonderheiten für die Nutzung" value={values.comment} onChange={(event) => onChange({ ...values, comment: event.target.value })} />
     <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
       <TextField required fullWidth type="date" label="Startdatum" value={values.availableFrom} error={Boolean(show('availableFrom'))} helperText={show('availableFrom')} slotProps={{ inputLabel: { shrink: true } }} onChange={(event) => onChange({ ...values, availableFrom: event.target.value })} />
       <TextField required fullWidth type="date" label="Enddatum" value={values.availableUntil} error={Boolean(show('availableUntil'))} helperText={show('availableUntil')} slotProps={{ inputLabel: { shrink: true } }} onChange={(event) => onChange({ ...values, availableUntil: event.target.value })} />
