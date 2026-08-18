@@ -39,6 +39,10 @@ export interface ContingentRow {
   hotel: string;
   roomType: string;
   region: string;
+  contactPerson: string;
+  phone: string;
+  email: string;
+  comment: string;
   availableFrom: string;
   availableUntil: string;
   totalRooms: number;
@@ -155,6 +159,10 @@ export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[]): 
       hotel: hotel.name,
       roomType: inventory.roomType.name,
       region: hotel.region || '—',
+      contactPerson: value(hotel.contactPerson),
+      phone: value(hotel.phone),
+      email: value(hotel.email),
+      comment: value(inventory.comment),
       availableFrom: iso(inventory.availableFrom),
       availableUntil: iso(inventory.availableUntil),
       totalRooms,
@@ -180,6 +188,6 @@ export function filterContingentRows(rows: ContingentRow[], filters: ContingentF
     if (filters.skiRoom && !row.hasSR) return false;
     if (filters.availability === 'available' && row.freeRooms === 0) return false;
     if (filters.availability === 'occupied' && row.occupiedRooms === 0) return false;
-    return !query || [row.hotel, row.roomType, row.region].some(value => value.toLocaleLowerCase('de').includes(query));
+    return !query || [row.hotel, row.roomType, row.region, row.contactPerson, row.phone, row.email, row.comment].some(value => value.toLocaleLowerCase('de').includes(query));
   });
 }

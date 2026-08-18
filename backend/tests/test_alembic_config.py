@@ -32,8 +32,9 @@ class AlembicConfigurationTest(unittest.TestCase):
         self.assertIn('ALTER TABLE hotel ADD COLUMN email', result.stdout)
         self.assertIn('ALTER TABLE hotel ADD COLUMN phone', result.stdout)
         self.assertIn('ALTER TABLE hotel_room_inventory ADD COLUMN comment', result.stdout)
+        self.assertIn('ALTER TABLE athlete ADD COLUMN import_change_details_json', result.stdout)
 
-    def test_contact_migration_is_the_head_revision(self):
+    def test_import_change_details_migration_is_the_head_revision(self):
         environment = os.environ.copy()
         environment['DATABASE_URL'] = 'postgresql://incoming:secret@postgres/incoming'
         result = subprocess.run(
@@ -45,7 +46,7 @@ class AlembicConfigurationTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), '20260818_01 (head)')
+        self.assertEqual(result.stdout.strip(), '20260818_02 (head)')
 
 
 if __name__ == '__main__':

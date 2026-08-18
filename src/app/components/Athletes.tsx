@@ -43,6 +43,17 @@ const genderLabel = (value?: string) => {
 };
 const assignmentLabel = (athlete: Athlete) => athlete.assignment?.hasAssignment ? 'Zugewiesen' : 'Nicht zugewiesen';
 const importLabel = (athlete: Athlete) => WORK_CATEGORY_LABELS[athleteWorkCategory(athlete)];
+const shortDate = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }) : '—';
+const reviewHint = (athlete: Athlete) => {
+  const details = athlete.importChangeDetails || [];
+  const arrival = details.find(change => change.field === 'arrivalDate');
+  const departure = details.find(change => change.field === 'departureDate');
+  const dateChange = arrival || departure;
+  if (dateChange) return `${shortDate(dateChange.old)} → ${shortDate(dateChange.new)}`;
+  if (details.some(change => change.type === 'ROOMMATE_CHANGED')) return 'Zimmerpartner geändert';
+  if (details.some(change => change.type === 'HOTEL_CHANGED')) return 'Hotel geändert';
+  return athlete.importChangeTypes?.length ? ({ ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert', EVENT_CHANGED: 'Event geändert', NATION_CHANGED: 'Nation geändert', NEW_ATHLETE: 'Neu importiert', DATE_CHANGED: 'Aufenthalt geändert', ROOMMATE_CHANGED: 'Zimmerpartner geändert' }[athlete.importChangeTypes[0]]) : null;
+};
 const roomTypeLabel = (athlete: Athlete) => {
   const roomType = athlete.assignment?.roomTypeName || athlete.roomType;
   if (!roomType) return '—';
@@ -326,7 +337,7 @@ export function Athletes() {
                 <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
                 <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
-                <Cell><StatusChip tone={['review', 'conflict'].includes(athleteWorkCategory(athlete)) ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip></Cell>
+                <Cell><StatusChip tone={['review', 'conflict'].includes(athleteWorkCategory(athlete)) ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>{athleteWorkCategory(athlete) === 'review' && reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</Cell>
               </tr>)}
             </tbody>
           </table>

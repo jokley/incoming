@@ -68,7 +68,8 @@ export function exportContingentsExcel(rows: ContingentRow[]) {
     ['hotel', 'Hotel'], ['roomType', 'Zimmerart'], ['region', 'Region'], ['availableFrom', 'Von'], ['availableUntil', 'Bis'],
     ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Freie Betten'],
     ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Belegte Betten'], ['occupancy', 'Auslastung %'],
-    ['hasHalfBoard', 'HP'], ['hasSR', 'SR'],
+    ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contactPerson', 'Ansprechpartner'],
+    ['phone', 'Telefon'], ['email', 'E-Mail'], ['comment', 'Kontingent-Kommentar'],
   ];
   const cells = (values: string[]) => values.map((value, index) => `<c r="${String.fromCharCode(65 + index)}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
   const display = (row: ContingentRow, key: keyof ContingentRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : key === 'occupancy' ? row.occupancy.toFixed(0) : String(row[key]);
