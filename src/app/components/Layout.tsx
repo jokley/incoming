@@ -15,7 +15,7 @@ const navItems = [
 ];
 
 export function Layout() {
-  const { user, hasPermission, permissions } = useAuth();
+  const { user, permissions } = useAuth();
   const { mode, toggle } = useOpsTheme();
   const displayName = user?.displayName?.trim() || user?.username || 'Benutzer';
   const initials = displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U';
@@ -36,7 +36,7 @@ export function Layout() {
                   </NavLink>
                 ))}
                 {permissions.canManageImports && <NavLink to="/import" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><Upload className="mr-2 h-4 w-4" />Import</NavLink>}
-                {hasPermission('audit.read') && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><ShieldCheck className="mr-2 h-4 w-4" />Aktivitäten</NavLink>}
+                {permissions.canReadAudit && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><ShieldCheck className="mr-2 h-4 w-4" />Aktivitäten</NavLink>}
                 {permissions.isAdmin && <NavLink to="/administration" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><Settings className="mr-2 h-4 w-4" />Administration</NavLink>}
               </div>
             </div>
@@ -61,7 +61,7 @@ export function Layout() {
           </div>
           <div className="flex gap-1 overflow-x-auto pb-2 lg:hidden">
             {navItems.map(({ to, end, label, icon: Icon }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><Icon className="mr-1.5 h-4 w-4" />{label}</NavLink>)}
-            {hasPermission('audit.read') && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><ShieldCheck className="mr-1.5 h-4 w-4" />Aktivitäten</NavLink>}
+            {permissions.canReadAudit && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><ShieldCheck className="mr-1.5 h-4 w-4" />Aktivitäten</NavLink>}
             {permissions.isAdmin && <NavLink to="/administration" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><Settings className="mr-1.5 h-4 w-4" />Administration</NavLink>}
           </div>
         </div>

@@ -20,10 +20,10 @@ export function ImportDecisionDialog({ decisionId, onClose, onOpenSession }: { d
     if (decisionId) void api.getImportDecision(decisionId).then(setDecision).catch(error => setError(error instanceof Error ? error.message : 'Entscheidung konnte nicht geladen werden'));
   }, [decisionId]);
 
-  return <Dialog open={Boolean(decisionId)} onClose={onClose} fullWidth maxWidth="md">
-    <div className="bg-[var(--ops-surface)] text-[var(--ops-text)]">
+  return <Dialog open={Boolean(decisionId)} onClose={onClose} fullWidth maxWidth="md" slotProps={{ paper: { sx: { maxHeight: 'calc(100dvh - 32px)', display: 'flex', overflow: 'hidden' } } }}>
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--ops-surface)] text-[var(--ops-text)]">
       <DialogHeader title="Entscheidung anzeigen" subtitle="Vollständige fachliche Importentscheidung · schreibgeschützt" />
-      <DialogContent dividers className="space-y-6">
+      <DialogContent dividers className="min-h-0 flex-1 space-y-6 overflow-y-auto">
         {error && <InfoPanel tone="error" title="Laden fehlgeschlagen">{error}</InfoPanel>}
         {!decision && !error && <div className="flex items-center justify-center gap-2 py-14 text-sm text-[var(--ops-text-muted)]"><Loader2 className="h-5 w-5 animate-spin"/>Entscheidung wird geladen …</div>}
         {decision && <>

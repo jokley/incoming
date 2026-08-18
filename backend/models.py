@@ -258,6 +258,9 @@ class Hotel(db.Model):
     name = db.Column(db.String(100), nullable=False)
     location = db.Column(db.String(100))  # Ort
     region = db.Column(db.String(100))  # Region
+    contact_person = db.Column(db.String(150))
+    email = db.Column(db.String(254))
+    phone = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -269,6 +272,9 @@ class Hotel(db.Model):
             'name': self.name,
             'location': self.location,
             'region': self.region,
+            'contactPerson': self.contact_person,
+            'email': self.email,
+            'phone': self.phone,
             'roomInventories': [inv.to_dict() for inv in self.room_inventories]
         }
 
@@ -285,6 +291,7 @@ class HotelRoomInventory(db.Model):
     room_count = db.Column(db.Integer, nullable=False)  # Anzahl Zimmer
     has_half_board = db.Column(db.Boolean, default=False)  # HP
     has_sr = db.Column(db.Boolean, default=False)  # SR
+    comment = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -299,7 +306,8 @@ class HotelRoomInventory(db.Model):
             'availableUntil': self.available_until.isoformat(),
             'roomCount': self.room_count,
             'hasHalfBoard': self.has_half_board,
-            'hasSR': self.has_sr
+            'hasSR': self.has_sr,
+            'comment': self.comment
         }
 
 

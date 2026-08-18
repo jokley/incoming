@@ -103,8 +103,10 @@ alembic upgrade head
 alembic current
 ```
 
-Neue Schemaänderungen benötigen eine geprüfte Alembic-Revision. Die Anwendung
-erzeugt oder verändert Tabellen beim Start nicht selbst.
+Neue Schemaänderungen benötigen eine geprüfte Alembic-Revision. Das Backend-
+Container-Entrypoint führt vor dem Start von Gunicorn automatisch
+`alembic upgrade head` aus. Schlägt das Upgrade fehl, startet die Anwendung
+bewusst nicht mit einem veralteten oder nur teilweise aktualisierten Schema.
 
 ### Tests
 
@@ -140,7 +142,9 @@ die Sicherheitsprüfungen beschreibt das
 
 1. Secrets über die Zielplattform bereitstellen; `incoming.env` nicht committen.
 2. PostgreSQL und Backup-Service starten und deren Healthchecks abwarten.
-3. `alembic upgrade head` mit dem Release-Artefakt ausführen.
+3. Das Backend ausrollen. Sein Entrypoint führt `alembic upgrade head` vor dem
+   Anwendungsstart aus; den erfolgreichen Migrationslauf in den Container-Logs
+   kontrollieren.
 4. Backend und Frontend aus unveränderlichen Images ausrollen.
 5. `/health`, Admin-Datenbankstatus und zentrale Benutzerabläufe prüfen.
 

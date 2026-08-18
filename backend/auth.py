@@ -8,7 +8,7 @@ from flask import current_app, g, jsonify, request
 
 ROLE_PERMISSIONS = {
     'incoming-viewer': {'data.read'},
-    'incoming-editor': {'data.read', 'data.write', 'assignments.write', 'imports.write'},
+    'incoming-editor': {'data.read', 'data.write', 'assignments.write', 'imports.write', 'audit.read'},
     'incoming-admin': {'*'},
     'admin': {'*'},
 }
