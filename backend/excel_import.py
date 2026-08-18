@@ -1386,6 +1386,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
             athlete.roomlist_changed_at = None
             athlete.roomlist_change_summary = 'Neu importiert'
             athlete.import_change_types_json = json.dumps(['NEW_ATHLETE'])
+            athlete.import_change_details_json = json.dumps([], ensure_ascii=False)
         else:
             existing_after = _snapshot_roomlist_fields(athlete)
             changed_keys = [key for key, value in existing_after.items() if existing_before.get(key) != value]
@@ -1395,6 +1396,15 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
                 athlete.roomlist_changed_at = now
                 athlete.roomlist_change_summary = 'changed: ' + ', '.join(changed_keys)
                 athlete.import_change_types_json = json.dumps(change_types)
+                athlete.import_change_details_json = json.dumps([
+                    {
+                        'type': IMPORT_CHANGE_FIELDS[key],
+                        'field': key,
+                        'old': existing_before.get(key),
+                        'new': existing_after.get(key),
+                    }
+                    for key in changed_keys if key in IMPORT_CHANGE_FIELDS
+                ], ensure_ascii=False)
                 athlete.roomlist_change_acknowledged_at = None
                 athlete.roomlist_change_acknowledged_summary = None
         db.session.flush()

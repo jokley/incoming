@@ -126,6 +126,7 @@ export interface Athlete {
   roomlistChangedAt?: string | null; // ISO datetime
   roomlistChangeSummary?: string | null;
   importChangeTypes?: ImportChangeType[];
+  importChangeDetails?: ImportChangeDetail[];
   roomlistChangeAcknowledgedAt?: string | null;
   roomlistChangeAcknowledgedSummary?: string | null;
 
@@ -153,7 +154,15 @@ export type ImportChangeType =
   | 'ROOMMATE_CHANGED'
   | 'ROOM_DEMAND_CHANGED'
   | 'EVENT_CHANGED'
-  | 'NATION_CHANGED';
+  | 'NATION_CHANGED'
+  | 'HOTEL_CHANGED';
+
+export interface ImportChangeDetail {
+  type: ImportChangeType;
+  field: string;
+  old?: string | null;
+  new?: string | null;
+}
 
 export interface RoomAssignment {
   id: string;
@@ -200,6 +209,7 @@ export interface RoomBookingUnitOccupant {
   single_room_decision_id?: string | null;
   hasPendingReview: boolean;
   importChangeTypes: ImportChangeType[];
+  importChangeDetails: ImportChangeDetail[];
   changeTouchesAssignment: boolean;
   isAssigned?: boolean;
   assignedBookingId?: string | null;

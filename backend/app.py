@@ -950,6 +950,7 @@ def _build_room_booking_units():
                 'specialMeal': athlete.special_meal,
                 'roomType': athlete.room_type,
                 'importChangeTypes': json.loads(athlete.import_change_types_json) if athlete.import_change_types_json else [],
+                'importChangeDetails': json.loads(athlete.import_change_details_json) if athlete.import_change_details_json else [],
                 'statusBadges': _status_badges_for_athlete(type('A', (), {
                     'hasPendingRoomlistReview': pending_review,
                     'changeTouchesAssignment': assigned_change,

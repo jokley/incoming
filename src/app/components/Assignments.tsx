@@ -80,6 +80,13 @@ const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
   ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert',
   EVENT_CHANGED: 'Event geändert',
   NATION_CHANGED: 'Nation geändert',
+  HOTEL_CHANGED: 'Hotel geändert',
+};
+
+const compactValue = (value?: string | null, field?: string) => {
+  if (!value) return '—';
+  if (field?.toLowerCase().includes('date')) return new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+  return value;
 };
 
 export function Assignments() {
@@ -1153,6 +1160,7 @@ function QueueUnitCard({
     >
       {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
       {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ops-tone-warning-text)]">Disposition prüfen</span>}
+      {unit.occupants.some((occ) => occ.hasPendingReview) && <div className="mb-2 space-y-1 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]/60 p-2">{unit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).slice(0, 2).map((change, index) => <div key={`${change.field}-${index}`} className="text-[10px]"><b className="block text-[var(--ops-tone-warning-text)]">{IMPORT_CHANGE_LABELS[change.type]}</b><span className="text-[var(--ops-text-muted)]">{compactValue(change.old, change.field)} <span aria-hidden="true">↓</span> {compactValue(change.new, change.field)}</span></div>)}</div>}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
@@ -2426,7 +2434,7 @@ function DetailPanel({
       {pendingChanges.length > 0 && (
         <div className="m-4 mb-0 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-100">
           <div className="text-xs font-bold">Importänderungen</div>
-          <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map((change) => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>
+          <div className="mt-2 space-y-2">{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).map((change, index) => <div key={`${change.field}-${index}`} className="grid grid-cols-[7rem_1fr_1fr] gap-2 rounded-lg bg-[var(--ops-surface)]/60 p-2 text-xs"><b>{IMPORT_CHANGE_LABELS[change.type]}</b><span><small className="block uppercase text-[9px] opacity-70">Alt</small>{compactValue(change.old, change.field)}</span><span><small className="block uppercase text-[9px] opacity-70">Neu</small>{compactValue(change.new, change.field)}</span></div>)}</div>{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).length === 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map(change => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>}
           <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
         </div>
       )}
