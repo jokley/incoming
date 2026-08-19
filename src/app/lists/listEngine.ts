@@ -66,9 +66,24 @@ export interface ContingentFilters {
   availability: '' | 'available' | 'occupied';
 }
 
+export interface HotelContactRow {
+  id: string;
+  hotel: string;
+  location: string;
+  contactPerson: string;
+  phone: string;
+  email: string;
+}
+
 const value = (entry?: string | null) => entry?.trim() || '—';
 const iso = (entry?: string | null) => entry?.slice(0, 10) || '';
 const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)$/i, 'Zimmer $1');
+
+/** Read-only hotel master-data projection for the event contact directory. */
+export function createHotelContactRows(hotels: Hotel[]): HotelContactRow[] {
+  return hotels.map(hotel => ({ id: hotel.id, hotel: hotel.name, location: value(hotel.location), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email) }))
+    .sort((a, b) => a.hotel.localeCompare(b.hotel, 'de'));
+}
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
 export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = []): ListRow[] {
@@ -188,6 +203,6 @@ export function filterContingentRows(rows: ContingentRow[], filters: ContingentF
     if (filters.skiRoom && !row.hasSR) return false;
     if (filters.availability === 'available' && row.freeRooms === 0) return false;
     if (filters.availability === 'occupied' && row.occupiedRooms === 0) return false;
-    return !query || [row.hotel, row.roomType, row.region, row.contactPerson, row.phone, row.email, row.comment].some(value => value.toLocaleLowerCase('de').includes(query));
+    return !query || [row.hotel, row.roomType, row.region, row.comment].some(value => value.toLocaleLowerCase('de').includes(query));
   });
 }
