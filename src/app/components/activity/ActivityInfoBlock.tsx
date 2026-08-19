@@ -9,6 +9,7 @@ export function ActivitySummaryCard({ entityType, entityId, createdAt, updatedAt
   const [historyOpen, setHistoryOpen] = useState(false);
   const [metadata, setMetadata] = useState({ createdAt, createdBy: '—', updatedAt, updatedBy: '—' });
   useEffect(() => {
+    setMetadata({ createdAt, createdBy: '—', updatedAt, updatedBy: '—' });
     if (!entityId) return;
     void loadAllAuditEvents().then(events => {
       const matching = events.filter(event => belongsToEntity(event, entityType, entityId));

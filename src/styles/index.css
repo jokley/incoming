@@ -1,3 +1,6 @@
 @import './fonts.css';
 @import './tailwind.css';
 @import './theme.css';
+/* Operational tables keep values scannable; rich hint cells can opt out. */
+table th, table td { white-space: nowrap; }
+table .ops-table-wrap { white-space: normal; }
