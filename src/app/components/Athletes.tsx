@@ -150,7 +150,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
           <FieldGrid>
             <TextField fullWidth type="date" label="Anreise" value={stay.arrivalDate} onChange={event => setStay(current => ({ ...current, arrivalDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField fullWidth type="date" label="Abreise" value={stay.departureDate} onChange={event => setStay(current => ({ ...current, departureDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
-            <TextField fullWidth multiline minRows={3} label="Interne Bemerkung" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise zum Aufenthalt' : undefined} sx={{ gridColumn: '1 / -1' }} />
+            <TextField fullWidth multiline minRows={3} label="Athletenbemerkung" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise zum Aufenthalt' : undefined} sx={{ gridColumn: '1 / -1' }} />
           </FieldGrid>
         </DialogSection>
 

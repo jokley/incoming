@@ -51,6 +51,8 @@ export interface Hotel {
   contactPerson?: string;
   email?: string;
   phone?: string;
+  /** Hotel master-data note; distinct from comments on individual contingents. */
+  comment?: string;
   roomInventories?: HotelRoomInventory[];
 }
 
