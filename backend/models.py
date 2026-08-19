@@ -465,7 +465,6 @@ class Athlete(db.Model):
             'gender': self.gender,
             'forGender': self.for_gender,
             'phone': self.phone,
-            'comment': self.comment,
             'email': self.email,
             'present': self.present,
             'singleRoomEntitlement': self.single_room_entitlement,
