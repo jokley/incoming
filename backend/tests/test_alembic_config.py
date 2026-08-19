@@ -15,6 +15,10 @@ class AlembicConfigurationTest(unittest.TestCase):
         self.assertIn('audit_event', db.metadata.tables)
         self.assertIn('import_session', db.metadata.tables)
 
+    def test_athlete_model_matches_baseline_without_comment_column(self):
+        athlete_columns = db.metadata.tables['athlete'].columns
+        self.assertNotIn('comment', athlete_columns)
+
     def test_offline_sql_uses_postgresql_configuration(self):
         environment = os.environ.copy()
         environment['DATABASE_URL'] = 'postgresql://incoming:secret@postgres/incoming'

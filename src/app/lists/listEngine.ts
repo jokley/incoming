@@ -73,7 +73,6 @@ export interface HotelContactRow {
   contactPerson: string;
   phone: string;
   email: string;
-  comment: string;
 }
 
 const value = (entry?: string | null) => entry?.trim() || '—';
@@ -82,7 +81,7 @@ const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)
 
 /** Read-only hotel master-data projection for the event contact directory. */
 export function createHotelContactRows(hotels: Hotel[]): HotelContactRow[] {
-  return hotels.map(hotel => ({ id: hotel.id, hotel: hotel.name, location: value(hotel.location), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment) }))
+  return hotels.map(hotel => ({ id: hotel.id, hotel: hotel.name, location: value(hotel.location), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email) }))
     .sort((a, b) => a.hotel.localeCompare(b.hotel, 'de'));
 }
 
