@@ -243,7 +243,7 @@ class ApiService {
     return this.request<Hotel>(`/hotels/${id}`);
   }
 
-  async createHotel(data: { name: string; location?: string; region?: string; contactPerson?: string; email?: string; phone?: string }): Promise<Hotel> {
+  async createHotel(data: { name: string; location?: string; region?: string; contactPerson?: string; email?: string; phone?: string; comment?: string }): Promise<Hotel> {
     if (USE_MOCK_DATA) {
       const maxId = mockHotels.reduce((max, h) => Math.max(max, parseInt(h.id) || 0), 0);
       const newHotel: Hotel = {
@@ -262,7 +262,7 @@ class ApiService {
     });
   }
 
-  async updateHotel(id: string, data: { name?: string; location?: string; region?: string }): Promise<Hotel> {
+  async updateHotel(id: string, data: { name?: string; location?: string; region?: string; contactPerson?: string; email?: string; phone?: string; comment?: string }): Promise<Hotel> {
     if (USE_MOCK_DATA) {
       const hotel = mockHotels.find(h => h.id === id);
       if (!hotel) throw new Error('Hotel not found');

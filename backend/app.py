@@ -2098,7 +2098,8 @@ def create_hotel():
         region=data.get('region'),
         contact_person=data.get('contactPerson'),
         email=data.get('email'),
-        phone=data.get('phone')
+        phone=data.get('phone'),
+        comment=data.get('comment')
     )
     db.session.add(hotel)
     db.session.commit()
@@ -2125,6 +2126,8 @@ def update_hotel(hotel_id):
         hotel.email = data['email']
     if 'phone' in data:
         hotel.phone = data['phone']
+    if 'comment' in data:
+        hotel.comment = data['comment']
 
     db.session.commit()
     return jsonify(hotel.to_dict())
