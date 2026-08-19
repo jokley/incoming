@@ -7,7 +7,7 @@ import unittest
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
-from models import db  # noqa: E402
+from models import Athlete, db  # noqa: E402
 
 
 class AlembicConfigurationTest(unittest.TestCase):
@@ -18,6 +18,13 @@ class AlembicConfigurationTest(unittest.TestCase):
     def test_athlete_model_matches_baseline_without_comment_column(self):
         athlete_columns = db.metadata.tables['athlete'].columns
         self.assertNotIn('comment', athlete_columns)
+
+        # Exercise the ORM projection used by Athlete.query.all(), rather than
+        # only checking migration text. A mapped comment attribute would show
+        # up here as ``athlete.comment`` and break /api/athletes in production.
+        athlete_select = str(db.select(Athlete).compile())
+        self.assertNotIn('athlete.comment', athlete_select)
+        self.assertIn('athlete.additional_items', athlete_select)
 
     def test_offline_sql_uses_postgresql_configuration(self):
         environment = os.environ.copy()

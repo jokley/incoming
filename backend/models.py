@@ -384,7 +384,8 @@ class Athlete(db.Model):
     gender = db.Column(db.String(10))
     for_gender = db.Column(db.String(10))  # Competition gender
     phone = db.Column(db.String(50))
-    comment = db.Column(db.Text)
+    # Schema contract: there is deliberately no generic ``comment`` column on
+    # athletes. Existing operational notes are stored in ``additional_items``.
     email = db.Column(db.String(100))
     present = db.Column(db.Boolean, default=False)
 
