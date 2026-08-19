@@ -137,6 +137,7 @@ export function Assignments() {
   const routeState = location.state as ({ athleteId?: string; assignmentId?: string; view?: AppView; quotaKey?: string } & OperationsLocationState) | null;
   const routeQuery = new URLSearchParams(location.search);
   const requestedAthleteId = routeQuery.get('athleteId') || routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeQuery.get('assignmentId')||routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
+  const requestedRoomTypeId = routeQuery.get('roomTypeId');
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
@@ -176,6 +177,12 @@ export function Assignments() {
   useEffect(() => {
     void loadQuotaUsage();
   }, [filterNation, filterDiscipline, filterGender]);
+
+  useEffect(() => {
+    if (!requestedRoomTypeId || !planning || !activeHotelId) return;
+    const frame = window.requestAnimationFrame(() => document.getElementById(`room-group-${requestedRoomTypeId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeHotelId, planning, requestedRoomTypeId]);
 
   const loadInitialData = async () => {
     try {
@@ -765,6 +772,7 @@ export function Assignments() {
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
               selectedAssignedUnit={selectedAssignedUnit}
+              hotels={allHotels}
               onUnassignBooking={handleUnassignBooking}
               onUnassignOccupant={handleUnassignOccupant}
               onMarkBookingAsSingle={handleMarkBookingAsSingle}
@@ -1201,7 +1209,6 @@ function QueueUnitCard({
     >
       {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
       {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ops-tone-warning-text)]">Disposition prüfen</span>}
-      {unit.occupants.some((occ) => occ.hasPendingReview) && <PersonChangeBlocks compact occupants={unit.occupants}/>}
       {unit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`mb-1.5 flex items-start gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>{warning.message}</div>)}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -1211,10 +1218,6 @@ function QueueUnitCard({
           <div className="mt-0.5 text-[11px] font-semibold text-[var(--ops-text-subtle)]">
             {unit.nationCode || '—'} · {discipline}
           </div>
-          <div className="mt-0.5 text-[11px] font-mono font-semibold text-[var(--ops-text-subtle)]">
-            {formatShortDate(unit.checkInDate)}–{formatShortDate(unit.checkOutDate)}
-          </div>
-          {primaryOccupant && <ChangedStayDates occupant={primaryOccupant} fallbackArrival={unit.checkInDate} fallbackDeparture={unit.checkOutDate}/>}
           <div className="mt-2 border-t border-[var(--ops-divider)] pt-2">
             <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Zimmerpartner</div>
             <div className="mt-0.5 truncate text-xs font-semibold text-[var(--ops-text)]">
@@ -1247,6 +1250,8 @@ function QueueUnitCard({
           onQuickAssign={onQuickAssign}
           unitId={unit.unitId}
           pending={pending}
+          fallbackArrival={unit.checkInDate}
+          fallbackDeparture={unit.checkOutDate}
         />
         <QueueOccupantActionRow
           title="Zimmerpartner"
@@ -1259,6 +1264,8 @@ function QueueUnitCard({
           onQuickAssign={onQuickAssign}
           unitId={unit.unitId}
           pending={pending}
+          fallbackArrival={unit.checkInDate}
+          fallbackDeparture={unit.checkOutDate}
         />
         {unit.occupants.length >= 2 && (
           <button
@@ -1292,6 +1299,8 @@ function QueueOccupantActionRow({
   onQuickAssign,
   unitId,
   pending,
+  fallbackArrival,
+  fallbackDeparture,
 }: {
   title: string;
   occupant?: RoomBookingUnit['occupants'][number] | null;
@@ -1303,6 +1312,8 @@ function QueueOccupantActionRow({
   onQuickAssign: (unitId: string, athleteIds: string[]) => void;
   unitId: string;
   pending: boolean;
+  fallbackArrival?: string | null;
+  fallbackDeparture?: string | null;
 }) {
   if (!occupant) {
     return (
@@ -1318,6 +1329,7 @@ function QueueOccupantActionRow({
         <div>
           <div className="text-[11px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">{title}</div>
           <div className="text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>
+          <ChangedStayDates occupant={occupant} fallbackArrival={fallbackArrival} fallbackDeparture={fallbackDeparture}/>
         </div>
         <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-[var(--ops-assignment-text-body)]'}`}>
           {occupant.isAssigned ? 'zugewiesen' : 'offen'}
@@ -1839,7 +1851,7 @@ function HotelDetailView({
             const canDrop = !!draggingUnitId && hasSlotForRoomType(group.slots);
 
             return (
-              <div key={group.roomTypeId} className="overflow-hidden rounded-2xl border border-[var(--ops-border)]">
+              <div id={`room-group-${group.roomTypeId}`} key={group.roomTypeId} className="scroll-mt-4 overflow-hidden rounded-2xl border border-[var(--ops-border)]">
                 <button
                   onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
                   className="flex w-full items-center gap-3 bg-[var(--ops-surface-overlay)] px-3 py-2.5 text-left hover:bg-[var(--ops-surface-overlay)]"
@@ -2333,6 +2345,7 @@ function DetailPanel({
   selectedUnit,
   selectedBookingContext,
   selectedAssignedUnit,
+  hotels,
   onUnassignBooking,
   onUnassignOccupant,
   onMarkBookingAsSingle,
@@ -2343,6 +2356,7 @@ function DetailPanel({
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
   selectedAssignedUnit: RoomBookingUnit | null;
+  hotels: AssignmentGridHotel[];
   onUnassignBooking: (bookingId: string) => void;
   onUnassignOccupant: (bookingId: string, athleteId: string) => void;
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
@@ -2415,6 +2429,11 @@ function DetailPanel({
                 <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Ort</div>
                 <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{hotel.location || '—'}</div>
               </div>
+              <div className="col-span-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2.5 py-2">
+                <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Hotelkontingent</div>
+                <div className="mt-1 font-mono font-bold text-[var(--ops-assignment-text-strong)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</div>
+                <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
+              </div>
               <div>
                 <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Anreise</div>
                 <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{booking.checkInDate || '—'}</div>
@@ -2471,6 +2490,10 @@ function DetailPanel({
   if (!selectedUnit) return null;
 
   const pendingChanges = Array.from(new Set(selectedUnit.occupants.filter((occ) => occ.hasPendingReview).flatMap((occ) => occ.importChangeTypes)));
+  const assignedHotel = hotels.find(hotel => hotel.hotelId === (selectedAssignedUnit?.assignedHotelId || selectedUnit.assignedHotelId));
+  const assignedSlots = assignedHotel?.slots.filter(slot => !selectedUnit.assignedRoomTypeId || slot.roomTypeId === selectedUnit.assignedRoomTypeId) || [];
+  const availableFrom = assignedSlots.map(slot => slot.dateCoverage.availableFrom).filter((value): value is string => Boolean(value)).sort()[0];
+  const availableUntil = assignedSlots.map(slot => slot.dateCoverage.availableUntil).filter((value): value is string => Boolean(value)).sort().at(-1);
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -2499,6 +2522,15 @@ function DetailPanel({
         </div>
       </div>
 
+      <div className="border-b border-[var(--ops-divider)] px-4 py-4">
+        <div className="rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]/40 p-3">
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div><div className="text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Hotel</div><div className="mt-1 font-bold text-[var(--ops-text)]">{assignedHotel?.hotelName || 'Noch nicht zugewiesen'}</div></div>
+            <div><div className="text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Hotelkontingent</div><div className="mt-1 font-mono font-bold text-[var(--ops-text)]">{availableFrom && availableUntil ? `${formatShortDate(availableFrom)} – ${formatShortDate(availableUntil)}` : 'Kein Kontingentbezug'}</div></div>
+          </div>
+          <ContingentConflict arrival={selectedUnit.checkInDate} departure={selectedUnit.checkOutDate} availableFrom={availableFrom} availableUntil={availableUntil}/>
+        </div>
+      </div>
       <div className="border-b border-[var(--ops-divider)] px-4 py-4">
         <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Bewohner</div>
         <div className="space-y-2">
@@ -2587,6 +2619,14 @@ function DetailPanel({
       <div className="px-4 pb-4"><ActivitySummaryCard entityType="assignments" entityId={selectedAssignedUnit?.assignedBookingId || selectedUnit.unitId} /></div>
     </div>
   );
+}
+
+function ContingentConflict({ arrival, departure, availableFrom, availableUntil }: { arrival?: string | null; departure?: string | null; availableFrom?: string | null; availableUntil?: string | null }) {
+  const early = Boolean(arrival && availableFrom && arrival < availableFrom);
+  const late = Boolean(departure && availableUntil && departure > availableUntil);
+  if (!early && !late) return null;
+  const message = early && late ? 'Aufenthalt außerhalb Hotelkontingent' : early ? 'Anreise vor Kontingentbeginn' : 'Abreise nach Kontingentende';
+  return <div className="mt-2 flex items-center gap-1.5 rounded-md border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] px-2 py-1.5 text-[10px] font-extrabold text-[var(--ops-error)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" />{message}</div>;
 }
 
 function SingleRoomDecisionCard({ status, decisionId, onShowDecision }: { status?: string | null; decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
