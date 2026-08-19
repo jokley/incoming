@@ -111,6 +111,25 @@ function ChangeBlocks({ changes, compact = false }: { changes: ImportChangeDetai
   return <div className="mt-2 space-y-2">{blocks.map(block => <div key={block.type} className="rounded-lg bg-[var(--ops-surface)]/60 p-3 text-xs"><b className="block text-sm">{block.title}</b><div className="mt-2 whitespace-pre-line"><small className="block uppercase text-[9px] opacity-70">Alt</small>{block.oldValue}</div><div className="my-1 text-[var(--ops-text-subtle)]" aria-hidden="true">↓</div><div className="whitespace-pre-line"><small className="block uppercase text-[9px] opacity-70">Neu</small>{block.newValue}</div></div>)}</div>;
 }
 
+function PersonChangeBlocks({ occupants, compact = false }: { occupants: RoomBookingUnit['occupants']; compact?: boolean }) {
+  const affected = occupants.filter(occupant => occupant.hasPendingReview && occupant.importChangeDetails.length > 0);
+  return <div className="space-y-2">{affected.map(occupant => <section key={occupant.athleteId} aria-label={`Änderungen für ${occupant.firstname} ${occupant.lastname}`}>
+    {affected.length > 1 && <div className="mb-1 text-xs font-extrabold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>}
+    <ChangeBlocks compact={compact} changes={occupant.importChangeDetails}/>
+  </section>)}</div>;
+}
+
+function ChangedStayDates({ occupant, fallbackArrival, fallbackDeparture }: { occupant: RoomBookingUnit['occupants'][number]; fallbackArrival?: string | null; fallbackDeparture?: string | null }) {
+  const dateChanges = occupant.importChangeDetails.filter(change => change.type === 'DATE_CHANGED');
+  const find = (pattern: RegExp) => dateChanges.find(change => pattern.test(change.field));
+  const arrival = find(/arrival|check.?in|from/i), departure = find(/departure|check.?out|until|to/i);
+  const DateValue = ({ label, change, fallback }: { label: string; change?: ImportChangeDetail; fallback?: string | null }) => <div className="min-w-0">
+    <div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div>
+    {change ? <div className="mt-1 rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-1 text-[10px] font-mono"><span className="text-[9px] font-bold uppercase">Alt</span> {compactValue(change.old, change.field)} <span aria-hidden="true">↓</span> <span className="text-[9px] font-bold uppercase">Neu</span> {compactValue(change.new, change.field)}</div> : <div className="mt-1 font-mono text-[11px]">{formatShortDate(fallback)}</div>}
+  </div>;
+  return <div className="mt-2 grid grid-cols-2 gap-2"><DateValue label="Anreise" change={arrival} fallback={fallbackArrival}/><DateValue label="Abreise" change={departure} fallback={fallbackDeparture}/></div>;
+}
+
 export function Assignments() {
   const permissions = usePermissions();
   const location = useLocation();
@@ -1182,7 +1201,8 @@ function QueueUnitCard({
     >
       {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
       {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ops-tone-warning-text)]">Disposition prüfen</span>}
-      {unit.occupants.some((occ) => occ.hasPendingReview) && <ChangeBlocks compact changes={unit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || [])}/>}
+      {unit.occupants.some((occ) => occ.hasPendingReview) && <PersonChangeBlocks compact occupants={unit.occupants}/>}
+      {unit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`mb-1.5 flex items-start gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>{warning.message}</div>)}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
@@ -1194,6 +1214,7 @@ function QueueUnitCard({
           <div className="mt-0.5 text-[11px] font-mono font-semibold text-[var(--ops-text-subtle)]">
             {formatShortDate(unit.checkInDate)}–{formatShortDate(unit.checkOutDate)}
           </div>
+          {primaryOccupant && <ChangedStayDates occupant={primaryOccupant} fallbackArrival={unit.checkInDate} fallbackDeparture={unit.checkOutDate}/>}
           <div className="mt-2 border-t border-[var(--ops-divider)] pt-2">
             <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Zimmerpartner</div>
             <div className="mt-0.5 truncate text-xs font-semibold text-[var(--ops-text)]">
@@ -2456,10 +2477,11 @@ function DetailPanel({
       {pendingChanges.length > 0 && (
         <div className="m-4 mb-0 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-100">
           <div className="text-xs font-bold">Importänderungen</div>
-          <ChangeBlocks changes={selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || [])}/>{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).length === 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map(change => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>}
+          <PersonChangeBlocks occupants={selectedUnit.occupants}/>{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).length === 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map(change => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>}
           <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
         </div>
       )}
+      {selectedUnit.assignmentWarnings.length > 0 && <div className="mx-4 mt-4 space-y-2">{selectedUnit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`flex items-start gap-2 rounded-xl border p-3 text-xs font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="h-4 w-4 shrink-0"/>{warning.message}</div>)}</div>}
       <div className="border-b border-[var(--ops-divider)] px-4 py-4">
         <div className="flex items-center gap-3">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-[var(--ops-assignment-text-accent)]">
@@ -2489,6 +2511,7 @@ function DetailPanel({
                     {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
                   </div>
                   <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
+                  <ChangedStayDates occupant={occupant} fallbackArrival={selectedUnit.checkInDate} fallbackDeparture={selectedUnit.checkOutDate}/>
                 </div>
                 <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
                   {occupant.isAssigned ? 'zugewiesen' : 'offen'}
