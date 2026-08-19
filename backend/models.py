@@ -261,6 +261,7 @@ class Hotel(db.Model):
     contact_person = db.Column(db.String(150))
     email = db.Column(db.String(254))
     phone = db.Column(db.String(50))
+    comment = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # Relationships
@@ -275,6 +276,7 @@ class Hotel(db.Model):
             'contactPerson': self.contact_person,
             'email': self.email,
             'phone': self.phone,
+            'comment': self.comment,
             'roomInventories': [inv.to_dict() for inv in self.room_inventories]
         }
 
@@ -382,6 +384,8 @@ class Athlete(db.Model):
     gender = db.Column(db.String(10))
     for_gender = db.Column(db.String(10))  # Competition gender
     phone = db.Column(db.String(50))
+    # Schema contract: there is deliberately no generic ``comment`` column on
+    # athletes. Existing operational notes are stored in ``additional_items``.
     email = db.Column(db.String(100))
     present = db.Column(db.Boolean, default=False)
 
@@ -461,6 +465,7 @@ class Athlete(db.Model):
             'gender': self.gender,
             'forGender': self.for_gender,
             'phone': self.phone,
+            'comment': self.comment,
             'email': self.email,
             'present': self.present,
             'singleRoomEntitlement': self.single_room_entitlement,
