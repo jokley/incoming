@@ -26,6 +26,20 @@ class AlembicConfigurationTest(unittest.TestCase):
         self.assertNotIn('athlete.comment', athlete_select)
         self.assertIn('athlete.additional_items', athlete_select)
 
+    def test_athlete_serialization_does_not_access_removed_comment(self):
+        athlete = Athlete(
+            id=1,
+            lastname='Muster',
+            firstname='Mia',
+            nation_code='SUI',
+            additional_items='Bestehende Athletenbemerkung',
+        )
+
+        payload = athlete.to_dict()
+
+        self.assertNotIn('comment', payload)
+        self.assertEqual(payload['additionalItems'], 'Bestehende Athletenbemerkung')
+
     def test_offline_sql_uses_postgresql_configuration(self):
         environment = os.environ.copy()
         environment['DATABASE_URL'] = 'postgresql://incoming:secret@postgres/incoming'
