@@ -4,3 +4,50 @@
 /* Operational tables keep values scannable; rich hint cells can opt out. */
 table th, table td { white-space: nowrap; }
 table .ops-table-wrap { white-space: normal; }
+
+/* Person cards prioritize identity over density and adapt to their host card, not the viewport. */
+.ops-occupant-card { container-type: inline-size; }
+.ops-occupant-card__content {
+  display: grid;
+  grid-template-areas:
+    "name name"
+    "details status";
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 0.75rem;
+  row-gap: 0.25rem;
+  min-width: 0;
+}
+.ops-occupant-card__name {
+  grid-area: name;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+.ops-occupant-card__details { grid-area: details; min-width: 0; }
+.ops-occupant-card__context { min-width: 0; }
+.ops-occupant-card__context + .ops-occupant-card__stay { margin-left: 0.375rem; }
+.ops-occupant-card__context + .ops-occupant-card__stay::before {
+  content: '·';
+  margin-right: 0.375rem;
+  color: var(--ops-text-muted);
+}
+.ops-occupant-card__status { grid-area: status; justify-self: end; }
+
+@container (min-width: 26rem) {
+  .ops-occupant-card__content:not(.ops-occupant-card__content--stacked) {
+    grid-template-areas: "name details status";
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.5fr) auto;
+  }
+  .ops-occupant-card__details { display: flex; align-items: center; gap: 0.75rem; }
+  .ops-occupant-card__context + .ops-occupant-card__stay { margin-left: 0; }
+  .ops-occupant-card__context + .ops-occupant-card__stay::before { content: none; }
+}
+
+.ops-occupant-card__content--horizontal {
+  grid-template-areas: "name details status";
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1.5fr) auto;
+}
+.ops-occupant-card__content--horizontal .ops-occupant-card__details { display: flex; align-items: center; gap: 0.75rem; }
+.ops-occupant-card__content--horizontal .ops-occupant-card__context + .ops-occupant-card__stay { margin-left: 0; }
+.ops-occupant-card__content--horizontal .ops-occupant-card__context + .ops-occupant-card__stay::before { content: none; }
