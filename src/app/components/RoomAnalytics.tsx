@@ -7,6 +7,7 @@ import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
 import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, SplitPageLayout, SplitPaneLayout, SectionHeader, StatusChip } from '../design-system';
 import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
+import { calculateQuotaUsage, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
 
 type ViewKey = 'capacity' | 'hotels' | 'nations' | 'assignments' | 'singleRooms' | 'conflicts';
 type AnalyticsData = { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] };
@@ -212,8 +213,8 @@ function CapacityView({ data }: { data: AnalyticsData }) {
     const activeBookings = data.bookings.filter(booking => bookingOnDay(booking, date));
     const assignedRooms = activeBookings.length;
     const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
-    const assignedEz = activeBookings.filter(booking => booking.countsAsSingle).length;
-    const assignedDz = assignedRooms - assignedEz;
+    const assignedEz = calculateQuotaUsage(quotaAssignmentsFromBookings(activeBookings));
+    const assignedDz = Math.max(0, assignedBeds - assignedEz);
     const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0);
     const plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0);
     // Real assignments replace the planning split while the still-free rooms retain
@@ -273,8 +274,8 @@ function HotelsView({ data }: { data: AnalyticsData }) {
 }
 function NationsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
-  const quotaEvaluation = new Map(data.bookings.flatMap(booking =>
-    booking.occupants.map(occupant => [occupant.id, Boolean(booking.countsAsSingle)] as const)));
+  const quotaEvaluation = new Map(quotaAssignmentsFromBookings(data.bookings).map(assignment =>
+    [assignment.personId, assignment.countsAsSingle] as const));
   const colors = ['var(--ops-primary)', 'var(--ops-success)', 'var(--ops-warning)', 'var(--ops-error)', 'var(--ops-secondary)', 'var(--ops-info)', 'var(--ops-primary-emphasis)', 'var(--ops-text-muted)'];
   const rows = Object.values(data.athletes.reduce<Record<string, { nation: string; people: number; athletes: number; officials: number; ez: number; dzPeople: number }>>((result, person) => {
     const nation = person.nationCode || '—';

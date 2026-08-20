@@ -34,6 +34,7 @@ import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import type { OfficialQuotaUsage } from '../services/fisRules';
+import { evaluateQuotaUsageRow } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
   AssignmentGridHotel,
@@ -342,7 +343,7 @@ export function Assignments() {
   }, [allUnitsCombined.length, assignedUnits.length]);
 
   const quotaViolations = useMemo(
-    () => quotaUsage.filter((row) => row.assignedOfficials > row.officialQuota || row.singleRoomsUsed > row.singleRoomsAllowed),
+    () => quotaUsage.filter((row) => row.assignedOfficials > row.officialQuota || evaluateQuotaUsageRow(row).hasViolation),
     [quotaUsage]
   );
   const pendingQuotaDecisions = useMemo(
@@ -864,9 +865,9 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
       </span>
       <span className="min-w-[112px] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Als EZ gewertet</span>
-        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.singleRoomsUsed > row.singleRoomsAllowed ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${evaluateQuotaUsageRow(row).hasViolation ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
           {row.singleRoomsUsed} / {row.singleRoomsAllowed}
-          {row.singleRoomsUsed <= row.singleRoomsAllowed && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+          {!evaluateQuotaUsageRow(row).hasViolation && <Check className="h-3.5 w-3.5 text-emerald-400" />}
         </span>
       </span>
     </button>
@@ -913,8 +914,9 @@ function AlertBanner({
   const officialText = row.assignedOfficials > row.officialQuota
     ? `Official-Quote überschritten: ${row.nationCode} (${row.assignedOfficials}/${row.officialQuota})`
     : '';
-  const singleText = row.singleRoomsUsed > row.singleRoomsAllowed
-    ? `EZ-Quotenbewertung überschritten (${row.singleRoomsUsed}/${row.singleRoomsAllowed})`
+  const quotaEvaluation = evaluateQuotaUsageRow(row);
+  const singleText = quotaEvaluation.hasViolation
+    ? `EZ-Quotenbewertung überschritten (${quotaEvaluation.usedSingleRooms}/${quotaEvaluation.allowedSingleRooms})`
     : '';
   const message = [officialText, singleText].filter(Boolean).join(' und ');
 
@@ -2039,7 +2041,7 @@ function quotaGenderLabel(gender: string) {
 }
 
 function getQuotaState(card: QuotaCard) {
-  if (card.singleRoomsUsed > card.singleRoomsAllowed) return { label: 'Quote überschritten · Mehrkosten', tone: 'warning' as const, icon: AlertTriangle };
+  if (evaluateQuotaUsageRow(card).hasViolation) return { label: 'Quote überschritten · Mehrkosten', tone: 'warning' as const, icon: AlertTriangle };
   if (card.assignedOfficials > card.officialQuota) return { label: 'Official-Quote überschritten', tone: 'warning' as const, icon: AlertTriangle };
   return { label: 'Quote erfüllt', tone: 'success' as const, icon: CheckCircle2 };
 }
@@ -2092,7 +2094,7 @@ function QuotasPanel({
           const state = getQuotaState(card);
           const StateIcon = state.icon;
           const officialsOver = card.assignedOfficials > card.officialQuota;
-          const singlesOver = card.singleRoomsUsed > card.singleRoomsAllowed;
+          const singlesOver = evaluateQuotaUsageRow(card).hasViolation;
           const dispatchPct = card.peopleTotal > 0 ? Math.round(card.peopleAssigned / card.peopleTotal * 100) : 0;
 
           return (
@@ -2123,7 +2125,7 @@ function QuotasPanel({
                 <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
                   <ApprovalInfo label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
                   <ApprovalInfo label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
-                  <ApprovalInfo label="EZ mit Mehrkosten" value={String(Math.max(0, card.singleRoomsUsed - card.singleRoomsAllowed))} warning={singlesOver} />
+                  <ApprovalInfo label="EZ mit Mehrkosten" value={String(evaluateQuotaUsageRow(card).overflow)} warning={singlesOver} />
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{dispatchPct}% disponiert</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
               </div>
@@ -2214,7 +2216,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   const state = getQuotaState(card);
   const StateIcon = state.icon;
   const officialsOver = card.assignedOfficials > card.officialQuota;
-  const singlesOver = card.singleRoomsUsed > card.singleRoomsAllowed;
+  const singlesOver = evaluateQuotaUsageRow(card).hasViolation;
   const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels);
 
   return <div className="flex h-full flex-col">
