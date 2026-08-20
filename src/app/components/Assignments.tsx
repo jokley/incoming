@@ -16,7 +16,6 @@ import {
   FileCheck2,
   Eye,
   Flag,
-  Link2,
   RefreshCw,
   Search,
   Trash2,
@@ -25,7 +24,8 @@ import {
 } from 'lucide-react';
 
 import { ImportConflictNotice } from './ImportConflictNotice';
-import { AssignmentStatusChip, OccupantStays, PersonPendingChanges, PendingChanges, StaySummary } from './assignment/AssignmentInfo';
+import { AssignmentStatusChip, PendingChanges } from './assignment/AssignmentInfo';
+import { OccupantCard } from './assignment/OccupantCard';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
@@ -43,7 +43,6 @@ import type {
   AssignmentValidationResult,
   Athlete,
   RoomBookingUnit,
-  ImportChangeType,
 } from '../types';
 
 type AppView = 'dispatch' | 'quotas';
@@ -72,16 +71,6 @@ const REGION_COLORS: Record<string, string> = {
   Bludenz: 'var(--ops-primary)',
   Montafon: 'var(--ops-success)',
   Feldkirch: 'var(--ops-secondary)',
-};
-
-const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
-  NEW_ATHLETE: 'Neuer Athlet',
-  DATE_CHANGED: 'Aufenthaltsdatum geändert',
-  ROOMMATE_CHANGED: 'Zimmerpartner geändert',
-  ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert',
-  EVENT_CHANGED: 'Event geändert',
-  NATION_CHANGED: 'Nation geändert',
-  HOTEL_CHANGED: 'Hotel geändert',
 };
 
 
@@ -1050,19 +1039,9 @@ function QueueSidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {shareRequests.length > 0 && (
-          <div className="border-b border-[var(--ops-divider)] px-3 py-2">
-            <div className="mb-2 flex items-center justify-between px-1">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[var(--ops-assignment-text-muted)]">
-                <Link2 className="h-3.5 w-3.5 text-violet-400" />
-                Zimmerpartner
-              </div>
-              <span className="rounded-md bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-300">
-                {shareRequests.length}
-              </span>
-            </div>
-            <div className="space-y-2">
-              {shareRequests.map(({ unit }) => (
+        <div className="px-3 py-3">
+          <div className="space-y-2">
+            {shareRequests.map(({ unit }) => (
                 <QueueUnitCard
                   key={unit.unitId}
                   unit={unit}
@@ -1078,12 +1057,6 @@ function QueueSidebar({
                   pending={pendingAction?.unitId === unit.unitId}
                 />
               ))}
-            </div>
-          </div>
-        )}
-
-        <div className="px-3 py-3">
-          <div className="space-y-2">
             {regularUnits.map((unit) => (
               <QueueUnitCard
                 key={unit.unitId}
@@ -1138,10 +1111,8 @@ function QueueUnitCard({
   pending: boolean;
 }) {
   const primaryOccupant = unit.occupants[0];
-  const partnerOccupant = unit.occupants[1] ?? null;
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
   const isReadOnly = unit.isFullyAssigned;
-  const workStatus = isReadOnly ? 'assigned' : unit.hasAnyAssigned ? 'partial' : 'open';
   const discipline = primaryOccupant?.discipline || '—';
   const cardBase = highlighted
     ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
@@ -1159,22 +1130,13 @@ function QueueUnitCard({
       {unit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`mb-1.5 flex items-start gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>{warning.message}</div>)}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
-            {primaryOccupant ? `${primaryOccupant.firstname} ${primaryOccupant.lastname}` : '—'}
+          <div className="truncate text-[11px] font-semibold text-[var(--ops-text-subtle)]">
+            {unit.nationCode || '—'} · {discipline} · {primaryOccupant?.function || 'Athlet'}
           </div>
-          <div className="mt-0.5 text-[11px] font-semibold text-[var(--ops-text-subtle)]">
-            {unit.nationCode || '—'} · {discipline}
-          </div>
-          <div className="mt-1.5 flex items-center gap-2 text-[10px] text-[var(--ops-text-subtle)]">
-            <span className="font-mono font-semibold">{formatShortDate(unit.checkInDate)}–{formatShortDate(unit.checkOutDate)}</span>
-            <span aria-hidden="true">·</span><b>{unit.roomTypeLabel || '—'}</b>
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-[var(--ops-text-subtle)]">
+            <b>{unit.roomTypeLabel || '—'}</b>
             <span aria-hidden="true">·</span><span className="min-w-0 truncate" title={unit.assignedHotelName || undefined}>{unit.assignedHotelName || 'Hotel offen'}</span>
           </div>
-          {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
-          {unit.occupants.some(occupant => occupant.hasPendingReview) && <PersonPendingChanges occupants={unit.occupants} compact />}
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <AssignmentStatusChip status={unit.occupants.some((occ) => occ.hasPendingReview) ? 'review' : workStatus} />
         </div>
       </div>
 
@@ -1185,10 +1147,10 @@ function QueueUnitCard({
       )}
 
       <div className="mt-2 grid gap-1.5">
-        <QueueOccupantActionRow
-          title="Athlet"
-          occupant={primaryOccupant}
-          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === primaryOccupant?.athleteId}
+        {unit.occupants.map(occupant => <QueueOccupantActionRow
+          key={occupant.athleteId}
+          occupant={occupant}
+          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === occupant.athleteId}
           canEditAssignments={canEditAssignments && !isReadOnly}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -1197,21 +1159,7 @@ function QueueUnitCard({
           pending={pending}
           fallbackArrival={unit.checkInDate}
           fallbackDeparture={unit.checkOutDate}
-        />
-        <QueueOccupantActionRow
-          title="Zimmerpartner"
-          occupant={partnerOccupant}
-          emptyLabel="Noch kein Zimmerpartner"
-          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === partnerOccupant?.athleteId}
-          canEditAssignments={canEditAssignments && !isReadOnly}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          onQuickAssign={onQuickAssign}
-          unitId={unit.unitId}
-          pending={pending}
-          fallbackArrival={unit.checkInDate}
-          fallbackDeparture={unit.checkOutDate}
-        />
+        />)}
         {unit.occupants.length >= 2 && (
           <button
             draggable={canEditAssignments && !isReadOnly && !pending}
@@ -1234,9 +1182,7 @@ function QueueUnitCard({
 }
 
 function QueueOccupantActionRow({
-  title,
   occupant,
-  emptyLabel = '—',
   isDragging,
   canEditAssignments,
   onDragStart,
@@ -1247,9 +1193,7 @@ function QueueOccupantActionRow({
   fallbackArrival,
   fallbackDeparture,
 }: {
-  title: string;
-  occupant?: RoomBookingUnit['occupants'][number] | null;
-  emptyLabel?: string;
+  occupant: RoomBookingUnit['occupants'][number];
   isDragging: boolean;
   canEditAssignments: boolean;
   onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
@@ -1260,29 +1204,15 @@ function QueueOccupantActionRow({
   fallbackArrival?: string | null;
   fallbackDeparture?: string | null;
 }) {
-  if (!occupant) {
-    return (
-      <div className="rounded-lg border border-dashed border-[var(--ops-border-strong)] px-2.5 py-1.5 text-[10px] text-[var(--ops-text-muted)]">
-        {title}: {emptyLabel}
-      </div>
-    );
-  }
-
   return (
-    <div className={`rounded-lg border px-2.5 py-1.5 ${occupant.isAssigned ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'} ${isDragging ? 'opacity-70' : ''}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">{title}</div>
-          {title !== 'Athlet' && <div className="truncate text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>}
-          {(occupant.arrivalDate && occupant.arrivalDate !== fallbackArrival) || (occupant.departureDate && occupant.departureDate !== fallbackDeparture) ? (
-            <div className="font-mono text-[10px] text-[var(--ops-tone-warning-text)]">Abweichend: {formatShortDate(occupant.arrivalDate)}–{formatShortDate(occupant.departureDate)}</div>
-          ) : null}
-        </div>
-        <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-[var(--ops-assignment-text-body)]'}`}>
-          {occupant.isAssigned ? 'zugewiesen' : 'offen'}
-        </span>
-      </div>
-      <div className="mt-1 flex gap-1.5">
+    <OccupantCard
+      person={occupant}
+      status={occupant.hasPendingReview ? 'review' : occupant.isAssigned ? 'assigned' : 'open'}
+      fallbackArrival={fallbackArrival}
+      fallbackDeparture={fallbackDeparture}
+      className={isDragging ? 'opacity-70' : ''}
+      footer={<><div className="flex items-center gap-1.5">
+        {occupant.single_room_status !== 'NONE' && <SingleRoomStatusBadge status={occupant.single_room_status} />}
         <button
           draggable={canEditAssignments && !pending}
           disabled={pending || !canEditAssignments}
@@ -1297,8 +1227,8 @@ function QueueOccupantActionRow({
         >
           Einzeln zuweisen
         </button>
-      </div>
-    </div>
+      </div>{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
+    />
   );
 }
 function DispatchWorkspace({
@@ -1829,7 +1759,6 @@ function HotelDetailView({
                           (entry.booking.capacity || 0) > entry.booking.occupants.length &&
                           entry.booking.occupants.length >= 1;
                         const isBookingDropTarget = dragOverBookingId === entry.booking.bookingId;
-                        const pendingChanges = entry.booking.occupants.flatMap(occupant => occupant.hasPendingReview ? occupant.importChangeDetails : []);
                         return (
                       <button
                         key={entry.booking.bookingId}
@@ -1867,10 +1796,6 @@ function HotelDetailView({
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
-                            <div className="mt-0.5 truncate text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">
-                              {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-1"><AssignmentStatusChip status={pendingChanges.length ? 'review' : 'assigned'} /></div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
                               {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
@@ -1881,11 +1806,16 @@ function HotelDetailView({
                                 </span>
                               )}
                             </div>
-                            <div className="mt-1.5 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
-                              <div className="mb-1 text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Aufenthalt je Bewohner</div>
-                              <OccupantStays occupants={entry.booking.occupants} compact />
+                            <div className="mt-1.5 grid gap-1">
+                              {entry.booking.occupants.map(occupant => <OccupantCard
+                                key={occupant.athleteId}
+                                person={occupant}
+                                status={occupant.hasPendingReview ? 'review' : 'assigned'}
+                                fallbackArrival={entry.booking.checkInDate}
+                                fallbackDeparture={entry.booking.checkOutDate}
+                                footer={occupant.hasPendingReview ? <PendingChanges changes={occupant.importChangeDetails} compact /> : undefined}
+                              />)}
                             </div>
-                            {pendingChanges.length > 0 && <PendingChanges changes={pendingChanges} compact className="mt-1.5" />}
                           </div>
                         </div>
                       </button>
@@ -2337,19 +2267,19 @@ function DetailPanel({
       <div className="space-y-3 p-4" aria-busy={pendingAction?.bookingId === booking.bookingId}>
         {pendingOccupants.length > 0 && <DetailSection icon={<AlertTriangle className="h-4 w-4" />} title="Disposition prüfen">
           <p className="text-xs font-semibold text-[var(--ops-tone-warning-text)]">Importdaten weichen von der aktuellen Zimmerzuweisung ab.</p>
-          <PersonPendingChanges occupants={booking.occupants} />
           <button onClick={() => onAcknowledgeImportChanges(booking)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Disposition bestätigen</button>
         </DetailSection>}
         <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (
-              <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <div className="text-sm font-semibold text-[var(--ops-assignment-text-strong)]">{occupant.name}</div>
-                    <div className="mt-1 text-[10px] font-mono text-[var(--ops-assignment-text-muted)]">{occupant.nationCode}</div>
-                    <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
-                  </div>
+              <OccupantCard
+                key={occupant.athleteId}
+                person={occupant}
+                status={occupant.hasPendingReview ? 'review' : 'assigned'}
+                fallbackArrival={booking.checkInDate}
+                fallbackDeparture={booking.checkOutDate}
+                footer={<><div className="flex items-start justify-between gap-2">
+                  <div><SingleRoomStatusBadge status={occupant.single_room_status} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}
@@ -2359,8 +2289,8 @@ function DetailPanel({
                       {pendingAction?.athleteIds?.includes(occupant.athleteId) ? <><RefreshCw className="mr-1 inline h-3 w-3 animate-spin" /> Loading</> : 'Nur diese Person'}
                     </button>
                   )}
-                </div>
-              </div>
+                </div>{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
+              />
             ))}
           </div>
         </DetailSection>
@@ -2388,14 +2318,6 @@ function DetailPanel({
         <DetailSection icon={<Clock className="h-4 w-4" />} title="Hotelkontingent">
           <div className="font-mono text-xs font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</div>
           <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
-        </DetailSection>
-        <DetailSection icon={<FileCheck2 className="h-4 w-4" />} title="Importänderungen">
-          <div className="space-y-3">
-            {booking.occupants.map((occupant) => <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3">
-              <div className="flex flex-wrap items-center justify-between gap-2"><strong className="text-sm">{occupant.name}</strong><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
-              <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
-            </div>)}
-          </div>
         </DetailSection>
         <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
           {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
@@ -2439,7 +2361,6 @@ function DetailPanel({
       {pendingChanges.length > 0 && (
         <div className="m-4 mb-0 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-100">
           <div className="text-xs font-bold">Importänderungen</div>
-          <PersonPendingChanges occupants={selectedUnit.occupants}/>{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).length === 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map(change => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>}
           <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
         </div>
       )}
@@ -2474,33 +2395,17 @@ function DetailPanel({
         <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Bewohner</div>
         <div className="space-y-2">
           {selectedUnit.occupants.map((occupant) => (
-            <div key={occupant.athleteId} className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm font-semibold text-[var(--ops-assignment-text-strong)]">{occupant.firstname} {occupant.lastname}</div>
-                  <div className="mt-1 text-[10px] font-mono text-[var(--ops-assignment-text-muted)]">
-                    {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
-                  </div>
-                  <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
-                  <StaySummary arrival={selectedUnit.checkInDate} departure={selectedUnit.checkOutDate} compact />
-                </div>
-                <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
-                  {occupant.isAssigned ? 'zugewiesen' : 'offen'}
-                </span>
-              </div>
-              {occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && (
-                <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />
-              )}
-            </div>
+            <OccupantCard
+              key={occupant.athleteId}
+              person={occupant}
+              status={occupant.hasPendingReview ? 'review' : occupant.isAssigned ? 'assigned' : 'open'}
+              fallbackArrival={selectedUnit.checkInDate}
+              fallbackDeparture={selectedUnit.checkOutDate}
+              footer={<>{occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />}{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
+            />
           ))}
         </div>
 
-        {selectedUnit.occupants.length >= 2 && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-violet-700/40 bg-violet-950/25 px-3 py-2 text-xs text-violet-200">
-            <Link2 className="h-3.5 w-3.5" />
-            Gewünschtes Zimmerpartner-Paar erkannt
-          </div>
-        )}
       </div>
 
       <div className="px-4 py-4">

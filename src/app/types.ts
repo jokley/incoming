@@ -206,6 +206,8 @@ export interface RoomBookingUnitOccupant {
   discipline?: string | null;
   gender?: string | null;
   function?: string | null;
+  arrivalDate?: string | null;
+  departureDate?: string | null;
   specialMeal?: string | null;
   roomType?: string | null;
   statusBadges: string[];
