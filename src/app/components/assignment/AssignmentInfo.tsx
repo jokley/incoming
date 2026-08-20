@@ -66,6 +66,16 @@ export function StaySummary({ arrival, departure, compact = false }: { arrival?:
   </div>;
 }
 
+/** Person-level stays used wherever a room can contain different travel dates. */
+export function OccupantStays({ occupants, compact = false }: { occupants: Array<{ athleteId: string; firstname: string; lastname: string; arrivalDate?: string | null; departureDate?: string | null }>; compact?: boolean }) {
+  return <div className={compact ? 'space-y-1' : 'space-y-1.5'}>
+    {occupants.map(occupant => <div key={occupant.athleteId} className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-2 text-[10px]">
+      <span className="truncate font-semibold text-[var(--ops-text)]" title={`${occupant.firstname} ${occupant.lastname}`}>{occupant.firstname} {occupant.lastname}</span>
+      <span className="whitespace-nowrap font-mono font-semibold text-[var(--ops-text-subtle)]">{formatValue(occupant.arrivalDate, 'arrivalDate')} – {formatValue(occupant.departureDate, 'departureDate')}</span>
+    </div>)}
+  </div>;
+}
+
 export type AssignmentStatus = 'review' | 'import-changed' | 'roommate-changed' | 'stay-changed' | 'hotel-changed' | 'room-type-changed' | 'open' | 'partial' | 'assigned';
 const STATUS = {
   review: { label: 'Disposition prüfen', tone: 'warning', icon: AlertTriangle },

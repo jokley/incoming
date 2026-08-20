@@ -949,6 +949,8 @@ def _build_room_booking_units():
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
                 'roomType': athlete.room_type,
+                'arrivalDate': athlete.arrival_date.isoformat() if athlete.arrival_date else None,
+                'departureDate': athlete.departure_date.isoformat() if athlete.departure_date else None,
                 'importChangeTypes': json.loads(athlete.import_change_types_json) if athlete.import_change_types_json else [],
                 'importChangeDetails': json.loads(athlete.import_change_details_json) if athlete.import_change_details_json else [],
                 'statusBadges': _status_badges_for_athlete(type('A', (), {
@@ -964,6 +966,7 @@ def _build_room_booking_units():
                 'isAssigned': bool(athlete_booking),
                 'assignedBookingId': str(athlete_booking.id) if athlete_booking else None,
                 'assignedHotelId': str(athlete_booking.hotel_id) if athlete_booking else None,
+                'assignedHotelName': athlete_booking.hotel.name if athlete_booking and athlete_booking.hotel else None,
                 'assignedRoomTypeId': str(athlete_booking.room_type_id) if athlete_booking else None,
                 'assignedRoomNumber': athlete_booking.room_number if athlete_booking else None,
             })
@@ -988,6 +991,7 @@ def _build_room_booking_units():
             'assignmentWarnings': warnings,
             'assignedBookingId': str(shared_booking.id) if shared_booking and is_fully_assigned else None,
             'assignedHotelId': str(shared_booking.hotel_id) if shared_booking and is_fully_assigned else None,
+            'assignedHotelName': shared_booking.hotel.name if shared_booking and shared_booking.hotel and is_fully_assigned else None,
             'assignedRoomTypeId': str(shared_booking.room_type_id) if shared_booking and is_fully_assigned else None,
             'assignedRoomNumber': shared_booking.room_number if shared_booking and is_fully_assigned else None,
             'hasAnyAssigned': has_any_assigned,
@@ -1064,6 +1068,8 @@ def _build_assignment_planning_view():
                                     'lastname': occ.athlete.lastname,
                                     'discipline': occ.athlete.discipline,
                                     'gender': _normalize_gender(occ.athlete),
+                                    'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
+                                    'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
                                     'hasPendingReview': _has_pending_roomlist_review(occ.athlete),
                                     'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
                                     'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],

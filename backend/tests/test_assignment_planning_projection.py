@@ -141,6 +141,8 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         unit = planning['units']['assigned'][0]
         self.assertTrue(unit['isFullyAssigned'])
         self.assertEqual(unit['assignedBookingId'], booking_id)
+        self.assertEqual(unit['assignedHotelName'], 'Projection Hotel')
+        self.assertEqual(unit['occupants'][0]['assignedHotelName'], 'Projection Hotel')
         grid_bookings = [
             booking
             for hotel in planning['hotels']
@@ -149,6 +151,8 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         ]
         self.assertEqual(grid_bookings[0]['bookingId'], booking_id)
         self.assertEqual(grid_bookings[0]['roomNumber'], 'Zimmer 01')
+        self.assertEqual(grid_bookings[0]['occupants'][0]['arrivalDate'], '2027-03-10')
+        self.assertEqual(grid_bookings[0]['occupants'][0]['departureDate'], '2027-03-14')
 
     def test_pending_import_context_is_projected_into_assigned_booking(self):
         with app.app_context():
