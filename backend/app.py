@@ -1060,6 +1060,13 @@ def _build_assignment_planning_view():
                                     'athleteId': str(occ.athlete.id),
                                     'name': f'{occ.athlete.firstname} {occ.athlete.lastname}'.strip(),
                                     'nationCode': occ.athlete.nation_code,
+                                    'firstname': occ.athlete.firstname,
+                                    'lastname': occ.athlete.lastname,
+                                    'discipline': occ.athlete.discipline,
+                                    'gender': _normalize_gender(occ.athlete),
+                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete),
+                                    'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
+                                    'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
                                     'single_room_decision_id': str(occ.athlete.single_room_decision_id) if occ.athlete.single_room_decision_id else None,
                                 }

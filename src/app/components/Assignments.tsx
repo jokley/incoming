@@ -111,7 +111,9 @@ function ChangeBlocks({ changes, compact = false }: { changes: ImportChangeDetai
   return <div className="mt-2 space-y-2">{blocks.map(block => <div key={block.type} className="rounded-lg bg-[var(--ops-surface)]/60 p-3 text-xs"><b className="block text-sm">{block.title}</b><div className="mt-2 whitespace-pre-line"><small className="block uppercase text-[9px] opacity-70">Alt</small>{block.oldValue}</div><div className="my-1 text-[var(--ops-text-subtle)]" aria-hidden="true">↓</div><div className="whitespace-pre-line"><small className="block uppercase text-[9px] opacity-70">Neu</small>{block.newValue}</div></div>)}</div>;
 }
 
-function PersonChangeBlocks({ occupants, compact = false }: { occupants: RoomBookingUnit['occupants']; compact?: boolean }) {
+type ChangeOccupant = { athleteId: string; firstname: string; lastname: string; hasPendingReview: boolean; importChangeDetails: ImportChangeDetail[] };
+
+function PersonChangeBlocks({ occupants, compact = false }: { occupants: ChangeOccupant[]; compact?: boolean }) {
   const affected = occupants.filter(occupant => occupant.hasPendingReview && occupant.importChangeDetails.length > 0);
   return <div className="space-y-2">{affected.map(occupant => <section key={occupant.athleteId} aria-label={`Änderungen für ${occupant.firstname} ${occupant.lastname}`}>
     {affected.length > 1 && <div className="mb-1 text-xs font-extrabold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>}
@@ -236,6 +238,17 @@ export function Assignments() {
         setLoading(false);
       }
     }
+  };
+
+  const refreshOperationalState = async () => {
+    const [planningData, athletesData] = await Promise.all([
+      api.getAssignmentPlanningView(),
+      api.getAthletes(),
+      loadQuotaUsage(),
+    ]);
+    setPlanning(planningData);
+    setAthletes(athletesData);
+    window.dispatchEvent(new CustomEvent('operations:state-changed', { detail: { source: 'disposition' } }));
   };
 
   const loadQuotaUsage = async () => {
@@ -603,12 +616,11 @@ export function Assignments() {
     ]);
   };
 
-  const handleAcknowledgeImportChanges = async (unit: RoomBookingUnit) => {
+  const handleAcknowledgeImportChanges = async (unit: { occupants: ChangeOccupant[] }) => {
     try {
       setSaving(true);
       await Promise.all(unit.occupants.filter((occ) => occ.hasPendingReview).map((occ) => api.acknowledgeAthleteRoomlistChange(occ.athleteId)));
-      setSelected(null);
-      await refreshPlanningData();
+      await refreshOperationalState();
     } catch (err) {
       setError(extractErrorMessage(err, 'Prüfung konnte nicht gespeichert werden'));
     } finally {
@@ -1225,6 +1237,7 @@ function QueueUnitCard({
             </div>
           </div>
           {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
+          {unit.occupants.some(occupant => occupant.hasPendingReview) && <PersonChangeBlocks occupants={unit.occupants} compact />}
         </div>
         <div className="flex flex-col items-end gap-1">
           <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${workStatus === 'Erledigt' || workStatus === 'Bereit' ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]'}`}>
@@ -2361,7 +2374,7 @@ function DetailPanel({
   onUnassignOccupant: (bookingId: string, athleteId: string) => void;
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
   pendingAction: PendingAssignmentAction | null;
-  onAcknowledgeImportChanges: (unit: RoomBookingUnit) => void;
+  onAcknowledgeImportChanges: (unit: { occupants: ChangeOccupant[] }) => void;
   onShowDecision: (decisionId: string) => void;
 }) {
   if (!selectedUnit && !selectedBookingContext) {
@@ -2381,8 +2394,14 @@ function DetailPanel({
 
   if (selectedBookingContext) {
     const { booking, hotel, slot } = selectedBookingContext;
+    const pendingOccupants = booking.occupants.filter(occupant => occupant.hasPendingReview);
     return (
       <div className="space-y-5 p-5 sm:p-6" aria-busy={pendingAction?.bookingId === booking.bookingId}>
+        {pendingOccupants.length > 0 && <DetailSection icon={<AlertTriangle className="h-4 w-4" />} title="Disposition prüfen">
+          <p className="text-xs font-semibold text-[var(--ops-tone-warning-text)]">Importdaten weichen von der aktuellen Zimmerzuweisung ab.</p>
+          <PersonChangeBlocks occupants={booking.occupants} />
+          <button onClick={() => onAcknowledgeImportChanges(booking)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Disposition bestätigen</button>
+        </DetailSection>}
         <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (

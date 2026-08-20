@@ -1,7 +1,8 @@
 import os
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime
+import json
 
 
 database_url = os.environ.get('TEST_DATABASE_URL')
@@ -148,6 +149,40 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         ]
         self.assertEqual(grid_bookings[0]['bookingId'], booking_id)
         self.assertEqual(grid_bookings[0]['roomNumber'], 'Zimmer 01')
+
+    def test_pending_import_context_is_projected_into_assigned_booking(self):
+        with app.app_context():
+            athlete = self.athlete('Lina', 'Frei')
+            athlete.roomlist_changed_at = datetime(2027, 2, 1, 10, 0)
+            athlete.import_change_types_json = json.dumps(['DATE_CHANGED'])
+            athlete.import_change_details_json = json.dumps([
+                {'type': 'DATE_CHANGED', 'field': 'arrivalDate', 'old': '2027-03-11', 'new': '2027-03-10'},
+            ])
+            db.session.add(athlete)
+            db.session.flush()
+            booking = RoomBooking(
+                hotel_id=Hotel.query.one().id,
+                room_type_id=RoomType.query.one().id,
+                room_number='Slot 01',
+                check_in_date=date(2027, 3, 11),
+                check_out_date=date(2027, 3, 14),
+            )
+            db.session.add(booking)
+            db.session.flush()
+            db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete.id))
+            db.session.commit()
+
+        planning = self.planning()
+        grid_booking = next(
+            booking
+            for hotel in planning['hotels']
+            for slot in hotel['slots']
+            for booking in slot['bookings']
+        )
+        occupant = grid_booking['occupants'][0]
+        self.assertTrue(occupant['hasPendingReview'])
+        self.assertEqual(occupant['importChangeTypes'], ['DATE_CHANGED'])
+        self.assertEqual(occupant['importChangeDetails'][0]['old'], '2027-03-11')
 
     def test_room_label_survives_unassign_and_replanning(self):
         with app.app_context():
