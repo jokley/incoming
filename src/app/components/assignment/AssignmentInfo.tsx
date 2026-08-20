@@ -1,0 +1,81 @@
+import { AlertTriangle, CheckCircle2, Clock3, Hotel, RefreshCw, Users } from 'lucide-react';
+import type { ImportChangeDetail, ImportChangeType } from '../../types';
+import { StatusChip } from '../../design-system';
+
+export type AssignmentChangeSubject = {
+  athleteId: string;
+  firstname: string;
+  lastname: string;
+  hasPendingReview: boolean;
+  importChangeDetails: ImportChangeDetail[];
+};
+
+const CHANGE_TITLES: Record<ImportChangeType, string> = {
+  NEW_ATHLETE: 'Person', DATE_CHANGED: 'Aufenthalt', ROOMMATE_CHANGED: 'Zimmerpartner',
+  ROOM_DEMAND_CHANGED: 'Zimmerart', EVENT_CHANGED: 'Event', NATION_CHANGED: 'Nation', HOTEL_CHANGED: 'Hotel',
+};
+
+const formatValue = (value?: string | null, field = '') => {
+  if (!value) return '—';
+  if (/date|arrival|departure|check.?in|check.?out|from|until/i.test(field)) {
+    return new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
+  }
+  return value;
+};
+
+const partOrder = (field: string) => /arrival|check.?in|from/i.test(field) ? 0 : /departure|check.?out|until|to/i.test(field) ? 1 : 2;
+
+export function groupAssignmentChanges(changes: ImportChangeDetail[]) {
+  const groups = new Map<ImportChangeType, ImportChangeDetail[]>();
+  changes.forEach(change => groups.set(change.type, [...(groups.get(change.type) || []), change]));
+  return [...groups].map(([type, details]) => {
+    const ordered = [...details].sort((a, b) => partOrder(a.field) - partOrder(b.field));
+    const separator = type === 'DATE_CHANGED' ? ' – ' : type === 'ROOMMATE_CHANGED' ? ' + ' : ' · ';
+    return { type, title: CHANGE_TITLES[type], oldValue: ordered.map(item => formatValue(item.old, item.field)).join(separator), newValue: ordered.map(item => formatValue(item.new, item.field)).join(separator) };
+  });
+}
+
+/** The single old-to-new visual language for import and assignment workspaces. */
+export function PendingChanges({ changes, compact = false, className = '' }: { changes: ImportChangeDetail[]; compact?: boolean; className?: string }) {
+  const blocks = groupAssignmentChanges(changes);
+  if (!blocks.length) return null;
+  return <div className={`${compact ? 'space-y-1' : 'space-y-2'} ${className}`}>
+    {blocks.map(block => <div key={block.type} className={`rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] ${compact ? 'px-2 py-1.5' : 'p-3'}`}>
+      <div className="mb-1 flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wide text-[var(--ops-tone-warning-text)]"><RefreshCw className="h-3 w-3" />{block.title} geändert</div>
+      <div className={`grid items-center ${compact ? 'grid-cols-[1fr_auto_1fr] gap-1 text-[10px]' : 'grid-cols-[1fr_auto_1fr] gap-3 text-xs'}`}>
+        <div className="min-w-0"><span className="block text-[9px] font-bold uppercase text-[var(--ops-text-muted)]">Alt</span><span className="block truncate font-mono text-[var(--ops-text-subtle)]" title={block.oldValue}>{block.oldValue}</span></div>
+        <span aria-hidden="true" className="font-bold text-[var(--ops-warning)]">→</span>
+        <div className="min-w-0"><span className="block text-[9px] font-bold uppercase text-[var(--ops-tone-warning-text)]">Neu</span><span className="block truncate font-mono font-bold text-[var(--ops-text)]" title={block.newValue}>{block.newValue}</span></div>
+      </div>
+    </div>)}
+  </div>;
+}
+
+export function PersonPendingChanges({ occupants, compact = false }: { occupants: AssignmentChangeSubject[]; compact?: boolean }) {
+  const affected = occupants.filter(item => item.hasPendingReview && item.importChangeDetails.length);
+  return <div className="space-y-2">{affected.map(item => <section key={item.athleteId} aria-label={`Änderungen für ${item.firstname} ${item.lastname}`}>
+    {affected.length > 1 && <div className="mb-1 text-[10px] font-extrabold text-[var(--ops-text)]">{item.firstname} {item.lastname}</div>}
+    <PendingChanges changes={item.importChangeDetails} compact={compact} />
+  </section>)}</div>;
+}
+
+export function StaySummary({ arrival, departure, compact = false }: { arrival?: string | null; departure?: string | null; compact?: boolean }) {
+  return <div className={`grid grid-cols-2 gap-2 ${compact ? 'text-[10px]' : 'text-xs'}`}>
+    <div><span className="block text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Anreise</span><span className="font-mono font-semibold text-[var(--ops-text)]">{formatValue(arrival, 'arrivalDate')}</span></div>
+    <div><span className="block text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Abreise</span><span className="font-mono font-semibold text-[var(--ops-text)]">{formatValue(departure, 'departureDate')}</span></div>
+  </div>;
+}
+
+export type AssignmentStatus = 'review' | 'import-changed' | 'roommate-changed' | 'stay-changed' | 'hotel-changed' | 'room-type-changed' | 'open' | 'partial' | 'assigned';
+const STATUS = {
+  review: { label: 'Disposition prüfen', tone: 'warning', icon: AlertTriangle },
+  'import-changed': { label: 'Import geändert', tone: 'warning', icon: RefreshCw },
+  'roommate-changed': { label: 'Zimmerpartner geändert', tone: 'warning', icon: Users },
+  'stay-changed': { label: 'Aufenthalt geändert', tone: 'warning', icon: Clock3 },
+  'hotel-changed': { label: 'Hotel geändert', tone: 'warning', icon: Hotel },
+  'room-type-changed': { label: 'Zimmerart geändert', tone: 'warning', icon: RefreshCw },
+  open: { label: 'Disposition offen', tone: 'warning', icon: Clock3 },
+  partial: { label: 'Teilweise disponiert', tone: 'info', icon: Clock3 },
+  assigned: { label: 'Disponiert', tone: 'success', icon: CheckCircle2 },
+} as const;
+export function AssignmentStatusChip({ status }: { status: AssignmentStatus }) { const item = STATUS[status]; const Icon = item.icon; return <StatusChip tone={item.tone}><Icon className="mr-1 h-3 w-3" />{item.label}</StatusChip>; }
