@@ -1798,11 +1798,11 @@ function HotelDetailView({
                         }`}
                       >
                         {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[var(--ops-surface)]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
-                        <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
                           <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
                             {entry.slot.roomNumber || `#${index + 1}`}
                           </span>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
@@ -2282,7 +2282,7 @@ function DetailPanel({
           <p className="text-xs font-semibold text-[var(--ops-tone-warning-text)]">Importdaten weichen von der aktuellen Zimmerzuweisung ab.</p>
           <button onClick={() => onAcknowledgeImportChanges(booking)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Disposition bestätigen</button>
         </DetailSection>}
-        <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
+        <DetailSection icon={<Users className="h-4 w-4" />} title="Personen">
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (
               <OccupantCard
@@ -2403,7 +2403,7 @@ function DetailPanel({
         </div>
       </div>
       <div className="border-b border-[var(--ops-divider)] px-4 py-4">
-        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Bewohner</div>
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Personen</div>
         <div className="space-y-2">
           {selectedUnit.occupants.map((occupant) => (
             <OccupantCard
