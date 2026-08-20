@@ -1110,10 +1110,15 @@ function QueueUnitCard({
   onQuickAssign: (unitId: string, athleteIds: string[]) => void;
   pending: boolean;
 }) {
-  const primaryOccupant = unit.occupants[0];
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
   const isReadOnly = unit.isFullyAssigned;
-  const discipline = primaryOccupant?.discipline || '—';
+  const contextValues = (values: Array<string | null | undefined>, fallback: string) =>
+    Array.from(new Set(values.map(value => value?.trim()).filter((value): value is string => Boolean(value)))).join(' + ') || fallback;
+  const nations = contextValues(unit.occupants.map(occupant => occupant.nationCode), unit.nationCode || '—');
+  const disciplines = contextValues(unit.occupants.map(occupant => occupant.discipline), '—');
+  const roles = unit.occupants.map(occupant => occupant.function?.trim() || 'Athlet');
+  const roleContext = contextValues(roles, 'Athlet');
+  const hasMixedRoles = new Set(roles).size > 1;
   const cardBase = highlighted
     ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
     : selected
@@ -1131,7 +1136,7 @@ function QueueUnitCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[11px] font-semibold text-[var(--ops-text-subtle)]">
-            {unit.nationCode || '—'} · {discipline} · {primaryOccupant?.function || 'Athlet'}
+            {nations} · {disciplines} · {roleContext}
           </div>
           <div className="mt-1 flex items-center gap-2 text-[10px] text-[var(--ops-text-subtle)]">
             <b>{unit.roomTypeLabel || '—'}</b>
@@ -1159,6 +1164,7 @@ function QueueUnitCard({
           pending={pending}
           fallbackArrival={unit.checkInDate}
           fallbackDeparture={unit.checkOutDate}
+          showRole={hasMixedRoles}
         />)}
         {unit.occupants.length >= 2 && (
           <button
@@ -1192,6 +1198,7 @@ function QueueOccupantActionRow({
   pending,
   fallbackArrival,
   fallbackDeparture,
+  showRole,
 }: {
   occupant: RoomBookingUnit['occupants'][number];
   isDragging: boolean;
@@ -1203,6 +1210,7 @@ function QueueOccupantActionRow({
   pending: boolean;
   fallbackArrival?: string | null;
   fallbackDeparture?: string | null;
+  showRole: boolean;
 }) {
   return (
     <OccupantCard
@@ -1210,6 +1218,9 @@ function QueueOccupantActionRow({
       status={occupant.hasPendingReview ? 'review' : occupant.isAssigned ? 'assigned' : 'open'}
       fallbackArrival={fallbackArrival}
       fallbackDeparture={fallbackDeparture}
+      hideNation
+      hideDiscipline
+      hideRole={!showRole}
       className={isDragging ? 'opacity-70' : ''}
       footer={<><div className="flex items-center gap-1.5">
         {occupant.single_room_status !== 'NONE' && <SingleRoomStatusBadge status={occupant.single_room_status} />}
