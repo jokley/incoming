@@ -761,8 +761,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
         if not person or normalize_string(person.get('function')) == 'athlete':
             continue
         booking = membership.room_booking
-        projected.append({**person, 'countsAsSingle': bool(
-            booking and (booking.counts_as_single or (booking.room_type and booking.room_type.max_persons == 1)))})
+        projected.append({**person, 'countsAsSingle': bool(booking and booking.counts_as_single)})
 
     requested_rows = evaluate_quota_usage(roster, requested)
     projected_rows = evaluate_quota_usage(roster, projected)
