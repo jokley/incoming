@@ -12,7 +12,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
-  Clock,
   FileCheck2,
   Eye,
   Flag,
@@ -1799,11 +1798,11 @@ function HotelDetailView({
                         }`}
                       >
                         {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[var(--ops-surface)]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
-                        <div className="flex min-w-0 items-start gap-3">
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
                           <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
                             {entry.slot.roomNumber || `#${index + 1}`}
                           </span>
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
@@ -1824,6 +1823,9 @@ function HotelDetailView({
                                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                                 fallbackArrival={entry.booking.checkInDate}
                                 fallbackDeparture={entry.booking.checkOutDate}
+                                hideNation
+                                hideDiscipline
+                                hideRole={!occupant.function || occupant.function === 'Athlet'}
                                 footer={occupant.hasPendingReview ? <PendingChanges changes={occupant.importChangeDetails} compact /> : undefined}
                               />)}
                             </div>
@@ -2280,7 +2282,7 @@ function DetailPanel({
           <p className="text-xs font-semibold text-[var(--ops-tone-warning-text)]">Importdaten weichen von der aktuellen Zimmerzuweisung ab.</p>
           <button onClick={() => onAcknowledgeImportChanges(booking)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Disposition bestätigen</button>
         </DetailSection>}
-        <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
+        <DetailSection icon={<Users className="h-4 w-4" />} title="Personen">
           <div className="space-y-2">
             {booking.occupants.map((occupant) => (
               <OccupantCard
@@ -2289,6 +2291,9 @@ function DetailPanel({
                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                 fallbackArrival={booking.checkInDate}
                 fallbackDeparture={booking.checkOutDate}
+                hideNation
+                hideDiscipline
+                hideRole={!occupant.function || occupant.function === 'Athlet'}
                 footer={<><div className="flex items-start justify-between gap-2">
                   <div><SingleRoomStatusBadge status={occupant.single_room_status} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
@@ -2305,30 +2310,25 @@ function DetailPanel({
             ))}
           </div>
         </DetailSection>
-        <DetailSection icon={<Bed className="h-4 w-4" />} title="Zimmerart">
-          <div className="flex items-center justify-between gap-3 text-xs"><strong>{slot.roomTypeName}</strong><span className="text-[var(--ops-text-muted)]">{booking.occupants.length} / {booking.capacity || 0} belegt</span></div>
-        </DetailSection>
         <DetailSection icon={<Building2 className="h-4 w-4" />} title="Hotel">
-          <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
-            <div className="flex items-center gap-2.5">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-              <div>
-                <div className="text-xs font-bold text-emerald-300">{hotel.hotelName}</div>
-                <div className="mt-0.5 text-[10px] font-mono text-emerald-500">
-                  {hotel.location || '—'} · {slot.roomTypeName} · {slot.roomNumber || `Zimmer ${String(slot.slotIndex).padStart(2, '0')}`}
-                </div>
+          <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold text-[var(--ops-text)]">{hotel.hotelName}</div>
+                <div className="mt-1 text-xs text-[var(--ops-text-muted)]">{hotel.location || '—'}</div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-xs font-bold text-[var(--ops-text)]">{slot.roomNumber || `Zimmer ${String(slot.slotIndex).padStart(2, '0')}`}</div>
+                <div className="mt-1 text-[10px] font-semibold text-[var(--ops-text-muted)]">{slot.roomTypeName} · {booking.occupants.length} / {booking.capacity || 0} belegt</div>
               </div>
             </div>
-          </div>
-          {(booking.capacity || 0) === 2 && (
-            <div className="mt-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs font-semibold text-[var(--ops-assignment-text-body)]">
-              {booking.countsAsSingle ? 'DZ wird aktuell exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--ops-divider)] pt-2 text-[10px]">
+              <span className="font-semibold text-[var(--ops-text-muted)]">Hotelkontingent</span>
+              <span className="font-mono font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</span>
             </div>
-          )}
-        </DetailSection>
-        <DetailSection icon={<Clock className="h-4 w-4" />} title="Hotelkontingent">
-          <div className="font-mono text-xs font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</div>
-          <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
+            {(booking.capacity || 0) === 2 && <div className="mt-2 text-[10px] font-semibold text-[var(--ops-text-subtle)]">{booking.countsAsSingle ? 'DZ wird exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}</div>}
+            <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
+          </div>
         </DetailSection>
         <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
           {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
@@ -2403,7 +2403,7 @@ function DetailPanel({
         </div>
       </div>
       <div className="border-b border-[var(--ops-divider)] px-4 py-4">
-        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Bewohner</div>
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Personen</div>
         <div className="space-y-2">
           {selectedUnit.occupants.map((occupant) => (
             <OccupantCard
@@ -2412,6 +2412,9 @@ function DetailPanel({
               status={occupant.hasPendingReview ? 'review' : occupant.isAssigned ? 'assigned' : 'open'}
               fallbackArrival={selectedUnit.checkInDate}
               fallbackDeparture={selectedUnit.checkOutDate}
+              hideNation
+              hideDiscipline
+              hideRole={!occupant.function || occupant.function === 'Athlet'}
               footer={<>{occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />}{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
             />
           ))}
