@@ -11,6 +11,7 @@ import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, quotaViolationLabel, type OperationsTask } from './OperationsDecisionDialog';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
+import { AssignmentStatusChip } from './assignment/AssignmentInfo';
 
 const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
 type WorkflowStep = { id: string; label: string; complete: boolean; current: boolean };
@@ -119,7 +120,7 @@ function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
     [categories.hotelAssignmentAffected?.count || 0, 'Hotelzuweisungen betroffen'],
   ] as const;
   const disposition = categories.dispositionAffected?.count || 0;
-  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Erkannte Änderungen" subtitle="Kompakte Freigabeinformation – die fachlichen Details folgen in der Disposition"/><div className="mt-3 flex flex-wrap gap-2">{items.filter(([count])=>count>0).map(([count,label])=><StatusChip key={label} tone="neutral">{count} {label}</StatusChip>)}{disposition>0&&<StatusChip tone="warning">Disposition erforderlich</StatusChip>}{items.every(([count])=>count===0)&&<StatusChip tone="success">Keine operativen Änderungen</StatusChip>}</div></ContentCard>;
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Erkannte Änderungen" subtitle="Dieselbe Statussprache führt von der Importprüfung direkt in die Disposition."/><div className="mt-3 flex flex-wrap gap-2">{items.filter(([count])=>count>0).map(([count,label])=><StatusChip key={label} tone="neutral">{count} {label}</StatusChip>)}{disposition>0&&<AssignmentStatusChip status="review" />}{items.every(([count])=>count===0)&&<StatusChip tone="success">Keine operativen Änderungen</StatusChip>}</div></ContentCard>;
 }
 
 function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {

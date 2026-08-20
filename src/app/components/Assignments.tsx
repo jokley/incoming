@@ -25,6 +25,7 @@ import {
 } from 'lucide-react';
 
 import { ImportConflictNotice } from './ImportConflictNotice';
+import { AssignmentStatusChip, PersonPendingChanges, PendingChanges, StaySummary } from './assignment/AssignmentInfo';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
@@ -43,7 +44,6 @@ import type {
   Athlete,
   RoomBookingUnit,
   ImportChangeType,
-  ImportChangeDetail,
 } from '../types';
 
 type AppView = 'dispatch' | 'quotas';
@@ -84,53 +84,6 @@ const IMPORT_CHANGE_LABELS: Record<ImportChangeType, string> = {
   HOTEL_CHANGED: 'Hotel geändert',
 };
 
-const compactValue = (value?: string | null, field?: string) => {
-  if (!value) return '—';
-  if (field?.toLowerCase().includes('date')) return new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
-  return value;
-};
-
-type ChangeBlock = { type: ImportChangeType; title: string; oldValue: string; newValue: string };
-const changeTitle = (type: ImportChangeType) => ({ DATE_CHANGED: 'Aufenthalt', ROOMMATE_CHANGED: 'Zimmerpartner', ROOM_DEMAND_CHANGED: 'Zimmerart', EVENT_CHANGED: 'Event', NATION_CHANGED: 'Nation', HOTEL_CHANGED: 'Hotel', NEW_ATHLETE: 'Athlet' })[type];
-const changePartOrder = (field: string) => /arrival|check.?in|from/i.test(field) ? 0 : /departure|check.?out|until|to/i.test(field) ? 1 : 2;
-
-/** Projects technical field changes into extensible, operator-facing business blocks. */
-function groupImportChanges(changes: ImportChangeDetail[]): ChangeBlock[] {
-  const groups = new Map<ImportChangeType, ImportChangeDetail[]>();
-  changes.forEach(change => groups.set(change.type, [...(groups.get(change.type) || []), change]));
-  return [...groups].map(([type, details]) => {
-    const ordered = [...details].sort((a, b) => changePartOrder(a.field) - changePartOrder(b.field));
-    const separator = type === 'DATE_CHANGED' ? ' – ' : type === 'ROOMMATE_CHANGED' ? '\n+\n' : ' · ';
-    return { type, title: changeTitle(type), oldValue: ordered.map(change => compactValue(change.old, change.field)).join(separator), newValue: ordered.map(change => compactValue(change.new, change.field)).join(separator) };
-  });
-}
-
-function ChangeBlocks({ changes, compact = false }: { changes: ImportChangeDetail[]; compact?: boolean }) {
-  const blocks = groupImportChanges(changes);
-  if (compact) return <div className="mb-2 space-y-1 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]/60 p-2">{blocks.slice(0, 2).map(block => <div key={block.type} className="text-[10px]"><b className="block text-[var(--ops-tone-warning-text)]">{block.title}</b><span className="whitespace-pre-line text-[var(--ops-text-muted)]">{block.oldValue} <span aria-hidden="true">↓</span> {block.newValue}</span></div>)}</div>;
-  return <div className="mt-2 space-y-2">{blocks.map(block => <div key={block.type} className="rounded-lg bg-[var(--ops-surface)]/60 p-3 text-xs"><b className="block text-sm">{block.title}</b><div className="mt-2 whitespace-pre-line"><small className="block uppercase text-[9px] opacity-70">Alt</small>{block.oldValue}</div><div className="my-1 text-[var(--ops-text-subtle)]" aria-hidden="true">↓</div><div className="whitespace-pre-line"><small className="block uppercase text-[9px] opacity-70">Neu</small>{block.newValue}</div></div>)}</div>;
-}
-
-type ChangeOccupant = { athleteId: string; firstname: string; lastname: string; hasPendingReview: boolean; importChangeDetails: ImportChangeDetail[] };
-
-function PersonChangeBlocks({ occupants, compact = false }: { occupants: ChangeOccupant[]; compact?: boolean }) {
-  const affected = occupants.filter(occupant => occupant.hasPendingReview && occupant.importChangeDetails.length > 0);
-  return <div className="space-y-2">{affected.map(occupant => <section key={occupant.athleteId} aria-label={`Änderungen für ${occupant.firstname} ${occupant.lastname}`}>
-    {affected.length > 1 && <div className="mb-1 text-xs font-extrabold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>}
-    <ChangeBlocks compact={compact} changes={occupant.importChangeDetails}/>
-  </section>)}</div>;
-}
-
-function ChangedStayDates({ occupant, fallbackArrival, fallbackDeparture }: { occupant: RoomBookingUnit['occupants'][number]; fallbackArrival?: string | null; fallbackDeparture?: string | null }) {
-  const dateChanges = occupant.importChangeDetails.filter(change => change.type === 'DATE_CHANGED');
-  const find = (pattern: RegExp) => dateChanges.find(change => pattern.test(change.field));
-  const arrival = find(/arrival|check.?in|from/i), departure = find(/departure|check.?out|until|to/i);
-  const DateValue = ({ label, change, fallback }: { label: string; change?: ImportChangeDetail; fallback?: string | null }) => <div className="min-w-0">
-    <div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div>
-    {change ? <div className="mt-1 rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-1 text-[10px] font-mono"><span className="text-[9px] font-bold uppercase">Alt</span> {compactValue(change.old, change.field)} <span aria-hidden="true">↓</span> <span className="text-[9px] font-bold uppercase">Neu</span> {compactValue(change.new, change.field)}</div> : <div className="mt-1 font-mono text-[11px]">{formatShortDate(fallback)}</div>}
-  </div>;
-  return <div className="mt-2 grid grid-cols-2 gap-2"><DateValue label="Anreise" change={arrival} fallback={fallbackArrival}/><DateValue label="Abreise" change={departure} fallback={fallbackDeparture}/></div>;
-}
 
 export function Assignments() {
   const permissions = usePermissions();
@@ -1205,7 +1158,7 @@ function QueueUnitCard({
   const partnerOccupant = unit.occupants[1] ?? null;
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
   const isReadOnly = unit.isFullyAssigned;
-  const workStatus = isReadOnly ? 'Erledigt' : unit.hasAnyAssigned ? 'Teilweise' : hasPairWarning ? 'Offen' : 'Bereit';
+  const workStatus = isReadOnly ? 'assigned' : unit.hasAnyAssigned ? 'partial' : 'open';
   const discipline = primaryOccupant?.discipline || '—';
   const cardBase = highlighted
     ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
@@ -1220,7 +1173,7 @@ function QueueUnitCard({
       className={`relative w-full cursor-pointer rounded-xl border px-2.5 py-2 text-left transition-all ${cardBase} ${dragging || pending ? 'opacity-60' : ''}`}
     >
       {pending && <div className="absolute right-2 top-2 flex items-center gap-1 rounded-md bg-[var(--ops-surface)] px-2 py-1 text-[9px] font-semibold text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3 w-3 animate-spin" /> Verarbeitung...</div>}
-      {unit.occupants.some((occ) => occ.hasPendingReview) && <span className="mb-1 inline-flex rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ops-tone-warning-text)]">Disposition prüfen</span>}
+      {unit.occupants.some((occ) => occ.hasPendingReview) && <div className="mb-1"><AssignmentStatusChip status="review" /></div>}
       {unit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`mb-1.5 flex items-start gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>{warning.message}</div>)}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
@@ -1230,6 +1183,10 @@ function QueueUnitCard({
           <div className="mt-0.5 text-[11px] font-semibold text-[var(--ops-text-subtle)]">
             {unit.nationCode || '—'} · {discipline}
           </div>
+          <div className="mt-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-2 py-1.5">
+            <StaySummary arrival={unit.checkInDate} departure={unit.checkOutDate} compact />
+            <div className="mt-1.5 grid grid-cols-2 gap-2 text-[10px]"><div><span className="block text-[9px] font-bold uppercase text-[var(--ops-text-muted)]">Zimmerart</span><b>{unit.roomTypeLabel || '—'}</b></div><div><span className="block text-[9px] font-bold uppercase text-[var(--ops-text-muted)]">Hotel</span><b>{unit.assignedHotelId ? 'Bereits zugewiesen' : 'Noch offen'}</b></div></div>
+          </div>
           <div className="mt-2 border-t border-[var(--ops-divider)] pt-2">
             <div className="text-[9px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Zimmerpartner</div>
             <div className="mt-0.5 truncate text-xs font-semibold text-[var(--ops-text)]">
@@ -1237,12 +1194,10 @@ function QueueUnitCard({
             </div>
           </div>
           {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
-          {unit.occupants.some(occupant => occupant.hasPendingReview) && <PersonChangeBlocks occupants={unit.occupants} compact />}
+          {unit.occupants.some(occupant => occupant.hasPendingReview) && <PersonPendingChanges occupants={unit.occupants} compact />}
         </div>
         <div className="flex flex-col items-end gap-1">
-          <span className={`rounded-full border px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-wide ${workStatus === 'Erledigt' || workStatus === 'Bereit' ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]'}`}>
-            {workStatus}
-          </span>
+          <AssignmentStatusChip status={workStatus} />
         </div>
       </div>
 
@@ -1342,7 +1297,7 @@ function QueueOccupantActionRow({
         <div>
           <div className="text-[11px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">{title}</div>
           <div className="text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>
-          <ChangedStayDates occupant={occupant} fallbackArrival={fallbackArrival} fallbackDeparture={fallbackDeparture}/>
+          <StaySummary arrival={fallbackArrival} departure={fallbackDeparture} compact />
         </div>
         <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-[var(--ops-assignment-text-body)]'}`}>
           {occupant.isAssigned ? 'zugewiesen' : 'offen'}
@@ -1895,6 +1850,7 @@ function HotelDetailView({
                           (entry.booking.capacity || 0) > entry.booking.occupants.length &&
                           entry.booking.occupants.length >= 1;
                         const isBookingDropTarget = dragOverBookingId === entry.booking.bookingId;
+                        const pendingChanges = entry.booking.occupants.flatMap(occupant => occupant.hasPendingReview ? occupant.importChangeDetails : []);
                         return (
                       <button
                         key={entry.booking.bookingId}
@@ -1935,6 +1891,7 @@ function HotelDetailView({
                             <div className="mt-0.5 truncate text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">
                               {entry.booking.occupants.map((occ) => occ.name).join(' · ')}
                             </div>
+                            <div className="mt-1 flex flex-wrap gap-1"><AssignmentStatusChip status={pendingChanges.length ? 'review' : 'assigned'} /></div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
                               {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
@@ -1945,9 +1902,8 @@ function HotelDetailView({
                                 </span>
                               )}
                             </div>
-                            <div className="mt-1.5 text-xs font-mono font-semibold text-[var(--ops-text-subtle)]">
-                              {entry.booking.checkInDate || '—'} → {entry.booking.checkOutDate || '—'}
-                            </div>
+                            <div className="mt-1.5 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1"><StaySummary arrival={entry.booking.checkInDate} departure={entry.booking.checkOutDate} compact /></div>
+                            {pendingChanges.length > 0 && <PendingChanges changes={pendingChanges} compact className="mt-1.5" />}
                           </div>
                         </div>
                       </button>
@@ -2399,7 +2355,7 @@ function DetailPanel({
       <div className="space-y-5 p-5 sm:p-6" aria-busy={pendingAction?.bookingId === booking.bookingId}>
         {pendingOccupants.length > 0 && <DetailSection icon={<AlertTriangle className="h-4 w-4" />} title="Disposition prüfen">
           <p className="text-xs font-semibold text-[var(--ops-tone-warning-text)]">Importdaten weichen von der aktuellen Zimmerzuweisung ab.</p>
-          <PersonChangeBlocks occupants={booking.occupants} />
+          <PersonPendingChanges occupants={booking.occupants} />
           <button onClick={() => onAcknowledgeImportChanges(booking)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Disposition bestätigen</button>
         </DetailSection>}
         <DetailSection icon={<Users className="h-4 w-4" />} title="Bewohner">
@@ -2519,7 +2475,7 @@ function DetailPanel({
       {pendingChanges.length > 0 && (
         <div className="m-4 mb-0 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-100">
           <div className="text-xs font-bold">Importänderungen</div>
-          <PersonChangeBlocks occupants={selectedUnit.occupants}/>{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).length === 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map(change => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>}
+          <PersonPendingChanges occupants={selectedUnit.occupants}/>{selectedUnit.occupants.filter(occ => occ.hasPendingReview).flatMap(occ => occ.importChangeDetails || []).length === 0 && <ul className="mt-2 list-disc space-y-1 pl-4 text-xs">{pendingChanges.map(change => <li key={change}>{IMPORT_CHANGE_LABELS[change]}</li>)}</ul>}
           <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
         </div>
       )}
@@ -2562,7 +2518,7 @@ function DetailPanel({
                     {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
                   </div>
                   <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
-                  <ChangedStayDates occupant={occupant} fallbackArrival={selectedUnit.checkInDate} fallbackDeparture={selectedUnit.checkOutDate}/>
+                  <StaySummary arrival={selectedUnit.checkInDate} departure={selectedUnit.checkOutDate} compact />
                 </div>
                 <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
                   {occupant.isAssigned ? 'zugewiesen' : 'offen'}
