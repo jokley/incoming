@@ -110,6 +110,8 @@ export interface Athlete {
   departureNeedTransportation?: boolean;
 
   roomType?: string | null;
+  arrivalDate?: string | null;
+  departureDate?: string | null;
   sharedWithName?: string | null;
   lateCheckout?: boolean;
   firstMeal?: string | null;
@@ -216,6 +218,7 @@ export interface RoomBookingUnitOccupant {
   isAssigned?: boolean;
   assignedBookingId?: string | null;
   assignedHotelId?: string | null;
+  assignedHotelName?: string | null;
   assignedRoomTypeId?: string | null;
   assignedRoomNumber?: string | null;
 }
@@ -242,6 +245,7 @@ export interface RoomBookingUnit {
   assignmentWarnings: RoomBookingUnitWarning[];
   assignedBookingId?: string | null;
   assignedHotelId?: string | null;
+  assignedHotelName?: string | null;
   assignedRoomTypeId?: string | null;
   assignedRoomNumber?: string | null;
   hasAnyAssigned?: boolean;
@@ -271,6 +275,8 @@ export interface AssignmentGridBooking {
     lastname: string;
     discipline?: string | null;
     gender?: string | null;
+    arrivalDate?: string | null;
+    departureDate?: string | null;
     hasPendingReview: boolean;
     importChangeTypes: ImportChangeType[];
     importChangeDetails: ImportChangeDetail[];
