@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router';
 import { Boxes, Building2, Check, ContactRound, Download, FileSpreadsheet, Minus, NotebookPen, Search, Users } from 'lucide-react';
 import { api } from '../services/api';
 import type { Athlete, Hotel, RoomBooking } from '../types';
+import type { OfficialQuotaUsage } from '../services/fisRules';
 import { ContentCard, EmptyState, ErrorState, LoadingState, OpsButton, PageHeader, SortableTableHead, SplitPageLayout, StatusChip, Toolbar, sortTableRows, type SortState } from '../design-system';
 import { createContingentRows, createHotelContactRows, createListRows, filterContingentRows, filterListRows, groupListRows, type ContingentFilters, type ContingentRow, type HotelContactRow, type ListFilters, type ListKind, type ListRow } from '../lists/listEngine';
 import { exportContingentsExcel, exportExcel, exportHotelOverviewExcel } from '../lists/listExports';
@@ -26,7 +27,7 @@ function GroupSummary({ group, kind }: { group: Group; kind: ListKind }) {
   const roomRows = new Map<string, ListRow>();
   rows.forEach(row => row.assigned && roomRows.set(`${row.hotel}/${row.room}`, row));
   const counts = { EZ: 0, DZ: 0, APP: 0 };
-  roomRows.forEach(row => { const code = roomCode(row.roomType); if (code in counts) counts[code as keyof typeof counts] += 1; });
+  roomRows.forEach(row => { const code = row.quotaEvaluation === 'EZ' ? 'EZ' : roomCode(row.roomType); if (code in counts) counts[code as keyof typeof counts] += 1; });
   const dates = rows.flatMap(row => [row.arrival, row.departure]).filter(Boolean).sort();
   return <div className="flex flex-wrap items-center gap-x-2.5 text-[10px] text-[var(--ops-text-muted)]"><span>{roomRows.size} Zimmer</span>{Object.entries(counts).map(([code, count]) => count > 0 && <span key={code}>{count} {code}</span>)}{dates.length > 0 && <span>{formatDate(dates[0])}–{formatDate(dates.at(-1)!)}</span>}</div>;
 }
@@ -112,11 +113,11 @@ export function Lists() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<ViewKind>('hotels');
   const [filters, setFilters] = useState(initialFilters);
-  const [data, setData] = useState<{ athletes: Athlete[]; bookings: RoomBooking[]; hotels: Hotel[] } | null>(null);
+  const [data, setData] = useState<{ athletes: Athlete[]; bookings: RoomBooking[]; hotels: Hotel[]; quotaUsage: OfficialQuotaUsage[] } | null>(null);
   const [error, setError] = useState(false);
-  useEffect(() => { Promise.all([api.getAthletes(), api.getRoomAssignments(), api.getHotels()]).then(([athletes, bookings, hotels]) => setData({ athletes, bookings, hotels })).catch(() => setError(true)); }, []);
+  useEffect(() => { Promise.all([api.getAthletes(), api.getRoomAssignments(), api.getHotels(), api.getOfficialQuotaUsage()]).then(([athletes, bookings, hotels, quotaUsage]) => setData({ athletes, bookings, hotels, quotaUsage })).catch(() => setError(true)); }, []);
 
-  const allRows = useMemo(() => data ? createListRows(data.athletes, data.bookings, data.hotels) : [], [data]);
+  const allRows = useMemo(() => data ? createListRows(data.athletes, data.bookings, data.hotels, data.quotaUsage) : [], [data]);
   const rows = useMemo(() => filterListRows(allRows, kind === 'hotelContacts' ? 'hotels' : kind, filters), [allRows, kind, filters]);
   const groups = useMemo(() => groupListRows(rows, kind === 'hotelContacts' ? 'hotels' : kind), [rows, kind]);
   const displayedRows = useMemo(() => groups.flatMap(group => group.rows), [groups]);
