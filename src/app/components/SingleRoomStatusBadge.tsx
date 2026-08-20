@@ -1,13 +1,13 @@
-import { BedSingle, CircleCheck } from 'lucide-react';
+import { BedSingle } from 'lucide-react';
 import { semanticToneClasses } from '../design-system/components/primitives';
 
 export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
 
 const statusPresentation = {
   NONE: { label: '', Icon: BedSingle, className: '' },
-  IN_QUOTA: { label: 'Einzelzimmer innerhalb Quote', Icon: BedSingle, className: semanticToneClasses.info },
-  APPROVED_EXTRA: { label: 'Einzelzimmer – Mehrpreis genehmigt', Icon: CircleCheck, className: semanticToneClasses.success },
-  PENDING_APPROVAL: { label: 'Prüfung erforderlich', Icon: BedSingle, className: semanticToneClasses.warning },
+  IN_QUOTA: { label: 'Einzelzimmer', Icon: BedSingle, className: semanticToneClasses.info },
+  APPROVED_EXTRA: { label: 'Einzelzimmer · Mehrpreis', Icon: BedSingle, className: semanticToneClasses.warning },
+  PENDING_APPROVAL: { label: 'Einzelzimmer · Prüfung', Icon: BedSingle, className: semanticToneClasses.warning },
 } satisfies Record<SingleRoomStatus, { label: string; Icon: typeof BedSingle; className: string }>;
 
 /** Canonical presentation of a person's persisted single-room status. */

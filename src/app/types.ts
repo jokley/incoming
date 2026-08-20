@@ -277,6 +277,7 @@ export interface AssignmentGridBooking {
     lastname: string;
     discipline?: string | null;
     gender?: string | null;
+    function?: string | null;
     arrivalDate?: string | null;
     departureDate?: string | null;
     hasPendingReview: boolean;

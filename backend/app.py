@@ -1068,6 +1068,7 @@ def _build_assignment_planning_view():
                                     'lastname': occ.athlete.lastname,
                                     'discipline': occ.athlete.discipline,
                                     'gender': _normalize_gender(occ.athlete),
+                                    'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
                                     'hasPendingReview': _has_pending_roomlist_review(occ.athlete),

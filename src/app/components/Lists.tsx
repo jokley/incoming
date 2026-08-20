@@ -13,7 +13,12 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 const initialFilters: ListFilters = { search: '', selection: '', discipline: '', assignedOnly: true };
 const formatDate = (date: string) => date ? new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'UTC' }) : '—';
 const roomCode = (value: string) => value.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || value;
-const columns = ['Zimmer', 'Art', 'Name', 'Nation', 'Disziplin / Event', 'Funktion', 'Anreise', 'Abreise', 'First Meal', 'Last Meal', 'Special Meal', 'Late Checkout', 'Mehrpreis', 'Zimmerpartner', 'Bemerkung'];
+const listColumns: Array<{ key: keyof ListRow & string; label: string }> = [
+  ['room','Zimmer'], ['roomType','Art'], ['name','Name'], ['nation','Nation'], ['discipline','Disziplin / Event'], ['role','Funktion'],
+  ['arrival','Anreise'], ['departure','Abreise'], ['firstMeal','First Meal'], ['lastMeal','Last Meal'], ['specialMeal','Special Meal'],
+  ['lateCheckout','Late Checkout'], ['surcharge','Mehrpreis'], ['roommate','Zimmerpartner'], ['remark','Bemerkung'],
+].map(([key, label]) => ({ key, label }));
+const columns = listColumns.map(column => column.label);
 const initialContingentFilters: ContingentFilters = { search: '', hotel: '', roomType: '', region: '', halfBoard: false, skiRoom: false, availability: '' };
 
 type Group = ReturnType<typeof groupListRows>[number];
@@ -113,6 +118,7 @@ export function Lists() {
   const navigate = useNavigate();
   const [kind, setKind] = useState<ViewKind>('hotels');
   const [filters, setFilters] = useState(initialFilters);
+  const [sort, setSort] = useState<SortState<keyof ListRow & string>>({ key: 'room', direction: 'asc' });
   const [data, setData] = useState<{ athletes: Athlete[]; bookings: RoomBooking[]; hotels: Hotel[]; quotaUsage: OfficialQuotaUsage[] } | null>(null);
   const [error, setError] = useState(false);
   useEffect(() => { Promise.all([api.getAthletes(), api.getRoomAssignments(), api.getHotels(), api.getOfficialQuotaUsage()]).then(([athletes, bookings, hotels, quotaUsage]) => setData({ athletes, bookings, hotels, quotaUsage })).catch(() => setError(true)); }, []);
@@ -120,7 +126,9 @@ export function Lists() {
   const allRows = useMemo(() => data ? createListRows(data.athletes, data.bookings, data.hotels, data.quotaUsage) : [], [data]);
   const rows = useMemo(() => filterListRows(allRows, kind === 'hotelContacts' ? 'hotels' : kind, filters), [allRows, kind, filters]);
   const groups = useMemo(() => groupListRows(rows, kind === 'hotelContacts' ? 'hotels' : kind), [rows, kind]);
-  const displayedRows = useMemo(() => groups.flatMap(group => group.rows), [groups]);
+  const sortedGroups = useMemo(() => groups.map(group => ({ ...group, rows: sortTableRows(group.rows, sort, (row, key) => row[key]) })), [groups, sort]);
+  const displayedRows = useMemo(() => sortedGroups.flatMap(group => group.rows), [sortedGroups]);
+  const toggleSort = (key: keyof ListRow & string) => setSort(current => ({ key, direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc' }));
   const selections = useMemo(() => [...new Set(allRows.map(row => kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent).filter(value => value !== '—'))].sort((a, b) => a.localeCompare(b, 'de')), [allRows, kind]);
   const disciplines = useMemo(() => [...new Set(allRows.map(row => row.discipline).filter(value => value !== '—'))].sort((a, b) => a.localeCompare(b, 'de')), [allRows]);
   const rooms = new Set(rows.filter(row => row.assigned).map(row => `${row.hotel}/${row.room}`)).size;
@@ -144,10 +152,11 @@ export function Lists() {
               <table className="w-full min-w-[1320px] border-collapse text-left text-xs">
                 <thead className="sticky top-0 z-30 bg-[var(--ops-surface)] shadow-sm">
                   <tr className="border-y border-[var(--ops-divider)] text-[10px] uppercase tracking-wider text-[var(--ops-text-subtle)]">
-                    {[...columns, ...(kind === 'nations' ? ['Hotel'] : [])].map(label => <th key={label} className="whitespace-nowrap px-2 py-1 text-[10px] font-extrabold">{label}</th>)}
+                    {listColumns.map(column => <SortableTableHead key={column.key} column={column.key} label={column.label} sort={sort} onSort={toggleSort}/>)}
+                    {kind === 'nations' && <SortableTableHead column="hotel" label="Hotel" sort={sort} onSort={toggleSort}/>}
                   </tr>
                 </thead>
-                {groups.map(group => {
+                {sortedGroups.map(group => {
                   const hotelId = group.rows[0]?.hotelId;
                   return <tbody key={group.label}>
                     <tr className="border-y border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)]">

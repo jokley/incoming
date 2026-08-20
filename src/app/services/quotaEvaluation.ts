@@ -1,5 +1,5 @@
 import type { OfficialQuotaUsage } from './fisRules';
-import type { RoomBooking } from '../types';
+import type { AssignmentGridHotel, RoomBooking } from '../types';
 
 export type QuotaGroupKey = string;
 
@@ -62,6 +62,23 @@ export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssi
     function: athlete.function,
     countsAsSingle: isEvaluatedAsSingle(booking),
   })));
+}
+
+export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): QuotaAssignment[] {
+  return hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings.flatMap(booking =>
+    booking.occupants.map(person => ({ personId: person.athleteId, bookingId: booking.bookingId,
+      nationCode: person.nationCode, discipline: person.discipline, gender: person.gender,
+      function: person.function, countsAsSingle: Boolean(booking.countsAsSingle) })))));
+}
+
+/** Reconciles quota definitions with the current disposition for every consumer. */
+export function evaluateCurrentQuotaUsage(rows: OfficialQuotaUsage[], assignments: QuotaAssignment[]): OfficialQuotaUsage[] {
+  const evaluated = new Map(evaluateAllQuotaGroups(rows, assignments).map(group => [group.key, group]));
+  return rows.map(row => {
+    const group = evaluated.get(quotaUsageKey(row.nationCode, row.discipline, row.gender));
+    return group ? { ...row, singleRoomsUsed: group.usedSingleRooms, requiredSingleRooms: group.usedSingleRooms,
+      remainingSingleRooms: Math.max(0, group.usedSingleRooms - (row.implementedSingleRooms || 0)) } : row;
+  });
 }
 
 export function calculateQuotaUsage(assignments: QuotaAssignment[]): number {
