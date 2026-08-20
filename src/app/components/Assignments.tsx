@@ -49,6 +49,15 @@ type AppView = 'dispatch' | 'quotas';
 type QueueStatus = 'pending' | 'all';
 type FilterMode = 'synchronized' | 'queue';
 type RoomCategoryFilter = '' | 'ez' | 'dz';
+type AssignmentFilterCriteria = {
+  search: string;
+  nation: string;
+  discipline: string;
+  gender: string;
+  status: QueueStatus;
+  roomCategory: RoomCategoryFilter;
+  importReview: boolean;
+};
 type SelectedState =
   | { type: 'unit'; id: string }
   | { type: 'booking'; id: string }
@@ -283,44 +292,39 @@ export function Assignments() {
     if (importReviewCount === 0 && filterImportReview) setFilterImportReview(false);
   }, [filterImportReview, importReviewCount]);
 
-  const queueUnits = useMemo(() => {
-    const source =
-      filterStatus === 'pending' ? allUnits :
-      allUnitsCombined;
+  // Every assignment filter is represented once and evaluated by one predicate.
+  // The mode only controls whether that result is also projected onto the hotel pane.
+  const assignmentFilters = useMemo<AssignmentFilterCriteria>(() => ({
+    search: queueSearch,
+    nation: filterNation,
+    discipline: filterDiscipline,
+    gender: filterGender,
+    status: filterStatus,
+    roomCategory: filterRoomCategory,
+    importReview: filterImportReview,
+  }), [filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
 
-    const query = queueSearch.trim().toLowerCase();
-    return source.filter((unit) => {
-      const matchesNation = !filterNation || unit.nationCode === filterNation;
-      const matchesDiscipline = !filterDiscipline || unit.occupants.some((occ) => occ.discipline === filterDiscipline);
-      const matchesGender = !filterGender || unit.occupants.some((occ) => normalizeGender(occ.gender) === filterGender);
-      const matchesRoomCategory = !filterRoomCategory || getUnitRoomCategory(unit) === filterRoomCategory;
-      const matchesImportReview = !filterImportReview || unit.occupants.some((occ) => occ.hasPendingReview);
-      const haystack = `${unit.nationCode} ${unit.roomTypeLabel} ${unit.occupants.map((o) => `${o.firstname} ${o.lastname}`).join(' ')}`.toLowerCase();
-      const matchesSearch = !query || haystack.includes(query);
-      return matchesNation && matchesDiscipline && matchesGender && matchesRoomCategory && matchesImportReview && matchesSearch;
-    });
-  }, [allUnits, allUnitsCombined, filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
+  const queueUnits = useMemo(
+    () => allUnitsCombined.filter((unit) => matchesAssignmentFilters(unit, assignmentFilters)),
+    [allUnitsCombined, assignmentFilters],
+  );
+
+  const synchronizedHotels = useMemo(
+    () => filterMode === 'synchronized' && hasActiveAssignmentFilters(assignmentFilters)
+      ? filterHotelsByMatchingUnits(allHotels, queueUnits)
+      : allHotels,
+    [allHotels, assignmentFilters, filterMode, queueUnits],
+  );
 
   const filteredHotels = useMemo(() => {
     const query = hotelSearch.trim().toLowerCase();
-    const queueQuery = queueSearch.trim().toLowerCase();
-    const matchingUnitIds = new Set(queueUnits.map((unit) => unit.unitId));
-    return allHotels.filter((hotel) => {
+    return synchronizedHotels.filter((hotel) => {
       const matchesRegion = !regionFilter || hotel.region === regionFilter;
       const haystack = `${hotel.hotelName} ${hotel.location || ''}`.toLowerCase();
       const matchesSearch = !query || haystack.includes(query);
-      if (!matchesRegion || !matchesSearch) return false;
-      const synchronizedFilterActive = filterMode === 'synchronized' && Boolean(queueQuery || filterNation || filterDiscipline || filterGender || filterRoomCategory || filterImportReview || filterStatus !== 'pending');
-      if (!synchronizedFilterActive) return true;
-      const containsMatchingOccupant = hotel.slots.some((slot) => slot.bookings.some((booking) =>
-        booking.occupants.some((occupant) => queueUnits.some((unit) => unit.occupants.some((person) => person.athleteId === occupant.athleteId)))
-      ));
-      const hasAssignableSlot = queueUnits.some((unit) => (validationByUnit[unit.unitId] || []).some((validation) =>
-        validation.status !== 'blocked' && hotel.slots.some((slot) => slot.slotId === validation.slotId)
-      ));
-      return matchingUnitIds.size > 0 && (containsMatchingOccupant || hasAssignableSlot);
+      return matchesRegion && matchesSearch;
     });
-  }, [allHotels, filterDiscipline, filterGender, filterImportReview, filterMode, filterNation, filterRoomCategory, filterStatus, hotelSearch, queueSearch, queueUnits, regionFilter, validationByUnit]);
+  }, [hotelSearch, regionFilter, synchronizedHotels]);
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
 
@@ -2694,6 +2698,52 @@ function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
   if (unit.roomTypeLabel === 'single') return 'ez';
   if (unit.roomTypeLabel === 'double') return 'dz';
   return '';
+}
+
+/**
+ * The single predicate for filters owned by the assignment queue. Adding a
+ * future filter means extending the criteria and this function; consumers do
+ * not need target-specific filter branches.
+ */
+function matchesAssignmentFilters(unit: RoomBookingUnit, filters: AssignmentFilterCriteria) {
+  if (filters.status === 'pending' && unit.isFullyAssigned) return false;
+  if (filters.nation && unit.nationCode !== filters.nation) return false;
+  if (filters.discipline && !unit.occupants.some((occupant) => occupant.discipline === filters.discipline)) return false;
+  if (filters.gender && !unit.occupants.some((occupant) => normalizeGender(occupant.gender) === filters.gender)) return false;
+  if (filters.roomCategory && getUnitRoomCategory(unit) !== filters.roomCategory) return false;
+  if (filters.importReview && !unit.occupants.some((occupant) => occupant.hasPendingReview)) return false;
+
+  const query = filters.search.trim().toLowerCase();
+  if (!query) return true;
+  const haystack = `${unit.nationCode} ${unit.roomTypeLabel} ${unit.occupants
+    .map((occupant) => `${occupant.firstname} ${occupant.lastname}`)
+    .join(' ')}`.toLowerCase();
+  return haystack.includes(query);
+}
+
+function hasActiveAssignmentFilters(filters: AssignmentFilterCriteria) {
+  return Boolean(
+    filters.search.trim()
+    || filters.nation
+    || filters.discipline
+    || filters.gender
+    || filters.status !== 'all'
+    || filters.roomCategory
+    || filters.importReview,
+  );
+}
+
+/**
+ * The synchronized result is intentionally hotel-level: a matching occupancy
+ * keeps the original hotel, including every room and booking, intact. The
+ * right-hand side is an overview and must never turn into a filtered person or
+ * slot list.
+ */
+function filterHotelsByMatchingUnits(hotels: AssignmentGridHotel[], units: RoomBookingUnit[]) {
+  const athleteIds = new Set(units.flatMap((unit) => unit.occupants.map((occupant) => occupant.athleteId)));
+  return hotels.filter((hotel) => hotel.slots.some((slot) =>
+    slot.bookings.some((booking) => booking.occupants.some((occupant) => athleteIds.has(occupant.athleteId))),
+  ));
 }
 
 function formatShortDate(value?: string | null) {
