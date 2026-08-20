@@ -34,7 +34,7 @@ import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning } from '../services/quotaEvaluation';
+import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaUsageKey } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
   AssignmentGridHotel,
@@ -323,16 +323,6 @@ export function Assignments() {
   }, [allHotels, filterDiscipline, filterGender, filterImportReview, filterMode, filterNation, filterRoomCategory, filterStatus, hotelSearch, queueSearch, queueUnits, regionFilter, validationByUnit]);
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
-
-  useEffect(() => {
-    if (!queueSearch.trim() || queueUnits.length !== 1) return;
-    const athleteIds = new Set(queueUnits[0].occupants.map((occupant) => occupant.athleteId));
-    const assignedHotel = filteredHotels.find((hotel) => hotel.slots.some((slot) => slot.bookings.some((booking) =>
-      booking.occupants.some((occupant) => athleteIds.has(occupant.athleteId))
-    )));
-    const target = assignedHotel ?? filteredHotels[0];
-    if (target && target.hotelId !== activeHotelId) setActiveHotelId(target.hotelId);
-  }, [activeHotelId, filteredHotels, queueSearch, queueUnits]);
 
   const queueProgress = useMemo(() => {
     const total = allUnitsCombined.length;
@@ -2176,13 +2166,11 @@ function ApprovalInfo({ label, value, warning = false }: { label: string; value:
 type SingleRoomControlPerson = {
   athleteId: string;
   name: string;
-  status: 'IN_QUOTA' | 'APPROVED_EXTRA';
   decisionId?: string | null;
-  operationalLabel: string;
-  operationalWarning: boolean;
+  additionalCost: boolean;
 };
 
-function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[]): SingleRoomControlPerson[] {
+function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>): SingleRoomControlPerson[] {
   const bookingsByAthlete = new Map<string, AssignmentGridBooking>();
   hotels.forEach((hotel) => hotel.slots.forEach((slot) => slot.bookings.forEach((booking) => {
     booking.occupants.forEach((occupant) => bookingsByAthlete.set(occupant.athleteId, booking));
@@ -2192,22 +2180,15 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
   allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
     if (occupant.nationCode !== card.nationCode
       || (occupant.discipline || '—') !== card.discipline
-      || normalizeGender(occupant.gender) !== card.gender
-      || (occupant.single_room_status !== 'IN_QUOTA' && occupant.single_room_status !== 'APPROVED_EXTRA')) return;
+      || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
-    const countsAsSingle = Boolean(booking?.countsAsSingle);
+    if (!booking?.countsAsSingle) return;
     people.set(occupant.athleteId, {
       athleteId: occupant.athleteId,
       name: occupant.name,
-      status: occupant.single_room_status,
       decisionId: occupant.single_room_decision_id,
-      operationalLabel: !booking
-        ? 'Noch nicht disponiert'
-        : countsAsSingle
-          ? 'Einzelzimmer'
-          : 'Als DZ gewertet',
-      operationalWarning: !countsAsSingle,
+      additionalCost: additionalCostPersonIds.has(occupant.athleteId),
     });
   }));
   return [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
@@ -2226,8 +2207,12 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   const state = getQuotaState(card);
   const StateIcon = state.icon;
   const officialsOver = card.assignedOfficials > card.officialQuota;
-  const singlesOver = evaluateQuotaUsageRow(card).hasViolation;
-  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels);
+  const quotaEvaluation = evaluateQuotaUsageRow(card);
+  const singlesOver = quotaEvaluation.hasViolation;
+  const evaluatedGroup = evaluateAllQuotaGroups(rows, quotaAssignmentsFromPlanning(hotels))
+    .find(group => group.key === quotaUsageKey(card.nationCode, card.discipline, card.gender));
+  const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
+  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds);
 
   return <div className="flex h-full flex-col">
     <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
@@ -2238,17 +2223,17 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     </header>
     <div className="flex-1 space-y-4 overflow-auto p-6">
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Mehrpreise" value={`${quotaEvaluation.overflow}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="overflow-hidden rounded-xl border border-[var(--ops-border)]">
           {controlPeople.map((person) => <div key={person.athleteId} className="grid items-center gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3 last:border-0 md:grid-cols-[minmax(150px,1fr)_minmax(170px,auto)_auto]">
             <div>
               <strong className="block text-sm text-[var(--ops-assignment-text-bright)]">{person.name}</strong>
-              <div className="mt-1.5"><SingleRoomStatusBadge status={person.status} /></div>
+              <div className={`mt-1.5 inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold ${person.additionalCost ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]' : 'border-[var(--ops-tone-info-border)] bg-[var(--ops-tone-info-surface)] text-[var(--ops-tone-info-text)]'}`}>{person.additionalCost ? 'Einzelzimmer · Mehrpreis' : 'Einzelzimmer'}</div>
             </div>
-            <span className={`flex items-center gap-1.5 text-sm font-semibold ${person.operationalWarning ? 'text-[var(--ops-tone-warning-text)]' : 'text-[var(--ops-tone-success-text)]'}`}>
-              {person.operationalWarning && <AlertTriangle className="h-4 w-4 shrink-0" />}{person.operationalLabel}
+            <span className={`flex items-center gap-1.5 text-sm font-semibold ${person.additionalCost ? 'text-[var(--ops-tone-warning-text)]' : 'text-[var(--ops-tone-info-text)]'}`}>
+              {person.additionalCost && <AlertTriangle className="h-4 w-4 shrink-0" />}{person.additionalCost ? 'Mehrpreis' : 'Innerhalb der Quote'}
             </span>
             <button type="button" disabled={!person.decisionId} title={!person.decisionId ? 'Innerhalb der Quote ist keine separate Importentscheidung hinterlegt.' : undefined} onClick={() => person.decisionId && onShowDecision(person.decisionId)} className="justify-self-start whitespace-nowrap text-sm font-semibold text-[var(--ops-assignment-text-accent-strong)] hover:text-[var(--ops-assignment-text-accent)] disabled:cursor-not-allowed disabled:text-[var(--ops-text-subtle)] md:justify-self-end">Entscheidung anzeigen</button>
           </div>)}
