@@ -310,10 +310,10 @@ export function Assignments() {
   );
 
   const synchronizedHotels = useMemo(
-    () => filterMode === 'synchronized'
-      ? projectAssignmentFiltersOntoHotels(allHotels, queueUnits, validationByUnit)
+    () => filterMode === 'synchronized' && hasActiveAssignmentFilters(assignmentFilters)
+      ? filterHotelsByMatchingUnits(allHotels, queueUnits)
       : allHotels,
-    [allHotels, filterMode, queueUnits, validationByUnit],
+    [allHotels, assignmentFilters, filterMode, queueUnits],
   );
 
   const filteredHotels = useMemo(() => {
@@ -2721,33 +2721,29 @@ function matchesAssignmentFilters(unit: RoomBookingUnit, filters: AssignmentFilt
   return haystack.includes(query);
 }
 
+function hasActiveAssignmentFilters(filters: AssignmentFilterCriteria) {
+  return Boolean(
+    filters.search.trim()
+    || filters.nation
+    || filters.discipline
+    || filters.gender
+    || filters.status !== 'all'
+    || filters.roomCategory
+    || filters.importReview,
+  );
+}
+
 /**
- * Projects the already-filtered unit set onto both the hotel overview and the
- * contingent detail. A slot remains visible when it contains a matching person
- * or is a valid assignment target for a matching unit. Booking data itself is
- * deliberately preserved so capacity and drag/drop operations stay truthful.
+ * The synchronized result is intentionally hotel-level: a matching occupancy
+ * keeps the original hotel, including every room and booking, intact. The
+ * right-hand side is an overview and must never turn into a filtered person or
+ * slot list.
  */
-function projectAssignmentFiltersOntoHotels(
-  hotels: AssignmentGridHotel[],
-  units: RoomBookingUnit[],
-  validationByUnit: Record<string, AssignmentValidationResult[]>,
-) {
-  if (units.length === 0) return [];
-
+function filterHotelsByMatchingUnits(hotels: AssignmentGridHotel[], units: RoomBookingUnit[]) {
   const athleteIds = new Set(units.flatMap((unit) => unit.occupants.map((occupant) => occupant.athleteId)));
-  const validSlotIds = new Set(units.flatMap((unit) =>
-    (validationByUnit[unit.unitId] || [])
-      .filter((validation) => validation.status !== 'blocked')
-      .map((validation) => validation.slotId),
+  return hotels.filter((hotel) => hotel.slots.some((slot) =>
+    slot.bookings.some((booking) => booking.occupants.some((occupant) => athleteIds.has(occupant.athleteId))),
   ));
-
-  return hotels.flatMap((hotel) => {
-    const slots = hotel.slots.filter((slot) =>
-      validSlotIds.has(slot.slotId)
-      || slot.bookings.some((booking) => booking.occupants.some((occupant) => athleteIds.has(occupant.athleteId))),
-    );
-    return slots.length > 0 ? [{ ...hotel, slots }] : [];
-  });
 }
 
 function formatShortDate(value?: string | null) {
