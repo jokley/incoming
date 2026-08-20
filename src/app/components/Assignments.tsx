@@ -16,7 +16,6 @@ import {
   FileCheck2,
   Eye,
   Flag,
-  Link2,
   RefreshCw,
   Search,
   Trash2,
@@ -1050,19 +1049,9 @@ function QueueSidebar({
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {shareRequests.length > 0 && (
-          <div className="border-b border-[var(--ops-divider)] px-3 py-2">
-            <div className="mb-2 flex items-center justify-between px-1">
-              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-[0.18em] text-[var(--ops-assignment-text-muted)]">
-                <Link2 className="h-3.5 w-3.5 text-violet-400" />
-                Zimmerpartner
-              </div>
-              <span className="rounded-md bg-violet-500/15 px-2 py-0.5 text-[10px] font-semibold text-violet-300">
-                {shareRequests.length}
-              </span>
-            </div>
-            <div className="space-y-2">
-              {shareRequests.map(({ unit }) => (
+        <div className="px-3 py-3">
+          <div className="space-y-2">
+            {shareRequests.map(({ unit }) => (
                 <QueueUnitCard
                   key={unit.unitId}
                   unit={unit}
@@ -1078,12 +1067,6 @@ function QueueSidebar({
                   pending={pendingAction?.unitId === unit.unitId}
                 />
               ))}
-            </div>
-          </div>
-        )}
-
-        <div className="px-3 py-3">
-          <div className="space-y-2">
             {regularUnits.map((unit) => (
               <QueueUnitCard
                 key={unit.unitId}
@@ -1138,10 +1121,8 @@ function QueueUnitCard({
   pending: boolean;
 }) {
   const primaryOccupant = unit.occupants[0];
-  const partnerOccupant = unit.occupants[1] ?? null;
   const hasPairWarning = !sameGender(unit) || !sameNation(unit);
   const isReadOnly = unit.isFullyAssigned;
-  const workStatus = isReadOnly ? 'assigned' : unit.hasAnyAssigned ? 'partial' : 'open';
   const discipline = primaryOccupant?.discipline || '—';
   const cardBase = highlighted
     ? 'border-transparent bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-overlay)]'
@@ -1159,22 +1140,14 @@ function QueueUnitCard({
       {unit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`mb-1.5 flex items-start gap-1.5 rounded-lg border px-2 py-1.5 text-[10px] font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="mt-0.5 h-3 w-3 shrink-0"/>{warning.message}</div>)}
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">
-            {primaryOccupant ? `${primaryOccupant.firstname} ${primaryOccupant.lastname}` : '—'}
+          <div className="truncate text-[11px] font-semibold text-[var(--ops-text-subtle)]">
+            {unit.nationCode || '—'} · {discipline} · {primaryOccupant?.function || 'Athlet'}
           </div>
-          <div className="mt-0.5 text-[11px] font-semibold text-[var(--ops-text-subtle)]">
-            {unit.nationCode || '—'} · {discipline}
-          </div>
-          <div className="mt-1.5 flex items-center gap-2 text-[10px] text-[var(--ops-text-subtle)]">
-            <span className="font-mono font-semibold">{formatShortDate(unit.checkInDate)}–{formatShortDate(unit.checkOutDate)}</span>
-            <span aria-hidden="true">·</span><b>{unit.roomTypeLabel || '—'}</b>
+          <div className="mt-1 flex items-center gap-2 text-[10px] text-[var(--ops-text-subtle)]">
+            <b>{unit.roomTypeLabel || '—'}</b>
             <span aria-hidden="true">·</span><span className="min-w-0 truncate" title={unit.assignedHotelName || undefined}>{unit.assignedHotelName || 'Hotel offen'}</span>
           </div>
-          {primaryOccupant && <div className="mt-1.5"><SingleRoomStatusBadge status={primaryOccupant.single_room_status} /></div>}
           {unit.occupants.some(occupant => occupant.hasPendingReview) && <PersonPendingChanges occupants={unit.occupants} compact />}
-        </div>
-        <div className="flex flex-col items-end gap-1">
-          <AssignmentStatusChip status={unit.occupants.some((occ) => occ.hasPendingReview) ? 'review' : workStatus} />
         </div>
       </div>
 
@@ -1185,10 +1158,10 @@ function QueueUnitCard({
       )}
 
       <div className="mt-2 grid gap-1.5">
-        <QueueOccupantActionRow
-          title="Athlet"
-          occupant={primaryOccupant}
-          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === primaryOccupant?.athleteId}
+        {unit.occupants.map(occupant => <QueueOccupantActionRow
+          key={occupant.athleteId}
+          occupant={occupant}
+          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === occupant.athleteId}
           canEditAssignments={canEditAssignments && !isReadOnly}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
@@ -1197,21 +1170,7 @@ function QueueUnitCard({
           pending={pending}
           fallbackArrival={unit.checkInDate}
           fallbackDeparture={unit.checkOutDate}
-        />
-        <QueueOccupantActionRow
-          title="Zimmerpartner"
-          occupant={partnerOccupant}
-          emptyLabel="Noch kein Zimmerpartner"
-          isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === partnerOccupant?.athleteId}
-          canEditAssignments={canEditAssignments && !isReadOnly}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          onQuickAssign={onQuickAssign}
-          unitId={unit.unitId}
-          pending={pending}
-          fallbackArrival={unit.checkInDate}
-          fallbackDeparture={unit.checkOutDate}
-        />
+        />)}
         {unit.occupants.length >= 2 && (
           <button
             draggable={canEditAssignments && !isReadOnly && !pending}
@@ -1234,9 +1193,7 @@ function QueueUnitCard({
 }
 
 function QueueOccupantActionRow({
-  title,
   occupant,
-  emptyLabel = '—',
   isDragging,
   canEditAssignments,
   onDragStart,
@@ -1247,9 +1204,7 @@ function QueueOccupantActionRow({
   fallbackArrival,
   fallbackDeparture,
 }: {
-  title: string;
-  occupant?: RoomBookingUnit['occupants'][number] | null;
-  emptyLabel?: string;
+  occupant: RoomBookingUnit['occupants'][number];
   isDragging: boolean;
   canEditAssignments: boolean;
   onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
@@ -1260,23 +1215,13 @@ function QueueOccupantActionRow({
   fallbackArrival?: string | null;
   fallbackDeparture?: string | null;
 }) {
-  if (!occupant) {
-    return (
-      <div className="rounded-lg border border-dashed border-[var(--ops-border-strong)] px-2.5 py-1.5 text-[10px] text-[var(--ops-text-muted)]">
-        {title}: {emptyLabel}
-      </div>
-    );
-  }
-
   return (
     <div className={`rounded-lg border px-2.5 py-1.5 ${occupant.isAssigned ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]'} ${isDragging ? 'opacity-70' : ''}`}>
       <div className="flex items-center justify-between gap-2">
-        <div>
-          <div className="text-[11px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">{title}</div>
-          {title !== 'Athlet' && <div className="truncate text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>}
-          {(occupant.arrivalDate && occupant.arrivalDate !== fallbackArrival) || (occupant.departureDate && occupant.departureDate !== fallbackDeparture) ? (
-            <div className="font-mono text-[10px] text-[var(--ops-tone-warning-text)]">Abweichend: {formatShortDate(occupant.arrivalDate)}–{formatShortDate(occupant.departureDate)}</div>
-          ) : null}
+        <div className="min-w-0">
+          <div className="truncate text-xs font-bold text-[var(--ops-text)]">{occupant.firstname} {occupant.lastname}</div>
+          <div className="font-mono text-[10px] text-[var(--ops-assignment-text-muted)]">{formatShortDate(occupant.arrivalDate || fallbackArrival)}–{formatShortDate(occupant.departureDate || fallbackDeparture)}</div>
+          {occupant.single_room_status !== 'NONE' && <div className="mt-1"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>}
         </div>
         <span className={`text-[10px] font-semibold ${occupant.isAssigned ? 'text-emerald-300' : 'text-[var(--ops-assignment-text-body)]'}`}>
           {occupant.isAssigned ? 'zugewiesen' : 'offen'}
@@ -2482,7 +2427,7 @@ function DetailPanel({
                     {occupant.nationCode} · {occupant.discipline || '—'} · {normalizeGender(occupant.gender) || '—'}
                   </div>
                   <div className="mt-1.5"><SingleRoomStatusBadge status={occupant.single_room_status} /></div>
-                  <StaySummary arrival={selectedUnit.checkInDate} departure={selectedUnit.checkOutDate} compact />
+                  <StaySummary arrival={occupant.arrivalDate || selectedUnit.checkInDate} departure={occupant.departureDate || selectedUnit.checkOutDate} compact />
                 </div>
                 <span className={`rounded-lg px-2 py-1 text-[10px] font-semibold ${occupant.isAssigned ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-[var(--ops-assignment-text-body)]'}`}>
                   {occupant.isAssigned ? 'zugewiesen' : 'offen'}
@@ -2495,12 +2440,6 @@ function DetailPanel({
           ))}
         </div>
 
-        {selectedUnit.occupants.length >= 2 && (
-          <div className="mt-3 flex items-center gap-2 rounded-xl border border-violet-700/40 bg-violet-950/25 px-3 py-2 text-xs text-violet-200">
-            <Link2 className="h-3.5 w-3.5" />
-            Gewünschtes Zimmerpartner-Paar erkannt
-          </div>
-        )}
       </div>
 
       <div className="px-4 py-4">
