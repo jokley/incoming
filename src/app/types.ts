@@ -267,6 +267,13 @@ export interface AssignmentGridBooking {
     athleteId: string;
     name: string;
     nationCode: string;
+    firstname: string;
+    lastname: string;
+    discipline?: string | null;
+    gender?: string | null;
+    hasPendingReview: boolean;
+    importChangeTypes: ImportChangeType[];
+    importChangeDetails: ImportChangeDetail[];
     single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
     single_room_decision_id?: string | null;
   }>;

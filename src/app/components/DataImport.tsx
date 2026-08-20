@@ -13,7 +13,7 @@ import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
 
 const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
-const workflowSteps = ['Entwurf', 'Technisch geprüft', 'Fachlich geprüft', 'Warten auf Nation', 'Erneut prüfen', 'Freigegeben', 'Importiert'];
+type WorkflowStep = { id: string; label: string; complete: boolean; current: boolean };
 type Detail = { title: string; subtitle?: string; issues?: FisImportIssue[]; rows?: string[][]; headers?: string[] };
 
 export function DataImport() {
@@ -31,8 +31,6 @@ export function DataImport() {
   const [savingTask, setSavingTask] = useState(false);
   const quotaWarnings = useMemo(() => preview?.warnings.filter(i => i.code.startsWith('QUOTA_')) ?? [], [preview]);
   const otherWarnings = useMemo(() => preview?.warnings.filter(i => !i.code.startsWith('QUOTA_')) ?? [], [preview]);
-  const statusStep: Partial<Record<ImportSession['status'],number>> = {DRAFT:0,TECHNICALLY_REVIEWED:1,PREVIEW_CREATED:1,PROFESSIONALLY_REVIEWED:2,READY_FOR_IMPORT:2,WAITING_FOR_NATION:3,NATION_CLARIFICATION:3,NEW_LIST_RECEIVED:4,RECHECK_REQUIRED:4,EXCEPTION_APPROVED:4,APPROVED:5,IMPORTED:6};
-  const currentStep = selected ? statusStep[selected.status] ?? 0 : files.length ? 0 : 0;
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
   useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
@@ -80,13 +78,13 @@ export function DataImport() {
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
         <ContentCard surface="raised" className="min-h-0 flex-1 overflow-hidden">
           <div ref={detailScrollRef} className="h-full overflow-y-auto">
-            {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} confirming={confirming} error={error} success={success} currentStep={currentStep} onFiles={handleFiles} onPreview={runPreview} onConfirm={confirm} onCancel={cancel} /> : <>
+            {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} confirming={confirming} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onConfirm={confirm} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] p-5">
               <div><SectionHeader title="Session" /><h2 className="mt-2 text-2xl font-extrabold">{selected.nation} · {selected.discipline}</h2><p className="text-sm text-[var(--ops-text-muted)]">{selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>
               <div className="flex gap-2"><OpsButton onClick={approve} disabled={!preview?.isValid || selected.approvals.some(a => a.decision !== 'APPROVED') || !['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(selected.status)}>Freigeben</OpsButton><OpsButton onClick={confirm} disabled={selected.status !== 'APPROVED' || confirming} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4" />Importieren</OpsButton></div>
             </div>
             <div className="space-y-5 p-5">
-              <Workflow current={currentStep} />
+              <Workflow session={selected} />
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}{success && <InfoPanel tone="success" title="Import abgeschlossen">{success}</InfoPanel>}
               {preview && <ImportChangeSummary preview={preview}/>}
               <TaskList session={selected} onOpen={setActiveTask}/>
@@ -107,9 +105,9 @@ export function DataImport() {
   </div>;
 }
 
-function NewSessionWorkspace({files,preview,loading,confirming,error,success,currentStep,onFiles,onPreview,onConfirm,onCancel}:{files:File[];preview:FisImportPreview|null;loading:boolean;confirming:boolean;error:string|null;success:string|null;currentStep:number;onFiles:(files:FileList|null)=>void;onPreview:()=>void;onConfirm:()=>void;onCancel:()=>void}) { return <>
+function NewSessionWorkspace({files,preview,loading,confirming,error,success,onFiles,onPreview,onConfirm,onCancel}:{files:File[];preview:FisImportPreview|null;loading:boolean;confirming:boolean;error:string|null;success:string|null;onFiles:(files:FileList|null)=>void;onPreview:()=>void;onConfirm:()=>void;onCancel:()=>void}) { return <>
   <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] p-5"><div><SectionHeader title="Session-Erstellung"/><h2 className="mt-2 text-2xl font-extrabold">Neue Import Session</h2><p className="text-sm text-[var(--ops-text-muted)]">FIS-Dateien hochladen und vor dem Import gemeinsam prüfen.</p></div><div className="flex gap-2"><OpsButton onClick={onPreview} disabled={files.length<2||loading}>{loading?<Loader2 className="mr-2 inline h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 inline h-4 w-4"/>}Preview prüfen</OpsButton><OpsButton onClick={onConfirm} disabled={true} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4"/>Importieren</OpsButton></div></div>
-  <div className="space-y-5 p-5"><Workflow current={currentStep}/>{preview&&<ImportChangeSummary preview={preview}/>}<div className="grid items-start gap-5 lg:grid-cols-2"><UploadCard files={files} onChange={onFiles}/><ContentCard surface="elevated" className="p-4"><SectionHeader title="Ausgewählte Dateien" subtitle="Dateien für die neue Session"/><div className="mt-4 space-y-2">{files.length?files.map(file=><div key={file.name} className="flex items-center justify-between rounded-lg bg-[var(--ops-surface)] p-3 text-sm"><span className="flex min-w-0 items-center gap-2"><FileText className="h-4 w-4 shrink-0"/><span className="truncate">{file.name}</span></span><span className="font-mono text-xs text-[var(--ops-text-muted)]">{(file.size/1024).toFixed(1)} KB</span></div>):<EmptyState title="Noch keine Dateien" description="Beide FIS-Dateien gemeinsam hochladen."/>}</div><div className="mt-3"><OpsButton onClick={onCancel} disabled={!files.length&&!preview}><RefreshCcw className="mr-2 inline h-4 w-4"/>Upload zurücksetzen</OpsButton></div></ContentCard></div>{error&&<InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}{success&&<InfoPanel tone="success" title="Import abgeschlossen">{success}</InfoPanel>}</div>
+  <div className="space-y-5 p-5"><Workflow session={null}/>{preview&&<ImportChangeSummary preview={preview}/>}<div className="grid items-start gap-5 lg:grid-cols-2"><UploadCard files={files} onChange={onFiles}/><ContentCard surface="elevated" className="p-4"><SectionHeader title="Ausgewählte Dateien" subtitle="Dateien für die neue Session"/><div className="mt-4 space-y-2">{files.length?files.map(file=><div key={file.name} className="flex items-center justify-between rounded-lg bg-[var(--ops-surface)] p-3 text-sm"><span className="flex min-w-0 items-center gap-2"><FileText className="h-4 w-4 shrink-0"/><span className="truncate">{file.name}</span></span><span className="font-mono text-xs text-[var(--ops-text-muted)]">{(file.size/1024).toFixed(1)} KB</span></div>):<EmptyState title="Noch keine Dateien" description="Beide FIS-Dateien gemeinsam hochladen."/>}</div><div className="mt-3"><OpsButton onClick={onCancel} disabled={!files.length&&!preview}><RefreshCcw className="mr-2 inline h-4 w-4"/>Upload zurücksetzen</OpsButton></div></ContentCard></div>{error&&<InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}{success&&<InfoPanel tone="success" title="Import abgeschlossen">{success}</InfoPanel>}</div>
 </>; }
 
 function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
@@ -124,8 +122,29 @@ function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
   return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Erkannte Änderungen" subtitle="Kompakte Freigabeinformation – die fachlichen Details folgen in der Disposition"/><div className="mt-3 flex flex-wrap gap-2">{items.filter(([count])=>count>0).map(([count,label])=><StatusChip key={label} tone="neutral">{count} {label}</StatusChip>)}{disposition>0&&<StatusChip tone="warning">Disposition erforderlich</StatusChip>}{items.every(([count])=>count===0)&&<StatusChip tone="success">Keine operativen Änderungen</StatusChip>}</div></ContentCard>;
 }
 
-function Workflow({current}:{current:number}) {
-  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Workflow" subtitle="Aktueller Status der Session"/><ol className="mt-4 grid grid-cols-3 gap-2 lg:grid-cols-7">{workflowSteps.map((step,index)=><li key={step}><div aria-current={index===current?'step':undefined} className={`h-full min-h-20 rounded-lg border p-2.5 text-left ${index===current?'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-2 ring-[var(--ops-primary)]':index<current?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}><span className="font-mono text-[10px] text-[var(--ops-text-subtle)]">0{index+1}</span><div className="text-xs font-bold">{step}</div></div></li>)}</ol></ContentCard>;
+function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
+  if (!session) return [{ id: 'upload', label: 'Importdateien', complete: false, current: true }, { id: 'validation', label: 'Technische Prüfung', complete: false, current: false }, { id: 'approval', label: 'Freigabe', complete: false, current: false }, { id: 'import', label: 'Import', complete: false, current: false }];
+  const status = session.status;
+  const imported = status === 'IMPORTED';
+  const validationComplete = status !== 'DRAFT';
+  const pendingDecisions = session.approvals.some(item => item.decision === 'PENDING');
+  const hasDecisions = session.approvals.length > 0;
+  const approved = ['APPROVED', 'IMPORTED'].includes(status);
+  const clarification = ['WAITING_FOR_NATION', 'NATION_CLARIFICATION', 'NEW_LIST_RECEIVED', 'RECHECK_REQUIRED'].includes(status);
+  const steps: WorkflowStep[] = [
+    { id: 'upload', label: 'Importdateien', complete: true, current: status === 'DRAFT' },
+    { id: 'validation', label: 'Technische Prüfung', complete: validationComplete, current: false },
+  ];
+  if (hasDecisions) steps.push({ id: 'decision', label: 'Fachliche Entscheidung', complete: !pendingDecisions, current: pendingDecisions });
+  if (clarification) steps.push({ id: 'clarification', label: 'Klärung / neue Liste', complete: false, current: true });
+  steps.push({ id: 'approval', label: 'Freigabe', complete: approved, current: !approved && !pendingDecisions && !clarification && validationComplete });
+  steps.push({ id: 'import', label: 'Import', complete: imported, current: status === 'APPROVED' || imported });
+  return steps;
+}
+
+function Workflow({session}:{session:ImportSession|null}) {
+  const steps = visibleWorkflow(session);
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Workflow" subtitle="Nur Schritte, die in dieser Session eine Aktion erfordern"/><ol className="mt-4 grid gap-2" style={{gridTemplateColumns:`repeat(${steps.length}, minmax(0, 1fr))`}}>{steps.map((step,index)=><li key={step.id}><div aria-current={step.current?'step':undefined} className={`h-full min-h-20 rounded-lg border p-2.5 text-left ${step.current?'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-2 ring-[var(--ops-primary)]':step.complete?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}><span className="font-mono text-[10px] text-[var(--ops-text-subtle)]">0{index+1}</span><div className="text-xs font-bold">{step.label}</div></div></li>)}</ol></ContentCard>;
 }
 function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · kompakter Session-Verlauf`}/><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></ContentCard>; }
 function UploadCard({files,onChange}:{files:File[];onChange:(f:FileList|null)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Neue Import Session" subtitle="Beide Dateien in einem Schritt auswählen"/><label className="mt-4 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-6 text-center hover:bg-[var(--ops-tone-primary-surface)]"><input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={e=>onChange(e.target.files)}/><Upload className="mx-auto h-8 w-8 text-[var(--ops-primary)]"/><p className="mt-2 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-1 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
