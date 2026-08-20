@@ -1,6 +1,7 @@
 import { Profiler, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { Dialog, DialogContent } from '@mui/material';
+import { Dialog, DialogContent, IconButton, Switch, Tooltip } from '@mui/material';
+import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import {
   AlertCircle,
   AlertTriangle,
@@ -12,7 +13,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronLeft,
-  FileCheck2,
   Eye,
   Flag,
   RefreshCw,
@@ -497,7 +497,7 @@ export function Assignments() {
         loadQuotaUsage(),
       ]);
     } catch (err) {
-      setError(extractErrorMessage(err, 'EZ-Markierung fehlgeschlagen'));
+      setError(extractErrorMessage(err, 'Quotenbewertung konnte nicht geändert werden'));
     } finally {
       setPendingAction(null);
       setSaving(false);
@@ -1807,7 +1807,7 @@ function HotelDetailView({
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">DZ als EZ · exklusiv belegt</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
+                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">Quotenbewertung · EZ</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
                               </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-[var(--ops-success)]">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
                               {canAddPartner && (
@@ -2023,8 +2023,8 @@ function quotaGenderLabel(gender: string) {
 }
 
 function getQuotaState(card: QuotaCard) {
-  if (card.quotaStatus === 'EXCEPTION_APPROVED') return { label: 'Quote verletzt · Ausnahme genehmigt', tone: 'success' as const, icon: FileCheck2 };
-  if (card.quotaStatus === 'DECISION_REQUIRED') return { label: 'Quote verletzt · Entscheidung erforderlich', tone: 'warning' as const, icon: AlertTriangle };
+  if (card.singleRoomsUsed > card.singleRoomsAllowed) return { label: 'Quote überschritten · Mehrkosten', tone: 'warning' as const, icon: AlertTriangle };
+  if (card.assignedOfficials > card.officialQuota) return { label: 'Official-Quote überschritten', tone: 'warning' as const, icon: AlertTriangle };
   return { label: 'Quote erfüllt', tone: 'success' as const, icon: CheckCircle2 };
 }
 
@@ -2107,7 +2107,7 @@ function QuotasPanel({
                 <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
                   <ApprovalInfo label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
                   <ApprovalInfo label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
-                  <ApprovalInfo label="Mehrpreis genehmigt" value={String(card.approvedExtraSingleRooms)} />
+                  <ApprovalInfo label="EZ mit Mehrkosten" value={String(Math.max(0, card.singleRoomsUsed - card.singleRoomsAllowed))} warning={singlesOver} />
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{dispatchPct}% disponiert</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
               </div>
@@ -2168,8 +2168,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       || (occupant.single_room_status !== 'IN_QUOTA' && occupant.single_room_status !== 'APPROVED_EXTRA')) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
-    const isExclusive = Boolean(booking && booking.occupants.length === 1
-      && (booking.countsAsSingle || booking.capacity === 1));
+    const countsAsSingle = Boolean(booking?.countsAsSingle);
     people.set(occupant.athleteId, {
       athleteId: occupant.athleteId,
       name: occupant.name,
@@ -2177,10 +2176,10 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       decisionId: occupant.single_room_decision_id,
       operationalLabel: !booking
         ? 'Noch nicht disponiert'
-        : isExclusive
-          ? booking.capacity === 2 ? 'DZ als EZ exklusiv' : 'Einzelzimmer disponiert'
-          : 'Zimmerpartner offen',
-      operationalWarning: !isExclusive,
+        : countsAsSingle
+          ? 'Als EZ gewertet'
+          : 'Als DZ gewertet',
+      operationalWarning: !countsAsSingle,
     });
   }));
   return [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
@@ -2326,25 +2325,26 @@ function DetailPanel({
               <span className="font-semibold text-[var(--ops-text-muted)]">Hotelkontingent</span>
               <span className="font-mono font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</span>
             </div>
-            {(booking.capacity || 0) === 2 && <div className="mt-2 text-[10px] font-semibold text-[var(--ops-text-subtle)]">{booking.countsAsSingle ? 'DZ wird exklusiv genutzt' : 'DZ wird gemeinsam genutzt'}</div>}
             <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
           </div>
         </DetailSection>
-        <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
-          {((booking.capacity || 0) > 1 && booking.occupants.length === 1) && (
-            <button
+        <DetailSection icon={<Bed className="h-4 w-4" />} title="Quotenbewertung">
+          <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
+            <div className="flex items-center gap-1">
+              <span className="text-sm font-semibold text-[var(--ops-text)]">Als EZ werten</span>
+              <Tooltip title={<>Bestimmt ausschließlich die Quotenberechnung.<br/>Die tatsächliche Zimmerart bleibt unverändert.</>} arrow>
+                <IconButton size="small" aria-label="Information zur Quotenbewertung"><InfoOutlinedIcon fontSize="inherit" /></IconButton>
+              </Tooltip>
+            </div>
+            <Switch
+              checked={Boolean(booking.countsAsSingle)}
               disabled={pendingAction?.bookingId === booking.bookingId}
-              onClick={() => onMarkBookingAsSingle(booking.bookingId, !booking.countsAsSingle)}
-              className={`flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-xs font-semibold transition-colors ${
-                booking.countsAsSingle
-                  ? 'border-amber-700/50 bg-amber-500/10 text-amber-200 hover:bg-amber-500/20'
-                  : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] text-[var(--ops-assignment-text-strong)] hover:bg-[var(--ops-surface-overlay)]'
-              }`}
-            >
-              {pendingAction?.kind === 'single' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Bed className="h-3.5 w-3.5" />}
-              {booking.countsAsSingle ? 'EZ-Markierung entfernen' : 'Als EZ werten'}
-            </button>
-          )}
+              onChange={(_, checked) => onMarkBookingAsSingle(booking.bookingId, checked)}
+              inputProps={{ 'aria-label': 'Als EZ werten' }}
+            />
+          </div>
+        </DetailSection>
+        <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
           <button
             disabled={pendingAction?.bookingId === booking.bookingId}
             onClick={() => onUnassignBooking(booking.bookingId)}

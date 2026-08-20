@@ -314,7 +314,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         if 'unassign' in request.path or action == 'delete':
             title = 'Zimmerzuweisung entfernt'
         elif request.method == 'PUT':
-            title = 'EZ-Markierung gesetzt' if set(payload) == {'countsAsSingle'} and payload.get('countsAsSingle') else ('EZ-Markierung entfernt' if set(payload) == {'countsAsSingle'} else 'Zimmerpartner geändert')
+            title = 'Quotenbewertung auf EZ gesetzt' if set(payload) == {'countsAsSingle'} and payload.get('countsAsSingle') else ('Quotenbewertung auf DZ gesetzt' if set(payload) == {'countsAsSingle'} else 'Zimmerpartner geändert')
         else:
             title = 'Zimmer zugewiesen'
         if hotel.get('name'):
@@ -1229,17 +1229,21 @@ def _validate_booking_payload(data, existing_booking=None):
     }, room_type, None
 
 
-def _automatic_exclusive_occupancy(room_type, athlete_ids):
-    """Derive the operational EZ flag without changing the business decision."""
-    if not room_type or room_type.max_persons != 2 or len(athlete_ids) != 1:
+def _automatic_quota_evaluation(room_type, athlete_ids):
+    """Initialize quota evaluation while leaving the physical room type untouched."""
+    if not room_type:
+        return False
+    if room_type.max_persons == 1:
+        return True
+    if room_type.max_persons != 2 or len(athlete_ids) != 1:
         return False
     athlete = db.session.get(Athlete, athlete_ids[0])
     return bool(athlete and athlete.single_room_status in {'IN_QUOTA', 'APPROVED_EXTRA'})
 
 
-def _sync_exclusive_occupancy(booking):
+def _sync_quota_evaluation(booking):
     athlete_ids = sorted(row[0] for row in db.session.query(RoomBookingOccupant.athlete_id).filter_by(room_booking_id=booking.id).all())
-    booking.counts_as_single = _automatic_exclusive_occupancy(booking.room_type, athlete_ids)
+    booking.counts_as_single = _automatic_quota_evaluation(booking.room_type, athlete_ids)
 
 
 def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False):
@@ -1268,7 +1272,7 @@ def _save_booking_from_payload(payload, existing_booking=None, manual_single_ove
         db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
     db.session.flush()
     if not manual_single_override:
-        _sync_exclusive_occupancy(booking)
+        _sync_quota_evaluation(booking)
     _acknowledge_import_changes(payload['athlete_ids'])
     db.session.commit()
     return booking
@@ -1289,7 +1293,7 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
             if remaining == 0:
                 db.session.delete(booking)
             else:
-                _sync_exclusive_occupancy(booking)
+                _sync_quota_evaluation(booking)
     db.session.commit()
 
 
@@ -1303,12 +1307,18 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     athletes = athletes.all()
     roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
                'forGender': a.for_gender, 'function': a.function} for a in athletes]
-    # The professional import result is authoritative. The eventual room type
-    # selected by disposition cannot create quota usage or additional costs.
-    assigned = [{'nationCode': a.nation_code, 'discipline': a.discipline,
-        'gender': a.gender, 'forGender': a.for_gender, 'function': a.function,
-        'countsAsSingle': bool(a.single_room_entitlement)} for a in athletes
-        if (a.function or '').strip().lower() != 'athlete']
+    # The persisted assignment flag is the sole source of truth for operational
+    # quota usage. The physical room type and import entitlement stay unchanged.
+    assigned = []
+    for athlete in athletes:
+        if (athlete.function or '').strip().lower() == 'athlete':
+            continue
+        membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
+        if not membership or not membership.room_booking:
+            continue
+        assigned.append({'nationCode': athlete.nation_code, 'discipline': athlete.discipline,
+            'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
+            'countsAsSingle': bool(membership.room_booking.counts_as_single)})
     rows = evaluate_quota_usage(roster, assigned)
     approved_by_key = {}
     implemented_by_key = {}
@@ -1319,9 +1329,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         if athlete.single_room_entitlement:
             membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
             booking = membership.room_booking if membership else None
-            if (booking and len(booking.occupants) == 1
-                    and (booking.counts_as_single
-                         or (booking.room_type and booking.room_type.max_persons == 1))):
+            if booking and booking.counts_as_single:
                 key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
                 implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
     approval_state = {}
@@ -2561,7 +2569,7 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     if remaining == 0:
         db.session.delete(booking)
     else:
-        _sync_exclusive_occupancy(booking)
+        _sync_quota_evaluation(booking)
     db.session.commit()
     return jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
 

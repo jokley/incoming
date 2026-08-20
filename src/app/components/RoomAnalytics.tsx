@@ -23,7 +23,6 @@ const range = (from: string, until: string) => {
 const inventoryBeds = (items: HotelRoomInventory[] = []) => items.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
 const isAssigned = (athlete: Athlete) => Boolean(athlete.assignment?.hasAssignment || athlete.assignments?.some(item => item.hasAssignment));
 const eventForAthlete = (athlete: Athlete, events: Event[]) => events.find(event => athlete.disciplines?.includes(event.discipline) || athlete.discipline === event.discipline);
-const athleteIsSingle = (athlete: Athlete) => athlete.single_room_status === 'IN_QUOTA' || athlete.single_room_status === 'APPROVED_EXTRA' || /(^|\W)EZ(\W|$)/i.test(athlete.roomType || '');
 const athleteOnDay = (athlete: Athlete, date: string) => {
   const stays = athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }];
   return stays.some(stay => Boolean(stay.arrivalDate && stay.departureDate && dayKey(stay.arrivalDate) <= date && dayKey(stay.departureDate) > date));
@@ -213,7 +212,7 @@ function CapacityView({ data }: { data: AnalyticsData }) {
     const activeBookings = data.bookings.filter(booking => bookingOnDay(booking, date));
     const assignedRooms = activeBookings.length;
     const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
-    const assignedEz = activeBookings.filter(booking => booking.countsAsSingle || isSingle(booking.roomType)).length;
+    const assignedEz = activeBookings.filter(booking => booking.countsAsSingle).length;
     const assignedDz = assignedRooms - assignedEz;
     const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0);
     const plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0);
@@ -274,13 +273,15 @@ function HotelsView({ data }: { data: AnalyticsData }) {
 }
 function NationsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
+  const quotaEvaluation = new Map(data.bookings.flatMap(booking =>
+    booking.occupants.map(occupant => [occupant.id, Boolean(booking.countsAsSingle)] as const)));
   const colors = ['var(--ops-primary)', 'var(--ops-success)', 'var(--ops-warning)', 'var(--ops-error)', 'var(--ops-secondary)', 'var(--ops-info)', 'var(--ops-primary-emphasis)', 'var(--ops-text-muted)'];
   const rows = Object.values(data.athletes.reduce<Record<string, { nation: string; people: number; athletes: number; officials: number; ez: number; dzPeople: number }>>((result, person) => {
     const nation = person.nationCode || '—';
     const row = result[nation] ||= { nation, people: 0, athletes: 0, officials: 0, ez: 0, dzPeople: 0 };
     row.people += 1;
     if (/official|coach|staff|trainer/i.test(person.function || '')) row.officials += 1; else row.athletes += 1;
-    if (athleteIsSingle(person)) row.ez += 1; else row.dzPeople += 1;
+    if (quotaEvaluation.get(person.id)) row.ez += 1; else row.dzPeople += 1;
     return result;
   }, {})).map(row => ({ ...row, dz: Math.ceil(row.dzPeople / 2), share: data.athletes.length ? row.people / data.athletes.length * 100 : 0 })).sort((a, b) => b.people - a.people);
   const leader = rows[0];

@@ -47,8 +47,9 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             db.session.add_all(roster)
             db.session.flush()
             hotel, room_type = Hotel.query.one(), RoomType.query.one()
-            for official in roster[1:]:
-                booking = RoomBooking(hotel_id=hotel.id, room_type_id=room_type.id)
+            for index, official in enumerate(roster[1:]):
+                booking = RoomBooking(hotel_id=hotel.id, room_type_id=room_type.id,
+                                      counts_as_single=index < 2)
                 db.session.add(booking)
                 db.session.flush()
                 db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=official.id))
