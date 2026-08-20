@@ -46,6 +46,7 @@ import type {
 
 type AppView = 'dispatch' | 'quotas';
 type QueueStatus = 'pending' | 'all';
+type FilterMode = 'synchronized' | 'queue';
 type RoomCategoryFilter = '' | 'ez' | 'dz';
 type SelectedState =
   | { type: 'unit'; id: string }
@@ -98,6 +99,7 @@ export function Assignments() {
   const [selectedQuotaKey, setSelectedQuotaKey] = useState<string | null>(routeState?.quotaKey || routeState?.operationsContext?.quotaKey || null);
 
   const [queueSearch, setQueueSearch] = useState('');
+  const [filterMode, setFilterMode] = useState<FilterMode>('synchronized');
   const [hotelSearch, setHotelSearch] = useState('');
   const [filterNation, setFilterNation] = useState('');
   const [filterDiscipline, setFilterDiscipline] = useState('');
@@ -305,7 +307,8 @@ export function Assignments() {
       const haystack = `${hotel.hotelName} ${hotel.location || ''}`.toLowerCase();
       const matchesSearch = !query || haystack.includes(query);
       if (!matchesRegion || !matchesSearch) return false;
-      if (!queueQuery) return true;
+      const synchronizedFilterActive = filterMode === 'synchronized' && Boolean(queueQuery || filterNation || filterDiscipline || filterGender || filterRoomCategory || filterImportReview || filterStatus !== 'pending');
+      if (!synchronizedFilterActive) return true;
       const containsMatchingOccupant = hotel.slots.some((slot) => slot.bookings.some((booking) =>
         booking.occupants.some((occupant) => queueUnits.some((unit) => unit.occupants.some((person) => person.athleteId === occupant.athleteId)))
       ));
@@ -314,7 +317,7 @@ export function Assignments() {
       ));
       return matchingUnitIds.size > 0 && (containsMatchingOccupant || hasAssignableSlot);
     });
-  }, [allHotels, hotelSearch, queueSearch, queueUnits, regionFilter, validationByUnit]);
+  }, [allHotels, filterDiscipline, filterGender, filterImportReview, filterMode, filterNation, filterRoomCategory, filterStatus, hotelSearch, queueSearch, queueUnits, regionFilter, validationByUnit]);
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
 
@@ -615,6 +618,8 @@ export function Assignments() {
           {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
             <QueueSidebar
               units={queueUnits}
+              filterMode={filterMode}
+              onFilterMode={setFilterMode}
               regularUnits={regularQueueUnits}
               shareRequests={shareRequests}
               filterNation={filterNation}
@@ -848,7 +853,7 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
   if (!row) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
 
   return (
-    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, Single Rooms ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
+    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, als EZ gewertete Personen ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
       {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[var(--ops-surface)]/95 py-0.5 text-[9px] text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
       <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
         <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
@@ -858,7 +863,7 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
         </span>
       </span>
       <span className="min-w-[112px] px-3 py-1.5">
-        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Single Rooms</span>
+        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Als EZ gewertet</span>
         <span className={`flex items-center gap-1.5 font-mono font-bold ${row.singleRoomsUsed > row.singleRoomsAllowed ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
           {row.singleRoomsUsed} / {row.singleRoomsAllowed}
           {row.singleRoomsUsed <= row.singleRoomsAllowed && <Check className="h-3.5 w-3.5 text-emerald-400" />}
@@ -909,7 +914,7 @@ function AlertBanner({
     ? `Official-Quote überschritten: ${row.nationCode} (${row.assignedOfficials}/${row.officialQuota})`
     : '';
   const singleText = row.singleRoomsUsed > row.singleRoomsAllowed
-    ? `Single-Room-Kontingent überschritten (${row.singleRoomsUsed}/${row.singleRoomsAllowed})`
+    ? `EZ-Quotenbewertung überschritten (${row.singleRoomsUsed}/${row.singleRoomsAllowed})`
     : '';
   const message = [officialText, singleText].filter(Boolean).join(' und ');
 
@@ -931,6 +936,8 @@ function AlertBanner({
 
 function QueueSidebar({
   units,
+  filterMode,
+  onFilterMode,
   regularUnits,
   shareRequests,
   filterNation,
@@ -962,6 +969,8 @@ function QueueSidebar({
   pendingAction,
 }: {
   units: RoomBookingUnit[];
+  filterMode: FilterMode;
+  onFilterMode: (value: FilterMode) => void;
   regularUnits: RoomBookingUnit[];
   shareRequests: Array<{ unit: RoomBookingUnit; compatible: boolean; mixed: boolean }>;
   filterNation: string;
@@ -995,6 +1004,13 @@ function QueueSidebar({
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <div className="border-b border-[var(--ops-border)] px-3 py-2.5">
+        <fieldset className="mb-3 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
+          <legend className="px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-assignment-text-muted)]">Filtermodus</legend>
+          <div className="mt-0.5 flex gap-4 text-xs font-semibold text-[var(--ops-assignment-text-strong)]">
+            <label className="flex cursor-pointer items-center gap-1.5"><input type="radio" name="assignment-filter-mode" checked={filterMode === 'synchronized'} onChange={() => onFilterMode('synchronized')} />Synchron</label>
+            <label className="flex cursor-pointer items-center gap-1.5"><input type="radio" name="assignment-filter-mode" checked={filterMode === 'queue'} onChange={() => onFilterMode('queue')} />Nur Warteschlange</label>
+          </div>
+        </fieldset>
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
@@ -1807,7 +1823,7 @@ function HotelDetailView({
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">Quotenbewertung · EZ</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
+                              {Boolean(entry.booking.countsAsSingle) !== ((entry.booking.capacity || 0) === 1) ? <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">Abweichende Quotenbewertung · {entry.booking.countsAsSingle ? 'EZ' : 'DZ'}</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
                               </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-[var(--ops-success)]">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
                               {canAddPartner && (
@@ -2094,13 +2110,13 @@ function QuotasPanel({
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <KpiBlock label="Athleten" value={`${card.athletes}`} />
                   <KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} />
-                  <KpiBlock label="Single Rooms" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
+                  <KpiBlock label="Als EZ gewertete Personen" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
                   <KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} />
                 </div>
 
                 <div className="mt-4 space-y-3 rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface)] p-3.5">
                   <QuotaProgress label="Officials" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} />
-                  <QuotaProgress label="Single Rooms" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
+                  <QuotaProgress label="Als EZ gewertete Personen" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
                   <QuotaProgress label="Disposition" current={card.peopleAssigned} max={card.peopleTotal} />
                 </div>
 
@@ -2210,7 +2226,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     </header>
     <div className="flex-1 space-y-4 overflow-auto p-6">
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Single Rooms" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Als EZ gewertete Personen" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="overflow-hidden rounded-xl border border-[var(--ops-border)]">
