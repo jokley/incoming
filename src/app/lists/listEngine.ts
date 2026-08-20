@@ -1,4 +1,6 @@
 import type { Athlete, Hotel, RoomBooking } from '../types';
+import type { OfficialQuotaUsage } from '../services/fisRules';
+import { evaluateAllQuotaGroups, isEvaluatedAsSingle, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
 
 export type ListKind = 'hotels' | 'nations' | 'contingents';
 
@@ -21,6 +23,7 @@ export interface ListRow {
   specialMeal: string;
   lateCheckout: string;
   surcharge: string;
+  quotaEvaluation: 'EZ' | 'DZ' | '—';
   roommate: string;
   remark: string;
   assigned: boolean;
@@ -79,6 +82,7 @@ export interface HotelContactRow {
 const value = (entry?: string | null) => entry?.trim() || '—';
 const iso = (entry?: string | null) => entry?.slice(0, 10) || '';
 const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)$/i, 'Zimmer $1');
+const roomTypeCode = (name?: string | null) => name?.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || 'ZI';
 
 /** Read-only hotel master-data projection for the event contact directory. */
 export function createHotelContactRows(hotels: Hotel[]): HotelContactRow[] {
@@ -87,9 +91,21 @@ export function createHotelContactRows(hotels: Hotel[]): HotelContactRow[] {
 }
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
-export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = []): ListRow[] {
+export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = [], quotaUsage: OfficialQuotaUsage[] = []): ListRow[] {
   const hotelById = new Map(hotels.map(hotel => [hotel.id, hotel]));
+  const evaluations = evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromBookings(bookings));
+  const additionalCostPersonIds = new Set(evaluations.flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId)));
   const assignments = new Map<string, { booking: RoomBooking; roommate: string }>();
+  const counters = new Map<string, number>();
+  const displayRoomByBooking = new Map<string, string>();
+  bookings.forEach(booking => {
+    const code = roomTypeCode(booking.roomType.name);
+    const key = `${booking.hotel.id}/${code}`;
+    const next = (counters.get(key) || 0) + 1;
+    counters.set(key, next);
+    const supplied = booking.roomNumber?.replace(/^(?:Zimmer|Slot)\s*/i, '').trim();
+    displayRoomByBooking.set(booking.id, `${code} ${supplied || String(next).padStart(2, '0')}`);
+  });
   bookings.forEach((booking) => booking.occupants.forEach((occupant) => {
     const roommate = booking.occupants
       .filter((candidate) => candidate.athlete.id !== occupant.athlete.id)
@@ -111,7 +127,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       bookingId: booking?.id || '',
       hotel: value(booking?.hotel.name),
       contingent: booking ? `${booking.hotel.name} → ${inventory?.roomType.name || booking.roomType.name}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}` : '—',
-      room: roomLabel(booking?.roomNumber),
+      room: booking ? displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber) : '—',
       roomType: value(booking?.roomType.name || athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
@@ -123,7 +139,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       lastMeal: value(athlete.lastMeal),
       specialMeal: value(athlete.specialMeal),
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
-      surcharge: athlete.single_room_status === 'APPROVED_EXTRA' ? 'Ja' : 'Nein',
+      surcharge: additionalCostPersonIds.has(athlete.id) ? 'Ja' : 'Nein',
+      quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
       roommate: value(assignment?.roommate || athlete.sharedWithName),
       remark: value(athlete.additionalItems),
       assigned: Boolean(booking),
