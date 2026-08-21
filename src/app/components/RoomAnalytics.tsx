@@ -8,6 +8,7 @@ import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../
 import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, SplitPageLayout, SplitPaneLayout, SectionHeader, StatusChip } from '../design-system';
 import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
 import { calculateQuotaUsage, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
+import { SingleRoomStatusBadge, singleRoomStatusPresentation } from './SingleRoomStatusBadge';
 
 type ViewKey = 'capacity' | 'hotels' | 'nations' | 'assignments' | 'singleRooms' | 'conflicts';
 type AnalyticsData = { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] };
@@ -310,13 +311,13 @@ function AssignmentsView({ data }: { data: AnalyticsData }) {
 function SingleRoomsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
   const defs: Array<{ status: Athlete['single_room_status']; label: string; tone: Tone; rank: number }> = [
-    { status: 'PENDING_APPROVAL', label: 'Entscheidung offen', tone: 'warning', rank: 0 },
-    { status: 'IN_QUOTA', label: 'Innerhalb Quote', tone: 'success', rank: 1 },
-    { status: 'APPROVED_EXTRA', label: 'Genehmigt', tone: 'info', rank: 2 },
+    { status: 'PENDING_APPROVAL', label: singleRoomStatusPresentation.PENDING_APPROVAL.label, tone: 'warning', rank: 0 },
+    { status: 'IN_QUOTA', label: singleRoomStatusPresentation.IN_QUOTA.label, tone: 'success', rank: 1 },
+    { status: 'APPROVED_EXTRA', label: singleRoomStatusPresentation.APPROVED_EXTRA.label, tone: 'warning', rank: 2 },
   ];
   const counts = defs.map(def => ({ ...def, value: data.athletes.filter(a => a.single_room_status === def.status).length }));
   const people = data.athletes.filter(person => defs.some(def => def.status === person.single_room_status)).sort((a, b) => (defs.find(def => def.status === a.single_room_status)?.rank ?? 9) - (defs.find(def => def.status === b.single_room_status)?.rank ?? 9) || a.lastname.localeCompare(b.lastname));
-  return <ViewShell title="Einzelzimmer"><Kpis>{counts.map(item => <ClickMetric key={item.status} onClick={() => navigate(`/athletes?singleRoomStatus=${item.status}`)} label={item.label} value={item.value} helper="Personen mit Einzelzimmerbedarf" trend={item.status === 'PENDING_APPROVAL' ? 'jetzt entscheiden' : 'anzeigen'} tone={item.tone}/>)}</Kpis><DataPanel title="Einzelzimmerentscheidungen" actions={<StatusChip tone={counts[0].value ? 'warning' : 'success'}>{counts[0].value ? `${counts[0].value} Entscheidungen offen` : 'Keine Entscheidung offen'}</StatusChip>}><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Person</th><th>Nation</th><th>Disziplin</th><th>EZ-Status</th><th/></tr></thead><tbody>{people.map(person => { const def = defs.find(d => d.status === person.single_room_status)!; return <tr key={person.id} onClick={() => navigate(`/athletes?athleteId=${person.id}`)} className={rowClass}><td className="p-3 font-bold">{person.firstname} {person.lastname}</td><td>{person.nationCode}</td><td>{person.discipline || person.disciplines?.join(', ') || '—'}</td><td><StatusChip tone={def.tone}>{def.label}</StatusChip></td><td><ActionCell/></td></tr>})}</tbody></table>{!people.length && <EmptyState title="Keine Einzelzimmerentscheidungen vorhanden"/>}</div></DataPanel></ViewShell>;
+  return <ViewShell title="Einzelzimmer"><Kpis>{counts.map(item => <ClickMetric key={item.status} onClick={() => navigate(`/athletes?singleRoomStatus=${item.status}`)} label={item.label} value={item.value} helper="Personen mit Einzelzimmerbedarf" trend={item.status === 'PENDING_APPROVAL' ? 'jetzt entscheiden' : 'anzeigen'} tone={item.tone}/>)}</Kpis><DataPanel title="Einzelzimmerentscheidungen" actions={<StatusChip tone={counts[0].value ? 'warning' : 'success'}>{counts[0].value ? `${counts[0].value} Entscheidungen offen` : 'Keine Entscheidung offen'}</StatusChip>}><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Person</th><th>Nation</th><th>Disziplin</th><th>Einzelzimmerstatus</th><th/></tr></thead><tbody>{people.map(person => <tr key={person.id} onClick={() => navigate(`/athletes?athleteId=${person.id}`)} className={rowClass}><td className="p-3 font-bold">{person.firstname} {person.lastname}</td><td>{person.nationCode}</td><td>{person.discipline || person.disciplines?.join(', ') || '—'}</td><td><SingleRoomStatusBadge status={person.single_room_status}/></td><td><ActionCell/></td></tr>)}</tbody></table>{!people.length && <EmptyState title="Keine Einzelzimmerentscheidungen vorhanden"/>}</div></DataPanel></ViewShell>;
 }
 
 function ConflictsView({ data }: { data: AnalyticsData }) {
