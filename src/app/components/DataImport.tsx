@@ -1,25 +1,25 @@
-import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Dialog, DialogContent, DialogTitle } from '@mui/material';
-import { AlertTriangle, CheckCircle, ChevronRight, Clock3, FileCheck2, FileText, Loader2, LockKeyhole, RefreshCcw, Upload, Users } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users } from 'lucide-react';
 
 import { api } from '../services/api';
 import type { FisImportIssue, FisImportPreview } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
-import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, quotaViolationLabel, type OperationsTask } from './OperationsDecisionDialog';
+import { buildOperationsTask, OperationsDecisionDialog, quotaViolationLabel, type OperationsTask } from './OperationsDecisionDialog';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
 import { AssignmentStatusChip } from './assignment/AssignmentInfo';
+import { SingleRoomStatusBadge, type SingleRoomStatus } from './SingleRoomStatusBadge';
 
 const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
 type WorkflowStep = { id: string; label: string; complete: boolean; current: boolean };
-type Detail = { title: string; subtitle?: string; issues?: FisImportIssue[]; rows?: string[][]; headers?: string[] };
+type Detail = { title: string; subtitle?: string; issues?: FisImportIssue[]; rows?: ReactNode[][]; headers?: string[] };
 
 export function DataImport() {
   const [searchParams] = useSearchParams();
-  const detailScrollRef = useRef<HTMLDivElement>(null);
   const [selected, setSelected] = useState<ImportSession | null>(null);
   const [sessions, setSessions] = useState<ImportSession[]>([]);
   const [files, setFiles] = useState<File[]>([]);
@@ -35,14 +35,14 @@ export function DataImport() {
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
   useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
-  const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); setFiles([]); setSuccess(null); detailScrollRef.current?.scrollTo({ top: 0 }); };
-  const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); detailScrollRef.current?.scrollTo({ top: 0 }); };
+  const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); setFiles([]); setSuccess(null); };
+  const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); };
   const handleFiles = (incoming: FileList | File[] | null | undefined) => {
     if (!incoming) return; const accepted = Array.from(incoming).filter(f => /\.xlsx?$/i.test(f.name));
     if (!accepted.length) { setError('Bitte Excel-Dateien (.xlsx, .xls) hochladen.'); return; }
     setFiles([...new Map(accepted.map(f => [f.name.toLowerCase(), f])).values()]); setPreview(null); setSuccess(null); setError(null);
   };
-  const cancel = () => { setFiles([]); setPreview(null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
+  const cancel = () => { setFiles([]); if (!selected) setPreview(null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
   const runPreview = async () => { if (files.length < 2) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id); setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = await api.approveImportSession(selected.id); setSelected(updated); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
   const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); try { const result = await api.importSession(selected.id); setSuccess(`Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`); setSelected(await api.getImportSession(selected.id)); await refreshSessions(); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
@@ -64,10 +64,11 @@ export function DataImport() {
   const openIssues = (title: string, issues: FisImportIssue[]) => setDetail({ title, subtitle: `${issues.length} betroffene Prüfhinweise`, issues });
   const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
   const peopleRows = preview?.people.map(p => {
-    const entitlement = approvedPersonKeys.has((p as FisImportPreviewPersonWithKey).matchKey)
-      ? 'Einzelzimmer außerhalb Quote (Mehrpreis)'
-      : p.singleRoomEntitlement === 'IN_QUOTA' ? 'Einzelzimmer innerhalb Quote'
-        : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'Einzelzimmer außerhalb Quote (Genehmigung offen)' : '—';
+    const status: SingleRoomStatus = approvedPersonKeys.has((p as FisImportPreviewPersonWithKey).matchKey)
+      ? 'APPROVED_EXTRA'
+      : p.singleRoomEntitlement === 'IN_QUOTA' ? 'IN_QUOTA'
+        : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
+    const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
     return [`${p.firstname} ${p.lastname}`, p.nationCode, p.discipline || '—', p.function || '—', entitlement, p.operation];
   }) ?? [];
   const roomRows = preview?.rooms.map(r => [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—']) ?? [];
@@ -78,21 +79,21 @@ export function DataImport() {
       <div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
         <ContentCard surface="raised" className="min-h-0 flex-1 overflow-hidden">
-          <div ref={detailScrollRef} className="h-full overflow-y-auto">
+          <div className="h-full overflow-y-auto">
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
               <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} · {selected.discipline}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>
-              <div className="flex items-center gap-3"><StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip><SessionPrimaryAction session={selected} preview={preview} confirming={confirming} onApprove={approve} onImport={confirm}/></div>
+              <div className="flex items-center gap-3"><StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip><SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/></div>
             </div>
             <div className="space-y-4 p-5">
               <Workflow session={selected} />
+              <SessionUploadWorkspace session={selected} files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
-              <NextAction session={selected} success={success} onOpenTask={setActiveTask}/>
+              <NextAction session={selected} success={success}/>
               {preview && <ImportChangeSummary preview={preview}/>}
               <ProblemList preview={preview} fallback={selected} quota={quotaWarnings} others={otherWarnings} onOpen={openIssues}/>
               <PreviewCard peopleRows={peopleRows} roomRows={roomRows} onOpen={setDetail}/>
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
-              <NewVersionCard session={selected} files={files} loading={loading} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
             </div>
             </>}
@@ -108,10 +109,14 @@ export function DataImport() {
 
 function NewSessionWorkspace({files,preview,loading,error,success,onFiles,onPreview,onCancel}:{files:File[];preview:FisImportPreview|null;loading:boolean;error:string|null;success:string|null;onFiles:(files:FileList|null)=>void;onPreview:()=>void;onCancel:()=>void}) { return <>
   <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-4 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] p-5"><div><SectionHeader title="Importprüfung"/><h2 className="mt-2 text-2xl font-extrabold">Neue Importsession</h2><p className="text-sm text-[var(--ops-text-muted)]">FIS-Dateien hochladen und vor dem Import gemeinsam prüfen.</p></div><OpsButton onClick={onPreview} disabled={files.length<2||loading}>{loading?<Loader2 className="mr-2 inline h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 inline h-4 w-4"/>}Dateien prüfen</OpsButton></div>
-  <div className="space-y-4 p-5"><Workflow session={null}/><ContentCard surface="elevated" className="p-4"><SectionHeader title="Nächster Schritt" subtitle="Beide FIS-Dateien auswählen und anschließend oben rechts prüfen" actions={<StatusChip tone={files.length>=2?'primary':'neutral'}>{files.length>=2?'Bereit zur Prüfung':'Dateien erforderlich'}</StatusChip>}/><div className="mt-3 grid items-start gap-4 lg:grid-cols-2"><UploadCard files={files} onChange={onFiles}/><SelectedFiles files={files} preview={preview} onCancel={onCancel}/></div></ContentCard>{preview&&<ImportChangeSummary preview={preview}/>} {error&&<InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}{success&&<InfoPanel tone="success" title="Import abgeschlossen">{success}</InfoPanel>}</div>
+  <div className="space-y-4 p-5"><Workflow session={null}/><UploadWorkspace files={files} preview={preview} onFiles={onFiles} onCancel={onCancel}/>{preview&&<ImportChangeSummary preview={preview}/>} {error&&<InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}{success&&<InfoPanel tone="success" title="Import abgeschlossen">{success}</InfoPanel>}</div>
 </>; }
 
-function SelectedFiles({files,preview,onCancel}:{files:File[];preview:FisImportPreview|null;onCancel:()=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Ausgewählte Dateien" subtitle="Dateien für die neue Importsession"/><div className="mt-3 space-y-2">{files.length?files.map(file=><div key={file.name} className="flex items-center justify-between rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-sm"><span className="flex min-w-0 items-center gap-2"><FileText className="h-4 w-4 shrink-0"/><span className="truncate">{file.name}</span></span><span className="font-mono text-xs text-[var(--ops-text-muted)]">{(file.size/1024).toFixed(1)} KB</span></div>):<EmptyState title="Noch keine Dateien" description="Beide FIS-Dateien gemeinsam hochladen."/>}</div><div className="mt-3"><OpsButton onClick={onCancel} disabled={!files.length&&!preview}><RefreshCcw className="mr-2 inline h-4 w-4"/>Auswahl zurücksetzen</OpsButton></div></ContentCard>; }
+function UploadWorkspace({files,preview,onFiles,onCancel}:{files:File[];preview:FisImportPreview|null;onFiles:(files:FileList|null)=>void;onCancel:()=>void}) { return <div className="grid items-start gap-4 lg:grid-cols-2"><UploadCard files={files} onChange={onFiles}/><SelectedFiles files={files} preview={preview} onCancel={onCancel}/></div>; }
+
+function SessionUploadWorkspace({session,files,preview,onFiles,onCancel}:{session:ImportSession;files:File[];preview:FisImportPreview|null;onFiles:(files:FileList|null)=>void;onCancel:()=>void}) { const nextVersion=(session.currentVersion?.version ?? 0)+1; return <section aria-label="Upload für Meldeliste"><div className="mb-2 flex items-center justify-between"><p className="text-xs font-bold text-[var(--ops-text-muted)]">Nächste Meldeliste wird als Version {nextVersion} geprüft.</p><StatusChip tone="neutral">Version {nextVersion}</StatusChip></div><UploadWorkspace files={files} preview={preview} onFiles={onFiles} onCancel={onCancel}/></section>; }
+
+function SelectedFiles({files,preview,onCancel}:{files:File[];preview:FisImportPreview|null;onCancel:()=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Ausgewählte Dateien" subtitle="Dateien für die nächste Prüfung"/><div className="mt-3 space-y-2">{files.length?files.map(file=><div key={file.name} className="flex items-center justify-between rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-sm"><span className="flex min-w-0 items-center gap-2"><FileText className="h-4 w-4 shrink-0"/><span className="truncate">{file.name}</span></span><span className="font-mono text-xs text-[var(--ops-text-muted)]">{(file.size/1024).toFixed(1)} KB</span></div>):<EmptyState title="Noch keine Dateien" description="Beide FIS-Dateien gemeinsam hochladen."/>}</div><div className="mt-3"><OpsButton onClick={onCancel} disabled={!files.length}><RefreshCcw className="mr-2 inline h-4 w-4"/>Auswahl zurücksetzen</OpsButton></div></ContentCard>; }
 
 function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
   const categories = preview.dispositionAnalysis.categories;
@@ -126,7 +131,7 @@ function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
 }
 
 function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
-  if (!session) return [{ id: 'validation', label: 'Importprüfung', complete: false, current: true }, { id: 'decision', label: 'Entscheidungen', complete: false, current: false }, { id: 'approval', label: 'Freigeben', complete: false, current: false }, { id: 'import', label: 'Importieren', complete: false, current: false }];
+  if (!session) return [{ id: 'validation', label: 'Importprüfung', complete: false, current: true }, { id: 'decision', label: 'Entscheidung (falls erforderlich)', complete: false, current: false }, { id: 'approval', label: 'Freigeben', complete: false, current: false }, { id: 'import', label: 'Importieren', complete: false, current: false }];
   const status = session.status;
   const imported = status === 'IMPORTED';
   const validationComplete = status !== 'DRAFT';
@@ -135,7 +140,7 @@ function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
   const clarification = ['WAITING_FOR_NATION', 'NATION_CLARIFICATION', 'NEW_LIST_RECEIVED', 'RECHECK_REQUIRED'].includes(status);
   return [
     { id: 'validation', label: 'Importprüfung', complete: validationComplete, current: !validationComplete },
-    { id: 'decision', label: 'Entscheidungen', complete: validationComplete && !pendingDecisions && !clarification, current: validationComplete && (pendingDecisions || clarification) },
+    { id: 'decision', label: 'Entscheidung (falls erforderlich)', complete: validationComplete && !pendingDecisions && !clarification, current: validationComplete && (pendingDecisions || clarification) },
     { id: 'approval', label: 'Freigeben', complete: approved, current: !approved && !pendingDecisions && !clarification && validationComplete },
     { id: 'import', label: 'Importieren', complete: imported, current: status === 'APPROVED' },
   ];
@@ -143,31 +148,27 @@ function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
 
 function Workflow({session}:{session:ImportSession|null}) {
   const steps = visibleWorkflow(session);
-  return <ContentCard surface="elevated" className="p-3"><SectionHeader title="Importworkflow" subtitle="Aktueller Stand und nächster Schritt"/><ol className="mt-3 flex items-stretch">{steps.map((step,index)=><li key={step.id} className="flex min-w-0 flex-1 items-center"><div aria-current={step.current?'step':undefined} className={`flex min-h-14 w-full items-center gap-2 rounded-lg border px-3 py-2 ${step.current?'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-1 ring-[var(--ops-primary)]':step.complete?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold ${step.complete?'bg-[var(--ops-primary)] text-white':'bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)]'}`}>{step.complete?<CheckCircle className="h-3.5 w-3.5"/>:index+1}</span><div className="min-w-0"><div className="truncate text-xs font-extrabold">{step.label}</div>{step.current&&<div className="text-[10px] font-bold text-[var(--ops-primary-emphasis)]">Jetzt bearbeiten</div>}</div></div>{index<steps.length-1&&<ChevronRight className="mx-1 h-4 w-4 shrink-0 text-[var(--ops-text-subtle)]"/>}</li>)}</ol></ContentCard>;
+  return <ContentCard surface="elevated" className="p-3"><SectionHeader title="Importworkflow" subtitle="Status der aktuellen Importsession"/><ol className="mt-3 flex items-stretch">{steps.map((step,index)=><li key={step.id} className="flex min-w-0 flex-1 items-center"><div aria-current={step.current?'step':undefined} className={`flex min-h-14 w-full items-center gap-2 rounded-lg border px-3 py-2 ${step.current?'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-1 ring-[var(--ops-primary)]':step.complete?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}><span className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-extrabold ${step.complete?'bg-[var(--ops-primary)] text-white':'bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)]'}`}>{step.complete?<CheckCircle className="h-3.5 w-3.5"/>:index+1}</span><div className="min-w-0"><div className="truncate text-xs font-extrabold">{step.label}</div>{step.current&&<div className="text-[10px] font-bold text-[var(--ops-primary-emphasis)]">Aktueller Status</div>}</div></div>{index<steps.length-1&&<ChevronRight className="mx-1 h-4 w-4 shrink-0 text-[var(--ops-text-subtle)]"/>}</li>)}</ol></ContentCard>;
 }
 
-function SessionPrimaryAction({session,preview,confirming,onApprove,onImport}:{session:ImportSession;preview:FisImportPreview|null;confirming:boolean;onApprove:()=>void;onImport:()=>void}) {
-  const pending=session.approvals.filter(a=>a.decision==='PENDING').length;
-  const canApprove=Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
-  if(session.status==='IMPORTED') return null;
-  if(session.status==='APPROVED') return <OpsButton onClick={onImport} disabled={confirming} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4"/>Importieren</OpsButton>;
-  return <OpsButton onClick={onApprove} disabled={!canApprove} title={pending ? 'Zuerst alle Entscheidungen abschließen' : undefined}>Freigeben</OpsButton>;
-}
-
-function NextAction({session,success,onOpenTask}:{session:ImportSession;success:string|null;onOpenTask:(task:OperationsTask)=>void}) {
+function SessionPrimaryAction({session,preview,files,loading,confirming,onPreview,onOpenTask,onApprove,onImport}:{session:ImportSession;preview:FisImportPreview|null;files:File[];loading:boolean;confirming:boolean;onPreview:()=>void;onOpenTask:(task:OperationsTask)=>void;onApprove:()=>void;onImport:()=>void}) {
   const pending=session.approvals.map(approval=>buildOperationsTask(session,approval)).filter(task=>task.approval.decision==='PENDING');
-  const clarification=['WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','RECHECK_REQUIRED'].includes(session.status);
-  if(pending.length) return <ContentCard surface="elevated" className="border-[var(--ops-tone-warning-border)] p-4"><SectionHeader title="Nächster Schritt: Entscheidungen bearbeiten" subtitle={`${pending.length} ${pending.length===1?'offene Entscheidung':'offene Entscheidungen'} vor der Freigabe abschließen`} actions={<StatusChip tone="warning">Handlungsbedarf</StatusChip>}/><div className="mt-3 space-y-2">{pending.map((task,index)=><OperationsTaskRow key={task.approval.id} task={task} onOpen={()=>onOpenTask(task)} primary={index===0}/>)}</div></ContentCard>;
-  if(session.status==='IMPORTED') return <InfoPanel tone="success" title="Import abgeschlossen">{success ?? `Die Importsession ist abgeschlossen. Als nächsten Schritt kann unten eine neue Meldeliste als Version ${(session.currentVersion?.version ?? 0)+1} geprüft werden.`}</InfoPanel>;
-  if(session.status==='APPROVED') return <div className="flex items-center gap-3 rounded-xl border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] px-4 py-3"><CheckCircle className="h-5 w-5 shrink-0 text-[var(--ops-success)]"/><div><div className="font-extrabold">Nächster Schritt: Importieren</div><p className="text-sm text-[var(--ops-text-muted)]">Die Importsession ist freigegeben. Import oben rechts starten.</p></div></div>;
-  if(clarification) return <div className="flex items-center gap-3 rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-4 py-3"><AlertTriangle className="h-5 w-5 shrink-0 text-[var(--ops-warning)]"/><div><div className="font-extrabold">Nächster Schritt: Klärung abschließen</div><p className="text-sm text-[var(--ops-text-muted)]">Die fachliche Klärung oder eine neue Meldeliste ist erforderlich, bevor freigegeben werden kann.</p></div></div>;
-  return <div className="flex items-center gap-3 rounded-xl border border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)] px-4 py-3"><LockKeyhole className="h-5 w-5 shrink-0 text-[var(--ops-primary)]"/><div><div className="font-extrabold">Nächster Schritt: Freigeben</div><p className="text-sm text-[var(--ops-text-muted)]">Alle Prüfungen sind abgeschlossen. Importsession oben rechts freigeben.</p></div></div>;
+  const needsFiles=['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','RECHECK_REQUIRED'].includes(session.status);
+  const canApprove=Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
+  if(pending.length) return <OpsButton onClick={()=>onOpenTask(pending[0])}>Entscheidung öffnen</OpsButton>;
+  if(session.status==='APPROVED') return <OpsButton onClick={onImport} disabled={confirming} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4"/>Importieren</OpsButton>;
+  if(files.length>=2 || session.status==='IMPORTED' || needsFiles) return <OpsButton onClick={onPreview} disabled={files.length<2||loading}>{loading?<Loader2 className="mr-2 inline h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 inline h-4 w-4"/>}Dateien prüfen</OpsButton>;
+  return <OpsButton onClick={onApprove} disabled={!canApprove}>Freigeben</OpsButton>;
 }
 
-function NewVersionCard({session,files,loading,onFiles,onPreview,onCancel}:{session:ImportSession;files:File[];loading:boolean;onFiles:(files:FileList|null)=>void;onPreview:()=>void;onCancel:()=>void}) {
-  const nextVersion=(session.currentVersion?.version ?? 0)+1;
-  const imported=session.status==='IMPORTED';
-  return <ContentCard surface="elevated" className={`p-4 ${imported?'border-[var(--ops-tone-primary-border)]':''}`}><SectionHeader title={imported?'Nächster Schritt: Neue Meldeliste prüfen':'Neue Meldeliste'} subtitle={`Als Version ${nextVersion} prüfen · Version ${nextVersion-1} bleibt in der Historie erhalten`} actions={imported?<StatusChip tone="primary">Version {nextVersion}</StatusChip>:undefined}/><div className="mt-3 grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]"><UploadCard files={files} onChange={onFiles}/><div className="rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4"><p className="text-sm text-[var(--ops-text-muted)]">Beide aktualisierten FIS-Dateien auswählen. Die vorhandene Importsession und ihre Historie bleiben vollständig erhalten.</p><div className="mt-4 flex gap-2"><OpsButton onClick={onPreview} disabled={files.length<2||loading}>{loading?<Loader2 className="mr-2 inline h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 inline h-4 w-4"/>}Version prüfen</OpsButton><OpsButton onClick={onCancel} disabled={!files.length}>Auswahl zurücksetzen</OpsButton></div></div></div></ContentCard>;
+function NextAction({session,success}:{session:ImportSession;success:string|null}) {
+  const pending=session.approvals.filter(approval=>approval.decision==='PENDING').length;
+  const clarification=['WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','RECHECK_REQUIRED'].includes(session.status);
+  if(pending) return <InfoPanel tone="warning" title="Entscheidung erforderlich">{pending} {pending===1?'offene Entscheidung muss':'offene Entscheidungen müssen'} vor der Freigabe abgeschlossen werden.</InfoPanel>;
+  if(session.status==='IMPORTED') return <InfoPanel tone="success" title="Import abgeschlossen">{success ?? `Die Importsession ist abgeschlossen. Im Uploadbereich kann eine neue Meldeliste als Version ${(session.currentVersion?.version ?? 0)+1} geprüft werden.`}</InfoPanel>;
+  if(session.status==='APPROVED') return <InfoPanel tone="success" title="Freigegeben">Die Importsession ist bereit für den kontrollierten Import.</InfoPanel>;
+  if(clarification) return <InfoPanel tone="warning" title="Klärung erforderlich">Die fachliche Klärung oder eine neue Meldeliste ist erforderlich, bevor freigegeben werden kann.</InfoPanel>;
+  return <InfoPanel tone="info" title="Prüfung abgeschlossen">Alle Prüfungen und erforderlichen Entscheidungen sind abgeschlossen.</InfoPanel>;
 }
 function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · kompakter Session-Verlauf`}/><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></ContentCard>; }
 function UploadCard({files,onChange}:{files:File[];onChange:(f:FileList|null)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Neue Importsession" subtitle="Beide Dateien in einem Schritt auswählen"/><label className="mt-4 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-6 text-center hover:bg-[var(--ops-tone-primary-surface)]"><input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={e=>onChange(e.target.files)}/><Upload className="mx-auto h-8 w-8 text-[var(--ops-primary)]"/><p className="mt-2 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-1 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
@@ -183,7 +184,7 @@ function ProblemList({preview,fallback,quota,others,onOpen}:{preview:FisImportPr
   </div></ContentCard>;
 }
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
-function PreviewCard({peopleRows,roomRows,onOpen}:{peopleRows:string[][];roomRows:string[][];onOpen:(detail:Detail)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Die vollständigen Inhalte der beiden Excel-Dateien prüfen"/><div className="mt-4 grid gap-3 sm:grid-cols-2"><SummaryRow label="Personen" count={peopleRows.length} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmeranspruch','Aktion']})}/><SummaryRow label="Zimmerzuordnungen" count={roomRows.length} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt']})}/></div></ContentCard>; }
+function PreviewCard({peopleRows,roomRows,onOpen}:{peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Die vollständigen Inhalte der beiden Excel-Dateien prüfen"/><div className="mt-4 grid gap-3 sm:grid-cols-2"><SummaryRow label="Personen" count={peopleRows.length} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmerstatus','Aktion']})}/><SummaryRow label="Zimmerzuordnungen" count={roomRows.length} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt']})}/></div></ContentCard>; }
 function SummaryRow({label,count,tone='neutral',disabled,onClick}:{label:string;count:number;tone?:'neutral'|'success'|'warning'|'error';disabled?:boolean;onClick:()=>void}) { return <button type="button" disabled={disabled} onClick={onClick} className="flex w-full items-center justify-between rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2.5 text-left transition hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)] disabled:cursor-default disabled:opacity-70"><span className="flex items-center gap-2 text-sm font-bold">{tone==='error'?<AlertTriangle className="h-4 w-4 text-[var(--ops-error)]"/>:tone==='success'?<CheckCircle className="h-4 w-4 text-[var(--ops-success)]"/>:<Users className="h-4 w-4 text-[var(--ops-text-subtle)]"/>}{label}</span><span className="flex items-center gap-2"><StatusChip tone={tone}>{count}</StatusChip><ChevronRight className="h-4 w-4 text-[var(--ops-text-subtle)]"/></span></button>; }
 const issueCopy:Record<string,{message:string;causes?:string[];action:string}>={
   ROOM_PERSON_NOT_FOUND:{message:'Neue Person erkannt.',action:'Die Person wird beim Import neu angelegt.'},

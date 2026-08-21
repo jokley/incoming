@@ -2217,6 +2217,10 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     .find(group => group.key === quotaUsageKey(card.nationCode, card.discipline, card.gender));
   const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
   const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds);
+  const additionalCostPeople = controlPeople.filter(person => person.additionalCost);
+  const withinQuotaPeople = controlPeople.filter(person => !person.additionalCost);
+  const sharedDecisionId = additionalCostPeople.find(person => person.decisionId)?.decisionId
+    ?? controlPeople.find(person => person.decisionId)?.decisionId;
 
   return <div className="flex h-full flex-col">
     <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
@@ -2230,21 +2234,28 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Mehrpreise" value={`${quotaEvaluation.overflow}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
-        {controlPeople.length ? <div className="overflow-hidden rounded-xl border border-[var(--ops-border)]">
-          {controlPeople.map((person) => <div key={person.athleteId} className="grid items-center gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3 last:border-0 md:grid-cols-[minmax(150px,1fr)_minmax(170px,auto)_auto]">
-            <div>
-              <strong className="block text-sm text-[var(--ops-assignment-text-bright)]">{person.name}</strong>
-              <div className={`mt-1.5 inline-flex rounded-md border px-2 py-0.5 text-[10px] font-bold ${person.additionalCost ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]' : 'border-[var(--ops-tone-info-border)] bg-[var(--ops-tone-info-surface)] text-[var(--ops-tone-info-text)]'}`}>{person.additionalCost ? 'Einzelzimmer · Mehrpreis' : 'Einzelzimmer'}</div>
-            </div>
-            <span className={`flex items-center gap-1.5 text-sm font-semibold ${person.additionalCost ? 'text-[var(--ops-tone-warning-text)]' : 'text-[var(--ops-tone-info-text)]'}`}>
-              {person.additionalCost && <AlertTriangle className="h-4 w-4 shrink-0" />}{person.additionalCost ? 'Mehrpreis' : 'Innerhalb der Quote'}
-            </span>
-            <button type="button" disabled={!person.decisionId} title={!person.decisionId ? 'Innerhalb der Quote ist keine separate Importentscheidung hinterlegt.' : undefined} onClick={() => person.decisionId && onShowDecision(person.decisionId)} className="justify-self-start whitespace-nowrap text-sm font-semibold text-[var(--ops-assignment-text-accent-strong)] hover:text-[var(--ops-assignment-text-accent)] disabled:cursor-not-allowed disabled:text-[var(--ops-text-subtle)] md:justify-self-end">Entscheidung anzeigen</button>
-          </div>)}
+        {controlPeople.length ? <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <SingleRoomDecisionGroup title="Mehrpreis" people={additionalCostPeople} status="APPROVED_EXTRA" />
+            <SingleRoomDecisionGroup title="Innerhalb der Quote" people={withinQuotaPeople} status="IN_QUOTA" />
+          </div>
+          <div className="flex justify-end border-t border-[var(--ops-divider)] pt-3">
+            <OpsButton disabled={!sharedDecisionId} title={!sharedDecisionId ? 'Für diese Quotengruppe ist keine Importentscheidung hinterlegt.' : undefined} onClick={() => sharedDecisionId && onShowDecision(sharedDecisionId)}>Entscheidung anzeigen</OpsButton>
+          </div>
         </div> : <p className="text-sm text-[var(--ops-text-muted)]">Keine Personen mit Einzelzimmeranspruch in dieser Quotengruppe.</p>}
       </DetailSection>
     </div>
   </div>;
+}
+
+function SingleRoomDecisionGroup({ title, people, status }: { title: string; people: SingleRoomControlPerson[]; status: 'APPROVED_EXTRA' | 'IN_QUOTA' }) {
+  return <section className="overflow-hidden rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]">
+    <header className="flex items-center justify-between gap-3 border-b border-[var(--ops-divider)] px-3 py-2.5">
+      <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
+      <SingleRoomStatusBadge status={status} />
+    </header>
+    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]">{person.name}</li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
+  </section>;
 }
 
 function DetailSection({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
