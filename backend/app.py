@@ -1476,7 +1476,12 @@ def preview_fis_import():
                 db.session.flush()
             next_version = session.next_version_number()
             session.discipline = result.get('detectedDiscipline')
-            session.status = status if is_new else ('DRAFT' if result['errors'] else 'NEW_LIST_RECEIVED')
+            # A new version has already completed its technical preview here.
+            # Its workflow state must therefore be derived from the current
+            # result, not from the mere fact that the session existed before.
+            # In particular, an unchanged valid list has no open decision and
+            # can proceed directly to professional approval.
+            session.status = status
             session.approved_at = session.approved_by = None
             # Imported athletes and history entries may reference a decision from
             # the preceding version. Detach those references before replacing the
