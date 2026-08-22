@@ -24,22 +24,22 @@ class ScenarioDefinition:
     steps: tuple[str, ...]
 
     def public_dict(self) -> dict:
-        return {'number': self.number, 'title': self.title, 'description': self.description, 'versions': len(self.steps)}
+        return {'number': self.number, 'title': self.title, 'description': self.description, 'versions': 1}
 
 
-# A scenario contains the files a tester imports in order. Except for the explicitly
-# named step, every version is derived from exactly the same immutable roster.
+# These are the nine consecutive uploads of one workflow.  ``steps`` describes
+# the state of that upload; it is intentionally cumulative so an earlier change
+# remains present until a later scenario explicitly corrects it.
 SCENARIOS = (
     ScenarioDefinition('001', 'Erstimport', 'Eine neue Nation wird erstmals importiert.', ('base',)),
-    ScenarioDefinition('002', 'Unveränderte Meldeliste', 'Dieselbe Meldeliste wird ohne fachliche Änderung erneut importiert.', ('base', 'base')),
+    ScenarioDefinition('002', 'Unveränderte Meldeliste', 'Dieselbe Meldeliste wird ohne fachliche Änderung erneut importiert.', ('base',)),
     ScenarioDefinition('003', 'Neue Athleten', 'Nur zwei zusätzliche Athleten werden ergänzt.', ('base', 'add-athletes')),
-    ScenarioDefinition('004', 'Athlet entfernt', 'Nur ein bestehender Athlet entfällt.', ('base', 'remove-athlete')),
-    ScenarioDefinition('005', 'Aufenthaltsdaten geändert', 'Nur die Aufenthaltsdaten eines Athleten ändern sich.', ('base', 'stay-dates')),
-    ScenarioDefinition('006', 'Zimmerpartner geändert', 'Nur die Zimmerpartner bestehender Athletinnen ändern sich.', ('base', 'room-partner')),
-    ScenarioDefinition('007', 'Genehmigtes Einzelzimmer außerhalb Quote', 'Eine zusätzliche Person benötigt einen genehmigten Einzelzimmeranspruch.', ('single-quota-base', 'single-quota-extra')),
-    ScenarioDefinition('008', 'Single-Room-Quote verletzt', 'Nur Einzelzimmeranforderungen verletzen die Quote.', ('base', 'single-quota')),
-    ScenarioDefinition('009', 'Korrigierte Meldeliste', 'Die verletzte Official-Quote wird wieder eingehalten.', ('official-quota', 'base')),
-    ScenarioDefinition('010', 'Import abschließen', 'Unveränderte Meldeliste ohne offene Entscheidungen.', ('base',)),
+    ScenarioDefinition('004', 'Athlet entfernt', 'Nur ein bestehender Athlet entfällt.', ('base', 'add-athletes', 'remove-athlete')),
+    ScenarioDefinition('005', 'Aufenthaltsdaten geändert', 'Nur die Aufenthaltsdaten eines Athleten ändern sich.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates')),
+    ScenarioDefinition('006', 'Zimmerpartner geändert', 'Nur die Zimmerpartner bestehender Athletinnen ändern sich.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner')),
+    ScenarioDefinition('007', 'Genehmigtes Einzelzimmer außerhalb Quote', 'Ein Einzelzimmer außerhalb der Quote kann genehmigt werden.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner', 'single-quota')),
+    ScenarioDefinition('008', 'Single Room Quote verletzt', 'Die genehmigte Meldeliste verletzt weiterhin nur die Einzelzimmerquote.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner', 'single-quota')),
+    ScenarioDefinition('009', 'Korrigierte Meldeliste', 'Nur die verletzte Einzelzimmerquote wird wieder korrigiert.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner')),
 )
 SCENARIO_BY_NUMBER = {scenario.number: scenario for scenario in SCENARIOS}
 
@@ -130,6 +130,14 @@ def _apply(rows: list[dict], step: str) -> list[dict]:
     return rows
 
 
+def _scenario_people(scenario: ScenarioDefinition) -> list[dict]:
+    """Apply a scenario's cumulative recipe without resetting between steps."""
+    rows = _base_people()
+    for step in scenario.steps:
+        rows = _apply(rows, step)
+    return rows
+
+
 def _room_rows(entries: list[dict]) -> list[dict]:
     rows = []
     for person in entries:
@@ -166,19 +174,24 @@ def generate_scenario(number: str, output_dir: Path) -> dict:
     root = output_dir / f'{scenario.number}_{scenario_slug(scenario)}'
     root.mkdir(parents=True, exist_ok=True)
     expectations = {'scenario': scenario.public_dict(), 'nation': TEST_NATION, 'versions': []}
-    base = _base_people()
-    for version, step in enumerate(scenario.steps, 1):
-        entries = _apply(base, step)
-        prefix = f'{scenario.number}_{scenario_slug(scenario)}_V{version}'
-        write_excel(entries, root / f'{prefix}_entries.xlsx')
-        write_excel(_room_rows(entries), root / f'{prefix}_entries-room-list-detailed.xlsx')
-        expectations['versions'].append(_expectation(version, step))
+    entries = _scenario_people(scenario)
+    prefix = f'{scenario.number}_{scenario_slug(scenario)}'
+    write_excel(entries, root / f'{prefix}_entries.xlsx')
+    write_excel(_room_rows(entries), root / f'{prefix}_room_list.xlsx')
+    expectations['versions'].append(_expectation(1, scenario.steps[-1]))
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return {'root': root, **scenario.public_dict()}
 
 
 def generate_complete_suite(output_dir: Path) -> Path:
     root = output_dir / 'Kompletter_Testordner'
+    root.mkdir(parents=True, exist_ok=True)
+    expectations = {'nation': TEST_NATION, 'scenarios': []}
     for scenario in SCENARIOS:
-        generate_scenario(scenario.number, root)
+        entries = _scenario_people(scenario)
+        prefix = f'{scenario.number}_{scenario_slug(scenario)}'
+        write_excel(entries, root / f'{prefix}_entries.xlsx')
+        write_excel(_room_rows(entries), root / f'{prefix}_room_list.xlsx')
+        expectations['scenarios'].append({**scenario.public_dict(), **_expectation(1, scenario.steps[-1])})
+    (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return root

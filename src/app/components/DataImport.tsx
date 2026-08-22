@@ -137,7 +137,7 @@ function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
   const validationComplete = status !== 'DRAFT';
   const pendingDecisions = session.approvals.some(item => item.decision === 'PENDING');
   const approved = ['APPROVED', 'IMPORTED'].includes(status);
-  const clarification = ['WAITING_FOR_NATION', 'NATION_CLARIFICATION', 'NEW_LIST_RECEIVED', 'RECHECK_REQUIRED'].includes(status);
+  const clarification = ['WAITING_FOR_NATION', 'NATION_CLARIFICATION', 'RECHECK_REQUIRED'].includes(status);
   return [
     { id: 'validation', label: 'Importprüfung', complete: validationComplete, current: !validationComplete },
     { id: 'decision', label: 'Entscheidung (falls erforderlich)', complete: validationComplete && !pendingDecisions && !clarification, current: validationComplete && (pendingDecisions || clarification) },
@@ -153,7 +153,7 @@ function Workflow({session}:{session:ImportSession|null}) {
 
 function SessionPrimaryAction({session,preview,files,loading,confirming,onPreview,onOpenTask,onApprove,onImport}:{session:ImportSession;preview:FisImportPreview|null;files:File[];loading:boolean;confirming:boolean;onPreview:()=>void;onOpenTask:(task:OperationsTask)=>void;onApprove:()=>void;onImport:()=>void}) {
   const pending=session.approvals.map(approval=>buildOperationsTask(session,approval)).filter(task=>task.approval.decision==='PENDING');
-  const needsFiles=['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','RECHECK_REQUIRED'].includes(session.status);
+  const needsFiles=['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status);
   const canApprove=Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
   if(pending.length) return <OpsButton onClick={()=>onOpenTask(pending[0])}>Entscheidung öffnen</OpsButton>;
   if(session.status==='APPROVED') return <OpsButton onClick={onImport} disabled={confirming} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4"/>Importieren</OpsButton>;
@@ -163,7 +163,7 @@ function SessionPrimaryAction({session,preview,files,loading,confirming,onPrevie
 
 function NextAction({session,success}:{session:ImportSession;success:string|null}) {
   const pending=session.approvals.filter(approval=>approval.decision==='PENDING').length;
-  const clarification=['WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','RECHECK_REQUIRED'].includes(session.status);
+  const clarification=['WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status);
   if(pending) return <InfoPanel tone="warning" title="Entscheidung erforderlich">{pending} {pending===1?'offene Entscheidung muss':'offene Entscheidungen müssen'} vor der Freigabe abgeschlossen werden.</InfoPanel>;
   if(session.status==='IMPORTED') return <InfoPanel tone="success" title="Import abgeschlossen">{success ?? `Die Importsession ist abgeschlossen. Im Uploadbereich kann eine neue Meldeliste als Version ${(session.currentVersion?.version ?? 0)+1} geprüft werden.`}</InfoPanel>;
   if(session.status==='APPROVED') return <InfoPanel tone="success" title="Freigegeben">Die Importsession ist bereit für den kontrollierten Import.</InfoPanel>;
