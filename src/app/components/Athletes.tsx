@@ -52,7 +52,7 @@ const reviewHint = (athlete: Athlete) => {
   if (dateChange) return `${shortDate(dateChange.old)} → ${shortDate(dateChange.new)}`;
   if (details.some(change => change.type === 'ROOMMATE_CHANGED')) return 'Zimmerpartner geändert';
   if (details.some(change => change.type === 'HOTEL_CHANGED')) return 'Hotel geändert';
-  return athlete.importChangeTypes?.length ? ({ ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert', EVENT_CHANGED: 'Event geändert', NATION_CHANGED: 'Nation geändert', NEW_ATHLETE: 'Neu importiert', DATE_CHANGED: 'Aufenthalt geändert', ROOMMATE_CHANGED: 'Zimmerpartner geändert' }[athlete.importChangeTypes[0]]) : null;
+  return athlete.importChangeTypes?.length ? ({ ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert', EVENT_CHANGED: 'Event geändert', NATION_CHANGED: 'Nation geändert', NEW_ATHLETE: 'Neu', DATE_CHANGED: 'Aufenthalt geändert', ROOMMATE_CHANGED: 'Zimmerpartner geändert' }[athlete.importChangeTypes[0]]) : null;
 };
 const roomTypeLabel = (athlete: Athlete) => {
   const roomType = athlete.assignment?.roomTypeName || athlete.roomType;
@@ -261,8 +261,8 @@ export function Athletes() {
     function: countValues(athletes, athlete => athlete.function || 'Athlet'),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
-      { value: 'open', label: 'Zuweisung offen', count: athletes.filter(athlete => ['new', 'open'].includes(athleteWorkCategory(athlete))).length },
-      { value: 'new', label: 'Neu importiert', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
+      { value: 'open', label: 'Offen', count: athletes.filter(athlete => ['new', 'open'].includes(athleteWorkCategory(athlete))).length },
+      { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
       { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
     ],

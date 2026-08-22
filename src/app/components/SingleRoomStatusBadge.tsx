@@ -6,8 +6,8 @@ export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING
 export const singleRoomStatusPresentation = {
   NONE: { label: '', Icon: BedSingle, className: '' },
   IN_QUOTA: { label: 'Einzelzimmer', Icon: BedSingle, className: semanticToneClasses.info },
-  APPROVED_EXTRA: { label: 'Einzelzimmer · Mehrpreis', Icon: BedSingle, className: semanticToneClasses.warning },
-  PENDING_APPROVAL: { label: 'Einzelzimmer · Prüfung', Icon: BedSingle, className: semanticToneClasses.warning },
+  APPROVED_EXTRA: { label: 'Einzelzimmer – Mehrpreis', Icon: BedSingle, className: semanticToneClasses.warning },
+  PENDING_APPROVAL: { label: 'Einzelzimmer – Prüfung', Icon: BedSingle, className: semanticToneClasses.warning },
 } satisfies Record<SingleRoomStatus, { label: string; Icon: typeof BedSingle; className: string }>;
 
 /** Canonical presentation of a person's persisted single-room status. */

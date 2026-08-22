@@ -227,7 +227,7 @@ export function Dashboard() {
     criticalHotels.slice(0, 2).forEach(item => alerts.push({ id: `hotel-${item.hotel.id}`, title: item.percent >= 100 ? 'Hotel überbucht' : 'Hotelreserve kritisch', detail: `${item.hotel.name}: ${item.remaining} Zimmer Reserve bei ${formatPercent(item.percent)} Auslastung.`, tone: item.percent >= 100 ? 'error' : 'warning', status: 'Hotel', href: `/hotels?hotelId=${item.hotel.id}` }));
     if (operations.invalidMasterData > 0) alerts.push({ id: 'invalid-master-data', title: 'Ungültige Stammdaten', detail: `${operations.invalidMasterData} Personen benötigen eine fachliche Korrektur.`, tone: 'error', status: 'Fehler', href: '/athletes?review=invalid' });
     if (operations.pendingImportReviews > 0) alerts.push({ id: 'assignment-reviews', title: 'Disposition prüfen', detail: `${operations.pendingImportReviews} bestehende Dispositionen wurden durch einen späteren Import berührt.`, tone: 'warning', status: 'Prüfen', href: '/assignments?workflow=review' });
-    if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'Einzelzimmer · Prüfung', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/athletes?singleRoomStatus=PENDING_APPROVAL' });
+    if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'Einzelzimmer – Prüfung', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/athletes?singleRoomStatus=PENDING_APPROVAL' });
     return (alerts.length > 0 ? alerts : [{ id: 'stable', title: 'Keine kritischen Hinweise', detail: 'Aktuell besteht kein unmittelbarer operativer Handlungsbedarf.', tone: 'success' as Tone, status: 'stabil', href: '/assignments' }]).slice(0, 3);
   }, [criticalHotels, operations.invalidMasterData, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
@@ -243,7 +243,7 @@ export function Dashboard() {
   const importStatuses = [
     { id: 'sessions', title: 'Importsessions', count: importSessions.length, helper: `${importSessions.filter(session => !['IMPORTED', 'REPLACED', 'ARCHIVED'].includes(session.status)).length} in Bearbeitung`, tone: importSessions.length > 0 ? 'success' : 'warning' as Tone, href: importSessions[0] ? `/import?sessionId=${importSessions[0].id}` : '/import' },
     { id: 'reviews', title: 'Disposition prüfen', count: operations.pendingImportReviews, helper: 'geänderte bestehende Zuweisungen', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/assignments?workflow=review' },
-    { id: 'decisions', title: 'Einzelzimmer · Prüfung', count: operations.pendingSingleRooms, helper: 'offene Einzelzimmer-Entscheidungen', tone: operations.pendingSingleRooms > 0 ? 'warning' : 'success' as Tone, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' },
+    { id: 'decisions', title: 'Einzelzimmer – Prüfung', count: operations.pendingSingleRooms, helper: 'offene Einzelzimmer-Entscheidungen', tone: operations.pendingSingleRooms > 0 ? 'warning' : 'success' as Tone, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' },
     { id: 'validation', title: 'Importprüfungen', count: operationalConflicts, helper: 'Referenzen und Konflikte im Import', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: '/import' },
   ];
 
