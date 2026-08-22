@@ -84,8 +84,8 @@ const STATUS = {
   'stay-changed': { label: 'Aufenthalt geändert', tone: 'warning', icon: Clock3 },
   'hotel-changed': { label: 'Hotel geändert', tone: 'warning', icon: Hotel },
   'room-type-changed': { label: 'Zimmerart geändert', tone: 'warning', icon: RefreshCw },
-  open: { label: 'Disposition offen', tone: 'warning', icon: Clock3 },
+  open: { label: 'Offen', tone: 'warning', icon: Clock3 },
   partial: { label: 'Teilweise disponiert', tone: 'info', icon: Clock3 },
-  assigned: { label: 'Disponiert', tone: 'success', icon: CheckCircle2 },
+  assigned: { label: 'Zugewiesen', tone: 'success', icon: CheckCircle2 },
 } as const;
 export function AssignmentStatusChip({ status }: { status: AssignmentStatus }) { const item = STATUS[status]; const Icon = item.icon; return <StatusChip tone={item.tone}><Icon className="mr-1 h-3 w-3" />{item.label}</StatusChip>; }

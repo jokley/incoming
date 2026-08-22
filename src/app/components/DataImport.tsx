@@ -18,6 +18,12 @@ const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
 type WorkflowStep = { id: string; label: string; complete: boolean; current: boolean };
 type Detail = { title: string; subtitle?: string; issues?: FisImportIssue[]; rows?: ReactNode[][]; headers?: string[] };
 
+const importStatus = (operation: FisImportPreview['people'][number]['operation']) => (
+  <StatusChip tone={operation === 'create' ? 'primary' : 'warning'}>
+    {operation === 'create' ? 'Neu' : 'Aufenthalt geändert'}
+  </StatusChip>
+);
+
 export function DataImport() {
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<ImportSession | null>(null);
@@ -69,9 +75,13 @@ export function DataImport() {
       : p.singleRoomEntitlement === 'IN_QUOTA' ? 'IN_QUOTA'
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
     const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
-    return [`${p.firstname} ${p.lastname}`, p.nationCode, p.discipline || '—', p.function || '—', entitlement, p.operation];
+    return [`${p.firstname} ${p.lastname}`, p.nationCode, p.discipline || '—', p.function || '—', entitlement, importStatus(p.operation)];
   }) ?? [];
-  const roomRows = preview?.rooms.map(r => [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—']) ?? [];
+  const roomRows = preview?.rooms.map(r => {
+    const people = preview.people.filter(person => [r.person1Name, r.person2Name].filter(Boolean).includes(`${person.firstname} ${person.lastname}`));
+    const operations = [...new Set(people.map(person => person.operation))];
+    return [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—', <span className="flex flex-wrap gap-1">{operations.map(operation => <span key={operation}>{importStatus(operation)}</span>)}</span>];
+  }) ?? [];
 
   return <div className="h-full min-h-0 bg-[var(--ops-background)] text-[var(--ops-text)]">
     <SplitPageLayout className="flex h-full min-h-0 flex-col gap-5 space-y-0">
@@ -121,9 +131,9 @@ function SelectedFiles({files,preview,onCancel}:{files:File[];preview:FisImportP
 function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
   const categories = preview.dispositionAnalysis.categories;
   const items = [
-    [categories.stayChanged?.count || 0, 'Aufenthalte geändert'],
+    [categories.stayChanged?.count || 0, 'Aufenthalt geändert'],
     [categories.roommateAffected?.count || 0, 'Zimmerpartner geändert'],
-    [categories.newAthletes?.count || 0, 'neue Athleten'],
+    [categories.newAthletes?.count || 0, 'Neu'],
     [categories.hotelAssignmentAffected?.count || 0, 'Hotelzuweisungen betroffen'],
   ] as const;
   const disposition = categories.dispositionAffected?.count || 0;
@@ -184,7 +194,7 @@ function ProblemList({preview,fallback,quota,others,onOpen}:{preview:FisImportPr
   </div></ContentCard>;
 }
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
-function PreviewCard({peopleRows,roomRows,onOpen}:{peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Die vollständigen Inhalte der beiden Excel-Dateien prüfen"/><div className="mt-4 grid gap-3 sm:grid-cols-2"><SummaryRow label="Personen" count={peopleRows.length} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmerstatus','Aktion']})}/><SummaryRow label="Zimmerzuordnungen" count={roomRows.length} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt']})}/></div></ContentCard>; }
+function PreviewCard({peopleRows,roomRows,onOpen}:{peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Die vollständigen Inhalte der beiden Excel-Dateien prüfen"/><div className="mt-4 grid gap-3 sm:grid-cols-2"><SummaryRow label="Personen" count={peopleRows.length} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmerstatus','Importstatus']})}/><SummaryRow label="Zimmerzuordnungen" count={roomRows.length} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>; }
 function SummaryRow({label,count,tone='neutral',disabled,onClick}:{label:string;count:number;tone?:'neutral'|'success'|'warning'|'error';disabled?:boolean;onClick:()=>void}) { return <button type="button" disabled={disabled} onClick={onClick} className="flex w-full items-center justify-between rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface)] px-3 py-2.5 text-left transition hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)] disabled:cursor-default disabled:opacity-70"><span className="flex items-center gap-2 text-sm font-bold">{tone==='error'?<AlertTriangle className="h-4 w-4 text-[var(--ops-error)]"/>:tone==='success'?<CheckCircle className="h-4 w-4 text-[var(--ops-success)]"/>:<Users className="h-4 w-4 text-[var(--ops-text-subtle)]"/>}{label}</span><span className="flex items-center gap-2"><StatusChip tone={tone}>{count}</StatusChip><ChevronRight className="h-4 w-4 text-[var(--ops-text-subtle)]"/></span></button>; }
 const issueCopy:Record<string,{message:string;causes?:string[];action:string}>={
   ROOM_PERSON_NOT_FOUND:{message:'Neue Person erkannt.',action:'Die Person wird beim Import neu angelegt.'},

@@ -28,8 +28,8 @@ export function athleteWorkCategory(athlete: Athlete): WorkCategory {
 }
 
 export const WORK_CATEGORY_LABELS: Record<WorkCategory, string> = {
-  new: 'Neu importiert',
-  open: 'Zuweisung offen',
+  new: 'Neu',
+  open: 'Offen',
   review: 'Disposition prüfen',
   conflict: 'Stammdaten prüfen',
   current: 'Aktuell',
