@@ -9,107 +9,67 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from scenario_generator import (
-    SCENARIOS, TEST_NATION, _apply, _base_people, generate_complete_suite, generate_scenario,
+    SCENARIOS, TEST_NATION, _apply, _base_people, _scenario_people, generate_complete_suite, generate_scenario,
 )
 from excel_import import create_fis_import_preview
 
 
 class ScenarioGeneratorTest(unittest.TestCase):
     def test_catalog_is_complete_and_stably_numbered(self):
-        self.assertEqual([item.number for item in SCENARIOS], [f'{number:03d}' for number in range(1, 11)])
+        self.assertEqual([item.number for item in SCENARIOS], [f'{number:03d}' for number in range(1, 10)])
         self.assertEqual([item.title for item in SCENARIOS], ['Erstimport', 'Unveränderte Meldeliste', 'Neue Athleten',
             'Athlet entfernt', 'Aufenthaltsdaten geändert', 'Zimmerpartner geändert', 'Genehmigtes Einzelzimmer außerhalb Quote',
-            'Single-Room-Quote verletzt', 'Korrigierte Meldeliste', 'Import abschließen'])
-        self.assertEqual([len(item.steps) for item in SCENARIOS], [1, 2, 2, 2, 2, 2, 2, 2, 2, 1])
+            'Single Room Quote verletzt', 'Korrigierte Meldeliste'])
 
-    def test_every_scenario_uses_the_same_master_data(self):
-        base = _base_people()
-        self.assertEqual({person['Nationcode'] for person in base}, {TEST_NATION})
-        self.assertEqual(_apply(base, 'base'), base)
-        self.assertEqual(SCENARIOS[1].steps, ('base', 'base'))
-        self.assertEqual(SCENARIOS[8].steps, ('official-quota', 'base'))
+    def test_chain_contains_only_the_declared_delta(self):
+        states = [_scenario_people(scenario) for scenario in SCENARIOS]
+        by_id = lambda rows: {row['Competitorid/Staff ID']: row for row in rows}
+        self.assertEqual(states[0], states[1])
+        self.assertEqual(set(by_id(states[2])) - set(by_id(states[1])), {'100007', '100008'})
+        self.assertEqual(set(by_id(states[2])) - set(by_id(states[3])), {'100006'})
 
-    def test_each_change_is_limited_to_its_declared_subject(self):
-        base = _base_people()
-        identity = lambda row: row['Competitorid/Staff ID']
-        by_id = lambda rows: {identity(row): row for row in rows}
+        def differences(before, after):
+            left, right = by_id(before), by_id(after)
+            return {(person_id, field) for person_id in left.keys() & right.keys()
+                    for field in left[person_id] if left[person_id][field] != right[person_id][field]}
+        self.assertEqual(differences(states[3], states[4]), {('100001', 'Arrival_date'), ('100001', 'First_meal')})
+        self.assertTrue({field for _, field in differences(states[4], states[5])} <= {'Shared with Name'})
+        self.assertTrue({field for _, field in differences(states[5], states[6])} <= {'Room_type', 'Shared with Name'})
+        self.assertEqual(states[6], states[7])
+        self.assertTrue({field for _, field in differences(states[7], states[8])} <= {'Room_type', 'Shared with Name'})
 
-        added = _apply(base, 'add-athletes')
-        self.assertEqual(by_id(added) | by_id(base), by_id(added))
-        self.assertEqual(len(added) - len(base), 2)
-
-        removed = _apply(base, 'remove-athlete')
-        self.assertEqual(set(by_id(base)) - set(by_id(removed)), {'100006'})
-        self.assertEqual([row for row in base if identity(row) != '100006'], removed)
-
-        stay = by_id(_apply(base, 'stay-dates'))
-        changed_fields = {key for key in stay['100001'] if stay['100001'][key] != by_id(base)['100001'][key]}
-        self.assertEqual(changed_fields, {'Arrival_date', 'First_meal'})
-        self.assertEqual({key: value for key, value in stay.items() if key != '100001'},
-                         {key: value for key, value in by_id(base).items() if key != '100001'})
-
-        partners = by_id(_apply(base, 'room-partner'))
-        for person_id, person in by_id(base).items():
-            differences = {key for key in person if person[key] != partners[person_id][key]}
-            self.assertTrue(differences <= {'Shared with Name'})
-
-        singles = by_id(_apply(base, 'single-quota'))
-        for person_id, person in by_id(base).items():
-            differences = {key for key in person if person[key] != singles[person_id][key]}
-            self.assertTrue(differences <= {'Room_type', 'Shared with Name'})
-
-    def test_all_roommates_are_reciprocal_and_same_gender(self):
-        for step in ('base', 'add-athletes', 'room-partner', 'official-quota'):
-            people = _apply(_base_people(), step)
-            by_name = {f"{person['Lastname']}, {person['Firstname']}": person for person in people}
-            for person in people:
-                if not person['Shared with Name']:
-                    continue
-                partner = by_name[person['Shared with Name']]
-                self.assertEqual(partner['Gender'], person['Gender'])
-                self.assertEqual(partner['Shared with Name'], f"{person['Lastname']}, {person['Firstname']}")
+    def test_all_generated_pairs_are_valid_and_expected_quota_isolated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for scenario in SCENARIOS:
+                generated = generate_scenario(scenario.number, Path(directory))['root']
+                prefix = f'{scenario.number}_' + generated.name.split('_', 1)[1]
+                preview = create_fis_import_preview(str(generated / f'{prefix}_entries.xlsx'),
+                                                    str(generated / f'{prefix}_room_list.xlsx'))
+                self.assertTrue(preview['isValid'], (scenario.number, preview['errors']))
+                quota_codes = {warning['code'] for warning in preview['warnings']
+                               if warning['code'].startswith('QUOTA_')}
+                expected = {'QUOTA_SINGLE_ROOMS_EXCEEDED'} if scenario.number in {'007', '008'} else set()
+                self.assertEqual(quota_codes, expected, scenario.number)
 
     def test_generation_is_byte_for_byte_reproducible(self):
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
-            one = generate_scenario('010', Path(first))['root']
-            two = generate_scenario('010', Path(second))['root']
-            hashes = lambda root: [(str(path.relative_to(root)), hashlib.sha256(path.read_bytes()).hexdigest()) for path in sorted(root.rglob('*')) if path.is_file()]
+            one = generate_complete_suite(Path(first))
+            two = generate_complete_suite(Path(second))
+            hashes = lambda root: [(path.name, hashlib.sha256(path.read_bytes()).hexdigest())
+                                   for path in sorted(root.iterdir()) if path.is_file()]
             self.assertEqual(hashes(one), hashes(two))
 
-    def test_every_version_uses_importable_fis_files_and_has_expectations(self):
-        with tempfile.TemporaryDirectory() as directory:
-            for scenario in SCENARIOS:
-                generated = generate_scenario(scenario.number, Path(directory))
-                expected = json.loads((generated['root'] / 'expected.json').read_text(encoding='utf-8'))
-                self.assertEqual(len(expected['versions']), len(scenario.steps))
-                for version in range(1, len(scenario.steps) + 1):
-                    prefix = f'{scenario.number}_' + generated['root'].name.split('_', 1)[1] + f'_V{version}'
-                    preview = create_fis_import_preview(str(generated['root'] / f'{prefix}_entries.xlsx'), str(generated['root'] / f'{prefix}_entries-room-list-detailed.xlsx'))
-                    self.assertTrue(preview['isValid'], (scenario.number, version, preview['errors']))
-                    expected_version = expected['versions'][version - 1]
-                    quota_warnings = [warning for warning in preview['warnings'] if warning['code'].startswith('QUOTA_')]
-                    self.assertEqual(bool(quota_warnings), expected_version['quotas'] == 'violated',
-                                     (scenario.number, version, preview['quotaChecks']))
-
-    def test_quota_scenarios_violate_the_named_rule_only(self):
-        expected_code = {
-            'official-quota': 'QUOTA_OFFICIALS_EXCEEDED',
-            'single-quota': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
-            'single-quota-extra': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
-        }
-        with tempfile.TemporaryDirectory() as directory:
-            for number, step in (('007', 'single-quota-extra'), ('008', 'single-quota')):
-                generated = generate_scenario(number, Path(directory))['root']
-                prefix = next(generated.glob('*_V2_entries.xlsx')).name.removesuffix('_entries.xlsx')
-                preview = create_fis_import_preview(str(generated / f'{prefix}_entries.xlsx'), str(generated / f'{prefix}_entries-room-list-detailed.xlsx'))
-                codes = {warning['code'] for warning in preview['warnings'] if warning['code'].startswith('QUOTA_')}
-                self.assertEqual(codes, {expected_code[step]})
-
-    def test_complete_suite_contains_every_scenario_without_nested_archives(self):
+    def test_complete_suite_is_flat_and_contains_nine_pairs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = generate_complete_suite(Path(directory))
-            self.assertEqual(len([path for path in root.iterdir() if path.is_dir()]), 10)
-            self.assertTrue((root / '004_Athlet_entfernt' / '004_Athlet_entfernt_V2_entries.xlsx').is_file())
+            self.assertFalse(any(path.is_dir() for path in root.iterdir()))
+            self.assertEqual(len(list(root.glob('*_entries.xlsx'))), 9)
+            self.assertEqual(len(list(root.glob('*_room_list.xlsx'))), 9)
+            self.assertTrue((root / '004_Athlet_entfernt_entries.xlsx').is_file())
+            self.assertTrue((root / '009_Korrigierte_Meldeliste_room_list.xlsx').is_file())
+            expected = json.loads((root / 'expected.json').read_text(encoding='utf-8'))
+            self.assertEqual([item['number'] for item in expected['scenarios']],
+                             [f'{number:03d}' for number in range(1, 10)])
 
 
 if __name__ == '__main__':
