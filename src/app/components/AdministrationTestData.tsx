@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Database, Download, FlaskConical } from 'lucide-react';
+import { AlertTriangle, Check, Database, Download } from 'lucide-react';
 import { Dialog, DialogContent } from './ui/dialog';
 import { ContentCard, DialogFooter, DialogHeader, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
@@ -17,34 +17,22 @@ export function AdministrationTestData({ embedded = false }: { embedded?: boolea
   const [selected, setSelected] = useState<(typeof actions)[number] | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-  const [scenarios, setScenarios] = useState<Array<{ number: string; title: string; description: string; versions: number }>>([]);
-  const [generating, setGenerating] = useState<string | null>(null);
+  const [generating, setGenerating] = useState(false);
   useEffect(() => {
     const resetMessage = sessionStorage.getItem('admin-reset-success');
     if (resetMessage) {
       sessionStorage.removeItem('admin-reset-success');
       setMessage({ tone: 'success', text: resetMessage });
     }
-    api.getScenarios().then(setScenarios).catch(() => setMessage({ tone: 'error', text: 'Szenarien konnten nicht geladen werden.' }));
   }, []);
-
-  const generate = async (number: string) => {
-    setGenerating(number); setMessage(null);
-    try {
-      await api.generateScenario(number);
-      setMessage({ tone: 'success', text: `Szenario ${number} wurde reproduzierbar erzeugt und heruntergeladen.` });
-    } catch (error) {
-      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Generierung fehlgeschlagen.' });
-    } finally { setGenerating(null); }
-  };
   const generateComplete = async () => {
-    setGenerating('complete'); setMessage(null);
+    setGenerating(true); setMessage(null);
     try {
       await api.generateCompleteScenarios();
       setMessage({ tone: 'success', text: 'Der komplette Testordner wurde erzeugt und heruntergeladen.' });
     } catch (error) {
       setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Generierung fehlgeschlagen.' });
-    } finally { setGenerating(null); }
+    } finally { setGenerating(false); }
   };
   const reset = async () => {
     if (!selected) return;
@@ -71,26 +59,12 @@ export function AdministrationTestData({ embedded = false }: { embedded?: boolea
       </ContentCard>)}</div>
     </ContentCard>
     <ContentCard className="p-5">
-      <SectionHeader title="Szenarien" subtitle="Deterministische FIS-Dateipaare mit dokumentiertem Soll-Ergebnis" />
+      <SectionHeader title="Regressionstest-Kette" subtitle="Alle neun chronologisch aufeinander aufbauenden FIS-Dateipaare in einem Download" />
       <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-[var(--ops-primary)] bg-[var(--ops-surface-elevated)] p-4">
-        <div><h3 className="font-bold">Kompletter Testordner</h3><p className="text-sm text-[var(--ops-text-muted)]">Alle Szenarien und Versionen in chronologischer Reihenfolge.</p></div>
-        <OpsButton disabled={generating !== null} onClick={generateComplete}><Download className="mr-2 h-4 w-4" />Komplett herunterladen</OpsButton>
+        <div><h3 className="font-bold">Kompletten Testordner generieren</h3><p className="text-sm text-[var(--ops-text-muted)]">Ein ZIP-Archiv mit allen Excel-Dateien in einem flachen Ordner.</p></div>
+        <OpsButton disabled={generating} onClick={generateComplete}><Download className="mr-2 h-4 w-4" />{generating ? 'Wird generiert …' : 'Kompletten Testordner generieren'}</OpsButton>
       </div>
-      <div className="mt-5 overflow-hidden rounded-xl border border-[var(--ops-border)]">
-        <div className="hidden grid-cols-[72px_1fr_110px_150px] gap-4 bg-[var(--ops-surface-subtle)] px-4 py-3 text-xs font-bold uppercase tracking-wide text-[var(--ops-text-subtle)] md:grid">
-          <span>Nr.</span><span>Szenario</span><span>Versionen</span><span className="sr-only">Aktion</span>
-        </div>
-        {scenarios.map(scenario => <div key={scenario.number} className="grid gap-3 border-t border-[var(--ops-border)] p-4 first:border-t-0 md:grid-cols-[72px_1fr_110px_150px] md:items-center">
-          <span className="font-mono text-sm font-bold text-[var(--ops-primary)]">{scenario.number}</span>
-          <div><h3 className="font-bold text-[var(--ops-text)]">{scenario.title}</h3><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{scenario.description}</p></div>
-          <StatusChip tone="neutral">{scenario.versions} {scenario.versions === 1 ? 'Version' : 'Versionen'}</StatusChip>
-          <OpsButton disabled={generating !== null} onClick={() => generate(scenario.number)}>
-            {generating === scenario.number ? <FlaskConical className="mr-2 h-4 w-4 animate-pulse" /> : <Download className="mr-2 h-4 w-4" />}
-            {generating === scenario.number ? 'Generiert …' : 'Generieren'}
-          </OpsButton>
-        </div>)}
-      </div>
-      <p className="mt-4 text-xs text-[var(--ops-text-subtle)]">Jeder Download enthält pro Version <strong>entries.xlsx</strong> und <strong>entries-room-list-detailed.xlsx</strong> sowie eine <strong>expected.json</strong>.</p>
+      <p className="mt-4 text-xs text-[var(--ops-text-subtle)]">Das Archiv enthält je Szenario <strong>entries.xlsx</strong> und <strong>room_list.xlsx</strong> sowie eine gemeinsame <strong>expected.json</strong>.</p>
     </ContentCard>
     <Dialog open={Boolean(selected)} onOpenChange={open => !open && !saving && setSelected(null)}><DialogContent className="max-w-3xl overflow-hidden border-[var(--ops-border-strong)] bg-[var(--ops-surface-raised)] p-0 text-[var(--ops-text)] shadow-2xl">
       {selected && <><DialogHeader title={selected.title} subtitle="Diese Aktion kann nicht rückgängig gemacht werden." /><div className="max-h-[65vh] overflow-y-auto p-5">

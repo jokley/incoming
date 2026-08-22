@@ -1478,6 +1478,16 @@ def preview_fis_import():
             session.discipline = result.get('detectedDiscipline')
             session.status = status if is_new else ('DRAFT' if result['errors'] else 'NEW_LIST_RECEIVED')
             session.approved_at = session.approved_by = None
+            # Imported athletes and history entries may reference a decision from
+            # the preceding version. Detach those references before replacing the
+            # session's transient approval tasks (PostgreSQL enforces both FKs).
+            approval_ids = [approval.id for approval in session.approvals if approval.id]
+            if approval_ids:
+                Athlete.query.filter(Athlete.single_room_decision_id.in_(approval_ids)).update(
+                    {Athlete.single_room_decision_id: None}, synchronize_session=False)
+                ImportSessionEvent.query.filter(ImportSessionEvent.approval_id.in_(approval_ids)).update(
+                    {ImportSessionEvent.approval_id: None}, synchronize_session=False)
+                db.session.flush()
             session.approvals.clear()
             version = ImportSessionVersion(session_id=session.id, version=next_version,
                 preview_token=result['previewToken'], preview_json=json.dumps(result, ensure_ascii=False),
