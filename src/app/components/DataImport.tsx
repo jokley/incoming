@@ -1,14 +1,14 @@
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Dialog, DialogContent, DialogTitle } from '@mui/material';
-import { AlertTriangle, CheckCircle, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users } from 'lucide-react';
+import { AlertTriangle, CheckCircle, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
 import type { FisImportIssue, FisImportPreview } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
-import { buildOperationsTask, OperationsDecisionDialog, quotaViolationLabel, type OperationsTask } from './OperationsDecisionDialog';
+import { buildOperationsTask, OperationsDecisionDialog, type OperationsTask } from './OperationsDecisionDialog';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
 import { AssignmentStatusChip } from './assignment/AssignmentInfo';
@@ -36,8 +36,6 @@ export function DataImport() {
   const [activeTask, setActiveTask] = useState<OperationsTask | null>(null);
   const [shownDecisionId, setShownDecisionId] = useState<string | null>(searchParams.get('decisionId'));
   const [savingTask, setSavingTask] = useState(false);
-  const quotaWarnings = useMemo(() => preview?.warnings.filter(i => i.code.startsWith('QUOTA_')) ?? [], [preview]);
-  const otherWarnings = useMemo(() => preview?.warnings.filter(i => !i.code.startsWith('QUOTA_')) ?? [], [preview]);
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
   useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
@@ -49,7 +47,8 @@ export function DataImport() {
     setFiles([...new Map(accepted.map(f => [f.name.toLowerCase(), f])).values()]); setPreview(null); setSuccess(null); setError(null);
   };
   const cancel = () => { setFiles([]); if (!selected) setPreview(null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id); setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+  const runPreview = async () => { if (files.length < 2) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id); if (result.alreadyImported) { setSuccess(result.message ?? 'Diese Meldeliste wurde bereits importiert.'); setFiles([]); return; } setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+  const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { await api.cancelImportSession(selected.id); setSelected(null); setPreview(null); setFiles([]); setSuccess('Importsession wurde abgebrochen und vollständig bereinigt.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
   const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = await api.approveImportSession(selected.id); setSelected(updated); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
   const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); try { const result = await api.importSession(selected.id); setSuccess(`Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`); setSelected(await api.getImportSession(selected.id)); await refreshSessions(); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string}) => {
@@ -93,7 +92,7 @@ export function DataImport() {
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
               <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} · {selected.discipline}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>
-              <div className="flex items-center gap-3"><StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip><SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/></div>
+              <div className="flex items-center gap-3"><StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip>{!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)&&<OpsButton onClick={abortSession} disabled={confirming}><XCircle className="mr-2 inline h-4 w-4"/>Workflow abbrechen</OpsButton>}<SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/></div>
             </div>
             <div className="space-y-4 p-5">
               <Workflow session={selected} />
@@ -101,7 +100,7 @@ export function DataImport() {
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
               <NextAction session={selected} success={success}/>
               {preview && <ImportChangeSummary preview={preview}/>}
-              <ProblemList preview={preview} fallback={selected} quota={quotaWarnings} others={otherWarnings} onOpen={openIssues}/>
+              <ProblemList preview={preview} fallback={selected} onOpen={openIssues}/>
               <PreviewCard peopleRows={peopleRows} roomRows={roomRows} onOpen={setDetail}/>
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
@@ -141,7 +140,7 @@ function ImportChangeSummary({preview}:{preview:FisImportPreview}) {
 }
 
 function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
-  if (!session) return [{ id: 'validation', label: 'Importprüfung', complete: false, current: true }, { id: 'decision', label: 'Entscheidung (falls erforderlich)', complete: false, current: false }, { id: 'approval', label: 'Freigeben', complete: false, current: false }, { id: 'import', label: 'Importieren', complete: false, current: false }];
+  if (!session) return [{ id: 'validation', label: 'Technische Validierung', complete: false, current: true }, { id: 'decision', label: 'Entscheidung (falls erforderlich)', complete: false, current: false }, { id: 'approval', label: 'Freigeben', complete: false, current: false }, { id: 'import', label: 'Importieren', complete: false, current: false }];
   const status = session.status;
   const imported = status === 'IMPORTED';
   const validationComplete = status !== 'DRAFT';
@@ -149,7 +148,7 @@ function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
   const approved = ['APPROVED', 'IMPORTED'].includes(status);
   const clarification = ['WAITING_FOR_NATION', 'NATION_CLARIFICATION', 'RECHECK_REQUIRED'].includes(status);
   return [
-    { id: 'validation', label: 'Importprüfung', complete: validationComplete, current: !validationComplete },
+    { id: 'validation', label: 'Technische Validierung', complete: validationComplete, current: !validationComplete },
     { id: 'decision', label: 'Entscheidung (falls erforderlich)', complete: validationComplete && !pendingDecisions && !clarification, current: validationComplete && (pendingDecisions || clarification) },
     { id: 'approval', label: 'Freigeben', complete: approved, current: !approved && !pendingDecisions && !clarification && validationComplete },
     { id: 'import', label: 'Importieren', complete: imported, current: status === 'APPROVED' },
@@ -182,15 +181,11 @@ function NextAction({session,success}:{session:ImportSession;success:string|null
 }
 function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · kompakter Session-Verlauf`}/><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></ContentCard>; }
 function UploadCard({files,onChange}:{files:File[];onChange:(f:FileList|null)=>void}) { return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Neue Importsession" subtitle="Beide Dateien in einem Schritt auswählen"/><label className="mt-4 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-6 text-center hover:bg-[var(--ops-tone-primary-surface)]"><input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={e=>onChange(e.target.files)}/><Upload className="mx-auto h-8 w-8 text-[var(--ops-primary)]"/><p className="mt-2 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-1 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
-function quotaIssueLabel(issue:FisImportIssue) { const single=issue.code==='QUOTA_SINGLE_ROOMS_EXCEEDED'; const current=Number(issue.details?.[single?'importedSingleRooms':'importedOfficials']); const allowed=Number(issue.details?.[single?'singleRoomsAllowed':'officialQuota']); return Number.isFinite(current)&&Number.isFinite(allowed)?quotaViolationLabel(single?'Single Rooms':'Officials',current,allowed):issue.message; }
-function ProblemList({preview,fallback,quota,others,onOpen}:{preview:FisImportPreview|null;fallback:ImportSession;quota:FisImportIssue[];others:FisImportIssue[];onOpen:(t:string,i:FisImportIssue[])=>void}) {
+function ProblemList({preview,fallback,onOpen}:{preview:FisImportPreview|null;fallback:ImportSession;onOpen:(t:string,i:FisImportIssue[])=>void}) {
   const blocking=preview?.errors??[];
-  const problemCount=quota.length+blocking.length+others.length;
+  if (blocking.length===0 && fallback.errors===0) return null;
   return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Prüfergebnis" subtitle="Kurzübersicht; Details öffnen sich nur bei Bedarf"/><div className="mt-3 space-y-2">
-    {quota.map((issue,index)=><button key={`${issue.code}-${index}`} type="button" onClick={()=>onOpen('Entscheidung erforderlich',[issue])} className="flex w-full items-center justify-between rounded-lg px-2 py-2 text-left hover:bg-[var(--ops-surface-overlay)]"><span className="flex items-center gap-2 text-sm font-bold"><AlertTriangle className="h-4 w-4 text-[var(--ops-warning)]"/>{quotaIssueLabel(issue)}</span><ChevronRight className="h-4 w-4 text-[var(--ops-text-subtle)]"/></button>)}
     {blocking.length>0&&<SummaryRow label="Blockierende Fehler" count={blocking.length} tone="error" onClick={()=>onOpen('Blockierend',blocking)}/>}
-    {others.length>0&&<SummaryRow label="Weitere Hinweise" count={others.length} tone="neutral" onClick={()=>onOpen('Information',others)}/>}
-    {problemCount===0&&fallback.errors===0&&<div className="flex items-center gap-2 px-2 py-2 text-sm font-bold"><CheckCircle className="h-4 w-4 text-[var(--ops-success)]"/>Keine weiteren Probleme</div>}
   </div></ContentCard>;
 }
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };

@@ -162,6 +162,7 @@ class ImportSessionVersion(db.Model):
     preview_json = db.Column(db.Text)
     entries_filename = db.Column(db.String(255))
     room_filename = db.Column(db.String(255))
+    source_hash = db.Column(db.String(64), index=True)
     uploaded_by = db.Column(db.String(100), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     __table_args__ = (db.UniqueConstraint('session_id', 'version', name='uq_import_session_version'),)
@@ -171,6 +172,7 @@ class ImportSessionVersion(db.Model):
         preview = json.loads(self.preview_json) if self.preview_json else {}
         return {'id': str(self.id), 'version': self.version, 'uploadedBy': self.uploaded_by,
                 'entriesFile': self.entries_filename, 'roomFile': self.room_filename,
+                'sourceHash': self.source_hash,
                 'uploadedAt': self.created_at.isoformat() + 'Z',
                 'errors': len(preview.get('errors', [])), 'warnings': len(preview.get('warnings', []))}
 

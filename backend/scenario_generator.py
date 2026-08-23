@@ -37,9 +37,9 @@ SCENARIOS = (
     ScenarioDefinition('004', 'Athlet entfernt', 'Nur ein bestehender Athlet entfällt.', ('base', 'add-athletes', 'remove-athlete')),
     ScenarioDefinition('005', 'Aufenthaltsdaten geändert', 'Nur die Aufenthaltsdaten eines Athleten ändern sich.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates')),
     ScenarioDefinition('006', 'Zimmerpartner geändert', 'Nur die Zimmerpartner bestehender Athletinnen ändern sich.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner')),
-    ScenarioDefinition('007', 'Genehmigtes Einzelzimmer außerhalb Quote', 'Ein Einzelzimmer außerhalb der Quote kann genehmigt werden.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner', 'single-quota')),
-    ScenarioDefinition('008', 'Single Room Quote verletzt', 'Die genehmigte Meldeliste verletzt weiterhin nur die Einzelzimmerquote.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner', 'single-quota')),
-    ScenarioDefinition('009', 'Korrigierte Meldeliste', 'Nur die verletzte Einzelzimmerquote wird wieder korrigiert.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner')),
+    ScenarioDefinition('007', 'Single-Room-Quote verletzt', 'Die erlaubte Einzelzimmerquote wird überschritten.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner', 'single-quota')),
+    ScenarioDefinition('008', 'Korrigierte Meldeliste', 'Die neue Meldeliste behebt die Quotenverletzung.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner')),
+    ScenarioDefinition('009', 'Technischer Fehler', 'Ein ungültiges Datum muss die technische Validierung blockieren.', ('base', 'add-athletes', 'remove-athlete', 'stay-dates', 'room-partner', 'invalid-date')),
 )
 SCENARIO_BY_NUMBER = {scenario.number: scenario for scenario in SCENARIOS}
 
@@ -125,6 +125,8 @@ def _apply(rows: list[dict], step: str) -> list[dict]:
     elif step == 'single-quota-extra':
         rows = _apply(rows, 'single-quota-base')
         rows.append(_person(EXTRA_SINGLE_OFFICIAL))
+    elif step == 'invalid-date':
+        rows[0]['Arrival_date'] = 'kein-datum'
     else:
         raise ValueError(f'Unknown scenario step: {step}')
     return rows
@@ -153,17 +155,18 @@ def _room_rows(entries: list[dict]) -> list[dict]:
 
 
 def _expectation(version: int, step: str) -> dict:
+    technical_error = step == 'invalid-date'
     changed = step != 'base'
     quota_violation = step in {'official-quota', 'single-quota', 'single-quota-extra'}
     return {
-        'version': version, 'change': step, 'technicalCheck': 'valid',
-        'functionalCheck': 'review-required' if changed else 'valid',
-        'quotas': 'violated' if quota_violation else 'fulfilled', 'importStatus': 'READY_FOR_REVIEW',
-        'expectedTasks': ['Fachliche Prüfung'] if changed else [],
-        'expectedHistory': [f'Version {version} hochgeladen', 'Technische Prüfung abgeschlossen'],
+        'version': version, 'change': step, 'technicalCheck': 'invalid' if technical_error else 'valid',
+        'functionalCheck': 'not-started' if technical_error else ('review-required' if changed else 'valid'),
+        'quotas': 'violated' if quota_violation else 'fulfilled', 'importStatus': 'ERROR' if technical_error else 'READY_FOR_REVIEW',
+        'expectedTasks': [] if technical_error else (['Fachliche Prüfung'] if changed else []),
+        'expectedHistory': [f'Version {version} hochgeladen', 'Technische Prüfung fehlgeschlagen' if technical_error else 'Technische Prüfung abgeschlossen'],
         'expectedDispositionChanges': step == 'stay-dates', 'expectedRoommateChanges': step == 'room-partner',
         'expectedApprovals': [], 'expectedConsultation': step == 'official-quota',
-        'expectedFinalStatus': 'WAITING_FOR_NATION' if quota_violation else ('READY_FOR_IMPORT' if not changed else 'READY_FOR_APPROVAL'),
+        'expectedFinalStatus': 'ERROR' if technical_error else ('WAITING_FOR_NATION' if quota_violation else ('READY_FOR_IMPORT' if not changed else 'READY_FOR_APPROVAL')),
     }
 
 
@@ -176,8 +179,9 @@ def generate_scenario(number: str, output_dir: Path) -> dict:
     expectations = {'scenario': scenario.public_dict(), 'nation': TEST_NATION, 'versions': []}
     entries = _scenario_people(scenario)
     prefix = f'{scenario.number}_{scenario_slug(scenario)}'
+    room_entries = _scenario_people(SCENARIOS[-2]) if scenario.steps[-1] == 'invalid-date' else entries
     write_excel(entries, root / f'{prefix}_entries.xlsx')
-    write_excel(_room_rows(entries), root / f'{prefix}_room_list.xlsx')
+    write_excel(_room_rows(room_entries), root / f'{prefix}_room_list.xlsx')
     expectations['versions'].append(_expectation(1, scenario.steps[-1]))
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return {'root': root, **scenario.public_dict()}
@@ -190,8 +194,9 @@ def generate_complete_suite(output_dir: Path) -> Path:
     for scenario in SCENARIOS:
         entries = _scenario_people(scenario)
         prefix = f'{scenario.number}_{scenario_slug(scenario)}'
+        room_entries = _scenario_people(SCENARIOS[-2]) if scenario.steps[-1] == 'invalid-date' else entries
         write_excel(entries, root / f'{prefix}_entries.xlsx')
-        write_excel(_room_rows(entries), root / f'{prefix}_room_list.xlsx')
+        write_excel(_room_rows(room_entries), root / f'{prefix}_room_list.xlsx')
         expectations['scenarios'].append({**scenario.public_dict(), **_expectation(1, scenario.steps[-1])})
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return root

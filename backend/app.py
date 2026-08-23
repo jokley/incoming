@@ -1452,6 +1452,9 @@ def preview_fis_import():
 
         entries_path = detected['entries']
         room_path = detected['roomlist']
+        source_hash = hashlib.sha256(
+            Path(entries_path).read_bytes() + b'\0' + Path(room_path).read_bytes()
+        ).hexdigest()
         result = create_fis_import_preview(entries_path, room_path)
         session_id = request.form.get('sessionId')
         if request.form.get('createSession') == 'true' or session_id:
@@ -1468,6 +1471,13 @@ def preview_fis_import():
             if not session:
                 # There is exactly one durable workflow per nation, including completed workflows.
                 session = ImportSession.query.filter_by(nation=nation).first()
+            if session and any(version.source_hash == source_hash for version in session.versions):
+                result.update({
+                    'alreadyImported': True,
+                    'message': 'Diese Meldeliste wurde bereits importiert.',
+                    'session': session.to_dict(include_preview=True),
+                })
+                return jsonify(result), 200
             is_new = session is None
             if is_new:
                 session = ImportSession(nation=nation, discipline=result.get('detectedDiscipline'),
@@ -1497,6 +1507,7 @@ def preview_fis_import():
             version = ImportSessionVersion(session_id=session.id, version=next_version,
                 preview_token=result['previewToken'], preview_json=json.dumps(result, ensure_ascii=False),
                 entries_filename=detected_names['entries'], room_filename=detected_names['roomlist'],
+                source_hash=source_hash,
                 uploaded_by=user.username)
             db.session.add(version)
             db.session.flush()
@@ -1706,6 +1717,33 @@ def archive_import_session(session_id):
     session.status, session.archived_at = 'ARCHIVED', datetime.utcnow()
     db.session.commit()
     return jsonify(session.to_dict())
+
+
+@app.route('/api/import/sessions/<int:session_id>/cancel', methods=['POST'])
+def cancel_import_session(session_id):
+    """End an unfinished workflow and remove all transient review state."""
+    session = ImportSession.query.get_or_404(session_id)
+    if session.status in {'IMPORTED', 'REPLACED', 'ARCHIVED'}:
+        return jsonify({'error': 'Eine abgeschlossene Session kann nicht abgebrochen werden.'}), 409
+    approval_ids = [approval.id for approval in session.approvals if approval.id]
+    if approval_ids:
+        Athlete.query.filter(Athlete.single_room_decision_id.in_(approval_ids)).update(
+            {Athlete.single_room_decision_id: None}, synchronize_session=False)
+        ImportSessionEvent.query.filter(ImportSessionEvent.approval_id.in_(approval_ids)).update(
+            {ImportSessionEvent.approval_id: None}, synchronize_session=False)
+    ImportSessionEvent.query.filter_by(session_id=session.id).update(
+        {ImportSessionEvent.version_id: None}, synchronize_session=False)
+    session.current_version = None
+    session.approvals.clear()
+    session.versions.clear()
+    session.status = 'CANCELLED'
+    session.approved_at = session.approved_by = None
+    session.error_message = None
+    db.session.add(ImportSessionEvent(session_id=session.id, event_type='CANCELLED',
+        title='Importsession abgebrochen', description='Temporäre Prüfstände und offene Versionen wurden bereinigt.',
+        username=current_user().username))
+    db.session.commit()
+    return jsonify(session.to_dict(include_preview=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/history', methods=['POST'])
