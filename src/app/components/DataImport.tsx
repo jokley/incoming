@@ -201,13 +201,13 @@ function ActiveWorkflowStep({step,session,upload,action}:{step:WorkflowStep;sess
     approval: 'Geprüfte Version für den Import freigeben.',
     import: 'Freigegebene Version kontrolliert übernehmen.',
   };
-  const content:Record<WorkflowStep['id'],ReactNode> = {
-    validation: <>{upload}<div className="mt-3 flex justify-end">{action}</div></>,
-    decision: <div className="flex justify-end">{action}</div>,
-    approval: <div className="flex justify-end">{action}</div>,
-    import: <div className="flex justify-end">{action}</div>,
-  };
-  return <section className="mt-3 rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-2" aria-labelledby={`workflow-step-${step.id}`}><div className="mb-2"><div className="flex items-center gap-2"><StatusChip tone="primary">Aktueller Schritt</StatusChip><h3 id={`workflow-step-${step.id}`} className="font-extrabold">{step.label.replace(' (falls erforderlich)','')}</h3></div><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{description[step.id]}</p></div>{content[step.id]}</section>;
+  return <div className="mt-2">
+    <section className="rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface)] px-2 py-1.5" aria-labelledby={`workflow-step-${step.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><StatusChip tone="primary">Aktueller Schritt</StatusChip><h3 id={`workflow-step-${step.id}`} className="font-extrabold">{step.label.replace(' (falls erforderlich)','')}</h3></div><div>{action}</div></div>
+      <p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{description[step.id]}</p>
+    </section>
+    {step.id==='validation'&&<div className="mt-2">{upload}</div>}
+  </div>;
 }
 
 function primaryActionStep(session:ImportSession, files:File[]):WorkflowStep['id'] {
