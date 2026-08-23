@@ -949,6 +949,8 @@ def _assignment_context(athlete):
         return {
             'hotel': fis_assignment.hotel.name if fis_assignment.hotel else None,
             'hotelId': str(fis_assignment.hotel_id) if fis_assignment.hotel_id else None,
+            'assignmentId': str(fis_assignment.id),
+            'sourceRowKey': fis_assignment.source_row_key,
             'roomType': _display_room_type(fis_assignment.room_type),
             'partners': [partner] if partner else [],
             'checkInDate': fis_assignment.check_in_date,
@@ -1117,6 +1119,88 @@ def build_disposition_analysis(people, rooms, quota_warnings):
     return {'categories': categories}
 
 
+def _room_comparison_changes(people, rooms, removed_records):
+    """Compare room assignments by identities, never by spreadsheet position."""
+    athlete_maps = _build_existing_athlete_maps()
+
+    def athlete_token(athlete):
+        canonical = (athlete_maps['by_fis_code'].get(athlete.fis_code.strip().upper(), athlete)
+                     if athlete.fis_code else athlete)
+        return f'id:{canonical.id}'
+
+    existing_by_key = {}
+    existing_by_id = {}
+    for person in people:
+        athlete = _find_existing_athlete(person, athlete_maps)
+        if athlete:
+            existing_by_key[person.get('matchKey')] = athlete
+            existing_by_id[athlete.id] = athlete
+    for record in removed_records:
+        athlete_id = record.get('personId')
+        if athlete_id:
+            athlete = db.session.get(Athlete, int(athlete_id))
+            if athlete:
+                existing_by_id[athlete.id] = athlete
+
+    staged = []
+    for room in rooms:
+        occupants = frozenset(
+            athlete_token(existing_by_key[key]) if key in existing_by_key else f"new:{key}"
+            for key in (room.get('person1Key'), room.get('person2Key')) if key
+        )
+        staged.append({'entityId': room.get('sourceRowKey'), 'assignmentId': room.get('assignmentId'),
+                       'roomId': room.get('roomId'), 'occupants': occupants})
+
+    current_by_assignment = {}
+    for athlete in existing_by_id.values():
+        context = _assignment_context(athlete)
+        if not context or not context.get('assignmentId'):
+            continue
+        assignment_id = str(context['assignmentId'])
+        occupants = {athlete_token(athlete)}
+        occupants.update(athlete_token(partner) for partner in context.get('partners', []))
+        snapshot = current_by_assignment.setdefault(assignment_id, {
+            'entityId': context.get('sourceRowKey') or assignment_id,
+            'assignmentId': assignment_id, 'roomId': context.get('roomId'), 'occupants': set(),
+        })
+        snapshot['occupants'].update(occupants)
+    current = [{**item, 'occupants': frozenset(item['occupants'])} for item in current_by_assignment.values()]
+
+    matches = []
+    unused_current = set(range(len(current)))
+    # Match strongest stable keys first, then the unordered person identity set.
+    for staged_index, new_room in enumerate(staged):
+        match = next((index for index in unused_current
+                      if new_room.get('assignmentId') and new_room['assignmentId'] == current[index]['assignmentId']), None)
+        if match is None:
+            match = next((index for index in unused_current
+                          if new_room['occupants'] == current[index]['occupants']), None)
+        if match is None and new_room.get('roomId'):
+            match = next((index for index in unused_current
+                          if new_room['roomId'] == current[index].get('roomId')), None)
+        if match is None:
+            overlap = sorted(
+                ((len(new_room['occupants'] & current[index]['occupants']),
+                  current[index]['assignmentId'], index) for index in unused_current),
+                key=lambda item: (-item[0], item[1]),
+            )
+            match = overlap[0][2] if overlap and overlap[0][0] else None
+        if match is not None:
+            unused_current.remove(match)
+        matches.append((staged_index, match))
+
+    changes = []
+    for staged_index, current_index in matches:
+        new_room = staged[staged_index]
+        if current_index is None:
+            changes.append(('ROOM_CREATED', new_room['entityId'], 'Zimmerzuordnung erstellt'))
+        elif new_room['occupants'] != current[current_index]['occupants']:
+            changes.append(('ROOMMATE_CHANGED', new_room['entityId'], 'Zimmerpartner geändert'))
+    for current_index in unused_current:
+        changes.append(('ROOM_REMOVED', current[current_index]['entityId'], 'Zimmerzuordnung entfernt'))
+    return changes
+
+
 def build_import_changes(disposition_analysis, people, rooms, errors):
     """Normalize comparison results into the UI's sole semantic change model."""
     categories = disposition_analysis['categories']
@@ -1154,8 +1238,9 @@ def build_import_changes(disposition_analysis, people, rooms, errors):
         if room:
             add('STAY_CHANGED', 'rooms', room.get('sourceRowKey'), 'Aufenthalt geändert',
                 affectedPersonId=str(entity_id or ''))
-    for record in categories['roommateAffected']['records']:
-        add('ROOMMATE_CHANGED', 'rooms', record.get('entityId'), 'Zimmerpartner geändert')
+    for change_type, entity_id, description in _room_comparison_changes(
+            people, rooms, categories['removedAthletes']['records']):
+        add(change_type, 'rooms', entity_id, description)
     for issue in errors:
         preview = 'rooms' if issue.get('code', '').startswith('ROOM_') else 'persons'
         add('VALIDATION_ERROR', preview, issue.get('details', {}).get('row'), 'Validierungsfehler', 'error')
