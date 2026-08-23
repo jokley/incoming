@@ -122,7 +122,13 @@ def daterange_strings(start: str, end: str) -> list[str]:
     return values
 
 
-def write_excel(rows: list[dict], path: Path) -> None:
+def write_excel(rows: list[dict], path: Path, document_tag: str | None = None) -> None:
+    """Write a deterministic workbook, optionally tagged as a distinct document.
+
+    ``document_tag`` is stored in a harmless workbook XML comment.  It does not
+    alter the spreadsheet data, but it lets fixtures that are fachlich equal
+    represent distinct files (and therefore distinct upload versions).
+    """
     columns: list[str] = []
     seen = set()
     for row in rows:
@@ -162,10 +168,12 @@ def write_excel(rows: list[dict], path: Path) -> None:
         '</worksheet>'
     )
 
+    tag_xml = f'<!-- document-tag:{escape(document_tag)} -->' if document_tag else ''
     workbook_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
         'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        f'{tag_xml}'
         '<sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets>'
         '</workbook>'
     )

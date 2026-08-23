@@ -120,7 +120,7 @@ class ApiService {
     return this.request(`/audit-events?page=${page}`);
   }
 
-  async resetTestData(scope: 'imports' | 'athletes' | 'assignments' | 'all'): Promise<{ scope: string; deleted: string[]; counts: Record<string, number> }> {
+  async resetTestData(scope: 'activities' | 'imports' | 'athletes' | 'assignments' | 'all'): Promise<{ scope: string; deleted: string[]; counts: Record<string, number> }> {
     return this.request('/admin/test-data/reset', { method: 'POST', body: JSON.stringify({ scope }) });
   }
 

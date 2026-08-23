@@ -180,8 +180,9 @@ def generate_scenario(number: str, output_dir: Path) -> dict:
     entries = _scenario_people(scenario)
     prefix = f'{scenario.number}_{scenario_slug(scenario)}'
     room_entries = _scenario_people(SCENARIOS[-2]) if scenario.steps[-1] == 'invalid-date' else entries
-    write_excel(entries, root / f'{prefix}_entries.xlsx')
-    write_excel(_room_rows(room_entries), root / f'{prefix}_room_list.xlsx')
+    write_excel(entries, root / f'{prefix}_entries.xlsx', document_tag=f'{scenario.number}:entries')
+    write_excel(_room_rows(room_entries), root / f'{prefix}_room_list.xlsx',
+                document_tag=f'{scenario.number}:room-list')
     expectations['versions'].append(_expectation(1, scenario.steps[-1]))
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return {'root': root, **scenario.public_dict()}
@@ -195,8 +196,10 @@ def generate_complete_suite(output_dir: Path) -> Path:
         entries = _scenario_people(scenario)
         prefix = f'{scenario.number}_{scenario_slug(scenario)}'
         room_entries = _scenario_people(SCENARIOS[-2]) if scenario.steps[-1] == 'invalid-date' else entries
-        write_excel(entries, root / f'{prefix}_entries.xlsx')
-        write_excel(_room_rows(room_entries), root / f'{prefix}_room_list.xlsx')
-        expectations['scenarios'].append({**scenario.public_dict(), **_expectation(1, scenario.steps[-1])})
+        write_excel(entries, root / f'{prefix}_entries.xlsx', document_tag=f'{scenario.number}:entries')
+        write_excel(_room_rows(room_entries), root / f'{prefix}_room_list.xlsx',
+                    document_tag=f'{scenario.number}:room-list')
+        expectations['scenarios'].append({**scenario.public_dict(),
+                                          **_expectation(int(scenario.number), scenario.steps[-1])})
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
     return root

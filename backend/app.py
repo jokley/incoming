@@ -136,6 +136,7 @@ def _required_permission():
 
 
 RESET_TARGETS = {
+    'activities': ('Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse'),
     'imports': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'),
     'athletes': ('Athleten', 'Zimmerpartner', 'Prüfmarkierungen'),
     'assignments': ('Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'),
@@ -153,6 +154,12 @@ def reset_test_data():
         return jsonify({'error': 'INVALID_SCOPE', 'message': 'Unbekannter Reset-Umfang'}), 400
     counts = {}
     try:
+        if scope == 'activities':
+            counts['Aktivitäten / Audit-Log'] = AuditEvent.query.delete(synchronize_session=False)
+            counts['Workflowhistorie'] = ImportSessionEvent.query.delete(synchronize_session=False)
+            FisRoomAssignment.query.update(
+                {FisRoomAssignment.import_run_id: None}, synchronize_session=False)
+            counts['Systemereignisse'] = ImportRun.query.delete(synchronize_session=False)
         if scope in {'assignments', 'athletes', 'all'}:
             # Athlete deletion also has to detach all dependent assignments.
             models = (
