@@ -949,6 +949,8 @@ def _assignment_context(athlete):
         return {
             'hotel': fis_assignment.hotel.name if fis_assignment.hotel else None,
             'hotelId': str(fis_assignment.hotel_id) if fis_assignment.hotel_id else None,
+            'assignmentId': str(fis_assignment.id),
+            'sourceRowKey': fis_assignment.source_row_key,
             'roomType': _display_room_type(fis_assignment.room_type),
             'partners': [partner] if partner else [],
             'checkInDate': fis_assignment.check_in_date,
@@ -979,15 +981,19 @@ def build_disposition_analysis(people, rooms, quota_warnings):
     for person in people:
         existing = _find_existing_athlete(person, _build_existing_athlete_maps())
         name = f"{person.get('firstname', '')} {person.get('lastname', '')}".strip()
-        base = {'athlete': name, 'nation': person.get('nationCode'), 'discipline': person.get('industryName')}
+        base = {'athlete': name, 'entityId': person.get('matchKey'), 'nation': person.get('nationCode'), 'discipline': person.get('industryName')}
         if existing is None:
             categories['newAthletes']['records'].append(base)
             continue
         imported_by_id[existing.id] = person
         base['personId'] = str(existing.id)
         changes = []
-        for field, label in (('firstname', 'Vorname'), ('lastname', 'Nachname'), ('discipline', 'Disziplin'), ('gender', 'Gender')):
-            new_value = person.get('industryName') if field == 'discipline' else person.get(field)
+        for field, label, imported_field in (
+            ('firstname', 'Vorname', 'firstname'), ('lastname', 'Nachname', 'lastname'),
+            ('discipline', 'Disziplin', 'industryName'), ('gender', 'Gender', 'gender'),
+            ('function', 'Funktion', 'function'), ('nation_code', 'Nation', 'nationCode'),
+        ):
+            new_value = person.get(imported_field)
             if (getattr(existing, field, None) or '') != (new_value or ''):
                 changes.append({'field': label, 'old': getattr(existing, field, None), 'new': new_value})
         old_arrival, old_departure = existing.arrival_date, existing.departure_date
@@ -1073,6 +1079,8 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         desired_name = f"{desired_partner.get('firstname', '')} {desired_partner.get('lastname', '')}".strip() if desired_partner else None
         if old_partners and (not desired_name or desired_name not in old_partner_names):
             categories['roommateAffected']['records'].append({
+                'entityId': room.get('sourceRowKey') if room else context.get('assignmentId'),
+                'assignmentId': context.get('assignmentId'),
                 'athlete': _person_name(athlete), 'oldPartners': old_partner_names,
                 'newPartners': [desired_name] if desired_name else [],
                 'reason': 'Partner entfernt, Reisezeitraum oder Zimmerbedarf geändert',
@@ -1100,9 +1108,143 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         }
         categories['quotaAffected']['records'].append(record)
         categories['approvalRequired']['records'].append(record)
+    # A shared room is one business change, not one change per occupant.
+    roommate_records = {}
+    for record in categories['roommateAffected']['records']:
+        key = record.get('assignmentId') or record.get('entityId') or record.get('athlete')
+        roommate_records.setdefault(key, record)
+    categories['roommateAffected']['records'] = list(roommate_records.values())
     for category in categories.values():
         category['count'] = len(category['records'])
     return {'categories': categories}
+
+
+def _room_comparison_changes(people, rooms, removed_records):
+    """Compare room assignments by identities, never by spreadsheet position."""
+    athlete_maps = _build_existing_athlete_maps()
+
+    def athlete_token(athlete):
+        canonical = (athlete_maps['by_fis_code'].get(athlete.fis_code.strip().upper(), athlete)
+                     if athlete.fis_code else athlete)
+        return f'id:{canonical.id}'
+
+    existing_by_key = {}
+    existing_by_id = {}
+    for person in people:
+        athlete = _find_existing_athlete(person, athlete_maps)
+        if athlete:
+            existing_by_key[person.get('matchKey')] = athlete
+            existing_by_id[athlete.id] = athlete
+    for record in removed_records:
+        athlete_id = record.get('personId')
+        if athlete_id:
+            athlete = db.session.get(Athlete, int(athlete_id))
+            if athlete:
+                existing_by_id[athlete.id] = athlete
+
+    staged = []
+    for room in rooms:
+        occupants = frozenset(
+            athlete_token(existing_by_key[key]) if key in existing_by_key else f"new:{key}"
+            for key in (room.get('person1Key'), room.get('person2Key')) if key
+        )
+        staged.append({'entityId': room.get('sourceRowKey'), 'assignmentId': room.get('assignmentId'),
+                       'roomId': room.get('roomId'), 'occupants': occupants})
+
+    current_by_assignment = {}
+    for athlete in existing_by_id.values():
+        context = _assignment_context(athlete)
+        if not context or not context.get('assignmentId'):
+            continue
+        assignment_id = str(context['assignmentId'])
+        occupants = {athlete_token(athlete)}
+        occupants.update(athlete_token(partner) for partner in context.get('partners', []))
+        snapshot = current_by_assignment.setdefault(assignment_id, {
+            'entityId': context.get('sourceRowKey') or assignment_id,
+            'assignmentId': assignment_id, 'roomId': context.get('roomId'), 'occupants': set(),
+        })
+        snapshot['occupants'].update(occupants)
+    current = [{**item, 'occupants': frozenset(item['occupants'])} for item in current_by_assignment.values()]
+
+    matches = []
+    unused_current = set(range(len(current)))
+    # Match strongest stable keys first, then the unordered person identity set.
+    for staged_index, new_room in enumerate(staged):
+        match = next((index for index in unused_current
+                      if new_room.get('assignmentId') and new_room['assignmentId'] == current[index]['assignmentId']), None)
+        if match is None:
+            match = next((index for index in unused_current
+                          if new_room['occupants'] == current[index]['occupants']), None)
+        if match is None and new_room.get('roomId'):
+            match = next((index for index in unused_current
+                          if new_room['roomId'] == current[index].get('roomId')), None)
+        if match is None:
+            overlap = sorted(
+                ((len(new_room['occupants'] & current[index]['occupants']),
+                  current[index]['assignmentId'], index) for index in unused_current),
+                key=lambda item: (-item[0], item[1]),
+            )
+            match = overlap[0][2] if overlap and overlap[0][0] else None
+        if match is not None:
+            unused_current.remove(match)
+        matches.append((staged_index, match))
+
+    changes = []
+    for staged_index, current_index in matches:
+        new_room = staged[staged_index]
+        if current_index is None:
+            changes.append(('ROOM_CREATED', new_room['entityId'], 'Zimmerzuordnung erstellt'))
+        elif new_room['occupants'] != current[current_index]['occupants']:
+            changes.append(('ROOMMATE_CHANGED', new_room['entityId'], 'Zimmerpartner geändert'))
+    for current_index in unused_current:
+        changes.append(('ROOM_REMOVED', current[current_index]['entityId'], 'Zimmerzuordnung entfernt'))
+    return changes
+
+
+def build_import_changes(disposition_analysis, people, rooms, errors):
+    """Normalize comparison results into the UI's sole semantic change model."""
+    categories = disposition_analysis['categories']
+    room_by_person = {
+        key: room for room in rooms for key in (room.get('person1Key'), room.get('person2Key')) if key
+    }
+    changes = []
+
+    def add(change_type, preview, entity_id, description, severity='warning', **extra):
+        changes.append({'type': change_type, 'preview': preview, 'severity': severity,
+                        'entityId': str(entity_id or ''), 'description': description, **extra})
+
+    for record in categories['newAthletes']['records']:
+        add('NEW_PERSON', 'persons', record.get('entityId'), 'Neue Person')
+    for record in categories['removedAthletes']['records']:
+        add('PERSON_REMOVED', 'persons', record.get('personId'), 'Person entfernt')
+    for record in categories['updatedAthletes']['records']:
+        fields = {item['field'] for item in record.get('changes', [])}
+        semantic_fields = (
+            ('Funktion', 'FUNCTION_CHANGED', 'Funktion geändert'),
+            ('Nation', 'COUNTRY_CHANGED', 'Nation geändert'),
+        )
+        for field, change_type, description in semantic_fields:
+            if field in fields:
+                add(change_type, 'persons', record.get('entityId'), description)
+    for record in categories['roomRequirementChanged']['records']:
+        old_single, new_single = record.get('old') == 'EZ', record.get('new') == 'EZ'
+        change_type = 'SINGLE_ROOM_CHANGED' if old_single != new_single else 'ROOMTYPE_CHANGED'
+        add(change_type, 'persons' if change_type == 'SINGLE_ROOM_CHANGED' else 'rooms',
+            record.get('entityId'), 'Einzelzimmer geändert' if old_single != new_single else 'Zimmerart geändert')
+    for record in categories['stayChanged']['records']:
+        entity_id = record.get('entityId')
+        add('STAY_CHANGED', 'persons', entity_id, 'Aufenthalt geändert')
+        room = room_by_person.get(entity_id)
+        if room:
+            add('STAY_CHANGED', 'rooms', room.get('sourceRowKey'), 'Aufenthalt geändert',
+                affectedPersonId=str(entity_id or ''))
+    for change_type, entity_id, description in _room_comparison_changes(
+            people, rooms, categories['removedAthletes']['records']):
+        add(change_type, 'rooms', entity_id, description)
+    for issue in errors:
+        preview = 'rooms' if issue.get('code', '').startswith('ROOM_') else 'persons'
+        add('VALIDATION_ERROR', preview, issue.get('details', {}).get('row'), 'Validierungsfehler', 'error')
+    return changes
 
 
 def cleanup_preview_store():
@@ -1141,6 +1283,9 @@ def create_fis_import_preview(entries_path, roomlist_path):
     )
 
     blocking_errors = people_result['errors'] + room_result['errors']
+    disposition_analysis['changes'] = build_import_changes(
+        disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors
+    )
     preview = {
         'createdAt': datetime.utcnow(),
         'people': people_result['people'],
