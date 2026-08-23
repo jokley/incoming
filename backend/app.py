@@ -140,7 +140,8 @@ RESET_TARGETS = {
     'imports': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'),
     'athletes': ('Athleten', 'Zimmerpartner', 'Prüfmarkierungen'),
     'assignments': ('Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'),
-    'all': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen',
+    'all': ('Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse',
+            'Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen',
             'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus',
             'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'),
 }
@@ -154,7 +155,7 @@ def reset_test_data():
         return jsonify({'error': 'INVALID_SCOPE', 'message': 'Unbekannter Reset-Umfang'}), 400
     counts = {}
     try:
-        if scope == 'activities':
+        if scope in {'activities', 'all'}:
             counts['Aktivitäten / Audit-Log'] = AuditEvent.query.delete(synchronize_session=False)
             counts['Workflowhistorie'] = ImportSessionEvent.query.delete(synchronize_session=False)
             FisRoomAssignment.query.update(
