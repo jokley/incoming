@@ -123,6 +123,29 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 'entityId': 'A1|A3', 'description': 'Zimmerpartner geändert',
             }])
 
+    def test_stay_and_partner_change_share_the_existing_assignment(self):
+        with app.app_context():
+            mia = Athlete(fis_code='A1', firstname='Mia', lastname='One', nation_code='AUT', discipline='Big Air',
+                          arrival_date=date(2027, 3, 12), departure_date=date(2027, 3, 21))
+            lina = Athlete(fis_code='A2', firstname='Lina', lastname='Two', nation_code='AUT', discipline='Big Air')
+            lea = Athlete(fis_code='A3', firstname='Lea', lastname='Three', nation_code='AUT', discipline='Big Air')
+            db.session.add_all([mia, lina, lea]); db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+            db.session.add(booking); db.session.flush()
+            db.session.add_all([RoomBookingOccupant(room_booking_id=booking.id, athlete_id=mia.id),
+                                RoomBookingOccupant(room_booking_id=booking.id, athlete_id=lina.id)])
+            db.session.commit()
+            people = [self.person(mia, arrival=date(2027, 3, 11)), self.person(lina), self.person(lea)]
+            room = self.room(mia, lea, 'mia-existing-assignment')
+            analysis = build_disposition_analysis(people, [room], [])
+            changes = build_import_changes(analysis, people, [room], [])
+
+            room_changes = [(change['type'], change['entityId']) for change in changes
+                            if change['preview'] == 'rooms']
+            self.assertEqual(room_changes.count(('STAY_CHANGED', 'mia-existing-assignment')), 1)
+            self.assertEqual(room_changes.count(('ROOMMATE_CHANGED', 'mia-existing-assignment')), 1)
+            self.assertNotIn(('ROOM_CREATED', 'mia-existing-assignment'), room_changes)
+
     def test_room_changes_do_not_depend_on_spreadsheet_order(self):
         with app.app_context():
             athletes = [Athlete(fis_code=f'A{i}', firstname='Person', lastname=str(i),

@@ -1119,7 +1119,7 @@ def build_disposition_analysis(people, rooms, quota_warnings):
     return {'categories': categories}
 
 
-def _room_comparison_changes(people, rooms, removed_records):
+def _room_comparison_changes(people, rooms, removed_records, include_matches=False):
     """Compare room assignments by identities, never by spreadsheet position."""
     athlete_maps = _build_existing_athlete_maps()
 
@@ -1144,12 +1144,16 @@ def _room_comparison_changes(people, rooms, removed_records):
 
     staged = []
     for room in rooms:
+        primary = existing_by_key.get(room.get('person1Key'))
+        primary_context = _assignment_context(primary) if primary else None
         occupants = frozenset(
             athlete_token(existing_by_key[key]) if key in existing_by_key else f"new:{key}"
             for key in (room.get('person1Key'), room.get('person2Key')) if key
         )
         staged.append({'entityId': room.get('sourceRowKey'), 'assignmentId': room.get('assignmentId'),
-                       'roomId': room.get('roomId'), 'occupants': occupants})
+                       'anchorAssignmentId': str(primary_context['assignmentId'])
+                       if primary_context and primary_context.get('assignmentId') else None,
+                       'roomId': room.get('roomId'), 'occupants': occupants, 'room': room})
 
     current_by_assignment = {}
     for athlete in existing_by_id.values():
@@ -1173,11 +1177,18 @@ def _room_comparison_changes(people, rooms, removed_records):
     current.sort(key=lambda item: str(item['assignmentId']))
 
     matches = []
+    matched_rooms_by_assignment = {}
     unused_current = set(range(len(current)))
     # Match strongest stable keys first, then the unordered person identity set.
     for staged_index, new_room in enumerate(staged):
         match = next((index for index in unused_current
                       if new_room.get('assignmentId') and new_room['assignmentId'] == current[index]['assignmentId']), None)
+        if match is None:
+            # The primary occupant identifies the business assignment.  Match
+            # that assignment before considering the incoming partner, whose
+            # own old assignment must never steal this row during a swap.
+            match = next((index for index in unused_current
+                          if new_room.get('anchorAssignmentId') == current[index]['assignmentId']), None)
         if match is None:
             match = next((index for index in unused_current
                           if new_room['occupants'] == current[index]['occupants']), None)
@@ -1193,6 +1204,7 @@ def _room_comparison_changes(people, rooms, removed_records):
             match = overlap[0][2] if overlap and overlap[0][0] else None
         if match is not None:
             unused_current.remove(match)
+            matched_rooms_by_assignment[current[match]['assignmentId']] = new_room['room']
         matches.append((staged_index, match))
 
     changes = []
@@ -1206,7 +1218,7 @@ def _room_comparison_changes(people, rooms, removed_records):
         # Removed assignments have no staged row key.  Use the stable live
         # assignment id so the preview can join the summary to its detail row.
         changes.append(('ROOM_REMOVED', current[current_index]['assignmentId'], 'Zimmerzuordnung entfernt'))
-    return changes
+    return (changes, matched_rooms_by_assignment) if include_matches else changes
 
 
 def build_import_changes(disposition_analysis, people, rooms, errors):
@@ -1216,6 +1228,12 @@ def build_import_changes(disposition_analysis, people, rooms, errors):
         key: room for room in rooms for key in (room.get('person1Key'), room.get('person2Key')) if key
     }
     changes = []
+
+    # Resolve the stable live assignment first.  Stay and partner statuses must
+    # then use this same comparison result instead of independently selecting a
+    # room by whichever spreadsheet row happened to be processed last.
+    room_comparison_changes, matched_rooms_by_assignment = _room_comparison_changes(
+        people, rooms, categories['removedAthletes']['records'], include_matches=True)
 
     change_index = {}
 
@@ -1261,12 +1279,19 @@ def build_import_changes(disposition_analysis, people, rooms, errors):
     for record in categories['stayChanged']['records']:
         entity_id = record.get('entityId')
         add('STAY_CHANGED', 'persons', entity_id, 'Aufenthalt geändert')
-        room = room_by_person.get(entity_id)
+        existing = _find_existing_athlete(
+            next((person for person in people if person.get('matchKey') == entity_id), {}),
+            _build_existing_athlete_maps(),
+        )
+        context = _assignment_context(existing) if existing else None
+        assignment_id = str(context['assignmentId']) if context and context.get('assignmentId') else None
+        room = matched_rooms_by_assignment.get(assignment_id)
+        if room is None:
+            room = room_by_person.get(entity_id)
         if room:
             add('STAY_CHANGED', 'rooms', room.get('sourceRowKey'), 'Aufenthalt geändert',
                 affectedPersonId=str(entity_id or ''))
-    for change_type, entity_id, description in _room_comparison_changes(
-            people, rooms, categories['removedAthletes']['records']):
+    for change_type, entity_id, description in room_comparison_changes:
         add(change_type, 'rooms', entity_id, description)
     for issue in errors:
         preview = 'rooms' if issue.get('code', '').startswith('ROOM_') else 'persons'
