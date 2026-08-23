@@ -17,9 +17,10 @@ const REQUIRED_FILE_HINTS = ['ENTRIES-LIST', 'ENTRIES-ROOM-LIST-DETAILED'];
 type WorkflowStep = { id: string; label: string; complete: boolean; current: boolean };
 type Detail = { title: string; subtitle?: string; issues?: FisImportIssue[]; rows?: ReactNode[][]; headers?: string[] };
 
-type VisibleImportStatus = 'Neu' | 'Aufenthalt geändert' | 'Zimmerpartner geändert' | 'Disposition prüfen' | 'Stammdaten prüfen';
+type VisibleImportStatus = 'Neu' | 'Entfernt' | 'Aufenthalt geändert' | 'Zimmerpartner geändert' | 'Zimmer erstellt' | 'Zimmer entfernt' | 'Disposition prüfen' | 'Stammdaten prüfen';
 const statusTone: Record<VisibleImportStatus, 'primary'|'info'|'warning'|'error'> = {
-  Neu: 'primary', 'Aufenthalt geändert': 'info', 'Zimmerpartner geändert': 'primary',
+  Neu: 'primary', Entfernt: 'warning', 'Aufenthalt geändert': 'info', 'Zimmerpartner geändert': 'primary',
+  'Zimmer erstellt': 'primary', 'Zimmer entfernt': 'warning',
   'Disposition prüfen': 'warning', 'Stammdaten prüfen': 'error',
 };
 const importStatuses = (statuses: VisibleImportStatus[]) => statuses.length ? <span className="flex flex-wrap gap-1">{[...new Set(statuses)].map(status => <StatusChip key={status} tone={statusTone[status]}>{status}</StatusChip>)}</span> : null;
@@ -69,12 +70,16 @@ export function DataImport() {
 
   const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
   const changes = preview?.dispositionAnalysis.changes ?? [];
-  const statusesFor = (entityId:string,rowNumber?:number,operation?:'create'|'update'):VisibleImportStatus[] => {
+  const statusesFor = (previewArea:ImportChange['preview'],entityId:string,rowNumber?:number,operation?:'create'|'update'):VisibleImportStatus[] => {
     const statuses:VisibleImportStatus[]=[];
-    const matching=changes.filter(change=>change.entityId===entityId || (rowNumber && change.entityId===String(rowNumber)));
+    // Row numbers and business identifiers can overlap between the two Excel
+    // files.  Never let a person change leak into a room (or vice versa).
+    const matching=changes.filter(change=>change.preview===previewArea&&(change.entityId===entityId || (rowNumber && change.entityId===String(rowNumber))));
     if(operation==='create' || matching.some(change=>change.type==='NEW_PERSON')) statuses.push('Neu');
     if(matching.some(change=>change.type==='STAY_CHANGED')) statuses.push('Aufenthalt geändert');
     if(matching.some(change=>change.type==='ROOMMATE_CHANGED')) statuses.push('Zimmerpartner geändert');
+    if(matching.some(change=>change.type==='ROOM_CREATED')) statuses.push('Zimmer erstellt');
+    if(matching.some(change=>change.type==='ROOM_REMOVED')) statuses.push('Zimmer entfernt');
     if(matching.some(change=>['SINGLE_ROOM_CHANGED','ROOMTYPE_CHANGED'].includes(change.type))) statuses.push('Disposition prüfen');
     if(matching.some(change=>['VALIDATION_ERROR','FUNCTION_CHANGED','COUNTRY_CHANGED'].includes(change.type))) statuses.push('Stammdaten prüfen');
     return statuses;
@@ -86,12 +91,22 @@ export function DataImport() {
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
     const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
     const name=`${p.firstname} ${p.lastname}`;
-    return [name, p.nationCode, p.discipline || '—', p.function || '—', entitlement, importStatuses(statusesFor(String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
+    return [name, p.nationCode, p.discipline || '—', p.function || '—', entitlement, importStatuses(statusesFor('persons',String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
   }) ?? [];
+  preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
+    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),String(record.discipline??'—'),'—','—',importStatuses(['Entfernt'])]);
+  });
   const roomRows = preview?.rooms.map(r => {
-    const statuses=statusesFor(r.sourceRowKey,r.rowNumber);
+    const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
     return [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—', importStatuses(statuses)];
   }) ?? [];
+  const removedAssignments=new Set<string>();
+  preview?.dispositionAnalysis.categories.dispositionAffected.records.forEach(record => {
+    const assignmentId=String(record.assignmentId??'');
+    if(!assignmentId||removedAssignments.has(assignmentId)||!changes.some(change=>change.preview==='rooms'&&change.type==='ROOM_REMOVED'&&change.entityId===assignmentId)) return;
+    removedAssignments.add(assignmentId);
+    roomRows.push([String(record.athlete??'—'),Array.isArray(record.roommates)?record.roommates.join(', '):'—',String(record.roomType??'—'),'—',importStatuses(['Zimmer entfernt'])]);
+  });
 
   return <div className="h-full min-h-0 bg-[var(--ops-background)] text-[var(--ops-text)]">
     <SplitPageLayout className="flex h-full min-h-0 flex-col gap-5 space-y-0">
