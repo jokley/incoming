@@ -111,8 +111,7 @@ export function DataImport() {
               <StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip>
             </div>
             <div className="space-y-4 p-5">
-              <Workflow session={selected} actionStep={primaryActionStep(selected, files)} upload={<SessionUploadWorkspace session={selected} files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/>} />
-              {!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)&&<div className="flex items-center justify-between rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface)] px-4 py-3"><div><p className="text-sm font-extrabold">Workflowverwaltung</p><p className="text-xs text-[var(--ops-text-muted)]">Session unabhängig vom aktuellen Schritt verwalten.</p></div><OpsButton onClick={abortSession} disabled={confirming} className="border-[var(--ops-border-strong)] bg-transparent text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-overlay)]"><XCircle className="mr-2 inline h-4 w-4"/>Workflow abbrechen</OpsButton></div>}
+              <Workflow session={selected} actionStep={primaryActionStep(selected, files)} upload={<SessionUploadWorkspace session={selected} files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/>} secondaryAction={!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)?<OpsButton onClick={abortSession} disabled={confirming} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Workflow abbrechen</OpsButton>:null} />
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
               <NextAction session={selected} success={success}/>
               {preview && <ImportChangeSummary preview={preview} onNavigate={href=>navigate(href)}/>}
@@ -172,11 +171,11 @@ function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
   ];
 }
 
-function Workflow({session,upload,action,actionStep}:{session:ImportSession|null;upload:ReactNode;action:ReactNode;actionStep:WorkflowStep['id']}) {
+function Workflow({session,upload,action,actionStep,secondaryAction}:{session:ImportSession|null;upload:ReactNode;action:ReactNode;actionStep:WorkflowStep['id'];secondaryAction?:ReactNode}) {
   const steps = visibleWorkflow(session);
   const activeStep = steps.find(step => step.id === actionStep) ?? steps.find(step => step.current) ?? steps[0];
   return <ContentCard surface="elevated" className="p-4">
-    <SectionHeader title="Workflow" subtitle="Von der technischen Prüfung bis zum kontrollierten Import"/>
+    <div className="flex flex-wrap items-start justify-between gap-3"><SectionHeader title="Workflow" subtitle="Von der technischen Prüfung bis zum kontrollierten Import"/><div aria-label="Workflowverwaltung">{secondaryAction}</div></div>
     <ol className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-4" aria-label="Importworkflow">
       {steps.map((step,index) => {
         const isActive = step.id === activeStep.id;
@@ -195,13 +194,19 @@ function Workflow({session,upload,action,actionStep}:{session:ImportSession|null
 
 function ActiveWorkflowStep({step,session,upload,action}:{step:WorkflowStep;session:ImportSession|null;upload:ReactNode;action:ReactNode}) {
   const pending = session?.approvals.filter(approval=>approval.decision==='PENDING').length ?? 0;
+  const description:Record<WorkflowStep['id'],string> = {
+    validation: 'Wählen Sie beide FIS-Dateien aus und starten Sie die technische Prüfung.',
+    decision: pending ? `${pending} offene ${pending===1?'Entscheidung':'Entscheidungen'} prüfen und dokumentieren.` : 'Fachliche Hinweise prüfen und die erforderliche Entscheidung dokumentieren.',
+    approval: 'Alle Prüfungen sind abgeschlossen. Geben Sie die geprüfte Version für den Import frei.',
+    import: 'Die freigegebene Importsession kontrolliert in den aktuellen Datenbestand übernehmen.',
+  };
   const content:Record<WorkflowStep['id'],ReactNode> = {
     validation: <>{upload}<div className="mt-4 flex justify-end">{action}</div></>,
-    decision: <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end"><div><SectionHeader title="Hinweise und Entscheidungen" subtitle={pending?`${pending} offene ${pending===1?'Entscheidung':'Entscheidungen'} bearbeiten`:'Fachliche Hinweise der aktuellen Prüfung bearbeiten'}/><p className="mt-3 text-sm text-[var(--ops-text-muted)]">Prüfen Sie die Hinweise und dokumentieren Sie die erforderliche Entscheidung, bevor der Workflow fortgesetzt wird.</p></div><div>{action}</div></div>,
-    approval: <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end"><div><SectionHeader title="Freigabeinformationen" subtitle="Technische Prüfung und erforderliche Entscheidungen sind abgeschlossen"/><p className="mt-3 text-sm text-[var(--ops-text-muted)]">Mit der Freigabe bestätigen Sie die geprüfte Version für den anschließenden Import.</p></div><div>{action}</div></div>,
-    import: <div className="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end"><div><SectionHeader title="Importieren" subtitle="Freigegebene Daten kontrolliert übernehmen"/><p className="mt-3 text-sm text-[var(--ops-text-muted)]">Die Importsession ist freigegeben und bereit für den abschließenden Import.</p></div><div>{action}</div></div>,
+    decision: <div className="flex justify-end">{action}</div>,
+    approval: <div className="flex justify-end">{action}</div>,
+    import: <div className="flex justify-end">{action}</div>,
   };
-  return <section className="mt-4 rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-4" aria-labelledby={`workflow-step-${step.id}`}><div className="mb-4 flex items-center gap-2"><StatusChip tone="primary">Aktueller Schritt</StatusChip><h3 id={`workflow-step-${step.id}`} className="font-extrabold">{step.label.replace(' (falls erforderlich)','')}</h3></div>{content[step.id]}</section>;
+  return <section className="mt-4 rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-4" aria-labelledby={`workflow-step-${step.id}`}><div className="mb-4"><div className="flex items-center gap-2"><StatusChip tone="primary">Aktueller Schritt</StatusChip><h3 id={`workflow-step-${step.id}`} className="font-extrabold">{step.label.replace(' (falls erforderlich)','')}</h3></div><p className="mt-2 text-sm text-[var(--ops-text-muted)]">{description[step.id]}</p></div>{content[step.id]}</section>;
 }
 
 function primaryActionStep(session:ImportSession, files:File[]):WorkflowStep['id'] {
