@@ -4,7 +4,7 @@ import { Alert, Dialog, DialogContent, DialogTitle, Snackbar } from '@mui/materi
 import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
-import type { FisImportIssue, FisImportPreview } from '../types';
+import type { FisImportIssue, FisImportPreview, ImportChange, ImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
@@ -68,16 +68,15 @@ export function DataImport() {
   };
 
   const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
-  const recordNames = (category: keyof FisImportPreview['dispositionAnalysis']['categories']) => new Set((preview?.dispositionAnalysis.categories[category]?.records ?? []).map(record => String(record.athlete ?? '')));
-  const newNames=recordNames('newAthletes'), stayNames=recordNames('stayChanged'), roommateNames=recordNames('roommateAffected'), dispositionNames=recordNames('dispositionAffected');
-  const technicalRows = new Set((preview?.errors ?? []).map(issue => Number(issue.details?.row)).filter(Boolean));
-  const statusesFor = (name:string,rowNumber?:number,operation?:'create'|'update'):VisibleImportStatus[] => {
+  const changes = preview?.dispositionAnalysis.changes ?? [];
+  const statusesFor = (entityId:string,rowNumber?:number,operation?:'create'|'update'):VisibleImportStatus[] => {
     const statuses:VisibleImportStatus[]=[];
-    if(operation==='create' || newNames.has(name)) statuses.push('Neu');
-    if(stayNames.has(name)) statuses.push('Aufenthalt geändert');
-    if(roommateNames.has(name)) statuses.push('Zimmerpartner geändert');
-    if(dispositionNames.has(name)) statuses.push('Disposition prüfen');
-    if(rowNumber && technicalRows.has(rowNumber)) statuses.push('Stammdaten prüfen');
+    const matching=changes.filter(change=>change.entityId===entityId || (rowNumber && change.entityId===String(rowNumber)));
+    if(operation==='create' || matching.some(change=>change.type==='NEW_PERSON')) statuses.push('Neu');
+    if(matching.some(change=>change.type==='STAY_CHANGED')) statuses.push('Aufenthalt geändert');
+    if(matching.some(change=>change.type==='ROOMMATE_CHANGED')) statuses.push('Zimmerpartner geändert');
+    if(matching.some(change=>['SINGLE_ROOM_CHANGED','ROOMTYPE_CHANGED'].includes(change.type))) statuses.push('Disposition prüfen');
+    if(matching.some(change=>['VALIDATION_ERROR','FUNCTION_CHANGED','COUNTRY_CHANGED'].includes(change.type))) statuses.push('Stammdaten prüfen');
     return statuses;
   };
   const peopleRows = preview?.people.map(p => {
@@ -87,11 +86,10 @@ export function DataImport() {
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
     const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
     const name=`${p.firstname} ${p.lastname}`;
-    return [name, p.nationCode, p.discipline || '—', p.function || '—', entitlement, importStatuses(statusesFor(name,p.rowNumber,p.operation))];
+    return [name, p.nationCode, p.discipline || '—', p.function || '—', entitlement, importStatuses(statusesFor(String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
   }) ?? [];
   const roomRows = preview?.rooms.map(r => {
-    const people = preview.people.filter(person => [r.person1Name, r.person2Name].filter(Boolean).includes(`${person.firstname} ${person.lastname}`));
-    const statuses=people.flatMap(person=>statusesFor(`${person.firstname} ${person.lastname}`, r.rowNumber, person.operation));
+    const statuses=statusesFor(r.sourceRowKey,r.rowNumber);
     return [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—', importStatuses(statuses)];
   }) ?? [];
 
@@ -222,38 +220,35 @@ function NextAction({session,success}:{session:ImportSession;success:string|null
 function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><details className="group"><summary className="flex cursor-pointer list-none items-center justify-between gap-3"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · bei Bedarf aufklappen`}/><ChevronDown className="h-5 w-5 shrink-0 text-[var(--ops-text-subtle)] transition-transform group-open:rotate-180"/></summary><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></details></ContentCard>; }
 function UploadCard({files,onChange,versionLabel}:{files:File[];onChange:(f:FileList|null)=>void;versionLabel?:string}) { return <ContentCard surface="elevated" className="p-2"><div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Neue Importsession"/>{versionLabel&&<span className="text-xs font-bold text-[var(--ops-text-muted)]">{versionLabel}</span>}</div><label className="mt-2 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-3 text-center hover:bg-[var(--ops-tone-primary-surface)]"><input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={e=>onChange(e.target.files)}/><Upload className="mx-auto h-7 w-7 text-[var(--ops-primary)]"/><p className="mt-1 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
-type PreviewHint = { count: number; label: string; technical?: boolean };
-const issueLabel = (issue:FisImportIssue) => issueCopy[issue.code]?.message ?? issue.message;
-const uniqueIssueHints = (issues:FisImportIssue[]) => [...new Map(issues.map(issue => [issueLabel(issue), issue])).keys()].map(label => ({ count: issues.filter(issue => issueLabel(issue)===label).length, label, technical: true }));
+type PreviewHint = { count: number; label: string; severity: ImportChange['severity'] };
+const changeLabels:Record<ImportChangeType,string>={
+  NEW_PERSON:'neue Personen',PERSON_REMOVED:'entfernte Personen',STAY_CHANGED:'Aufenthalt geändert',
+  ROOMMATE_CHANGED:'Zimmerpartner geändert',ROOM_CHANGED:'Zimmeränderungen',SINGLE_ROOM_CHANGED:'Einzelzimmer geändert',
+  ROOMTYPE_CHANGED:'Zimmerart geändert',FUNCTION_CHANGED:'Funktion geändert',COUNTRY_CHANGED:'Nation geändert',
+  VALIDATION_ERROR:'Validierungsfehler',
+};
+function aggregateChanges(changes:ImportChange[]):PreviewHint[] {
+  const grouped=new Map<ImportChangeType,ImportChange[]>();
+  changes.forEach(change=>grouped.set(change.type,[...(grouped.get(change.type)??[]),change]));
+  return [...grouped].map(([type,items])=>({count:items.length,label:changeLabels[type],severity:items.some(item=>item.severity==='error')?'error':items.some(item=>item.severity==='warning')?'warning':'info'}));
+}
 function PreviewCard({preview,peopleRows,roomRows,onOpen}:{preview:FisImportPreview|null;peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void}) {
-  const categories=preview?.dispositionAnalysis.categories;
   const errors=preview?.errors??[];
   const entryErrors=errors.filter(issue=>!issue.code.startsWith('ROOM_'));
   const roomErrors=errors.filter(issue=>issue.code.startsWith('ROOM_'));
-  const peopleHints:PreviewHint[] = [
-    {count:categories?.newAthletes?.count??0,label:'Neue Personen'},
-    {count:categories?.stayChanged?.count??0,label:'Aufenthalt geändert'},
-    {count:categories?.roomRequirementChanged?.count??0,label:'Einzelzimmer geändert'},
-    {count:categories?.approvalRequired?.count??0,label:'Einzelzimmer prüfen'},
-    {count:categories?.additionalCostsPossible?.count??0,label:'Mehrpreis'},
-    ...uniqueIssueHints(entryErrors),
-  ].filter(hint=>hint.count>0);
-  const roomHints:PreviewHint[] = [
-    {count:categories?.roommateAffected?.count??0,label:'Zimmerpartner geändert'},
-    {count:categories?.stayChanged?.count??0,label:'Aufenthalt geändert'},
-    {count:categories?.hotelAssignmentAffected?.count??0,label:'Hotelzuweisung betroffen'},
-    ...uniqueIssueHints(roomErrors),
-  ].filter(hint=>hint.count>0);
+  const changes=preview?.dispositionAnalysis.changes??[];
+  const peopleHints=aggregateChanges(changes.filter(change=>change.preview==='persons'));
+  const roomHints=aggregateChanges(changes.filter(change=>change.preview==='rooms'));
   return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Hinweise prüfen und direkt in der betroffenen Vorschau arbeiten"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-2"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>;
 }
 function PreviewWorkspaceCard({icon,label,count,unit,hints,onClick}:{icon:ReactNode;label:string;count:number;unit:string;hints:PreviewHint[];onClick:()=>void}) {
-  const hasErrors=hints.some(hint=>hint.technical), hasChanges=hints.some(hint=>!hint.technical);
+  const hasErrors=hints.some(hint=>hint.severity==='error'), hasChanges=hints.length>0;
   const tone=hasErrors?'error':hasChanges?'warning':count>0?'success':'neutral';
   const border={error:'border-[var(--ops-tone-error-border)]',warning:'border-[var(--ops-tone-warning-border)]',success:'border-[var(--ops-tone-success-border)]',neutral:'border-[var(--ops-border)]'}[tone];
   return <button type="button" onClick={onClick} className={`group flex min-h-40 w-full flex-col rounded-xl border-2 ${border} bg-[var(--ops-surface)] p-4 text-left transition hover:bg-[var(--ops-surface-overlay)] focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]`}>
     <span className="flex w-full items-start justify-between gap-3"><span><span className="flex items-center gap-2 text-base font-extrabold">{icon}{label}</span><span className="mt-1 block text-sm text-[var(--ops-text-muted)]"><strong className="text-[var(--ops-text)]">{count}</strong> {unit}</span></span><StatusChip tone={tone}>{hasErrors?'Fehler':hasChanges?'Prüfen':count>0?'Bereit':'Keine Änderungen'}</StatusChip></span>
     <span className="my-3 block w-full border-t border-[var(--ops-divider)]"/>
-    <span className="flex w-full flex-1 flex-col gap-1.5">{hints.length?hints.map(hint=><span key={`${hint.label}-${hint.technical}`} className="flex items-start gap-2 text-sm font-semibold"><span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${hint.technical?'bg-[var(--ops-error)]':'bg-[var(--ops-warning)]'}`}/><span>{hint.count} {hint.label}</span></span>):<span className="flex items-center gap-2 text-sm font-semibold text-[var(--ops-text-muted)]"><CheckCircle className="h-4 w-4 text-[var(--ops-success)]"/>Keine Hinweise</span>}</span>
+    <span className="flex w-full flex-1 flex-col gap-1.5">{hints.length?hints.map(hint=><span key={hint.label} className="flex items-start gap-2 text-sm font-semibold"><span aria-hidden="true" className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${hint.severity==='error'?'bg-[var(--ops-error)]':'bg-[var(--ops-warning)]'}`}/><span>{hint.count} {hint.label}</span></span>):<span className="flex items-center gap-2 text-sm font-semibold text-[var(--ops-text-muted)]"><CheckCircle className="h-4 w-4 text-[var(--ops-success)]"/><span><strong className="text-[var(--ops-text)]">Bereit</strong><br/>Keine Änderungen, die Aufmerksamkeit erfordern.</span></span>}</span>
     <span className="mt-3 flex w-full items-center justify-end gap-1 text-xs font-bold text-[var(--ops-primary)]">Vorschau öffnen <ChevronRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5"/></span>
   </button>;
 }

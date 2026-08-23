@@ -12,7 +12,8 @@ os.environ['DATABASE_URL'] = database_url
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app import app  # noqa: E402
-from excel_import import _remove_athletes, build_disposition_analysis, build_quota_warnings  # noqa: E402
+from excel_import import (_remove_athletes, build_disposition_analysis, build_import_changes,
+                          build_quota_warnings)  # noqa: E402
 from models import Athlete, Hotel, RoomBooking, RoomBookingOccupant, RoomType, db  # noqa: E402
 
 
@@ -80,6 +81,28 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             self.assertEqual(result['stayChanged']['count'], 1)
             self.assertEqual(result['hotelAssignmentAffected']['count'], 1)
             self.assertIn('Bea Two', result['dispositionAffected']['records'][0]['roommates'])
+
+    def test_roommate_replacement_is_one_room_change(self):
+        with app.app_context():
+            mia = Athlete(fis_code='A1', firstname='Mia', lastname='One', nation_code='AUT', discipline='Big Air')
+            lina = Athlete(fis_code='A2', firstname='Lina', lastname='Two', nation_code='AUT', discipline='Big Air')
+            luca = Athlete(fis_code='A3', firstname='Luca', lastname='Three', nation_code='AUT', discipline='Big Air')
+            db.session.add_all([mia, lina, luca]); db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+            db.session.add(booking); db.session.flush()
+            db.session.add_all([RoomBookingOccupant(room_booking_id=booking.id, athlete_id=mia.id),
+                                RoomBookingOccupant(room_booking_id=booking.id, athlete_id=lina.id)])
+            db.session.commit()
+            people = [self.person(mia), self.person(lina), self.person(luca)]
+            room = {'sourceRowKey': 'A1|A3', 'person1Key': 'A1', 'person2Key': 'A3', 'roomType': 'Double'}
+            analysis = build_disposition_analysis(people, [room], [])
+            self.assertEqual(analysis['categories']['roommateAffected']['count'], 1)
+            changes = build_import_changes(analysis, people, [room], [])
+            roommate_changes = [change for change in changes if change['type'] == 'ROOMMATE_CHANGED']
+            self.assertEqual(roommate_changes, [{
+                'type': 'ROOMMATE_CHANGED', 'preview': 'rooms', 'severity': 'warning',
+                'entityId': 'A1|A3', 'description': 'Zimmerpartner geändert',
+            }])
 
     def test_removed_athlete_releases_empty_booking_without_orphans(self):
         with app.app_context():

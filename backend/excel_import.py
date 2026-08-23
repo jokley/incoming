@@ -979,15 +979,19 @@ def build_disposition_analysis(people, rooms, quota_warnings):
     for person in people:
         existing = _find_existing_athlete(person, _build_existing_athlete_maps())
         name = f"{person.get('firstname', '')} {person.get('lastname', '')}".strip()
-        base = {'athlete': name, 'nation': person.get('nationCode'), 'discipline': person.get('industryName')}
+        base = {'athlete': name, 'entityId': person.get('matchKey'), 'nation': person.get('nationCode'), 'discipline': person.get('industryName')}
         if existing is None:
             categories['newAthletes']['records'].append(base)
             continue
         imported_by_id[existing.id] = person
         base['personId'] = str(existing.id)
         changes = []
-        for field, label in (('firstname', 'Vorname'), ('lastname', 'Nachname'), ('discipline', 'Disziplin'), ('gender', 'Gender')):
-            new_value = person.get('industryName') if field == 'discipline' else person.get(field)
+        for field, label, imported_field in (
+            ('firstname', 'Vorname', 'firstname'), ('lastname', 'Nachname', 'lastname'),
+            ('discipline', 'Disziplin', 'industryName'), ('gender', 'Gender', 'gender'),
+            ('function', 'Funktion', 'function'), ('nation_code', 'Nation', 'nationCode'),
+        ):
+            new_value = person.get(imported_field)
             if (getattr(existing, field, None) or '') != (new_value or ''):
                 changes.append({'field': label, 'old': getattr(existing, field, None), 'new': new_value})
         old_arrival, old_departure = existing.arrival_date, existing.departure_date
@@ -1073,6 +1077,8 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         desired_name = f"{desired_partner.get('firstname', '')} {desired_partner.get('lastname', '')}".strip() if desired_partner else None
         if old_partners and (not desired_name or desired_name not in old_partner_names):
             categories['roommateAffected']['records'].append({
+                'entityId': room.get('sourceRowKey') if room else context.get('assignmentId'),
+                'assignmentId': context.get('assignmentId'),
                 'athlete': _person_name(athlete), 'oldPartners': old_partner_names,
                 'newPartners': [desired_name] if desired_name else [],
                 'reason': 'Partner entfernt, Reisezeitraum oder Zimmerbedarf geändert',
@@ -1100,9 +1106,60 @@ def build_disposition_analysis(people, rooms, quota_warnings):
         }
         categories['quotaAffected']['records'].append(record)
         categories['approvalRequired']['records'].append(record)
+    # A shared room is one business change, not one change per occupant.
+    roommate_records = {}
+    for record in categories['roommateAffected']['records']:
+        key = record.get('assignmentId') or record.get('entityId') or record.get('athlete')
+        roommate_records.setdefault(key, record)
+    categories['roommateAffected']['records'] = list(roommate_records.values())
     for category in categories.values():
         category['count'] = len(category['records'])
     return {'categories': categories}
+
+
+def build_import_changes(disposition_analysis, people, rooms, errors):
+    """Normalize comparison results into the UI's sole semantic change model."""
+    categories = disposition_analysis['categories']
+    room_by_person = {
+        key: room for room in rooms for key in (room.get('person1Key'), room.get('person2Key')) if key
+    }
+    changes = []
+
+    def add(change_type, preview, entity_id, description, severity='warning', **extra):
+        changes.append({'type': change_type, 'preview': preview, 'severity': severity,
+                        'entityId': str(entity_id or ''), 'description': description, **extra})
+
+    for record in categories['newAthletes']['records']:
+        add('NEW_PERSON', 'persons', record.get('entityId'), 'Neue Person')
+    for record in categories['removedAthletes']['records']:
+        add('PERSON_REMOVED', 'persons', record.get('personId'), 'Person entfernt')
+    for record in categories['updatedAthletes']['records']:
+        fields = {item['field'] for item in record.get('changes', [])}
+        semantic_fields = (
+            ('Funktion', 'FUNCTION_CHANGED', 'Funktion geändert'),
+            ('Nation', 'COUNTRY_CHANGED', 'Nation geändert'),
+        )
+        for field, change_type, description in semantic_fields:
+            if field in fields:
+                add(change_type, 'persons', record.get('entityId'), description)
+    for record in categories['roomRequirementChanged']['records']:
+        old_single, new_single = record.get('old') == 'EZ', record.get('new') == 'EZ'
+        change_type = 'SINGLE_ROOM_CHANGED' if old_single != new_single else 'ROOMTYPE_CHANGED'
+        add(change_type, 'persons' if change_type == 'SINGLE_ROOM_CHANGED' else 'rooms',
+            record.get('entityId'), 'Einzelzimmer geändert' if old_single != new_single else 'Zimmerart geändert')
+    for record in categories['stayChanged']['records']:
+        entity_id = record.get('entityId')
+        add('STAY_CHANGED', 'persons', entity_id, 'Aufenthalt geändert')
+        room = room_by_person.get(entity_id)
+        if room:
+            add('STAY_CHANGED', 'rooms', room.get('sourceRowKey'), 'Aufenthalt geändert',
+                affectedPersonId=str(entity_id or ''))
+    for record in categories['roommateAffected']['records']:
+        add('ROOMMATE_CHANGED', 'rooms', record.get('entityId'), 'Zimmerpartner geändert')
+    for issue in errors:
+        preview = 'rooms' if issue.get('code', '').startswith('ROOM_') else 'persons'
+        add('VALIDATION_ERROR', preview, issue.get('details', {}).get('row'), 'Validierungsfehler', 'error')
+    return changes
 
 
 def cleanup_preview_store():
@@ -1141,6 +1198,9 @@ def create_fis_import_preview(entries_path, roomlist_path):
     )
 
     blocking_errors = people_result['errors'] + room_result['errors']
+    disposition_analysis['changes'] = build_import_changes(
+        disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors
+    )
     preview = {
         'createdAt': datetime.utcnow(),
         'people': people_result['people'],
