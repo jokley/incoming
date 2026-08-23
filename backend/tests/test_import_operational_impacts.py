@@ -146,6 +146,27 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             self.assertEqual(room_changes.count(('ROOMMATE_CHANGED', 'mia-existing-assignment')), 1)
             self.assertNotIn(('ROOM_CREATED', 'mia-existing-assignment'), room_changes)
 
+    def test_mirrored_room_rows_with_different_stays_are_one_assignment(self):
+        with app.app_context():
+            mia = Athlete(fis_code='A1', firstname='Mia', lastname='One', nation_code='AUT', discipline='Big Air',
+                          arrival_date=date(2027, 3, 12), departure_date=date(2027, 3, 21))
+            lina = Athlete(fis_code='A2', firstname='Lina', lastname='Two', nation_code='AUT', discipline='Big Air')
+            db.session.add_all([mia, lina]); db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+            db.session.add(booking); db.session.flush()
+            db.session.add_all([RoomBookingOccupant(room_booking_id=booking.id, athlete_id=mia.id),
+                                RoomBookingOccupant(room_booking_id=booking.id, athlete_id=lina.id)])
+            db.session.commit()
+            people = [self.person(mia, arrival=date(2027, 3, 11)), self.person(lina)]
+            rooms = [self.room(mia, lina, 'A1|A2|2027-03-11'),
+                     self.room(lina, mia, 'A1|A2|2027-03-12')]
+            analysis = build_disposition_analysis(people, rooms, [])
+            room_changes = [change for change in build_import_changes(analysis, people, rooms, [])
+                            if change['preview'] == 'rooms']
+
+            self.assertEqual([change['type'] for change in room_changes], ['STAY_CHANGED'])
+            self.assertEqual(room_changes[0]['entityId'], 'A1|A2|2027-03-11')
+
     def test_room_changes_do_not_depend_on_spreadsheet_order(self):
         with app.app_context():
             athletes = [Athlete(fis_code=f'A{i}', firstname='Person', lastname=str(i),

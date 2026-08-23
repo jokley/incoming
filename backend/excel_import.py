@@ -1142,7 +1142,7 @@ def _room_comparison_changes(people, rooms, removed_records, include_matches=Fal
             if athlete:
                 existing_by_id[athlete.id] = athlete
 
-    staged = []
+    staged_by_identity = {}
     for room in rooms:
         primary = existing_by_key.get(room.get('person1Key'))
         primary_context = _assignment_context(primary) if primary else None
@@ -1150,10 +1150,22 @@ def _room_comparison_changes(people, rooms, removed_records, include_matches=Fal
             athlete_token(existing_by_key[key]) if key in existing_by_key else f"new:{key}"
             for key in (room.get('person1Key'), room.get('person2Key')) if key
         )
-        staged.append({'entityId': room.get('sourceRowKey'), 'assignmentId': room.get('assignmentId'),
-                       'anchorAssignmentId': str(primary_context['assignmentId'])
-                       if primary_context and primary_context.get('assignmentId') else None,
-                       'roomId': room.get('roomId'), 'occupants': occupants, 'room': room})
+        stable_key = (str(room.get('assignmentId') or ''), str(room.get('roomId') or ''), occupants)
+        staged = staged_by_identity.setdefault(stable_key, {
+            'entityId': room.get('sourceRowKey'), 'assignmentId': room.get('assignmentId'),
+            'anchorAssignmentId': str(primary_context['assignmentId'])
+            if primary_context and primary_context.get('assignmentId') else None,
+            'roomId': room.get('roomId'), 'occupants': occupants, 'rooms': [],
+        })
+        staged['rooms'].append(room)
+        # Mirrored FIS rows can contain occupant-specific travel dates.  They
+        # are still one business assignment and must enter matching only once.
+        if not staged.get('anchorAssignmentId') and primary_context and primary_context.get('assignmentId'):
+            staged['anchorAssignmentId'] = str(primary_context['assignmentId'])
+    staged = list(staged_by_identity.values())
+    for item in staged:
+        item['rooms'].sort(key=lambda room: str(room.get('sourceRowKey') or ''))
+        item['entityId'] = item['rooms'][0].get('sourceRowKey')
 
     current_by_assignment = {}
     for athlete in existing_by_id.values():
@@ -1204,7 +1216,7 @@ def _room_comparison_changes(people, rooms, removed_records, include_matches=Fal
             match = overlap[0][2] if overlap and overlap[0][0] else None
         if match is not None:
             unused_current.remove(match)
-            matched_rooms_by_assignment[current[match]['assignmentId']] = new_room['room']
+            matched_rooms_by_assignment[current[match]['assignmentId']] = new_room['rooms']
         matches.append((staged_index, match))
 
     changes = []
@@ -1285,7 +1297,11 @@ def build_import_changes(disposition_analysis, people, rooms, errors):
         )
         context = _assignment_context(existing) if existing else None
         assignment_id = str(context['assignmentId']) if context and context.get('assignmentId') else None
-        room = matched_rooms_by_assignment.get(assignment_id)
+        matched_rooms = matched_rooms_by_assignment.get(assignment_id, [])
+        room = next((candidate for candidate in matched_rooms
+                     if candidate.get('person1Key') == entity_id), None)
+        if room is None and matched_rooms:
+            room = matched_rooms[0]
         if room is None:
             room = room_by_person.get(entity_id)
         if room:
