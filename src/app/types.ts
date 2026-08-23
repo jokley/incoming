@@ -452,6 +452,7 @@ export interface ImportChange {
   entityId: string;
   description: string;
   affectedPersonId?: string;
+  affectedPersonIds?: string[];
 }
 
 export type DispositionImpactCategory =

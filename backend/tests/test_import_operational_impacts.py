@@ -123,6 +123,51 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 'entityId': 'A1|A3', 'description': 'Zimmerpartner geändert',
             }])
 
+    def test_room_changes_do_not_depend_on_spreadsheet_order(self):
+        with app.app_context():
+            athletes = [Athlete(fis_code=f'A{i}', firstname='Person', lastname=str(i),
+                                nation_code='AUT', discipline='Big Air') for i in range(1, 5)]
+            db.session.add_all(athletes); db.session.flush()
+            for first, second in ((athletes[0], athletes[1]), (athletes[2], athletes[3])):
+                booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+                db.session.add(booking); db.session.flush()
+                db.session.add_all([
+                    RoomBookingOccupant(room_booking_id=booking.id, athlete_id=first.id),
+                    RoomBookingOccupant(room_booking_id=booking.id, athlete_id=second.id),
+                ])
+            db.session.commit()
+            people = [self.person(athlete) for athlete in athletes]
+            rooms = [self.room(athletes[0], athletes[2]), self.room(athletes[1], athletes[3])]
+
+            def semantics(room_rows):
+                analysis = build_disposition_analysis(people, room_rows, [])
+                return sorted((change['type'], change['entityId']) for change in
+                              build_import_changes(analysis, people, room_rows, [])
+                              if change['preview'] == 'rooms')
+
+            self.assertEqual(semantics(rooms), semantics(list(reversed(rooms))))
+
+    def test_two_changed_occupant_stays_are_one_room_status(self):
+        with app.app_context():
+            first = Athlete(fis_code='A1', firstname='Anna', lastname='One', nation_code='AUT',
+                            discipline='Big Air', arrival_date=date(2027, 3, 10))
+            second = Athlete(fis_code='A2', firstname='Bea', lastname='Two', nation_code='AUT',
+                             discipline='Big Air', arrival_date=date(2027, 3, 10))
+            db.session.add_all([first, second]); db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id, room_type_id=RoomType.query.one().id)
+            db.session.add(booking); db.session.flush()
+            db.session.add_all([RoomBookingOccupant(room_booking_id=booking.id, athlete_id=first.id),
+                                RoomBookingOccupant(room_booking_id=booking.id, athlete_id=second.id)])
+            db.session.commit()
+            people = [self.person(first, arrival=date(2027, 3, 9)),
+                      self.person(second, arrival=date(2027, 3, 9))]
+            room = self.room(first, second)
+            analysis = build_disposition_analysis(people, [room], [])
+            room_stays = [change for change in build_import_changes(analysis, people, [room], [])
+                          if change['preview'] == 'rooms' and change['type'] == 'STAY_CHANGED']
+            self.assertEqual(len(room_stays), 1)
+            self.assertEqual(room_stays[0]['affectedPersonIds'], ['A1', 'A2'])
+
     def test_new_person_with_room_emits_person_and_room_created(self):
         with app.app_context():
             mia = Athlete(fis_code='A1', firstname='Mia', lastname='One', nation_code='AUT', discipline='Big Air')

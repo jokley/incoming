@@ -1166,6 +1166,12 @@ def _room_comparison_changes(people, rooms, removed_records):
         snapshot['occupants'].update(occupants)
     current = [{**item, 'occupants': frozenset(item['occupants'])} for item in current_by_assignment.values()]
 
+    # Work in a canonical order.  The room list is a set of assignments from a
+    # business perspective; its Excel row order must not influence which live
+    # assignment is considered the predecessor of a staged assignment.
+    staged.sort(key=lambda item: (tuple(sorted(item['occupants'])), str(item.get('entityId') or '')))
+    current.sort(key=lambda item: str(item['assignmentId']))
+
     matches = []
     unused_current = set(range(len(current)))
     # Match strongest stable keys first, then the unordered person identity set.
@@ -1197,7 +1203,9 @@ def _room_comparison_changes(people, rooms, removed_records):
         elif new_room['occupants'] != current[current_index]['occupants']:
             changes.append(('ROOMMATE_CHANGED', new_room['entityId'], 'Zimmerpartner geändert'))
     for current_index in unused_current:
-        changes.append(('ROOM_REMOVED', current[current_index]['entityId'], 'Zimmerzuordnung entfernt'))
+        # Removed assignments have no staged row key.  Use the stable live
+        # assignment id so the preview can join the summary to its detail row.
+        changes.append(('ROOM_REMOVED', current[current_index]['assignmentId'], 'Zimmerzuordnung entfernt'))
     return changes
 
 
@@ -1209,9 +1217,28 @@ def build_import_changes(disposition_analysis, people, rooms, errors):
     }
     changes = []
 
+    change_index = {}
+
     def add(change_type, preview, entity_id, description, severity='warning', **extra):
-        changes.append({'type': change_type, 'preview': preview, 'severity': severity,
-                        'entityId': str(entity_id or ''), 'description': description, **extra})
+        """Add one business change per preview row and semantic status.
+
+        Several people can explain the same room impact (for example when both
+        occupants change their travel dates).  The room card and room row still
+        describe one changed assignment, so keep a single status for it.
+        """
+        entity_id = str(entity_id or '')
+        key = (change_type, preview, entity_id)
+        if key in change_index:
+            existing = change_index[key]
+            affected = set(existing.get('affectedPersonIds', []))
+            affected.update(filter(None, [existing.pop('affectedPersonId', None), extra.pop('affectedPersonId', None)]))
+            if affected:
+                existing['affectedPersonIds'] = sorted(affected)
+            return
+        change = {'type': change_type, 'preview': preview, 'severity': severity,
+                  'entityId': entity_id, 'description': description, **extra}
+        changes.append(change)
+        change_index[key] = change
 
     for record in categories['newAthletes']['records']:
         add('NEW_PERSON', 'persons', record.get('entityId'), 'Neue Person')
