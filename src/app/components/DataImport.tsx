@@ -223,7 +223,8 @@ type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matc
 type PreviewHint = { count: number; label: string; severity: ImportChange['severity'] };
 const changeLabels:Record<ImportChangeType,string>={
   NEW_PERSON:'neue Personen',PERSON_REMOVED:'entfernte Personen',STAY_CHANGED:'Aufenthalt geändert',
-  ROOMMATE_CHANGED:'Zimmerpartner geändert',ROOM_CHANGED:'Zimmeränderungen',SINGLE_ROOM_CHANGED:'Einzelzimmer geändert',
+  ROOMMATE_CHANGED:'Zimmerpartner geändert',ROOM_CREATED:'Zimmer erstellt',ROOM_REMOVED:'Zimmer entfernt',
+  ROOM_CHANGED:'Zimmeränderungen',SINGLE_ROOM_CHANGED:'Einzelzimmer geändert',
   ROOMTYPE_CHANGED:'Zimmerart geändert',FUNCTION_CHANGED:'Funktion geändert',COUNTRY_CHANGED:'Nation geändert',
   VALIDATION_ERROR:'Validierungsfehler',
 };
