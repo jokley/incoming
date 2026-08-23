@@ -795,7 +795,7 @@ class ApiService {
   // IMPORT
   // ============================================================================
 
-  async previewFisImport(files: File[], createSession = false, sessionId?: string): Promise<FisImportPreview & { session?: ImportSession }> {
+  async previewFisImport(files: File[], createSession = false, sessionId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; message?: string }> {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
     if (createSession) formData.append('createSession', 'true');
@@ -830,6 +830,7 @@ class ApiService {
   }
   async approveImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST' }); }
   async importSession(id: string): Promise<FisImportConfirmResult> { return this.request(`/import/sessions/${id}/import`, { method: 'POST' }); }
+  async cancelImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST' }); }
   async addImportSessionNote(id: string, description: string, waitingForNation = false): Promise<ImportSession> { return this.request(`/import/sessions/${id}/history`, { method: 'POST', body: JSON.stringify({ description, waitingForNation }) }); }
 
   async confirmFisImport(previewToken: string): Promise<FisImportConfirmResult> {

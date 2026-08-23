@@ -18,8 +18,8 @@ class ScenarioGeneratorTest(unittest.TestCase):
     def test_catalog_is_complete_and_stably_numbered(self):
         self.assertEqual([item.number for item in SCENARIOS], [f'{number:03d}' for number in range(1, 10)])
         self.assertEqual([item.title for item in SCENARIOS], ['Erstimport', 'Unveränderte Meldeliste', 'Neue Athleten',
-            'Athlet entfernt', 'Aufenthaltsdaten geändert', 'Zimmerpartner geändert', 'Genehmigtes Einzelzimmer außerhalb Quote',
-            'Single Room Quote verletzt', 'Korrigierte Meldeliste'])
+            'Athlet entfernt', 'Aufenthaltsdaten geändert', 'Zimmerpartner geändert', 'Single-Room-Quote verletzt',
+            'Korrigierte Meldeliste', 'Technischer Fehler'])
 
     def test_chain_contains_only_the_declared_delta(self):
         states = [_scenario_people(scenario) for scenario in SCENARIOS]
@@ -35,8 +35,8 @@ class ScenarioGeneratorTest(unittest.TestCase):
         self.assertEqual(differences(states[3], states[4]), {('100001', 'Arrival_date'), ('100001', 'First_meal')})
         self.assertTrue({field for _, field in differences(states[4], states[5])} <= {'Shared with Name'})
         self.assertTrue({field for _, field in differences(states[5], states[6])} <= {'Room_type', 'Shared with Name'})
-        self.assertEqual(states[6], states[7])
-        self.assertTrue({field for _, field in differences(states[7], states[8])} <= {'Room_type', 'Shared with Name'})
+        self.assertTrue({field for _, field in differences(states[6], states[7])} <= {'Room_type', 'Shared with Name'})
+        self.assertEqual({field for _, field in differences(states[7], states[8])}, {'Arrival_date'})
 
     def test_all_generated_pairs_are_valid_and_expected_quota_isolated(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -45,10 +45,10 @@ class ScenarioGeneratorTest(unittest.TestCase):
                 prefix = f'{scenario.number}_' + generated.name.split('_', 1)[1]
                 preview = create_fis_import_preview(str(generated / f'{prefix}_entries.xlsx'),
                                                     str(generated / f'{prefix}_room_list.xlsx'))
-                self.assertTrue(preview['isValid'], (scenario.number, preview['errors']))
+                self.assertEqual(preview['isValid'], scenario.number != '009', (scenario.number, preview['errors']))
                 quota_codes = {warning['code'] for warning in preview['warnings']
                                if warning['code'].startswith('QUOTA_')}
-                expected = {'QUOTA_SINGLE_ROOMS_EXCEEDED'} if scenario.number in {'007', '008'} else set()
+                expected = {'QUOTA_SINGLE_ROOMS_EXCEEDED'} if scenario.number == '007' else set()
                 self.assertEqual(quota_codes, expected, scenario.number)
 
     def test_generation_is_byte_for_byte_reproducible(self):
@@ -66,7 +66,7 @@ class ScenarioGeneratorTest(unittest.TestCase):
             self.assertEqual(len(list(root.glob('*_entries.xlsx'))), 9)
             self.assertEqual(len(list(root.glob('*_room_list.xlsx'))), 9)
             self.assertTrue((root / '004_Athlet_entfernt_entries.xlsx').is_file())
-            self.assertTrue((root / '009_Korrigierte_Meldeliste_room_list.xlsx').is_file())
+            self.assertTrue((root / '009_Technischer_Fehler_room_list.xlsx').is_file())
             expected = json.loads((root / 'expected.json').read_text(encoding='utf-8'))
             self.assertEqual([item['number'] for item in expected['scenarios']],
                              [f'{number:03d}' for number in range(1, 10)])

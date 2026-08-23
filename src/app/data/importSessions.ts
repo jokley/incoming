@@ -8,6 +8,7 @@ export const IMPORT_SESSION_STATUS = {
   PREVIEW_CREATED: 'Technisch geprüft', READY_FOR_IMPORT: 'Fachlich geprüft',
   NATION_CLARIFICATION: 'Warten auf Nation',
   REPLACED: 'Ersetzt', ARCHIVED: 'Archiviert', ERROR: 'Fehler',
+  CANCELLED: 'Abgebrochen',
 } as const;
 
 export type ImportSessionStatus = keyof typeof IMPORT_SESSION_STATUS;
@@ -25,4 +26,4 @@ export interface ImportSession {
   history: Array<{id:string;type:string;title:string;description?:string;user:string;timestamp:string;decisionId?:string|null}>;
 }
 
-export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED', 'REPLACED', 'ARCHIVED']);
+export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED']);
