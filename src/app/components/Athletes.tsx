@@ -228,10 +228,11 @@ export function Athletes() {
   const requestedDiscipline = query.get('discipline') || '';
   const requestedSingleRoomStatus = query.get('singleRoomStatus') || '';
   const requestedReview = query.get('review') || '';
+  const requestedStatus = query.get('status') || '';
   const requestedMovement = query.get('movement') || '';
   const requestedDate = query.get('date') || '';
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, discipline: requestedDiscipline });
+  const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, discipline: requestedDiscipline, status: requestedStatus });
   const [search, setSearch] = useState('');
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
   const [decisionId, setDecisionId] = useState<string | null>(null);
