@@ -174,13 +174,13 @@ function visibleWorkflow(session: ImportSession | null): WorkflowStep[] {
 function Workflow({session,upload,action,actionStep,secondaryAction}:{session:ImportSession|null;upload:ReactNode;action:ReactNode;actionStep:WorkflowStep['id'];secondaryAction?:ReactNode}) {
   const steps = visibleWorkflow(session);
   const activeStep = steps.find(step => step.id === actionStep) ?? steps.find(step => step.current) ?? steps[0];
-  return <ContentCard surface="elevated" className="p-4">
-    <div className="flex flex-wrap items-start justify-between gap-3"><SectionHeader title="Workflow" subtitle="Von der technischen Prüfung bis zum kontrollierten Import"/><div aria-label="Workflowverwaltung">{secondaryAction}</div></div>
-    <ol className="mt-4 grid grid-cols-1 gap-2 md:grid-cols-4" aria-label="Importworkflow">
+  return <ContentCard surface="elevated" className="p-3">
+    <SectionHeader title="Workflow" subtitle="Von der technischen Prüfung bis zum kontrollierten Import"/>
+    <ol className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-4" aria-label="Importworkflow">
       {steps.map((step,index) => {
         const isActive = step.id === activeStep.id;
         return <li key={step.id} aria-current={isActive?'step':undefined} className="relative flex items-center">
-          <div className={`flex min-h-16 w-full items-center gap-3 rounded-xl border px-3 py-2 ${isActive?'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-1 ring-[var(--ops-primary)]':step.complete?'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}>
+          <div className={`flex min-h-14 w-full items-center gap-2 rounded-xl border px-3 py-2 ${isActive?'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-1 ring-[var(--ops-primary)]':step.complete?'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]':'border-[var(--ops-border)] bg-[var(--ops-surface)]'}`}>
             <span className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ${step.complete&&!isActive?'bg-[var(--ops-success)] text-white':isActive?'bg-[var(--ops-primary)] text-white':'bg-[var(--ops-surface-overlay)] text-[var(--ops-text-muted)]'}`}>{step.complete&&!isActive?<CheckCircle className="h-4 w-4"/>:index+1}</span>
             <div className="min-w-0"><div className="text-xs font-bold text-[var(--ops-text-subtle)]">Schritt {index+1}</div><div className="truncate text-sm font-extrabold">{step.label.replace(' (falls erforderlich)','')}</div></div>
           </div>
@@ -189,24 +189,25 @@ function Workflow({session,upload,action,actionStep,secondaryAction}:{session:Im
       })}
     </ol>
     <ActiveWorkflowStep step={activeStep} session={session} upload={upload} action={action}/>
+    {secondaryAction&&<div className="mt-2 flex items-center justify-between border-t border-[var(--ops-divider)] px-1 pt-2" aria-label="Workflowverwaltung"><span className="text-xs font-bold text-[var(--ops-text-muted)]">Workflowverwaltung</span>{secondaryAction}</div>}
   </ContentCard>;
 }
 
 function ActiveWorkflowStep({step,session,upload,action}:{step:WorkflowStep;session:ImportSession|null;upload:ReactNode;action:ReactNode}) {
   const pending = session?.approvals.filter(approval=>approval.decision==='PENDING').length ?? 0;
   const description:Record<WorkflowStep['id'],string> = {
-    validation: 'Wählen Sie beide FIS-Dateien aus und starten Sie die technische Prüfung.',
-    decision: pending ? `${pending} offene ${pending===1?'Entscheidung':'Entscheidungen'} prüfen und dokumentieren.` : 'Fachliche Hinweise prüfen und die erforderliche Entscheidung dokumentieren.',
-    approval: 'Alle Prüfungen sind abgeschlossen. Geben Sie die geprüfte Version für den Import frei.',
-    import: 'Die freigegebene Importsession kontrolliert in den aktuellen Datenbestand übernehmen.',
+    validation: 'Dateien auswählen und technische Prüfung starten.',
+    decision: pending ? `${pending} offene fachliche ${pending===1?'Entscheidung':'Entscheidungen'} prüfen.` : 'Offene fachliche Entscheidungen prüfen.',
+    approval: 'Geprüfte Version für den Import freigeben.',
+    import: 'Freigegebene Version kontrolliert übernehmen.',
   };
   const content:Record<WorkflowStep['id'],ReactNode> = {
-    validation: <>{upload}<div className="mt-4 flex justify-end">{action}</div></>,
+    validation: <>{upload}<div className="mt-3 flex justify-end">{action}</div></>,
     decision: <div className="flex justify-end">{action}</div>,
     approval: <div className="flex justify-end">{action}</div>,
     import: <div className="flex justify-end">{action}</div>,
   };
-  return <section className="mt-4 rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-4" aria-labelledby={`workflow-step-${step.id}`}><div className="mb-4"><div className="flex items-center gap-2"><StatusChip tone="primary">Aktueller Schritt</StatusChip><h3 id={`workflow-step-${step.id}`} className="font-extrabold">{step.label.replace(' (falls erforderlich)','')}</h3></div><p className="mt-2 text-sm text-[var(--ops-text-muted)]">{description[step.id]}</p></div>{content[step.id]}</section>;
+  return <section className="mt-3 rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-3" aria-labelledby={`workflow-step-${step.id}`}><div className="mb-3"><div className="flex items-center gap-2"><StatusChip tone="primary">Aktueller Schritt</StatusChip><h3 id={`workflow-step-${step.id}`} className="font-extrabold">{step.label.replace(' (falls erforderlich)','')}</h3></div><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{description[step.id]}</p></div>{content[step.id]}</section>;
 }
 
 function primaryActionStep(session:ImportSession, files:File[]):WorkflowStep['id'] {
