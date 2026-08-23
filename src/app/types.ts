@@ -436,7 +436,22 @@ export interface FisImportPreview {
   quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
+    changes: ImportChange[];
   };
+}
+
+export type ImportChangeType =
+  | 'NEW_PERSON' | 'PERSON_REMOVED' | 'STAY_CHANGED' | 'ROOMMATE_CHANGED'
+  | 'ROOM_CHANGED' | 'SINGLE_ROOM_CHANGED' | 'ROOMTYPE_CHANGED'
+  | 'FUNCTION_CHANGED' | 'COUNTRY_CHANGED' | 'VALIDATION_ERROR';
+
+export interface ImportChange {
+  type: ImportChangeType;
+  preview: 'persons' | 'rooms';
+  severity: 'info' | 'warning' | 'error';
+  entityId: string;
+  description: string;
+  affectedPersonId?: string;
 }
 
 export type DispositionImpactCategory =
