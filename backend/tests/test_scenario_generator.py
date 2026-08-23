@@ -59,6 +59,20 @@ class ScenarioGeneratorTest(unittest.TestCase):
                                    for path in sorted(root.iterdir()) if path.is_file()]
             self.assertEqual(hashes(one), hashes(two))
 
+    def test_every_scenario_pair_has_a_unique_stable_import_hash(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = generate_complete_suite(Path(directory))
+            pair_hashes = []
+            for scenario in SCENARIOS:
+                prefix = next(path.name for path in root.glob(
+                    f'{scenario.number}_*_entries.xlsx')).removesuffix('_entries.xlsx')
+                digest = hashlib.sha256(
+                    (root / f'{prefix}_entries.xlsx').read_bytes() + b'\0' +
+                    (root / f'{prefix}_room_list.xlsx').read_bytes()
+                ).hexdigest()
+                pair_hashes.append(digest)
+            self.assertEqual(len(set(pair_hashes)), len(SCENARIOS))
+
     def test_complete_suite_is_flat_and_contains_nine_pairs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = generate_complete_suite(Path(directory))
@@ -70,6 +84,7 @@ class ScenarioGeneratorTest(unittest.TestCase):
             expected = json.loads((root / 'expected.json').read_text(encoding='utf-8'))
             self.assertEqual([item['number'] for item in expected['scenarios']],
                              [f'{number:03d}' for number in range(1, 10)])
+            self.assertEqual([item['version'] for item in expected['scenarios']], list(range(1, 10)))
 
 
 if __name__ == '__main__':
