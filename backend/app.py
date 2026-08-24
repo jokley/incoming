@@ -22,6 +22,7 @@ from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
+from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
 from config import RuntimeSettings
 from logging_config import configure_logging
 from database_admin import database_admin
@@ -238,6 +239,133 @@ def download_complete_scenarios():
     memory_file.seek(0)
     return send_file(memory_file, mimetype='application/zip', as_attachment=True,
                      download_name='Kompletter_Testordner.zip')
+
+
+def _delete_simulation_data():
+    """Delete only explicitly owned rows and return auditable row counts."""
+    booking_ids = [row[0] for row in db.session.query(RoomBooking.id).filter_by(
+        created_by=SIMULATION_OWNER).all()]
+    athlete_ids = [row[0] for row in db.session.query(Athlete.id).filter_by(
+        created_by=SIMULATION_OWNER).all()]
+    counts = {'roomAssignments': 0, 'people': 0}
+    if booking_ids:
+        counts['roomAssignmentOccupants'] = RoomBookingOccupant.query.filter(
+            RoomBookingOccupant.room_booking_id.in_(booking_ids)).delete(synchronize_session=False)
+        counts['roomAssignments'] = RoomBooking.query.filter(
+            RoomBooking.id.in_(booking_ids)).delete(synchronize_session=False)
+    if athlete_ids:
+        # Defensive cleanup for simulation people manually assigned after a run.
+        extra_memberships = RoomBookingOccupant.query.filter(
+            RoomBookingOccupant.athlete_id.in_(athlete_ids)).all()
+        extra_booking_ids = {membership.room_booking_id for membership in extra_memberships}
+        for membership in extra_memberships:
+            db.session.delete(membership)
+        db.session.flush()
+        for booking_id in extra_booking_ids:
+            if not RoomBookingOccupant.query.filter_by(room_booking_id=booking_id).first():
+                booking = db.session.get(RoomBooking, booking_id)
+                if booking:
+                    db.session.delete(booking)
+                    counts['roomAssignments'] += 1
+        counts['people'] = Athlete.query.filter(Athlete.id.in_(athlete_ids)).delete(
+            synchronize_session=False)
+    return counts
+
+
+@app.route('/api/admin/simulation', methods=['POST'])
+def create_simulation():
+    """Replace the owned simulation data set and exercise production booking validation."""
+    started = time.perf_counter()
+    timings = {}
+    try:
+        step_started = time.perf_counter()
+        deleted = _delete_simulation_data()
+        timings['Delete simulation'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        people = [Athlete(**values) for values in build_people(DEFAULT_PERSON_COUNT)]
+        db.session.add_all(people)
+        timings['Generate people'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        db.session.flush()
+        timings['Flush'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        inventories = HotelRoomInventory.query.options(
+            db.joinedload(HotelRoomInventory.room_type)).order_by(
+                HotelRoomInventory.hotel_id, HotelRoomInventory.room_type_id,
+                HotelRoomInventory.available_from, HotelRoomInventory.id).all()
+        timings['Load inventory'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        assignment_units = build_assignment_units(people)
+        timings['Build assignment units'] = (time.perf_counter() - step_started) * 1000
+
+        assignments = 0
+        assigned_people = 0
+        hotel_ids = set()
+        step_started = time.perf_counter()
+        for unit_index, unit in enumerate(assignment_units, start=1):
+            candidates = sorted(inventories, key=lambda item: (
+                item.room_type.max_persons != len(unit), item.room_type.max_persons,
+                item.hotel_id, item.room_type_id, item.id))
+            for inventory in candidates:
+                data = {
+                    'athleteIds': [str(person.id) for person in unit],
+                    'hotelId': str(inventory.hotel_id),
+                    'roomTypeId': str(inventory.room_type_id),
+                    'roomNumber': f'SIM-{unit_index:04d}',
+                    'checkInDate': unit[0].arrival_date.isoformat(),
+                    'checkOutDate': unit[0].departure_date.isoformat(),
+                }
+                payload, _, error = _validate_booking_payload(data)
+                if error:
+                    continue
+                payload['created_by'] = SIMULATION_OWNER
+                _save_booking_from_payload(payload, commit=False)
+                assignments += 1
+                assigned_people += len(unit)
+                hotel_ids.add(inventory.hotel_id)
+                break
+        timings['Assignments'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        db.session.commit()
+        timings['Commit'] = (time.perf_counter() - step_started) * 1000
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Simulation generation failed')
+        return jsonify({'error': 'SIMULATION_FAILED',
+                        'message': 'Simulation konnte nicht sicher erzeugt werden'}), 500
+    total_duration_ms = (time.perf_counter() - started) * 1000
+    timings['Total'] = total_duration_ms
+    app.logger.info(
+        'simulation_generation_performance\n%s',
+        '\n'.join(f'{label + ":":<28}{duration:>12,.0f} ms'
+                  for label, duration in timings.items()),
+    )
+    return jsonify({
+        'peopleCreated': len(people),
+        'hotelsUsed': len(hotel_ids),
+        'roomAssignmentsCreated': assignments,
+        'peopleUnassigned': len(people) - assigned_people,
+        'durationMs': round(total_duration_ms),
+        'replaced': deleted,
+    }), 201
+
+
+@app.route('/api/admin/simulation', methods=['DELETE'])
+def delete_simulation():
+    try:
+        deleted = _delete_simulation_data()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Simulation deletion failed')
+        return jsonify({'error': 'SIMULATION_DELETE_FAILED',
+                        'message': 'Simulation konnte nicht sicher gelöscht werden'}), 500
+    return jsonify({'deleted': deleted})
 
 
 @app.before_request
@@ -1255,9 +1383,10 @@ def _sync_quota_evaluation(booking):
     booking.counts_as_single = _automatic_quota_evaluation(booking.room_type, athlete_ids)
 
 
-def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False):
+def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False, commit=True):
     if existing_booking is None:
         booking = RoomBooking(
+            created_by=payload.get('created_by'),
             hotel_id=payload['hotel_id'],
             room_type_id=payload['room_type_id'],
             room_number=payload['room_number'],
@@ -1283,7 +1412,10 @@ def _save_booking_from_payload(payload, existing_booking=None, manual_single_ove
     if not manual_single_override:
         _sync_quota_evaluation(booking)
     _acknowledge_import_changes(payload['athlete_ids'])
-    db.session.commit()
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     return booking
 
 
