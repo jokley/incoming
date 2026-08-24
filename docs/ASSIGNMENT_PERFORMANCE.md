@@ -7,8 +7,7 @@ Es wurden weder Businesslogik, API-Verträge, Datenbankabfragen noch React-Kompo
 verändert. Die Aussagen trennen bewusst zwischen:
 
 - **statisch nachgewiesen**: direkt aus Kontrollfluss und Datenstrukturen ableitbar,
-- **instrumentierbar**: Messpunkte existieren, es liegt in diesem Repository aber
-  kein repräsentativer Produktions-Messlauf vor,
+- **gemessen**: mit der reproduzierbaren Simulation von 1.500 Personen erhoben,
 - **Hypothese**: muss mit demselben PostgreSQL-Snapshot, Produktions-Build und Browser
   bestätigt werden.
 
@@ -42,33 +41,102 @@ jeweils einen eigenen Messbericht. React-Commits innerhalb überlappender
 Requestfenster erscheinen bewusst in beiden Berichten, weil beide Requests zu diesem
 sichtbaren Commit beitragen können.
 
-Ohne einen solchen Lauf sind exakte Millisekunden, die „teuerste“ SQL-Anweisung und
-die Komponente mit der höchsten tatsächlichen Commit-Zeit nicht seriös benennbar.
-Die Instrumentierung liefert dafür getrennte Request- und Subtree-Messfenster. Sie
-aggregiert bewusst noch keine Durchläufe und ersetzt weder einen identischen
-PostgreSQL-Snapshot noch ein kontrolliertes Browserprofil.
+Der vorliegende Lauf liefert eine belastbare Größenordnung, aber noch keine p95-
+Verteilung. Die Instrumentierung stellt getrennte Request- und Subtree-Messfenster
+bereit, aggregiert bewusst keine Durchläufe und ersetzt für Folgemessungen weder
+einen identischen PostgreSQL-Snapshot noch ein kontrolliertes Browserprofil.
 
-## Kurzantwort
+## Messergebnis: 1.500 Personen
 
-Der primäre, statisch nachgewiesene Skalierungsengpass ist der Vertrag von
+| Request / Phase | Messwert |
+| --- | ---: |
+| Planning View – Client gesamt | 23,6 s |
+| Planning View – Server gesamt | 18,6 s |
+| Planning View – Datenbank | 50 ms |
+| Planning View – Serialisierung | 3,4 s |
+| Planning View – Payload | 148 MB |
+| Planning View – `JSON.parse` | 624 ms |
+| Planning View – Netzwerk/Body Read | 3,9 s |
+| Official Quotas – Client gesamt | 19,4 s |
+| Official Quotas – Server gesamt | 19,3 s |
+| Official Quotas – Datenbank | 17,6 s |
+| Official Quotas – SQL-Queries | 1.889 |
+
+Die React-Commit-Zeiten von Queue und Hotelübersicht waren im selben Lauf
+unkritisch. Damit sind die folgenden Aussagen Architekturentscheidungen auf Basis
+dieser Messung und nicht mehr nur statische Hypothesen. Für belastbare p95-Werte und
+die Skalierung bis 5.000 Personen bleibt die dokumentierte Messmatrix erforderlich;
+die Größenordnung und die Trennung der Engpässe sind bei 1.500 Personen jedoch
+bereits eindeutig.
+
+## Official-Quotas-Optimierung
+
+Dieser isolierte Sprint ändert ausschließlich den internen Datenzugriff von
+`GET /api/fis/official-quotas`. API-Pfad, Filterparameter, Response-Struktur,
+Sortierung und Quotenregeln bleiben unverändert.
+
+### Vorher/Nachher
+
+| Messwert | Vorher, Simulation 1.500 | Nachher |
+| --- | ---: | ---: |
+| SQL-Queries | 1.889 | höchstens 3 |
+| Serverzeit | 19,3 s | im Zielsystem erneut zu messen |
+| Datenbankzeit | 17,6 s | im Zielsystem erneut zu messen |
+| Payloadgröße | unverändert zu erwarten | mit identischem Snapshot zu verifizieren |
+| Response | Referenz | per Regressionstest fachlich identisch abgesichert |
+
+Die neue Queryanzahl ist strukturell unabhängig von der Personenzahl: eine Query
+lädt den gefilterten Roster, eine Query alle zugehörigen Booking-Memberships samt
+persistiertem `counts_as_single` und eine Query alle Approval-Daten samt
+Session-Schlüssel. Bei einem leeren Roster entfällt die Membership-Query.
+
+Die gemessenen Nachher-Zeiten werden bewusst nicht aus der Queryreduktion geschätzt.
+In dieser Entwicklungsumgebung steht weder der 1.500-Personen-PostgreSQL-Snapshot
+noch die zugehörige Deployment-/Netzwerkkonfiguration zur Verfügung. Der verbindliche
+Nachher-Lauf verwendet deshalb denselben Snapshot und dieselbe Instrumentierung wie
+die Baseline und ergänzt erst dann Serverzeit, DB-Zeit und Payloadbytes in der
+Tabelle.
+
+### Technische Entscheidung
+
+Die bisherige Schleife führte pro Official eine Membership-Abfrage aus und für
+Personen mit Einzelzimmeranspruch ein zweites Mal. Zusätzlich löste der Zugriff auf
+`membership.room_booking` Lazy Loads aus. Die Implementierung lädt nun alle
+Membership-/Booking-Paare in einem geordneten Set und baut daraus eine
+`athlete_id → counts_as_single`-Map. Bei inkonsistenten Legacy-Daten mit mehreren
+Memberships gewinnt weiterhin die erste Membership; die Ordnung wird jetzt explizit
+über deren Primärschlüssel stabilisiert.
+
+Approvals werden ebenfalls in einer einzigen Join-Abfrage mit Nation und Disziplin
+der Session geladen. Die bestehende Python-Quotenberechnung, Gender-Normalisierung,
+Entitlement-Auswertung und Statusbildung bleiben unangetastet. Es wurde kein Index
+ergänzt: Nach der Reduktion auf höchstens drei Queries gibt es ohne realen
+`EXPLAIN (ANALYZE, BUFFERS)`-Nachweis keinen Grund für zusätzliche Write-Kosten.
+
+## Aktualisierte Architekturentscheidung
+
+### Kurzantwort
+
+Der größte strukturelle Engpass ist bestätigt: der Vertrag von
 `GET /api/assignments/planning-view`: Der Server berechnet für **jede Einheit** und
 noch einmal für **jede Person als Teilvariante** die Zulässigkeit gegen **jeden
 physischen Zimmerslot**, serialisiert die vollständige Matrix und der Client ersetzt
 nach fast jeder Mutation den gesamten Planning-Snapshot. Damit wachsen Berechnung,
-Payload, JSON-Parsing und React-Arbeit gemeinsam statt unabhängig voneinander.
+Payload und Netzwerk gemeinsam statt unabhängig voneinander. Von 18,6 Sekunden
+Serverzeit entfallen nur 50 Millisekunden auf SQL und 3,4 Sekunden auf
+Serialisierung. Rund 15,15 Sekunden liegen damit in der übrigen serverseitigen
+Projektion und Validierungsarbeit. Die 148-MB-Response verursacht zusätzlich
+3,9 Sekunden Transfer und 624 Millisekunden Parsing.
 
-Die wahrscheinlich zweitgrößte Belastung ist die nicht virtualisierte Warteschlange:
-alle gefilterten Einheiten und ihre Personen-Karten bleiben gleichzeitig im DOM.
-Bei 1.500 Personen können Eingaben in Suche/Filter den Parent neu rendern und eine
-vierstellige Zahl komplexer Karten erneut reconciliieren. Das ist eine belastbare
-Code-Hypothese, aber ohne Browserprofil noch kein gemessener Sieger.
+Die Quotenansicht ist ein **separater Datenbankengpass**: 17,6 von 19,3 Sekunden
+Serverzeit und 1.889 Queries bestätigen das N+1-Verhalten. Es wäre falsch, aus der
+schnellen Planning-Datenbankzeit abzuleiten, dass Datenbankarbeit insgesamt
+unkritisch ist; die beiden Endpunkte benötigen unterschiedliche Lösungen.
 
-Die Datenbank ist für die Planning-View wahrscheinlich **nicht** der dominante Teil:
-Personen, Buchungen mit Occupants/Person/Hotel/Zimmertyp sowie Hotels mit Inventar
-werden in wenigen eager-loaded Abfragen geladen. Dagegen enthält die separate
-Quotenberechnung weiterhin personweise Membership-Abfragen und Relationship-Zugriffe;
-sie ist der wichtigste verbliebene N+1-Kandidat und läuft initial, bei jeder
-Quotenfilteränderung und parallel nach Assignment-Mutationen.
+Die ursprüngliche Frontend-Priorität wird dagegen widerlegt: React-Commit-Zeiten,
+Queue und Hotelübersicht sind bei 1.500 Personen nicht relevant. Virtualisierung,
+zusätzliche Memoisierung und Komponentenrefactorings würden derzeit nicht den
+gemessenen kritischen Pfad verbessern.
 
 ## 1. Verarbeitete Datenmengen und Komplexität
 
@@ -121,89 +189,57 @@ werden.
   dies bei unveränderter Planning-Referenz, aber jeder Full Refresh erzeugt
   erwartungsgemäß neue Referenzen und berechnet alles erneut.
 
-## 2. Backend-Diagnose
+## 2. Backend-Diagnose nach dem Messlauf
 
-### API-Rangfolge (vor dem Messlauf)
+### Planning View
 
-1. **Planning-View – sehr hohe Sicherheit.** CPU-Aufwand und Payload werden von der
-   kartesischen Validierungsmatrix bestimmt. Die Zeit wächst mit Personen/Einheiten
-   *und* Zimmern. JSON-Erzeugung muss Millionen kleiner Objekte materialisieren.
-2. **Offizielle Quoten – hohe Sicherheit für unnötige DB-Roundtrips.** Für jede
-   gefilterte Person wird mindestens einmal nach einer Membership gesucht; in einem
-   zweiten Durchlauf geschieht dies für Personen mit Entitlement erneut. Zugriffe
-   auf `room_booking` können weitere Lazy Loads auslösen. Zusätzlich werden Sessions
-   und deren Approvals ohne gezielte eager-load-/Aggregationsabfrage traversiert.
-3. **Assignment-Mutation – wahrscheinlich kleiner als der anschließende Refresh.**
-   Validierung und Speichern betreffen wenige Datensätze. Die Create-Route lädt aber
-   alle Buchungen mit Occupants, um eine bestehende identische Belegung zu finden;
-   das ist `O(B)` pro Aktion und sollte gemessen werden.
-4. **Athletenliste – Payload-Kandidat, aber nicht als langsamer SQL-Kandidat
-   nachgewiesen.** Sie dupliziert beim Initialladen Daten, die Planning bereits trägt.
+Die Datenbank ist mit 50 Millisekunden weder Optimierungsziel noch Erklärung für
+18,6 Sekunden Serverzeit. Auch die isolierte Optimierung der Serialisierung würde
+höchstens den gemessenen 3,4-Sekunden-Anteil adressieren. Der dominante Anteil ist
+die Materialisierung der Planning-Projektion einschließlich der vollständigen
+Validierungsmatrix. Diese Diagnose passt zur statisch ermittelten Komplexität
+`(U + O) × S` und wird durch die 148-MB-Response bestätigt.
+
+Die Phasen sind nicht vollständig additiv als CPU-Profil zu interpretieren; aus den
+vorliegenden Messgrenzen ergibt sich aber eine belastbare Obergrenze: Nach Abzug von
+DB und Serialisierung verbleiben rund 15,15 Sekunden Serverzeit. Vor der Umsetzung
+wird dieser Anteil im Planning-Contract-Sprint noch in Projektion und Validierung
+getrennt, damit der Vorher-/Nachher-Nachweis eindeutig bleibt.
+
+### Official Quotas
+
+Bei Official Quotas erklären 17,6 Sekunden Datenbankzeit fast die gesamten
+19,3 Sekunden Serverzeit. 1.889 Queries bei 1.500 Personen zeigen personabhängige
+Roundtrips statt einer konstanten set-basierten Abfrage. Hier ist kein neuer
+API-Vertrag erforderlich: Datenzugriff und Aggregation können intern geändert und
+gegen denselben Response verglichen werden.
 
 ### Datenbank und Indizes
 
-Die Planning-Leseabfragen nutzen eager loading, sodass eine klassische N+1-Kaskade
-dort aktuell nicht der Hauptverdacht ist. Für die schreibenden Pfade und Quoten sind
-jedoch relevante Fremdschlüsselspalten (`room_booking.hotel_id`,
-`room_booking.room_type_id`, `room_booking_occupant.athlete_id` und
-`room_booking_occupant.room_booking_id`) im ORM-Modell nicht einzeln indexiert. Ein
-Unique Constraint auf dem Occupant-Paar beginnt mit `room_booking_id` und ersetzt
-keinen Index für Suchen allein nach `athlete_id`.
+Planning und Quoten dürfen nicht gemeinsam als „Datenbankproblem“ behandelt werden.
+Für Planning wäre eine breite Indexkampagne wirkungslos. Für Quoten werden zuerst die
+N+1-Roundtrips entfernt; erst anschließend entscheiden die verbleibenden Querypläne
+über gezielte Indizes. Damit wird vermieden, 1.889 schlechte Einzelabfragen lediglich
+schneller auszuführen.
 
-Das ist **noch keine Empfehlung, blind Indizes anzulegen**. Zuerst sind für die
-langsamsten Requests `EXPLAIN (ANALYZE, BUFFERS)` und die Queryanzahl zu sichern.
-Die reine DB-Zeit ist von Python-Objektmaterialisierung und Serialisierung getrennt
-zu beurteilen; `Server-Timing db` misst nur Cursor-Ausführung, nicht zwingend die
-gesamte ORM-Hydrierung.
+## 3. Frontend-Diagnose nach dem Messlauf
 
-### Serialisierung
+Die getrennten Profilergrenzen zeigen keine relevanten Commit-Kosten für Queue und
+Hotelübersicht. Der Browser wartet überwiegend auf Server, Transfer und Parsing;
+React ist bei 1.500 Personen nicht der kritische Pfad. Die bestehende lokale
+State-Struktur und die Anzahl der Setter rechtfertigen daher aktuell weder ein
+Refactoring noch zusätzliche Memoisierung.
 
-`jsonify` wird zwar separat zeitlich markiert, die Messgrenze umfasst aber nur den
-Aufruf zur Response-Erstellung. Abhängig vom Flask-JSON-Provider findet die konkrete
-Byteerzeugung innerhalb dieses Aufrufs statt; Response-Übertragung, Browser-Download,
-`response.text()` und `JSON.parse()` fehlen in der Serverphase. Die Header
-`X-Response-Size` und `Server-Timing` sind geeignet, Payload und Phasen pro GET zu
-erfassen, werden vom aktuellen Browserbericht für GETs aber nicht automatisch
-gesammelt.
+`JSON.parse` benötigt 624 Millisekunden und ist damit messbar, aber gegenüber
+23,6 Sekunden Clientgesamtzeit sekundär. Ein Web Worker würde höchstens diesen
+Teil verschieben und die 148-MB-Allokation nicht beseitigen. Die richtige
+Frontendmaßnahme ist deshalb zunächst, einen wesentlich kleineren Read-Vertrag zu
+konsumieren, nicht denselben Full Snapshot anders zu verarbeiten.
 
-## 3. Frontend- und Renderdiagnose
-
-### Komponenten mit dem größten erwarteten Renderdruck
-
-Eine tatsächliche Rangliste existiert noch nicht, weil nur der gesamte
-`Assignments`-Baum profiliert wird. Aus der Kardinalität folgt diese Messpriorität:
-
-1. **`QueueSidebar` → `QueueUnitCard` → `QueueOccupantActionRow`/`OccupantCard`:**
-   rendert alle Treffer ohne Pagination oder Virtualisierung. Pro Karte werden
-   Warnungen, Status, Datums-/Personendetails und Aktionsbuttons erzeugt.
-2. **`HotelGridView` → `HotelCard`:** alle sichtbaren Hotels werden gemappt; jede
-   Karte aggregiert ihre Slots/Buchungen. Bei Drag-State-Änderungen ändern sich
-   Props im gesamten Hotelbereich.
-3. **`HotelDetailView`:** nur ein Hotel gleichzeitig, aber potenziell alle seine
-   Zimmer, Buchungen und Occupants; relevant bei einem Hotel mit großem Kontingent.
-4. **`Assignments`:** besitzt fast den gesamten UI-, Filter-, Drag-, Loading- und
-   Dialog-State. Jede dieser Änderungen rendert den Parent; nicht memoisierten
-   Kindkomponenten werden dabei erneut aufgerufen.
-
-`useMemo` ist für Maps, Filteroptionen, Queue, Hotels und Quotenableitungen bereits
-umfangreich vorhanden. Mehr `useMemo`/`useCallback` auf Verdacht löst weder die
-DOM-Menge noch den Snapshot-Austausch. Außerdem werden zahlreiche Inline-Callbacks
-an Karten übergeben; dadurch würde ein einfaches `React.memo` allein wenig helfen.
-
-### State- und Context-Fluss
-
-- `Assignments` konsumiert Berechtigungen und Routerzustand, aber keinen großen
-  globalen Planning-Context. Ein Context-Broadcast ist daher nicht als primärer
-  Re-Render-Auslöser nachgewiesen.
-- Filter, Auswahl, Drag-Ziele, Saving und Dialoge liegen lokal im Parent. Besonders
-  `dragOverHotelId`, `dragOverRoomTypeKey` und `dragOverBookingId` können während
-  Pointerbewegungen häufig wechseln.
-- `loading`, `saving`, `pendingAction` und `quotaRefreshing` erzeugen mehrere
-  absichtliche State-Übergänge pro Aktion. Diese sind semantisch sinnvoll; zu messen
-  ist die Kostenwirkung des großen Teilbaums, nicht die bloße Anzahl der Setter.
-- Nach jedem Planning-GET ersetzt `setPlanning` den Snapshot. Damit invalidieren alle
-  davon abhängigen Memos korrekt. Das ist kein Memo-Fehler, sondern eine Folge des
-  grobgranularen Datenvertrags.
+Virtualisierung bleibt eine mögliche spätere Skalierungsmaßnahme für 3.000–5.000
+Personen. Sie wird erst priorisiert, wenn erneute Profiler-, DOM-, Heap- oder
+Long-Task-Messungen einen Frontendengpass zeigen. Für den nächsten Sprint ist sie
+aufgrund der Messwerte ausdrücklich zurückgestellt.
 
 ## 4. Verbindlicher Messplan vor Umsetzung
 
@@ -231,9 +267,9 @@ Erfasst werden Median, p95 und Maximum für:
 - Long Tasks, maximale DOM-Node-Anzahl und Heap vor/nach Refresh,
 - `EXPLAIN (ANALYZE, BUFFERS)` der tatsächlich teuersten SQL-Statements.
 
-Für die Render-Rangfolge werden vorübergehend Profiler-Grenzen um Queue, Hotelgrid,
-Hoteldetail und Quotenbereich benötigt oder der React DevTools Profiler verwendet.
-Das ist Messinstrumentierung für einen separaten Sprint, keine Produktoptimierung.
+Für Folgeläufe bleiben die vorhandenen Profiler-Grenzen um Queue, Hotelgrid,
+Hoteldetail und Quotenbereich aktiv; für eine tiefergehende Ursachenanalyse kann
+ergänzend der React DevTools Profiler verwendet werden.
 
 ### Entscheidungsschwellen
 
@@ -245,102 +281,135 @@ Das ist Messinstrumentierung für einen separaten Sprint, keine Produktoptimieru
 - Caching wird nur verfolgt, wenn wiederholte identische Reads einen relevanten
   Anteil haben und Invalidierung eindeutig definiert werden kann.
 
-## 5. Maßnahmen nach erwartetem Nutzen
+## 5. Neu priorisierte Maßnahmen
 
-### Priorität A: Planning-Vertrag zerlegen
+### Größter Architekturhebel: Planning-Read-Modell zerlegen
 
-**Größter erwarteter Nutzen, mittlere Architekturkomplexität.** Die Übersicht sollte
-nur Einheiten, Hotel-/Kapazitätssummen und die für die erste Ansicht nötigen Daten
-liefern. Slots/Buchungen werden beim Öffnen eines Hotels geladen. Validierung wird
-für die aktuell gezogene/ausgewählte Einheit und relevante Hotel- oder Slotmenge
-serverseitig berechnet, nicht für alle denkbaren Kombinationen vorab.
+Der größte absolute Gewinn kommt nicht aus einer schnelleren SQL-Abfrage, einem
+zusätzlichen Index oder React-Tuning, sondern aus dem Entfernen der vollständigen
+`(U + O) × S`-Validierungsmatrix aus dem initialen Planning-Response.
 
-Das ist inkrementelles Laden und serverseitige fachliche Berechnung, keine
-Funktionsreduktion: dieselben Informationen bleiben beim Nutzungsmoment verfügbar.
-Der Vertrag braucht eine Planning-Revision, damit parallel geladene Ausschnitte und
-Mutationen nicht veralten.
+Die Zielarchitektur besteht aus drei revisionierten, fachlich autoritativen Reads:
 
-### Priorität B: Delta-Response nach Mutationen
+1. **Planning-Übersicht:** Einheiten, Hotel-/Kapazitätssummen und die Daten der
+   initial sichtbaren Arbeitsfläche. Keine vollständige Slot-Validierungsmatrix.
+2. **Hotel-Detail:** Slots und Buchungen genau des geöffneten Hotels. Dadurch werden
+   nicht gleichzeitig alle Zimmer aller Hotels übertragen.
+3. **On-demand-Validierung:** Zulässigkeit nur für die aktuell ausgewählte oder
+   gezogene Einheit gegen das relevante Hotel beziehungsweise dessen Slots. Die
+   Regeln bleiben ausschließlich auf dem Server.
 
-**Sehr hoher Nutzen im täglichen Workflow, höhere Konsistenzanforderung.** Mutation
-und Response sollten atomar den betroffenen Slot, die betroffenen Einheiten,
-Kapazitäts-/Quotenänderungen und eine neue Revision liefern. Nur diese Ausschnitte
-werden ersetzt; bei Revisionskonflikt bleibt der Full Refresh als Fallback.
+Diese Zerlegung adressiert gleichzeitig den ungefähr 15,15 Sekunden großen
+Berechnungsanteil, den 3,4-Sekunden-Serialisierungsanteil und einen Großteil der
+148-MB-Payload. Deshalb ist sie der wirkungsvollste Architekturbaustein. Der erste
+vertikale Schnitt muss eine deutliche, gemessene Größenreduktion gegenüber der
+148-MB-Baseline zeigen; ein verbindliches Byte- und Zeitbudget wird erst anhand des
+Prototyps mit identischem Datensatz festgelegt.
 
-Eine bloße optimistic UI ohne autoritativen Server-Delta ist nicht ausreichend, weil
-der Client sonst Assignment-, Datums- und Quotenregeln duplizieren müsste.
+Eine Planning-Revision ist Bestandteil des Vertrags, nicht optionale Zusatztechnik.
+Sie verhindert, dass parallel geladene Hotel-Details oder Validierungen nach einer
+Zuweisung auf einem veralteten Stand angewendet werden.
 
-### Priorität C: Queue und große Zimmerlisten virtualisieren
+### Erster Umsetzungsschritt: Quoten-N+1 eliminieren
 
-**Hoher Frontend-Nutzen bei unverändertem UI.** Windowing hält nur sichtbare Karten
-plus Overscan im DOM. Für Drag-and-drop, variable Kartenhöhen, Fokus, Screenreader
-und `scrollIntoView` ist ein Prototyp mit Akzeptanztests nötig. Die Hotelliste mit
-etwa 100 Karten braucht wahrscheinlich keine Virtualisierung; Hotelzimmer und Queue
-sind anhand der Messwerte zu priorisieren.
+Obwohl der Planning-Vertrag den größten Architekturgewinn verspricht, sollte die
+Quotenabfrage als **erster kleiner Implementierungssprint** umgesetzt werden. Die
+Messung ist eindeutig (1.889 Queries, 17,6 Sekunden DB-Zeit), der fachliche Vertrag
+kann unverändert bleiben und die Komplexität ist deutlich niedriger als bei der
+Planning-Zerlegung.
 
-### Priorität D: Quotenabfragen set-basiert ausführen
+Der Sprint soll Memberships, Buchungen und Approvals set-basiert laden beziehungsweise
+aggregieren. Konkrete Indizes werden nur anhand von `EXPLAIN (ANALYZE, BUFFERS)` der
+resultierenden wenigen Queries ergänzt. Akzeptanzkriterien sind identische
+Quotenresultate, eine konstante beziehungsweise kleine Queryanzahl unabhängig von
+der Personenzahl und ein Vorher-/Nachher-Lauf mit demselben Snapshot.
 
-**Wahrscheinlich guter Nutzen bei begrenzter Komplexität**, falls Queryzählung die
-N+1-Hypothese bestätigt. Memberships/Buchungen und Approvals sollten per eager load,
-Join oder Aggregation für den gesamten Filter geladen werden. Erst der Queryplan
-entscheidet über konkrete Indizes.
+Diese Reihenfolge ist kein Widerspruch: **größter Architekturhebel** ist die
+Planning-Zerlegung; **bestes erstes Kosten-Nutzen-Paket** ist die Quotenabfrage.
 
-### Priorität E: Caching und Hintergrundberechnung
+### Danach: Planning-Vertrag als vertikaler Schnitt
 
-Caching ist erst nach Verkleinerung des Vertrags sinnvoll. Ein revisionsgebundener,
-kurzlebiger Cache kann Hotelübersichten oder Validierung für `(revision, unit,
-hotel)` tragen. Globale TTL-Caches ohne revisionssichere Invalidierung sind im
-Dispositionbetrieb riskant.
+Der zweite Umsetzungssprint liefert zunächst nur Übersicht und Hotel-Detail mit
+Revision. Der bestehende Full Read bleibt während der Migration als Vergleichs- und
+Fallbackpfad verfügbar. Erst wenn Response-Größe, Serverphasen und fachliche
+Gleichheit belegt sind, folgt die On-demand-Validierung. So wird nicht gleichzeitig
+Backendvertrag, gesamter Clientzustand und Mutationsmodell umgestellt.
 
-Hintergrundberechnung eignet sich für Vorwärmen oder Statistiken, nicht als Ersatz
-für synchrone Prüfung einer Mutation. Web Worker können JSON-Nachverarbeitung vom
-Main Thread nehmen, beheben aber weder Netzwerkvolumen noch Serverkomplexität und
-sind deshalb keine erste Maßnahme.
+### Später: Delta-Response nach Mutationen
 
-### Server-side Filtering und Pagination
+Mutation-Deltas bleiben architektonisch sinnvoll, sind aber nicht der erste Schritt.
+Solange jeder Mutationsabschluss den 23,6-Sekunden-Full-Refresh auslöst, würden sie
+einen hohen Nutzen haben; ein sicherer Delta-Vertrag benötigt jedoch dieselbe
+Revisionierung und dieselben feingranularen Ressourcen wie das neue Read-Modell.
+Deshalb folgt er **nach** der Planning-Zerlegung und verwendet deren Verträge, statt
+eine parallele Übergangsarchitektur zu schaffen.
 
-Serverseitige Filterung ist für die Queue sinnvoll, sobald die Übersicht nicht mehr
-vollständig geladen wird. Cursor-Pagination oder inkrementelles Windowing ist stabiler
-als Offset-Pagination bei gleichzeitig laufenden Änderungen. Aktive Auswahl und
-Suchtreffer müssen weiterhin direkt adressierbar sein.
+### Aufgrund der Messung zurückgestellt
 
-Klassische Seitenzahlen sind für die Drag-and-drop-Disposition voraussichtlich
-schlechter als Virtualisierung plus serverseitige Suche, weil Ziel und Quelle auf
-verschiedenen Seiten verschwinden können. Für auditartige Tabellen wären sie passend,
-für das Herzstück Assignments nicht die erste Wahl.
+- **Virtualisierung von Queue und Hotelübersicht:** Commit-Zeiten sind unkritisch.
+  Erneut bewerten erst bei höheren Datenmengen, auffälligen Long Tasks oder stark
+  wachsender DOM-/Heap-Nutzung.
+- **Zusätzliche Memoisierung, `React.memo` und Callback-Refactorings:** kein
+  gemessener React-Engpass; aktuell nur Komplexität ohne relevanten Gewinn.
+- **Server-side Filtering und Pagination:** nicht nötig, um die aktuell gemessenen
+  148 MB zu lösen; diese stammen primär aus Slots und Validierungen. Als spätere
+  Skalierungsgrenze für 3.000–5.000 Einheiten erneut messen.
+- **Caching:** würde 18,6 Sekunden Berechnung nur verdecken und erfordert schwierige
+  Invalidierung. Erst nach einem kleinen, revisionierten Read-Modell prüfen.
+- **Hintergrundberechnung/Web Worker:** verschiebt die falsche Arbeit. `JSON.parse`
+  kostet 624 Millisekunden, nicht 23,6 Sekunden; die Payload darf nicht dauerhaft
+  148 MB groß bleiben.
+- **Kompression als Hauptmaßnahme:** kann die 3,9 Sekunden Transfer reduzieren,
+  beseitigt aber weder serverseitige Matrixberechnung noch Serialisierung und
+  Browserobjekte.
+- **Breite Indexkampagne:** Planning verbringt nur 50 Millisekunden in der DB.
+  Indizes sind ausschließlich Teil der gezielten Quoten-Queryarbeit.
 
-## 6. Ausdrücklich nicht empfohlen
+## 6. Gegenüber der ursprünglichen Diagnose
 
-1. **Keine weiteren Memos, Callbacks oder `React.memo` ohne Komponentenprofil.** Das
-   reduziert weder Validierungsmatrix noch Payload/DOM und erhöht Prop-Komplexität.
-2. **Keine Indizes auf Verdacht.** Sie belasten Writes und lösen Python-/JSON-Kosten
-   nicht; Grundlage sind reale Querypläne.
-3. **Kein globaler Cache mit TTL als erste Lösung.** Veraltete Zimmer- oder
-   Quotendaten sind operativ gefährlicher als eine langsame Ansicht.
-4. **Keine vollständige Vorberechnung aller Unit×Slot-Kombinationen im Hintergrund.**
-   Sie verschiebt die multiplikative Arbeit nur und erschwert Invalidierung.
-5. **Keine reine Client-Nachbildung der Validierungslogik.** Zwei Regelquellen führen
-   zu inkonsistenten Zuweisungen.
-6. **Keine Web-Worker-/Kompressions-Maßnahme als Primärlösung.** Kompression reduziert
-   Transferbytes, nicht Objekterzeugung, Parsing oder fachliche Matrixgröße.
-7. **Keine Entfernung von Informationen oder Funktionen.** Lazy Loading und
-   Virtualisierung müssen Details, Tastaturbedienung, Fokus und Drag-and-drop
-   vollständig erhalten.
-8. **Keine klassische Pagination der Dispositionsfläche ohne UX-Prototyp.** Sie kann
-   den Kernworkflow verschlechtern und löst den teuren Full-Snapshot allein nicht.
+### Bestätigt
 
-## 7. Empfohlene Sprintfolge
+1. Die vollständige Unit-/Teilunit-×-Slot-Matrix ist die zentrale Skalierungsgrenze
+   der Planning-View.
+2. Der Full-Snapshot koppelt Berechnung, Serialisierung, Transfer und Parsing.
+3. Die Quotenberechnung enthält ein relevantes N+1-Problem.
+4. Blindes Caching, Client-Regelduplikation und klassische Pagination bleiben keine
+   geeigneten Primärlösungen.
 
-1. **Mess-Sprint:** GET-Korrelation ergänzen, Subtree-Profiler setzen, reproduzierbare
-   1.500/3.000/5.000-Matrix ausführen und Rohwerte archivieren.
-2. **Backend-Vertrags-Sprint:** Übersicht, Hotel-Detail und On-demand-Validierung als
-   revisionierte Reads entwerfen; noch ohne optimistic UI.
-3. **Frontend-Sprint:** Queue/Hotelzimmer anhand gemessener DOM- und Commit-Kosten
-   virtualisieren und Barrierefreiheit/Drag-and-drop regressionsprüfen.
-4. **Mutations-Sprint:** atomare Deltas und Revisionskonflikt-Fallback einführen.
-5. **DB-Sprint nur bei Messnachweis:** Quotenabfragen set-basiert machen und gezielte
-   Indizes anhand der Produktionspläne ergänzen.
+### Präzisiert
 
-Damit wird zuerst die multiplikative Architekturgrenze beseitigt, danach die
-Darstellung skaliert und erst zuletzt lokal optimiert. Bedienbarkeit und fachliche
-Autorität bleiben unverändert.
+1. „Backend“ ist kein einheitlicher Flaschenhals: Planning ist überwiegend Python-
+   Projektion/Validierung, Quoten sind überwiegend Datenbank-Roundtrips.
+2. Serialisierung ist mit 3,4 Sekunden relevant, aber nicht isoliert zu optimieren.
+   Sie ist eine Folge der Matrixgröße und verschwindet weitgehend mit dem kleineren
+   Vertrag.
+3. Netzwerk ist mit 3,9 Sekunden relevant, aber ebenfalls Symptom der 148-MB-
+   Response. Kompression allein wäre daher nur Schadensbegrenzung.
+4. `JSON.parse` ist mit 624 Millisekunden sichtbar, aber kein Primärengpass.
+
+### Widerlegt
+
+1. Queue und Hotelübersicht sind bei 1.500 Personen kein relevanter Renderengpass.
+2. Virtualisierung ist für den nächsten Sprint nicht gerechtfertigt.
+3. Zusätzliche `useMemo`-/`useCallback`-/`React.memo`-Arbeit hat derzeit keine
+   messbare Priorität.
+
+## 7. Verbindliche Sprintfolge
+
+1. **Quoten-Query-Sprint (implementiert):** N+1 set-basiert eliminiert; identische
+   Fachresultate und höchstens drei Queries sind regressionsgesichert. Server- und
+   DB-Nachher-Zeit werden mit dem unveränderten 1.500-Personen-Snapshot ergänzt.
+2. **Planning-Contract-Sprint:** revisionierte Übersicht und Hotel-Detail als
+   vertikalen Schnitt einführen; Payload und Serverphasen gegen die Baseline messen.
+3. **Validation-Sprint:** Validierungen für aktive Einheit und relevanten Zielbereich
+   on demand liefern; vollständige Matrix erst nach Gleichheitsnachweis entfernen.
+4. **Mutation-Sprint:** atomare, revisionierte Deltas auf Basis derselben Ressourcen;
+   Full Refresh als Konflikt-Fallback beibehalten.
+5. **Skalierungs-Recheck:** 1.500/3.000/5.000 Personen erneut messen. Nur wenn DOM,
+   Heap, Long Tasks oder Commits dann relevant werden, Virtualisierung beziehungsweise
+   serverseitige Queue-Filterung einplanen.
+
+Vor jedem Sprint bleibt die bestehende Funktionalität Referenz. Keine Information
+wird entfernt; sie wird bei Bedarf über fachlich konsistente, revisionierte Reads
+geladen. Diese Entscheidung optimiert zuerst die beiden gemessenen Engpässe und
+stellt alle nicht belegten Frontendmaßnahmen bewusst zurück.

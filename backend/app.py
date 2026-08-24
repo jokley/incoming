@@ -1506,18 +1506,38 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     athletes = athletes.all()
     roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
                'forGender': a.for_gender, 'function': a.function} for a in athletes]
+
+    # Load every assignment once. The former per-athlete ``first()`` lookups made
+    # this endpoint issue up to two SQL statements per person. Keeping the first
+    # membership by its stable primary key preserves the existing single-booking
+    # semantics even if inconsistent legacy data contains multiple memberships.
+    booking_by_athlete = {}
+    athlete_ids = [athlete.id for athlete in athletes]
+    membership_rows = []
+    if athlete_ids:
+        membership_rows = db.session.query(
+            RoomBookingOccupant.athlete_id,
+            RoomBooking.counts_as_single,
+        ).join(
+            RoomBooking,
+            RoomBooking.id == RoomBookingOccupant.room_booking_id,
+        ).filter(
+            RoomBookingOccupant.athlete_id.in_(athlete_ids),
+        ).order_by(RoomBookingOccupant.id).all()
+    for athlete_id, counts_as_single in membership_rows:
+        booking_by_athlete.setdefault(athlete_id, bool(counts_as_single))
+
     # The persisted assignment flag is the sole source of truth for operational
     # quota usage. The physical room type and import entitlement stay unchanged.
     assigned = []
     for athlete in athletes:
         if (athlete.function or '').strip().lower() == 'athlete':
             continue
-        membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
-        if not membership or not membership.room_booking:
+        if athlete.id not in booking_by_athlete:
             continue
         assigned.append({'nationCode': athlete.nation_code, 'discipline': athlete.discipline,
             'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
-            'countsAsSingle': bool(membership.room_booking.counts_as_single)})
+            'countsAsSingle': booking_by_athlete[athlete.id]})
     rows = evaluate_quota_usage(roster, assigned)
     approved_by_key = {}
     implemented_by_key = {}
@@ -1525,21 +1545,23 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
             key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
             approved_by_key[key] = approved_by_key.get(key, 0) + 1
-        if athlete.single_room_entitlement:
-            membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
-            booking = membership.room_booking if membership else None
-            if booking and booking.counts_as_single:
-                key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
-                implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
+        if athlete.single_room_entitlement and booking_by_athlete.get(athlete.id, False):
+            key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
+            implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
     approval_state = {}
-    for session in ImportSession.query.all():
-        for approval in session.approvals:
-            details = json.loads(approval.quota_details_json or '{}')
-            key = (details.get('nationCode') or session.nation or '',
-                   details.get('discipline') or session.discipline or '',
-                   details.get('gender') or '')
-            state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
-            state['approved' if approval.decision == 'APPROVED' else 'pending'] += 1
+    approval_rows = db.session.query(
+        ImportApproval.quota_details_json,
+        ImportApproval.decision,
+        ImportSession.nation,
+        ImportSession.discipline,
+    ).join(ImportSession, ImportSession.id == ImportApproval.session_id).all()
+    for details_json, decision, session_nation, session_discipline in approval_rows:
+        details = json.loads(details_json or '{}')
+        key = (details.get('nationCode') or session_nation or '',
+               details.get('discipline') or session_discipline or '',
+               details.get('gender') or '')
+        state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
+        state['approved' if decision == 'APPROVED' else 'pending'] += 1
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
         row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
