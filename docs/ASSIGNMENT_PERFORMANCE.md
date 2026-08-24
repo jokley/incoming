@@ -1,94 +1,346 @@
-# Assignment-Performance-Analyse
+# Assignment-Performance: Diagnose und Zielarchitektur
 
-## Messung
+## Status und Abgrenzung
 
-Jede Assignment-Mutation erzeugt im Browser einen strukturierten Bericht unter
-`[Assignment Performance]`. Ausgegeben werden nicht aggregierte Einzelmessungen für
-Drop→Request, API, React-Commit, Render-Anzahl, gerenderte Komponenten, Request-Anzahl
-und Response-Größe. Der Server liefert pro Request `Server-Timing` für API, DB,
-Quote, Zimmerberechnung, Assignment-Logik und Serialisierung sowie
-`X-Assignment-Query-Count` und `X-Response-Size`. Zusätzlich schreibt er jede
-Einzelmessung als `assignment_performance` in das Serverlog. So bleiben Ausreißer
-sichtbar; es werden ausdrücklich nicht nur Durchschnittswerte erfasst.
+Dieses Dokument ist eine **Analyse des aktuellen Stands**, kein Optimierungs-PR.
+Es wurden weder Businesslogik, API-Verträge, Datenbankabfragen noch React-Komponenten
+verändert. Die Aussagen trennen bewusst zwischen:
 
-## Analyse des bisherigen Workflows
+- **statisch nachgewiesen**: direkt aus Kontrollfluss und Datenstrukturen ableitbar,
+- **instrumentierbar**: Messpunkte existieren, es liegt in diesem Repository aber
+  kein repräsentativer Produktions-Messlauf vor,
+- **Hypothese**: muss mit demselben PostgreSQL-Snapshot, Produktions-Build und Browser
+  bestätigt werden.
 
-Nach jeder Zuweisung, Ausbuchung, Teil-Ausbuchung und EZ-Änderung wurden drei Requests
-ausgeführt: Mutation, vollständige `planning-view` und vollständige Quotenansicht.
-Die Planning-View lädt und serialisiert erneut alle Hotels, Zimmer/Slots,
-Warteschlangen-Einheiten, Assignments und Validierungsmatrizen. Personen werden nur
-beim initialen Laden separat geladen. Der teuerste algorithmische Teil ist die
-Validierung jeder Einheit (und jeder Teil-Einheit) gegen jeden Slot. Außerdem führte
-die Kennzeichnung geänderter, bereits zugewiesener Personen bisher eine zusätzliche
-Existenzabfrage pro Person aus (N+1).
+## Sprint 1: temporäre Messinstrumentierung
 
-## Umgesetzte gezielte Optimierungen
+Die Diagnoseinstrumentierung ist standardmäßig aktiv und lässt sich ohne Codeänderung
+vollständig abschalten:
 
-- Die N+1-Existenzabfragen verwenden nun die bereits eager geladenen Buchungen.
-- Die Suche nach einer bestehenden Buchung lädt deren Occupants eager und verhindert
-  Lazy-Load-Abfragen in der Schleife.
-- FIS-Einheiten laden beide Personen in derselben Query. Dadurch entfallen beim
-  vollständigen Planning-Refresh bis zu zwei Lazy-Load-Queries pro Einheit.
-- Die Quotenberechnung lädt Occupants, Personen und Zimmertyp gemeinsam statt diese
-  Beziehungen pro Buchung bzw. Person nachzuladen.
-- Buchungen werden einmal nach Hotel/Zimmertyp und nach Slot indiziert. Slot-Aufbau
-  und Validierung durchsuchen deshalb nicht mehr für jede Variante erneut sämtliche
-  Buchungen. Das Ergebnis und die Reihenfolge der Validierungen bleiben unverändert.
-- Planning-Collections behalten bei reinen UI-State-Updates ihre Referenz. Die im
-  Profiler sichtbare erneute Berechnung aller Maps, Filteroptionen, Queue-Filter und
-  Hotel-Filter entfällt; ein Full Refresh ersetzt die Referenzen weiterhin bewusst.
-- Eine sofort sichtbare, barrierearme Fortschrittsanzeige startet synchron mit der
-  Aktion und bleibt bis Mutation und konsistentem Refresh sichtbar.
-- Der React-Profiler erfasst tatsächliche Commit-Dauern und Komponenten. Weitere
-  Memoisierung wurde bewusst nicht spekulativ eingebaut; die Messwerte zeigen künftig,
-  welche Teilbäume einen relevanten Nutzen versprechen.
+- Backend: `ASSIGNMENT_PERFORMANCE_ENABLED=false`
+- Frontend beim Build: `VITE_ASSIGNMENT_PERFORMANCE=false`
 
-## Vorher-/Nachher-Bericht
+Sie verändert weder Response-Body noch fachlichen Requestablauf. Assignment- und
+Quotenrequests liefern `Server-Timing`, `X-Assignment-Query-Count`,
+`X-Response-Size` und `X-Assignment-Measurement`; die Header werden auch bei einem
+separat gehosteten Frontend über CORS exponiert. Das Serverlog enthält je Request
+Methode, Pfad, Gesamt-/DB-/Phasenzeit, Queryanzahl und Responsegröße.
 
-Die vorhandene Instrumentierung bleibt die maßgebliche Laufzeitmessung, weil API-,
-DB- und Renderzeiten von Datenmenge, Browser und Deployment abhängen. In der
-Ausführungsumgebung dieses PRs stehen die Python-Abhängigkeiten nicht zur Verfügung;
-deshalb werden keine erfundenen Millisekundenwerte dokumentiert. Der Browser-Event
-`assignment:performance` und `Server-Timing` liefern nach Deployment weiterhin für
-jede Einzelaktion die folgende direkt vergleichbare Tabelle:
+Der Browser misst für Planning, Quoten und Assignment-Mutationen getrennt Zeit bis
+zu den Response-Headern, Lesen des Bodys, `JSON.parse`, gesamte Clientzeit und
+Payloadbytes. React-Profilergrenzen erfassen Queue, Hotelübersicht, Hoteldetail und
+Quotenbereich jeweils mit Commitanzahl, tatsächlicher Renderdauer und Zeit vom
+Renderstart bis zum Commit-Zeitpunkt. Nach zwei Animationsframes werden DOM-Knoten,
+optionaler Chromium-Heap und Long Tasks zusammen mit den Serverwerten als
+`[Assignment Performance]` ausgegeben. Der vollständige Rohwert wird zusätzlich als
+Browser-Event `assignment:performance` veröffentlicht.
 
-| Messwert | Vorher | Nachher / erwartete nachweisbare Änderung |
-| --- | --- | --- |
-| API-/Backend-/Gesamtzeit | Instrumentierter Einzelwert | geringer durch weniger DB-Roundtrips und lineare Indizes; vom Datensatz messen |
-| DB-Zeit | Instrumentierter Einzelwert | geringer; Personen- und Quoten-N+1 entfallen |
-| DB-Queries Planning | Basiswert | Basiswert minus bis zu `2 × Anzahl FIS-Einheiten` |
-| DB-Queries Quoten | Basiswert | konstante Eager-Load-Query statt Relationship-Queries je Buchung/Occupant |
-| Assignment-Berechnung | Varianten × Slots × alle Buchungen | Varianten × Slots × Buchungen des Slots |
-| React-Renderzeit | Profiler-Commit | reine UI-Updates berechnen die Planning-Derivate nicht erneut |
-| Requests pro Mutation | 3 | 3 (Mutation, Full Refresh, Quoten; die beiden Reads laufen parallel) |
-| React-Commits | unverändert instrumentiert | unverändert; keine Business-/Refresh-Semantik geändert |
+`performance.memory` und die Long-Tasks-API sind optionale Browser-APIs. Fehlen sie,
+bleiben die Heapwerte leer beziehungsweise die Long-Task-Werte bei null; die übrigen
+Messungen laufen weiter. Parallel laufende Planning- und Quotenrequests erhalten
+jeweils einen eigenen Messbericht. React-Commits innerhalb überlappender
+Requestfenster erscheinen bewusst in beiden Berichten, weil beide Requests zu diesem
+sichtbaren Commit beitragen können.
 
-Für einen belastbaren Vergleich werden vor und nach Deployment derselbe Drop,
-dieselbe Datenbankkopie, derselbe Browser und ein Produktions-Build verwendet. Pro
-Durchlauf werden die unaggregierten Browserberichte und die korrespondierenden
-`assignment_performance`-Logzeilen gesichert. Das bewahrt Ausreißer und vergleicht
-API-, Backend-, DB-, Render- und Gesamtzeit sowie Requests und Re-Renders ohne die
-bewusst beibehaltene Full-Refresh-Architektur zu verändern.
+Ohne einen solchen Lauf sind exakte Millisekunden, die „teuerste“ SQL-Anweisung und
+die Komponente mit der höchsten tatsächlichen Commit-Zeit nicht seriös benennbar.
+Die Instrumentierung liefert dafür getrennte Request- und Subtree-Messfenster. Sie
+aggregiert bewusst noch keine Durchläufe und ersetzt weder einen identischen
+PostgreSQL-Snapshot noch ein kontrolliertes Browserprofil.
 
-## Selektives Reloading und Optimistic UI
+## Kurzantwort
 
-Der aktuelle Response der Mutation enthält nur die Buchung, aber keine aktualisierte
-Einheit, Slot-Validierungen oder Quoten. Ein rein clientseitiges Partial-Update könnte
-daher serverseitige Regeln duplizieren und ist nicht risikofrei. Empfohlene Architektur:
+Der primäre, statisch nachgewiesene Skalierungsengpass ist der Vertrag von
+`GET /api/assignments/planning-view`: Der Server berechnet für **jede Einheit** und
+noch einmal für **jede Person als Teilvariante** die Zulässigkeit gegen **jeden
+physischen Zimmerslot**, serialisiert die vollständige Matrix und der Client ersetzt
+nach fast jeder Mutation den gesamten Planning-Snapshot. Damit wachsen Berechnung,
+Payload, JSON-Parsing und React-Arbeit gemeinsam statt unabhängig voneinander.
 
-1. Mutation akzeptiert eine Client-Operation-ID und liefert einen atomaren Delta-
-   Response mit betroffenem Slot, Einheit, Warteschlangenstatus, Quotenzeilen und
-   Detaildaten.
-2. Der Client verschiebt beim Drop zunächst nur eine visuelle Schattenkarte und merkt
-   sich den unveränderten Snapshot.
-3. Bei Erfolg ersetzt der Server-Delta ausschließlich betroffenes Zimmer,
-   Warteschlange, Quoten und offenen Detaildialog; bei Fehler wird der Snapshot
-   zurückgespielt.
-4. Eine versionierte Planning-Revision verhindert, dass parallele Aktionen veraltete
-   Deltas anwenden. Bei Versionskonflikt bleibt der vollständige Refresh der sichere
-   Fallback.
+Die wahrscheinlich zweitgrößte Belastung ist die nicht virtualisierte Warteschlange:
+alle gefilterten Einheiten und ihre Personen-Karten bleiben gleichzeitig im DOM.
+Bei 1.500 Personen können Eingaben in Suche/Filter den Parent neu rendern und eine
+vierstellige Zahl komplexer Karten erneut reconciliieren. Das ist eine belastbare
+Code-Hypothese, aber ohne Browserprofil noch kein gemessener Sieger.
 
-Damit ist Optimistic UI möglich, ohne Assignment- oder Quotenregeln in den Client zu
-verlagern. Bis der Delta-Vertrag existiert, bleibt der konsistente vollständige
-Refresh erhalten; das sofortige Feedback verhindert dennoch den Eindruck einer
-hängenden Anwendung.
+Die Datenbank ist für die Planning-View wahrscheinlich **nicht** der dominante Teil:
+Personen, Buchungen mit Occupants/Person/Hotel/Zimmertyp sowie Hotels mit Inventar
+werden in wenigen eager-loaded Abfragen geladen. Dagegen enthält die separate
+Quotenberechnung weiterhin personweise Membership-Abfragen und Relationship-Zugriffe;
+sie ist der wichtigste verbliebene N+1-Kandidat und läuft initial, bei jeder
+Quotenfilteränderung und parallel nach Assignment-Mutationen.
+
+## 1. Verarbeitete Datenmengen und Komplexität
+
+### Reproduzierbare Simulation
+
+Die Simulation erzeugt deterministisch 1.500 Personen. Davon wünschen 20 Prozent
+ein Einzelzimmer. Für die automatische Belegung entstehen nominell etwa 900
+Buchungseinheiten (300 Singles plus ungefähr 600 Paare), sofern genügend Inventar
+existiert. Die Planning-Projektion gruppiert Personen jedoch anhand des importierten
+Partnernamens. Die simulierten Personen besitzen keinen solchen Partnernamen; daher
+kann die Planning-View in diesem Datensatz bis zu **1.500 projizierte Einheiten**
+erzeugen, auch wenn zwei Personen in derselben Buchung liegen. Dieser Unterschied
+muss im Messlauf explizit gezählt werden.
+
+Seien:
+
+- `P` = Personen,
+- `U` = projizierte Einheiten,
+- `O` = Summe der Personen über alle Einheiten (typisch ungefähr `P`),
+- `S` = Summe aller physischen Zimmerslots (`room_count` über Inventare),
+- `B` = Buchungen.
+
+Die Response enthält ungefähr:
+
+- `U` vollständige Einheiten und `P` Personenobjekte,
+- `S` Slotobjekte, `B` Buchungen und nochmals die zugewiesenen Personenobjekte,
+- `(U + O) × S` Validierungsergebnisse, weil pro Einheit und pro einzelner
+  Teilvariante alle Slots bewertet werden.
+
+Bei `U = O = 1.500` sind das `3.000 × S` Validierungszeilen. Schon bei 500 Slots
+entstehen 1,5 Millionen, bei 1.000 Slots 3 Millionen Ergebnisse. Die Anzahl Hotels
+(etwa 100) ist dafür nur ein indirekter Indikator; entscheidend ist die Summe der
+Zimmer, nicht die Hotelanzahl. Die tatsächlichen Werte müssen aus dem Response bzw.
+per SQL erhoben werden und dürfen nicht aus der Simulationserfolgsmeldung geschätzt
+werden.
+
+### Wiederholte Arbeit
+
+- Initial werden Planning-View und die vollständige Athletenliste parallel geladen;
+  ein separater Effekt lädt zusätzlich die Quotenansicht.
+- Zuweisen, vollständiges Ausbuchen, Teil-Ausbuchen und Änderung des EZ-Status führen
+  nach der Mutation jeweils wieder eine vollständige Planning-View und die
+  Quotenansicht aus.
+- Die Planning-View enthält Personendetails sowohl in Einheiten als auch in
+  Buchungs-Occupants. `getAthletes()` liefert dieselben Personen beim Initialladen
+  ein weiteres Mal.
+- Filterung der Queue ist clientseitig linear in `U`; synchronisierte Hotelfilterung
+  traversiert zusätzlich Hotels, Slots, Buchungen und Occupants.
+- Quoten-Derivate traversieren die Planning-Hotels mehrfach. `useMemo` verhindert
+  dies bei unveränderter Planning-Referenz, aber jeder Full Refresh erzeugt
+  erwartungsgemäß neue Referenzen und berechnet alles erneut.
+
+## 2. Backend-Diagnose
+
+### API-Rangfolge (vor dem Messlauf)
+
+1. **Planning-View – sehr hohe Sicherheit.** CPU-Aufwand und Payload werden von der
+   kartesischen Validierungsmatrix bestimmt. Die Zeit wächst mit Personen/Einheiten
+   *und* Zimmern. JSON-Erzeugung muss Millionen kleiner Objekte materialisieren.
+2. **Offizielle Quoten – hohe Sicherheit für unnötige DB-Roundtrips.** Für jede
+   gefilterte Person wird mindestens einmal nach einer Membership gesucht; in einem
+   zweiten Durchlauf geschieht dies für Personen mit Entitlement erneut. Zugriffe
+   auf `room_booking` können weitere Lazy Loads auslösen. Zusätzlich werden Sessions
+   und deren Approvals ohne gezielte eager-load-/Aggregationsabfrage traversiert.
+3. **Assignment-Mutation – wahrscheinlich kleiner als der anschließende Refresh.**
+   Validierung und Speichern betreffen wenige Datensätze. Die Create-Route lädt aber
+   alle Buchungen mit Occupants, um eine bestehende identische Belegung zu finden;
+   das ist `O(B)` pro Aktion und sollte gemessen werden.
+4. **Athletenliste – Payload-Kandidat, aber nicht als langsamer SQL-Kandidat
+   nachgewiesen.** Sie dupliziert beim Initialladen Daten, die Planning bereits trägt.
+
+### Datenbank und Indizes
+
+Die Planning-Leseabfragen nutzen eager loading, sodass eine klassische N+1-Kaskade
+dort aktuell nicht der Hauptverdacht ist. Für die schreibenden Pfade und Quoten sind
+jedoch relevante Fremdschlüsselspalten (`room_booking.hotel_id`,
+`room_booking.room_type_id`, `room_booking_occupant.athlete_id` und
+`room_booking_occupant.room_booking_id`) im ORM-Modell nicht einzeln indexiert. Ein
+Unique Constraint auf dem Occupant-Paar beginnt mit `room_booking_id` und ersetzt
+keinen Index für Suchen allein nach `athlete_id`.
+
+Das ist **noch keine Empfehlung, blind Indizes anzulegen**. Zuerst sind für die
+langsamsten Requests `EXPLAIN (ANALYZE, BUFFERS)` und die Queryanzahl zu sichern.
+Die reine DB-Zeit ist von Python-Objektmaterialisierung und Serialisierung getrennt
+zu beurteilen; `Server-Timing db` misst nur Cursor-Ausführung, nicht zwingend die
+gesamte ORM-Hydrierung.
+
+### Serialisierung
+
+`jsonify` wird zwar separat zeitlich markiert, die Messgrenze umfasst aber nur den
+Aufruf zur Response-Erstellung. Abhängig vom Flask-JSON-Provider findet die konkrete
+Byteerzeugung innerhalb dieses Aufrufs statt; Response-Übertragung, Browser-Download,
+`response.text()` und `JSON.parse()` fehlen in der Serverphase. Die Header
+`X-Response-Size` und `Server-Timing` sind geeignet, Payload und Phasen pro GET zu
+erfassen, werden vom aktuellen Browserbericht für GETs aber nicht automatisch
+gesammelt.
+
+## 3. Frontend- und Renderdiagnose
+
+### Komponenten mit dem größten erwarteten Renderdruck
+
+Eine tatsächliche Rangliste existiert noch nicht, weil nur der gesamte
+`Assignments`-Baum profiliert wird. Aus der Kardinalität folgt diese Messpriorität:
+
+1. **`QueueSidebar` → `QueueUnitCard` → `QueueOccupantActionRow`/`OccupantCard`:**
+   rendert alle Treffer ohne Pagination oder Virtualisierung. Pro Karte werden
+   Warnungen, Status, Datums-/Personendetails und Aktionsbuttons erzeugt.
+2. **`HotelGridView` → `HotelCard`:** alle sichtbaren Hotels werden gemappt; jede
+   Karte aggregiert ihre Slots/Buchungen. Bei Drag-State-Änderungen ändern sich
+   Props im gesamten Hotelbereich.
+3. **`HotelDetailView`:** nur ein Hotel gleichzeitig, aber potenziell alle seine
+   Zimmer, Buchungen und Occupants; relevant bei einem Hotel mit großem Kontingent.
+4. **`Assignments`:** besitzt fast den gesamten UI-, Filter-, Drag-, Loading- und
+   Dialog-State. Jede dieser Änderungen rendert den Parent; nicht memoisierten
+   Kindkomponenten werden dabei erneut aufgerufen.
+
+`useMemo` ist für Maps, Filteroptionen, Queue, Hotels und Quotenableitungen bereits
+umfangreich vorhanden. Mehr `useMemo`/`useCallback` auf Verdacht löst weder die
+DOM-Menge noch den Snapshot-Austausch. Außerdem werden zahlreiche Inline-Callbacks
+an Karten übergeben; dadurch würde ein einfaches `React.memo` allein wenig helfen.
+
+### State- und Context-Fluss
+
+- `Assignments` konsumiert Berechtigungen und Routerzustand, aber keinen großen
+  globalen Planning-Context. Ein Context-Broadcast ist daher nicht als primärer
+  Re-Render-Auslöser nachgewiesen.
+- Filter, Auswahl, Drag-Ziele, Saving und Dialoge liegen lokal im Parent. Besonders
+  `dragOverHotelId`, `dragOverRoomTypeKey` und `dragOverBookingId` können während
+  Pointerbewegungen häufig wechseln.
+- `loading`, `saving`, `pendingAction` und `quotaRefreshing` erzeugen mehrere
+  absichtliche State-Übergänge pro Aktion. Diese sind semantisch sinnvoll; zu messen
+  ist die Kostenwirkung des großen Teilbaums, nicht die bloße Anzahl der Setter.
+- Nach jedem Planning-GET ersetzt `setPlanning` den Snapshot. Damit invalidieren alle
+  davon abhängigen Memos korrekt. Das ist kein Memo-Fehler, sondern eine Folge des
+  grobgranularen Datenvertrags.
+
+## 4. Verbindlicher Messplan vor Umsetzung
+
+### Datensatz und Szenarien
+
+Ein PostgreSQL-Snapshot wird einmal aufgebaut und für alle Läufe unverändert
+verwendet. Zu protokollieren sind `P`, `U`, `O`, `S`, `B`, Hotels, Response-Bytes
+und Browser-Hardware. Mindestens drei Größen (1.500, 3.000, 5.000 Personen) werden
+getestet, damit lineares von multiplikativem Wachstum unterscheidbar wird.
+
+Pro Größe werden mindestens diese Aktionen je zehnmal ausgeführt und **Einzelwerte
+statt nur Mittelwerte** gespeichert:
+
+1. kaltes und warmes Öffnen von Assignments,
+2. Queue-Suche und jeder Filtertyp,
+3. Hotel öffnen und zurück,
+4. Drag über mehrere Hotels/Zimmer ohne Drop,
+5. Zuweisen, Teil-Ausbuchen, vollständiges Ausbuchen, EZ-Umschalten.
+
+Erfasst werden Median, p95 und Maximum für:
+
+- TTFB, Download, JSON-Parse und Response-Bytes je Request,
+- Serverphasen API/DB/Assignment/Rooms/Serialization und Queryanzahl,
+- React-Commit-Dauer und Commits pro Interaktion,
+- Long Tasks, maximale DOM-Node-Anzahl und Heap vor/nach Refresh,
+- `EXPLAIN (ANALYZE, BUFFERS)` der tatsächlich teuersten SQL-Statements.
+
+Für die Render-Rangfolge werden vorübergehend Profiler-Grenzen um Queue, Hotelgrid,
+Hoteldetail und Quotenbereich benötigt oder der React DevTools Profiler verwendet.
+Das ist Messinstrumentierung für einen separaten Sprint, keine Produktoptimierung.
+
+### Entscheidungsschwellen
+
+- Dominiert `assignment`/`serialization` oder die Response-Größe: zuerst
+  Planning-Vertrag und Validierungsarchitektur ändern.
+- Dominiert DB bei hoher Queryanzahl: Quoten-N+1 bzw. konkrete Querypläne beheben.
+- Ist API schnell, aber Commit/Long Tasks hoch: Queue/Room-Liste virtualisieren.
+- Ist nur der Refresh nach Mutationen langsam: Delta-/Revisionsvertrag priorisieren.
+- Caching wird nur verfolgt, wenn wiederholte identische Reads einen relevanten
+  Anteil haben und Invalidierung eindeutig definiert werden kann.
+
+## 5. Maßnahmen nach erwartetem Nutzen
+
+### Priorität A: Planning-Vertrag zerlegen
+
+**Größter erwarteter Nutzen, mittlere Architekturkomplexität.** Die Übersicht sollte
+nur Einheiten, Hotel-/Kapazitätssummen und die für die erste Ansicht nötigen Daten
+liefern. Slots/Buchungen werden beim Öffnen eines Hotels geladen. Validierung wird
+für die aktuell gezogene/ausgewählte Einheit und relevante Hotel- oder Slotmenge
+serverseitig berechnet, nicht für alle denkbaren Kombinationen vorab.
+
+Das ist inkrementelles Laden und serverseitige fachliche Berechnung, keine
+Funktionsreduktion: dieselben Informationen bleiben beim Nutzungsmoment verfügbar.
+Der Vertrag braucht eine Planning-Revision, damit parallel geladene Ausschnitte und
+Mutationen nicht veralten.
+
+### Priorität B: Delta-Response nach Mutationen
+
+**Sehr hoher Nutzen im täglichen Workflow, höhere Konsistenzanforderung.** Mutation
+und Response sollten atomar den betroffenen Slot, die betroffenen Einheiten,
+Kapazitäts-/Quotenänderungen und eine neue Revision liefern. Nur diese Ausschnitte
+werden ersetzt; bei Revisionskonflikt bleibt der Full Refresh als Fallback.
+
+Eine bloße optimistic UI ohne autoritativen Server-Delta ist nicht ausreichend, weil
+der Client sonst Assignment-, Datums- und Quotenregeln duplizieren müsste.
+
+### Priorität C: Queue und große Zimmerlisten virtualisieren
+
+**Hoher Frontend-Nutzen bei unverändertem UI.** Windowing hält nur sichtbare Karten
+plus Overscan im DOM. Für Drag-and-drop, variable Kartenhöhen, Fokus, Screenreader
+und `scrollIntoView` ist ein Prototyp mit Akzeptanztests nötig. Die Hotelliste mit
+etwa 100 Karten braucht wahrscheinlich keine Virtualisierung; Hotelzimmer und Queue
+sind anhand der Messwerte zu priorisieren.
+
+### Priorität D: Quotenabfragen set-basiert ausführen
+
+**Wahrscheinlich guter Nutzen bei begrenzter Komplexität**, falls Queryzählung die
+N+1-Hypothese bestätigt. Memberships/Buchungen und Approvals sollten per eager load,
+Join oder Aggregation für den gesamten Filter geladen werden. Erst der Queryplan
+entscheidet über konkrete Indizes.
+
+### Priorität E: Caching und Hintergrundberechnung
+
+Caching ist erst nach Verkleinerung des Vertrags sinnvoll. Ein revisionsgebundener,
+kurzlebiger Cache kann Hotelübersichten oder Validierung für `(revision, unit,
+hotel)` tragen. Globale TTL-Caches ohne revisionssichere Invalidierung sind im
+Dispositionbetrieb riskant.
+
+Hintergrundberechnung eignet sich für Vorwärmen oder Statistiken, nicht als Ersatz
+für synchrone Prüfung einer Mutation. Web Worker können JSON-Nachverarbeitung vom
+Main Thread nehmen, beheben aber weder Netzwerkvolumen noch Serverkomplexität und
+sind deshalb keine erste Maßnahme.
+
+### Server-side Filtering und Pagination
+
+Serverseitige Filterung ist für die Queue sinnvoll, sobald die Übersicht nicht mehr
+vollständig geladen wird. Cursor-Pagination oder inkrementelles Windowing ist stabiler
+als Offset-Pagination bei gleichzeitig laufenden Änderungen. Aktive Auswahl und
+Suchtreffer müssen weiterhin direkt adressierbar sein.
+
+Klassische Seitenzahlen sind für die Drag-and-drop-Disposition voraussichtlich
+schlechter als Virtualisierung plus serverseitige Suche, weil Ziel und Quelle auf
+verschiedenen Seiten verschwinden können. Für auditartige Tabellen wären sie passend,
+für das Herzstück Assignments nicht die erste Wahl.
+
+## 6. Ausdrücklich nicht empfohlen
+
+1. **Keine weiteren Memos, Callbacks oder `React.memo` ohne Komponentenprofil.** Das
+   reduziert weder Validierungsmatrix noch Payload/DOM und erhöht Prop-Komplexität.
+2. **Keine Indizes auf Verdacht.** Sie belasten Writes und lösen Python-/JSON-Kosten
+   nicht; Grundlage sind reale Querypläne.
+3. **Kein globaler Cache mit TTL als erste Lösung.** Veraltete Zimmer- oder
+   Quotendaten sind operativ gefährlicher als eine langsame Ansicht.
+4. **Keine vollständige Vorberechnung aller Unit×Slot-Kombinationen im Hintergrund.**
+   Sie verschiebt die multiplikative Arbeit nur und erschwert Invalidierung.
+5. **Keine reine Client-Nachbildung der Validierungslogik.** Zwei Regelquellen führen
+   zu inkonsistenten Zuweisungen.
+6. **Keine Web-Worker-/Kompressions-Maßnahme als Primärlösung.** Kompression reduziert
+   Transferbytes, nicht Objekterzeugung, Parsing oder fachliche Matrixgröße.
+7. **Keine Entfernung von Informationen oder Funktionen.** Lazy Loading und
+   Virtualisierung müssen Details, Tastaturbedienung, Fokus und Drag-and-drop
+   vollständig erhalten.
+8. **Keine klassische Pagination der Dispositionsfläche ohne UX-Prototyp.** Sie kann
+   den Kernworkflow verschlechtern und löst den teuren Full-Snapshot allein nicht.
+
+## 7. Empfohlene Sprintfolge
+
+1. **Mess-Sprint:** GET-Korrelation ergänzen, Subtree-Profiler setzen, reproduzierbare
+   1.500/3.000/5.000-Matrix ausführen und Rohwerte archivieren.
+2. **Backend-Vertrags-Sprint:** Übersicht, Hotel-Detail und On-demand-Validierung als
+   revisionierte Reads entwerfen; noch ohne optimistic UI.
+3. **Frontend-Sprint:** Queue/Hotelzimmer anhand gemessener DOM- und Commit-Kosten
+   virtualisieren und Barrierefreiheit/Drag-and-drop regressionsprüfen.
+4. **Mutations-Sprint:** atomare Deltas und Revisionskonflikt-Fallback einführen.
+5. **DB-Sprint nur bei Messnachweis:** Quotenabfragen set-basiert machen und gezielte
+   Indizes anhand der Produktionspläne ergänzen.
+
+Damit wird zuerst die multiplikative Architekturgrenze beseitigt, danach die
+Darstellung skaliert und erst zuletzt lokal optimiert. Bedienbarkeit und fachliche
+Autorität bleiben unverändert.
