@@ -375,6 +375,8 @@ class Athlete(db.Model):
     )
 
     id = db.Column(db.Integer, primary_key=True)
+    # Ownership marker for independently managed, disposable data sets.
+    created_by = db.Column(db.String(50), nullable=True, index=True)
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
     competitor_id = db.Column(db.String(50))
     accred_id = db.Column(db.String(50))
@@ -589,6 +591,9 @@ class RoomBooking(db.Model):
     __tablename__ = 'room_booking'
 
     id = db.Column(db.Integer, primary_key=True)
+    # Bookings created by a simulation are removed by ownership, never by age
+    # or by relationships to otherwise unmarked data.
+    created_by = db.Column(db.String(50), nullable=True, index=True)
     hotel_id = db.Column(db.Integer, db.ForeignKey('hotel.id'), nullable=False)
     room_type_id = db.Column(db.Integer, db.ForeignKey('room_type.id'), nullable=False)
     room_number = db.Column(db.String(20))
