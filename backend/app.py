@@ -1427,9 +1427,10 @@ def _sync_quota_evaluation(booking):
     booking.counts_as_single = _automatic_quota_evaluation(booking.room_type, athlete_ids)
 
 
-def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False):
+def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False, commit=True):
     if existing_booking is None:
         booking = RoomBooking(
+            created_by=payload.get('created_by'),
             hotel_id=payload['hotel_id'],
             room_type_id=payload['room_type_id'],
             room_number=payload['room_number'],
@@ -1455,7 +1456,10 @@ def _save_booking_from_payload(payload, existing_booking=None, manual_single_ove
     if not manual_single_override:
         _sync_quota_evaluation(booking)
     _acknowledge_import_changes(payload['athlete_ids'])
-    db.session.commit()
+    if commit:
+        db.session.commit()
+    else:
+        db.session.flush()
     return booking
 
 
