@@ -1,4 +1,4 @@
-import { Profiler, type ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { Profiler, type ReactNode, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { Dialog, DialogContent, IconButton, Switch, Tooltip } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -32,7 +32,7 @@ import { DialogFooter, DialogHeader, OpsButton, WorkspaceFrame } from '../design
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
-import { markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
+import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaUsageKey } from '../services/quotaEvaluation';
 import type {
@@ -83,6 +83,11 @@ const REGION_COLORS: Record<string, string> = {
   Feldkirch: 'var(--ops-secondary)',
 };
 
+function AssignmentPerformanceBoundary({ id, children }: { id: string; children: ReactNode }) {
+  return assignmentPerformanceEnabled
+    ? <Profiler id={id} onRender={recordAssignmentRender}>{children}</Profiler>
+    : children;
+}
 
 export function Assignments() {
   const permissions = usePermissions();
@@ -569,10 +574,6 @@ export function Assignments() {
     }
   };
 
-  const onProfileRender = useCallback((id: string, _phase: string, actualDuration: number) => {
-    recordAssignmentRender(id, actualDuration);
-  }, []);
-
   if (loading) {
     return (
       <div className="flex h-64 items-center justify-center">
@@ -583,7 +584,6 @@ export function Assignments() {
 
   return (
     <>
-    <Profiler id="Assignments" onRender={onProfileRender}>
     <div className="relative" aria-busy={saving}>
       {saving && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-50" role="status" aria-live="polite">
@@ -613,6 +613,7 @@ export function Assignments() {
 
         <div className={`grid min-h-0 flex-1 border-t border-[var(--ops-divider)] ${view === 'dispatch' ? 'grid-cols-[352px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
           {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
+            <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
               units={queueUnits}
               filterMode={filterMode}
@@ -659,6 +660,7 @@ export function Assignments() {
               selectedUnitId={selected?.type === 'unit' ? selected.id : null}
               pendingAction={pendingAction}
             />
+            </AssignmentPerformanceBoundary>
           </aside>}
 
           <main className="min-h-0 overflow-hidden bg-[var(--ops-assignment-canvas)]">
@@ -700,6 +702,7 @@ export function Assignments() {
             )}
 
             {view === 'quotas' && (
+              <AssignmentPerformanceBoundary id="Quotas">
               <QuotasPanel
                 rows={currentQuotaUsage}
                 assignedUnits={assignedUnits}
@@ -716,6 +719,7 @@ export function Assignments() {
                 genderOptions={genderOptions}
                 refreshing={quotaRefreshing}
               />
+              </AssignmentPerformanceBoundary>
             )}
           </main>
 
@@ -758,7 +762,6 @@ export function Assignments() {
     </WorkspaceFrame>
     </div>
     </div>
-    </Profiler>
     <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
     </>
   );
@@ -1415,6 +1418,7 @@ function HotelGridOrDetail({
   return (
     <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]">
       {!activeHotel && <div>
+        <AssignmentPerformanceBoundary id="HotelOverview">
         <HotelGridView
           hotels={hotels}
           regionOptions={[...new Set(allHotels.map(hotel => hotel.region).filter((value): value is string => Boolean(value)))].sort((a, b) => a.localeCompare(b, 'de'))}
@@ -1433,9 +1437,11 @@ function HotelGridOrDetail({
           onDropHotel={onDropHotel}
           pendingHotelId={pendingAction?.hotelId ?? null}
         />
+        </AssignmentPerformanceBoundary>
       </div>}
       {activeHotel && (
         <div className="min-h-0">
+          <AssignmentPerformanceBoundary id="HotelDetail">
           <HotelDetailView
             hotel={activeHotel}
             additionalCostPersonIds={additionalCostPersonIds}
@@ -1453,6 +1459,7 @@ function HotelGridOrDetail({
             onSelectBooking={onSelectBooking}
             pendingAction={pendingAction}
           />
+          </AssignmentPerformanceBoundary>
         </div>
       )}
     </div>
