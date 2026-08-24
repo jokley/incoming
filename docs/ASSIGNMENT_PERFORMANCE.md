@@ -2,9 +2,10 @@
 
 ## Status und Abgrenzung
 
-Dieses Dokument ist eine **Analyse des aktuellen Stands**, kein Optimierungs-PR.
-Es wurden weder Businesslogik, API-Verträge, Datenbankabfragen noch React-Komponenten
-verändert. Die Aussagen trennen bewusst zwischen:
+Dieses Dokument hält Diagnose, Messwerte und die daraus abgeleiteten isolierten
+Performance-Sprints fest. Sprint 2 ergänzt einen kompatiblen Planning-Read, ohne
+Businesslogik, Bedienung oder bestehende Standardresponses zu verändern. Die
+Aussagen trennen bewusst zwischen:
 
 - **statisch nachgewiesen**: direkt aus Kontrollfluss und Datenstrukturen ableitbar,
 - **gemessen**: mit der reproduzierbaren Simulation von 1.500 Personen erhoben,
@@ -50,17 +51,16 @@ einen identischen PostgreSQL-Snapshot noch ein kontrolliertes Browserprofil.
 
 | Request / Phase | Messwert |
 | --- | ---: |
-| Planning View – Client gesamt | 23,6 s |
-| Planning View – Server gesamt | 18,6 s |
-| Planning View – Datenbank | 50 ms |
-| Planning View – Serialisierung | 3,4 s |
+| Planning View – Client gesamt | ca. 21 s |
+| Planning View – Server gesamt | ca. 17 s |
+| Planning View – Datenbank | ca. 194 ms |
+| Planning View – Serialisierung | ca. 2,9 s |
 | Planning View – Payload | 148 MB |
 | Planning View – `JSON.parse` | 624 ms |
 | Planning View – Netzwerk/Body Read | 3,9 s |
-| Official Quotas – Client gesamt | 19,4 s |
-| Official Quotas – Server gesamt | 19,3 s |
-| Official Quotas – Datenbank | 17,6 s |
-| Official Quotas – SQL-Queries | 1.889 |
+| Official Quotas – Server vor/nach Optimierung | 19,3 s / 181 ms |
+| Official Quotas – Datenbank vor/nach Optimierung | 17,6 s / 61 ms |
+| Official Quotas – SQL-Queries vor/nach Optimierung | 1.889 / 3 |
 
 Die React-Commit-Zeiten von Queue und Hotelübersicht waren im selben Lauf
 unkritisch. Damit sind die folgenden Aussagen Architekturentscheidungen auf Basis
@@ -80,9 +80,9 @@ Sortierung und Quotenregeln bleiben unverändert.
 | Messwert | Vorher, Simulation 1.500 | Nachher |
 | --- | ---: | ---: |
 | SQL-Queries | 1.889 | höchstens 3 |
-| Serverzeit | 19,3 s | im Zielsystem erneut zu messen |
-| Datenbankzeit | 17,6 s | im Zielsystem erneut zu messen |
-| Payloadgröße | unverändert zu erwarten | mit identischem Snapshot zu verifizieren |
+| Serverzeit | 19,3 s | 181 ms |
+| Datenbankzeit | 17,6 s | 61 ms |
+| Payloadgröße | Referenz | unverändert |
 | Response | Referenz | per Regressionstest fachlich identisch abgesichert |
 
 Die neue Queryanzahl ist strukturell unabhängig von der Personenzahl: eine Query
@@ -90,12 +90,8 @@ lädt den gefilterten Roster, eine Query alle zugehörigen Booking-Memberships s
 persistiertem `counts_as_single` und eine Query alle Approval-Daten samt
 Session-Schlüssel. Bei einem leeren Roster entfällt die Membership-Query.
 
-Die gemessenen Nachher-Zeiten werden bewusst nicht aus der Queryreduktion geschätzt.
-In dieser Entwicklungsumgebung steht weder der 1.500-Personen-PostgreSQL-Snapshot
-noch die zugehörige Deployment-/Netzwerkkonfiguration zur Verfügung. Der verbindliche
-Nachher-Lauf verwendet deshalb denselben Snapshot und dieselbe Instrumentierung wie
-die Baseline und ergänzt erst dann Serverzeit, DB-Zeit und Payloadbytes in der
-Tabelle.
+Der Nachher-Lauf mit derselben Simulation bestätigt, dass Official Quotas mit
+181 Millisekunden Server- und 61 Millisekunden Datenbankzeit abgeschlossen ist.
 
 ### Technische Entscheidung
 
@@ -113,6 +109,68 @@ Entitlement-Auswertung und Statusbildung bleiben unangetastet. Es wurde kein Ind
 ergänzt: Nach der Reduktion auf höchstens drei Queries gibt es ohne realen
 `EXPLAIN (ANALYZE, BUFFERS)`-Nachweis keinen Grund für zusätzliche Write-Kosten.
 
+## Sprint 2: erster vertikaler Planning-Schnitt
+
+### Tatsächlicher Bedarf des initialen Responses
+
+Die Codepfade der Assignment-Seite verwenden beim initialen Rendern Timeline,
+Einheiten, Hotels, Slots und bestehende Buchungen. `validationByUnit` wird dagegen
+ausschließlich benötigt, wenn eine Einheit gezogen oder per Schnellaktion einem
+Hotel beziehungsweise Zimmertyp zugewiesen wird. Trotzdem enthielt der initiale
+Response bisher für jede Einheit und jede Einzelpersonen-Variante die Validierung
+gegen jeden Slot. Dieser später benötigte Teil erklärt die multiplikative
+Berechnung und den überwiegenden Anteil der 148 MB.
+
+### Architekturentscheidung
+
+Der bestehende Planning-Endpunkt erhält den optionalen Parameter
+`includeValidations=false`. Nur die Assignment-Seite nutzt diese schlanke Variante;
+ohne Parameter liefert der Endpunkt aus Kompatibilitätsgründen weiterhin den
+vollständigen bisherigen Response. Ein ergänzender Read liefert die Validierungen
+für genau einen bestehenden Validation-Key on demand.
+
+Der Client startet diesen Read beim Drag-Start und dedupliziert parallele Requests
+für denselben Key. Schnellzuweisung und Drop warten bei Bedarf auf denselben Request.
+Die Ergebnisse gelten nur für den aktuellen Planning-Snapshot und werden bei jedem
+Full Refresh verworfen. Bedienung, Drop-Prüfung, Fehlermeldungen und serverseitige
+Businessregeln bleiben damit erhalten; lediglich der Zeitpunkt der bereits
+existierenden Berechnung verschiebt sich vom Seitenaufruf zur tatsächlichen Nutzung.
+
+Dies ist der kleinste vertikale Schnitt mit hohem Nutzen: Die vorhandene
+Planning-Projektion, Slotdarstellung, Mutationen und Full-Refresh-Semantik bleiben
+bestehen. Die Validierungslogik wurde lediglich in eine gemeinsam verwendete
+Funktion extrahiert, sodass Full Response und On-demand-Response nachweislich
+dieselben Ergebnisse liefern.
+
+### Alternativen
+
+| Alternative | Gewinn | Aufwand/Risiko | Entscheidung |
+| --- | --- | --- | --- |
+| Nur Response komprimieren | reduziert Transfer, nicht 17 s Serverarbeit | niedrig, aber symptomatisch | verworfen |
+| Alle Hotel-Details lazy laden | weitere Payloadreduktion möglich | deutlich größerer UI-/State-Schnitt | zurückgestellt |
+| Planning-Endpunkt standardmäßig ändern | gleicher technischer Gewinn | bricht unbekannte Bestandsclients | verworfen |
+| Validierungen cachen/vorberechnen | wiederholte Reads eventuell schneller | Invalidierung und Speicherkomplexität | verworfen |
+| Delta-Responses oder Revisionen | später sinnvoll | außerhalb dieses Sprints | zurückgestellt |
+| Queue-Pagination/Virtualisierung | kein gemessener Backendgewinn | unnötige UX-Komplexität | verworfen |
+
+### Vorher/Nachher-Messung
+
+| Messwert | Vorher, 1.500 Personen | Nachher |
+| --- | ---: | ---: |
+| Client gesamt | ca. 21 s | mit identischem Snapshot zu messen |
+| Server gesamt | ca. 17 s | mit identischem Snapshot zu messen |
+| Datenbank | ca. 194 ms | mit identischem Snapshot zu messen |
+| Serialisierung | ca. 2,9 s | mit identischem Snapshot zu messen |
+| Payload | ca. 148 MB | mit identischem Snapshot zu messen |
+| SQL-Queries | 3 | mit identischem Snapshot zu messen |
+
+Die Nachher-Werte werden nicht aus einem kleinen Testdatensatz hochgerechnet. Die
+bestehende Instrumentierung erfasst den schlanken Planning-Request und jeden
+On-demand-Validation-Request getrennt. Der verbindliche Nachher-Lauf erfolgt mit
+demselben 1.500-Personen-Snapshot; die Regressionstests sichern bereits ab, dass
+Slim Response und Full Response bis auf `validationByUnit` identisch sind und dass
+gezielte Validierungen exakt den bisherigen Matrixeinträgen entsprechen.
+
 ## Aktualisierte Architekturentscheidung
 
 ### Kurzantwort
@@ -122,16 +180,15 @@ Der größte strukturelle Engpass ist bestätigt: der Vertrag von
 noch einmal für **jede Person als Teilvariante** die Zulässigkeit gegen **jeden
 physischen Zimmerslot**, serialisiert die vollständige Matrix und der Client ersetzt
 nach fast jeder Mutation den gesamten Planning-Snapshot. Damit wachsen Berechnung,
-Payload und Netzwerk gemeinsam statt unabhängig voneinander. Von 18,6 Sekunden
-Serverzeit entfallen nur 50 Millisekunden auf SQL und 3,4 Sekunden auf
-Serialisierung. Rund 15,15 Sekunden liegen damit in der übrigen serverseitigen
-Projektion und Validierungsarbeit. Die 148-MB-Response verursacht zusätzlich
-3,9 Sekunden Transfer und 624 Millisekunden Parsing.
+Payload und Netzwerk gemeinsam statt unabhängig voneinander. Von rund 17 Sekunden
+Serverzeit entfallen nur etwa 194 Millisekunden auf SQL und 2,9 Sekunden auf
+Serialisierung. Der dominante Rest liegt damit in der übrigen serverseitigen
+Projektion und Validierungsarbeit; die 148-MB-Response belastet zusätzlich Transfer
+und Parsing.
 
-Die Quotenansicht ist ein **separater Datenbankengpass**: 17,6 von 19,3 Sekunden
-Serverzeit und 1.889 Queries bestätigen das N+1-Verhalten. Es wäre falsch, aus der
-schnellen Planning-Datenbankzeit abzuleiten, dass Datenbankarbeit insgesamt
-unkritisch ist; die beiden Endpunkte benötigen unterschiedliche Lösungen.
+Die Quotenansicht war ein separater Datenbankengpass und ist nach der Reduktion von
+1.889 auf drei Queries mit 181 Millisekunden Serverzeit abgeschlossen. Ihre Lösung
+wird deshalb nicht mit dem Planning-Schnitt vermischt.
 
 Die ursprüngliche Frontend-Priorität wird dagegen widerlegt: React-Commit-Zeiten,
 Queue und Hotelübersicht sind bei 1.500 Personen nicht relevant. Virtualisierung,
@@ -193,26 +250,24 @@ werden.
 
 ### Planning View
 
-Die Datenbank ist mit 50 Millisekunden weder Optimierungsziel noch Erklärung für
-18,6 Sekunden Serverzeit. Auch die isolierte Optimierung der Serialisierung würde
-höchstens den gemessenen 3,4-Sekunden-Anteil adressieren. Der dominante Anteil ist
+Die Datenbank ist mit rund 194 Millisekunden weder Optimierungsziel noch Erklärung für
+etwa 17 Sekunden Serverzeit. Auch die isolierte Optimierung der Serialisierung würde
+höchstens den gemessenen 2,9-Sekunden-Anteil adressieren. Der dominante Anteil ist
 die Materialisierung der Planning-Projektion einschließlich der vollständigen
 Validierungsmatrix. Diese Diagnose passt zur statisch ermittelten Komplexität
 `(U + O) × S` und wird durch die 148-MB-Response bestätigt.
 
 Die Phasen sind nicht vollständig additiv als CPU-Profil zu interpretieren; aus den
 vorliegenden Messgrenzen ergibt sich aber eine belastbare Obergrenze: Nach Abzug von
-DB und Serialisierung verbleiben rund 15,15 Sekunden Serverzeit. Vor der Umsetzung
+DB und Serialisierung verbleiben rund 13,9 Sekunden Serverzeit. Vor der Umsetzung
 wird dieser Anteil im Planning-Contract-Sprint noch in Projektion und Validierung
 getrennt, damit der Vorher-/Nachher-Nachweis eindeutig bleibt.
 
 ### Official Quotas
 
-Bei Official Quotas erklären 17,6 Sekunden Datenbankzeit fast die gesamten
-19,3 Sekunden Serverzeit. 1.889 Queries bei 1.500 Personen zeigen personabhängige
-Roundtrips statt einer konstanten set-basierten Abfrage. Hier ist kein neuer
-API-Vertrag erforderlich: Datenzugriff und Aggregation können intern geändert und
-gegen denselben Response verglichen werden.
+Official Quotas ist nach der set-basierten Umstellung abgeschlossen: drei Queries,
+61 Millisekunden Datenbankzeit und 181 Millisekunden Serverzeit. Der Endpunkt bleibt
+als erfolgreiche Referenz für isolierte, messwertgetriebene Änderungen dokumentiert.
 
 ### Datenbank und Indizes
 
@@ -299,8 +354,8 @@ Die Zielarchitektur besteht aus drei revisionierten, fachlich autoritativen Read
    gezogene Einheit gegen das relevante Hotel beziehungsweise dessen Slots. Die
    Regeln bleiben ausschließlich auf dem Server.
 
-Diese Zerlegung adressiert gleichzeitig den ungefähr 15,15 Sekunden großen
-Berechnungsanteil, den 3,4-Sekunden-Serialisierungsanteil und einen Großteil der
+Diese Zerlegung adressiert gleichzeitig den ungefähr 13,9 Sekunden großen
+Berechnungsanteil, den 2,9-Sekunden-Serialisierungsanteil und einen Großteil der
 148-MB-Payload. Deshalb ist sie der wirkungsvollste Architekturbaustein. Der erste
 vertikale Schnitt muss eine deutliche, gemessene Größenreduktion gegenüber der
 148-MB-Baseline zeigen; ein verbindliches Byte- und Zeitbudget wird erst anhand des
@@ -314,7 +369,7 @@ Zuweisung auf einem veralteten Stand angewendet werden.
 
 Obwohl der Planning-Vertrag den größten Architekturgewinn verspricht, sollte die
 Quotenabfrage als **erster kleiner Implementierungssprint** umgesetzt werden. Die
-Messung ist eindeutig (1.889 Queries, 17,6 Sekunden DB-Zeit), der fachliche Vertrag
+Ausgangsmessung war eindeutig (1.889 Queries, 17,6 Sekunden DB-Zeit), der fachliche Vertrag
 kann unverändert bleiben und die Komplexität ist deutlich niedriger als bei der
 Planning-Zerlegung.
 
@@ -354,7 +409,7 @@ eine parallele Übergangsarchitektur zu schaffen.
 - **Server-side Filtering und Pagination:** nicht nötig, um die aktuell gemessenen
   148 MB zu lösen; diese stammen primär aus Slots und Validierungen. Als spätere
   Skalierungsgrenze für 3.000–5.000 Einheiten erneut messen.
-- **Caching:** würde 18,6 Sekunden Berechnung nur verdecken und erfordert schwierige
+- **Caching:** würde rund 17 Sekunden Berechnung nur verdecken und erfordert schwierige
   Invalidierung. Erst nach einem kleinen, revisionierten Read-Modell prüfen.
 - **Hintergrundberechnung/Web Worker:** verschiebt die falsche Arbeit. `JSON.parse`
   kostet 624 Millisekunden, nicht 23,6 Sekunden; die Payload darf nicht dauerhaft
@@ -362,7 +417,7 @@ eine parallele Übergangsarchitektur zu schaffen.
 - **Kompression als Hauptmaßnahme:** kann die 3,9 Sekunden Transfer reduzieren,
   beseitigt aber weder serverseitige Matrixberechnung noch Serialisierung und
   Browserobjekte.
-- **Breite Indexkampagne:** Planning verbringt nur 50 Millisekunden in der DB.
+- **Breite Indexkampagne:** Planning verbringt nur rund 194 Millisekunden in der DB.
   Indizes sind ausschließlich Teil der gezielten Quoten-Queryarbeit.
 
 ## 6. Gegenüber der ursprünglichen Diagnose
@@ -380,7 +435,7 @@ eine parallele Übergangsarchitektur zu schaffen.
 
 1. „Backend“ ist kein einheitlicher Flaschenhals: Planning ist überwiegend Python-
    Projektion/Validierung, Quoten sind überwiegend Datenbank-Roundtrips.
-2. Serialisierung ist mit 3,4 Sekunden relevant, aber nicht isoliert zu optimieren.
+2. Serialisierung ist mit 2,9 Sekunden relevant, aber nicht isoliert zu optimieren.
    Sie ist eine Folge der Matrixgröße und verschwindet weitgehend mit dem kleineren
    Vertrag.
 3. Netzwerk ist mit 3,9 Sekunden relevant, aber ebenfalls Symptom der 148-MB-
@@ -396,14 +451,15 @@ eine parallele Übergangsarchitektur zu schaffen.
 
 ## 7. Verbindliche Sprintfolge
 
-1. **Quoten-Query-Sprint (implementiert):** N+1 set-basiert eliminiert; identische
+1. **Quoten-Query-Sprint (abgeschlossen):** N+1 set-basiert eliminiert; identische
    Fachresultate und höchstens drei Queries sind regressionsgesichert. Server- und
-   DB-Nachher-Zeit werden mit dem unveränderten 1.500-Personen-Snapshot ergänzt.
-2. **Planning-Contract-Sprint:** revisionierte Übersicht und Hotel-Detail als
-   vertikalen Schnitt einführen; Payload und Serverphasen gegen die Baseline messen.
-3. **Validation-Sprint:** Validierungen für aktive Einheit und relevanten Zielbereich
-   on demand liefern; vollständige Matrix erst nach Gleichheitsnachweis entfernen.
-4. **Mutation-Sprint:** atomare, revisionierte Deltas auf Basis derselben Ressourcen;
+   DB-Nachher-Zeit sind mit 181 beziehungsweise 61 Millisekunden bestätigt.
+2. **Validation-Schnitt (implementiert):** Initialrequest ohne Matrix und gezielte
+   Validierungen on demand; Full Response bleibt als Kompatibilitäts-Referenz.
+3. **Planning-Recheck:** schlanken Initialrequest und typische Validation-Reads mit
+   1.500 Personen erneut messen. Nur ein danach belegter Restengpass rechtfertigt
+   einen weiteren Hotel-Detail-/Read-Contract-Schnitt.
+4. **Mutation-Sprint:** später atomare, revisionierte Deltas auf Basis derselben Ressourcen;
    Full Refresh als Konflikt-Fallback beibehalten.
 5. **Skalierungs-Recheck:** 1.500/3.000/5.000 Personen erneut messen. Nur wenn DOM,
    Heap, Long Tasks oder Commits dann relevant werden, Virtualisierung beziehungsweise

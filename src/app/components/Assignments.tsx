@@ -1,4 +1,4 @@
-import { Profiler, type ReactNode, useEffect, useMemo, useState } from 'react';
+import { Profiler, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { Dialog, DialogContent, IconButton, Switch, Tooltip } from '@mui/material';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
@@ -98,6 +98,10 @@ export function Assignments() {
   const requestedAthleteId = routeQuery.get('athleteId') || routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeQuery.get('assignmentId')||routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
   const requestedRoomTypeId = routeQuery.get('roomTypeId');
   const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
+  const [validationByUnit, setValidationByUnit] = useState<Record<string, AssignmentValidationResult[]>>({});
+  const validationCacheRef = useRef<Record<string, AssignmentValidationResult[]>>({});
+  const validationRequestsRef = useRef(new Map<string, Promise<AssignmentValidationResult[]>>());
+  const validationGenerationRef = useRef(0);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
   const [loading, setLoading] = useState(true);
@@ -130,6 +134,41 @@ export function Assignments() {
   const [dragOverRoomTypeKey, setDragOverRoomTypeKey] = useState<string | null>(null);
   const [dragOverBookingId, setDragOverBookingId] = useState<string | null>(null);
 
+  const replacePlanning = (planningData: AssignmentPlanningView) => {
+    validationGenerationRef.current += 1;
+    validationCacheRef.current = {};
+    validationRequestsRef.current.clear();
+    setValidationByUnit({});
+    setPlanning(planningData);
+  };
+
+  const ensureAssignmentValidations = (unitId: string, athleteIds?: string[]) => {
+    const validationKey = getValidationKey(unitId, athleteIds);
+    if (Object.prototype.hasOwnProperty.call(validationCacheRef.current, validationKey)) {
+      return Promise.resolve(validationCacheRef.current[validationKey]);
+    }
+    const pendingRequest = validationRequestsRef.current.get(validationKey);
+    if (pendingRequest) return pendingRequest;
+
+    const generation = validationGenerationRef.current;
+    const request = api.getAssignmentValidations(validationKey).then((result) => {
+      if (generation === validationGenerationRef.current) {
+        validationCacheRef.current[validationKey] = result.validations;
+        setValidationByUnit((current) => ({
+          ...current,
+          [validationKey]: result.validations,
+        }));
+      }
+      return result.validations;
+    }).finally(() => {
+      if (validationRequestsRef.current.get(validationKey) === request) {
+        validationRequestsRef.current.delete(validationKey);
+      }
+    });
+    validationRequestsRef.current.set(validationKey, request);
+    return request;
+  };
+
   useEffect(() => {
     void loadInitialData();
   }, []);
@@ -151,7 +190,7 @@ export function Assignments() {
         api.getAssignmentPlanningView(),
         api.getAthletes(),
       ]);
-      setPlanning(planningData);
+      replacePlanning(planningData);
       setAthletes(athletesData);
       if (requestedAssignmentId) {
         const booking = planningData.hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings)).find(candidate => candidate.bookingId === requestedAssignmentId);
@@ -186,7 +225,7 @@ export function Assignments() {
         setLoading(true);
       }
       const planningData = await api.getAssignmentPlanningView();
-      setPlanning(planningData);
+      replacePlanning(planningData);
       setError(null);
     } catch (err) {
       console.error(err);
@@ -204,7 +243,7 @@ export function Assignments() {
       api.getAthletes(),
       loadQuotaUsage(),
     ]);
-    setPlanning(planningData);
+    replacePlanning(planningData);
     setAthletes(athletesData);
     window.dispatchEvent(new CustomEvent('operations:state-changed', { detail: { source: 'disposition' } }));
   };
@@ -234,8 +273,6 @@ export function Assignments() {
   const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
   const currentQuotaUsage = useMemo(() => evaluateCurrentQuotaUsage(quotaUsage, quotaAssignmentsFromPlanning(allHotels)), [allHotels, quotaUsage]);
   const additionalCostPersonIds = useMemo(() => new Set(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId))), [allHotels, quotaUsage]);
-  const validationByUnit = useMemo(() => planning?.validationByUnit ?? {}, [planning]);
-
   const unitById = useMemo(() => {
     const map = new Map<string, RoomBookingUnit>();
     for (const unit of allUnitsCombined) map.set(unit.unitId, unit);
@@ -382,8 +419,14 @@ export function Assignments() {
       setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
       return;
     }
-    const validationKey = getValidationKey(unitId, athleteIds);
-    const validSlot = findFirstValidSlot(validationByUnit[validationKey] || [], allHotels, hotelId);
+    let validations: AssignmentValidationResult[];
+    try {
+      validations = await ensureAssignmentValidations(unitId, athleteIds);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Zimmerprüfung konnte nicht geladen werden.'));
+      return;
+    }
+    const validSlot = findFirstValidSlot(validations, allHotels, hotelId);
     if (!validSlot) {
       setError('Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
       return;
@@ -396,8 +439,14 @@ export function Assignments() {
       setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
       return;
     }
-    const validationKey = getValidationKey(unitId, athleteIds);
-    const slot = findFirstValidSlotForRoomType(validationByUnit[validationKey] || [], allHotels, hotelId, roomTypeId);
+    let validations: AssignmentValidationResult[];
+    try {
+      validations = await ensureAssignmentValidations(unitId, athleteIds);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Zimmerprüfung konnte nicht geladen werden.'));
+      return;
+    }
+    const slot = findFirstValidSlotForRoomType(validations, allHotels, hotelId, roomTypeId);
     if (!slot) {
       setError('Für diesen Zimmertyp gibt es kein gültiges freies Zimmer.');
       return;
@@ -643,6 +692,9 @@ export function Assignments() {
               canEditAssignments={permissions.canManageAssignments}
               onDragStart={(unitId, athleteIds, label) => {
                 if (!permissions.canManageAssignments) return;
+                void ensureAssignmentValidations(unitId, athleteIds).catch((err) => {
+                  setError(extractErrorMessage(err, 'Zimmerprüfung konnte nicht geladen werden.'));
+                });
                 setDragging({ unitId, athleteIds, label });
               }}
               onDragEnd={() => {

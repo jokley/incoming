@@ -1195,7 +1195,32 @@ def _build_room_booking_units():
     return units, bookings
 
 
-def _build_assignment_planning_view():
+def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
+    validations = []
+    for hotel_section in hotel_sections:
+        for slot in hotel_section['slots']:
+            slot_copy = dict(slot)
+            covers_requested_range = True
+            date_coverage = slot['dateCoverage']
+            if (date_coverage['availableFrom'] and date_coverage['availableUntil']
+                    and unit.get('checkInDate') and unit.get('checkOutDate')):
+                covers_requested_range = (
+                    date_coverage['availableFrom'] <= unit['checkInDate']
+                    and date_coverage['availableUntil'] >= unit['checkOutDate'])
+            slot_copy['dateCoverage'] = dict(date_coverage)
+            slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
+            relevant_bookings = bookings_by_slot.get(
+                (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
+                [],
+            )
+            validations.append({
+                'slotId': slot['slotId'],
+                **_calculate_unit_validation(unit, slot_copy, relevant_bookings),
+            })
+    return validations
+
+
+def _build_assignment_planning_view(validation_keys=None):
     with _assignment_phase('assignment'):
         units, bookings = _build_room_booking_units()
     rooms_started = time.perf_counter()
@@ -1287,47 +1312,17 @@ def _build_assignment_planning_view():
     assigned_units = []
     validation_by_unit = {}
     for unit in units:
-        validations = []
-        for hotel_section in hotel_sections:
-            for slot in hotel_section['slots']:
-                slot_copy = dict(slot)
-                covers_requested_range = True
-                if slot['dateCoverage']['availableFrom'] and slot['dateCoverage']['availableUntil'] and unit.get('checkInDate') and unit.get('checkOutDate'):
-                    covers_requested_range = slot['dateCoverage']['availableFrom'] <= unit['checkInDate'] and slot['dateCoverage']['availableUntil'] >= unit['checkOutDate']
-                slot_copy['dateCoverage'] = dict(slot['dateCoverage'])
-                slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
-                relevant_bookings = bookings_by_slot.get(
-                    (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
-                    [],
-                )
-                validation = _calculate_unit_validation(unit, slot_copy, relevant_bookings)
-                validations.append({
-                    'slotId': slot['slotId'],
-                    **validation,
-                })
-        validation_by_unit[unit['unitId']] = validations
+        unit_key = unit['unitId']
+        if validation_keys is None or unit_key in validation_keys:
+            validation_by_unit[unit_key] = _build_unit_validations(
+                unit, hotel_sections, bookings_by_slot)
 
         for occupant in unit.get('occupants', []):
-            partial_validations = []
-            partial_unit = _build_partial_unit_variant(unit, occupant)
-            for hotel_section in hotel_sections:
-                for slot in hotel_section['slots']:
-                    slot_copy = dict(slot)
-                    covers_requested_range = True
-                    if slot['dateCoverage']['availableFrom'] and slot['dateCoverage']['availableUntil'] and partial_unit.get('checkInDate') and partial_unit.get('checkOutDate'):
-                        covers_requested_range = slot['dateCoverage']['availableFrom'] <= partial_unit['checkInDate'] and slot['dateCoverage']['availableUntil'] >= partial_unit['checkOutDate']
-                    slot_copy['dateCoverage'] = dict(slot['dateCoverage'])
-                    slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
-                    relevant_bookings = bookings_by_slot.get(
-                        (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
-                        [],
-                    )
-                    partial_validation = _calculate_unit_validation(partial_unit, slot_copy, relevant_bookings)
-                    partial_validations.append({
-                        'slotId': slot['slotId'],
-                        **partial_validation,
-                    })
-            validation_by_unit[f"{unit['unitId']}:athlete:{occupant['athleteId']}"] = partial_validations
+            partial_key = f"{unit_key}:athlete:{occupant['athleteId']}"
+            if validation_keys is None or partial_key in validation_keys:
+                partial_unit = _build_partial_unit_variant(unit, occupant)
+                validation_by_unit[partial_key] = _build_unit_validations(
+                    partial_unit, hotel_sections, bookings_by_slot)
 
         if unit.get('isFullyAssigned'):
             assigned_units.append(unit)
@@ -2754,7 +2749,24 @@ def get_official_quotas():
 @app.route('/api/assignments/planning-view', methods=['GET'])
 @app.route('/api/assignments/planning-view/', methods=['GET'])
 def get_assignments_planning_view():
-    return _assignment_jsonify(_build_assignment_planning_view())
+    include_validations = request.args.get('includeValidations', 'true').lower() != 'false'
+    validation_keys = None if include_validations else set()
+    return _assignment_jsonify(_build_assignment_planning_view(validation_keys))
+
+
+@app.route('/api/assignments/planning-view/validations/<path:validation_key>', methods=['GET'])
+def get_assignment_planning_validations(validation_key):
+    planning = _build_assignment_planning_view({validation_key})
+    validations = planning['validationByUnit'].get(validation_key)
+    if validations is None:
+        return _assignment_jsonify({
+            'error': 'VALIDATION_UNIT_NOT_FOUND',
+            'message': 'Die ausgewählte Dispositionseinheit wurde nicht gefunden.',
+        }), 404
+    return _assignment_jsonify({
+        'validationKey': validation_key,
+        'validations': validations,
+    })
 
 
 @app.route('/api/assignments/bookings', methods=['POST'])

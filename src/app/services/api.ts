@@ -13,6 +13,7 @@ import type {
   FisImportPreview,
   FisImportConfirmResult,
   AssignmentPlanningView,
+  AssignmentValidationView,
   FisMockFilePair
 } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
@@ -629,7 +630,13 @@ class ApiService {
         validationByUnit: {},
       });
     }
-    return this.request<AssignmentPlanningView>('/assignments/planning-view');
+    return this.request<AssignmentPlanningView>('/assignments/planning-view?includeValidations=false');
+  }
+
+  async getAssignmentValidations(validationKey: string): Promise<AssignmentValidationView> {
+    return this.request<AssignmentValidationView>(
+      `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}`,
+    );
   }
 
   async assignRoomBookingUnit(data: {

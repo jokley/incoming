@@ -327,6 +327,11 @@ export interface AssignmentPlanningView {
   validationByUnit: Record<string, AssignmentValidationResult[]>;
 }
 
+export interface AssignmentValidationView {
+  validationKey: string;
+  validations: AssignmentValidationResult[];
+}
+
 export interface RoomAvailability {
   roomType: RoomType;
   available: number;
