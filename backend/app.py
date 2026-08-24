@@ -274,7 +274,7 @@ def _delete_simulation_data():
 
 @app.route('/api/admin/simulation', methods=['POST'])
 def create_simulation():
-    """Replace the owned simulation data set and exercise production booking validation."""
+    """Replace the owned data set and persist its bookings directly through the ORM."""
     started = time.perf_counter()
     timings = {}
     try:
@@ -296,34 +296,78 @@ def create_simulation():
             db.joinedload(HotelRoomInventory.room_type)).order_by(
                 HotelRoomInventory.hotel_id, HotelRoomInventory.room_type_id,
                 HotelRoomInventory.available_from, HotelRoomInventory.id).all()
+        existing_bookings = RoomBooking.query.with_entities(
+            RoomBooking.hotel_id, RoomBooking.room_type_id,
+            RoomBooking.check_in_date, RoomBooking.check_out_date,
+        ).filter(
+            RoomBooking.check_in_date.isnot(None),
+            RoomBooking.check_out_date.isnot(None),
+        ).all()
         timings['Load inventory'] = (time.perf_counter() - step_started) * 1000
 
         step_started = time.perf_counter()
         assignment_units = build_assignment_units(people)
         timings['Build assignment units'] = (time.perf_counter() - step_started) * 1000
 
+        step_started = time.perf_counter()
         assignments = 0
         assigned_people = 0
         hotel_ids = set()
-        step_started = time.perf_counter()
+        bookings_by_slot = {}
+        for hotel_id, room_type_id, check_in_date, check_out_date in existing_bookings:
+            bookings_by_slot.setdefault((hotel_id, room_type_id), []).append(
+                (check_in_date, check_out_date))
+        candidate_slots = []
+        seen_slots = set()
+        for inventory in sorted(inventories, key=lambda item: (
+                item.room_type.max_persons, item.hotel_id, item.room_type_id, item.id)):
+            slot_key = (inventory.hotel_id, inventory.room_type_id)
+            if slot_key not in seen_slots:
+                seen_slots.add(slot_key)
+                candidate_slots.append(inventory)
         for unit_index, unit in enumerate(assignment_units, start=1):
-            candidates = sorted(inventories, key=lambda item: (
+            candidates = sorted(candidate_slots, key=lambda item: (
                 item.room_type.max_persons != len(unit), item.room_type.max_persons,
-                item.hotel_id, item.room_type_id, item.id))
+                item.hotel_id, item.room_type_id))
             for inventory in candidates:
-                data = {
-                    'athleteIds': [str(person.id) for person in unit],
-                    'hotelId': str(inventory.hotel_id),
-                    'roomTypeId': str(inventory.room_type_id),
-                    'roomNumber': f'SIM-{unit_index:04d}',
-                    'checkInDate': unit[0].arrival_date.isoformat(),
-                    'checkOutDate': unit[0].departure_date.isoformat(),
-                }
-                payload, _, error = _validate_booking_payload(data)
-                if error:
+                if inventory.room_type.max_persons < len(unit):
                     continue
-                payload['created_by'] = SIMULATION_OWNER
-                _save_booking_from_payload(payload, commit=False)
+                check_in_date = unit[0].arrival_date
+                check_out_date = unit[0].departure_date
+                inventory_rooms = sum(
+                    item.room_count for item in inventories
+                    if item.hotel_id == inventory.hotel_id
+                    and item.room_type_id == inventory.room_type_id
+                    and item.available_from <= check_in_date
+                    and item.available_until >= check_out_date
+                )
+                if inventory_rooms <= 0:
+                    continue
+                slot_bookings = bookings_by_slot.setdefault(
+                    (inventory.hotel_id, inventory.room_type_id), [])
+                used_rooms = sum(
+                    existing_start <= check_out_date and existing_end >= check_in_date
+                    for existing_start, existing_end in slot_bookings
+                )
+                if used_rooms >= inventory_rooms:
+                    continue
+                counts_as_single = (
+                    inventory.room_type.max_persons == 1
+                    or (inventory.room_type.max_persons == 2 and len(unit) == 1
+                        and unit[0].single_room_status in {'IN_QUOTA', 'APPROVED_EXTRA'})
+                )
+                booking = RoomBooking(
+                    created_by=SIMULATION_OWNER,
+                    hotel_id=inventory.hotel_id,
+                    room_type_id=inventory.room_type_id,
+                    room_number=f'SIM-{unit_index:04d}',
+                    check_in_date=check_in_date,
+                    check_out_date=check_out_date,
+                    counts_as_single=counts_as_single,
+                    occupants=[RoomBookingOccupant(athlete_id=person.id) for person in unit],
+                )
+                db.session.add(booking)
+                slot_bookings.append((check_in_date, check_out_date))
                 assignments += 1
                 assigned_people += len(unit)
                 hotel_ids.add(inventory.hotel_id)

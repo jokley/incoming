@@ -1,7 +1,9 @@
+import ast
 import os
 import sys
 import unittest
 from collections import Counter
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
@@ -9,6 +11,18 @@ from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_people
 
 
 class SimulationRecipeTest(unittest.TestCase):
+    def test_generator_does_not_call_production_assignment_functions(self):
+        app_source = (Path(__file__).parents[1] / 'app.py').read_text(encoding='utf-8')
+        module = ast.parse(app_source)
+        generator = next(node for node in module.body
+                         if isinstance(node, ast.FunctionDef) and node.name == 'create_simulation')
+        calls = {node.func.id for node in ast.walk(generator)
+                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)}
+        self.assertNotIn('_validate_booking_payload', calls)
+        self.assertNotIn('_save_booking_from_payload', calls)
+        self.assertIn('RoomBooking', calls)
+        self.assertIn('RoomBookingOccupant', calls)
+
     def test_default_roster_is_reproducible_and_uniquely_owned(self):
         first = build_people()
         second = build_people()
