@@ -18,7 +18,7 @@ import type {
 import type { AuthenticatedUser, AuditEvent } from '../types';
 import type { OfficialQuotaUsage } from './fisRules';
 import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
-import { finishAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
+import { finishAssignmentRequest, isMeasuredAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
 import { downloadResponse } from './download';
 
 import {
@@ -59,8 +59,10 @@ let mockRoomBookings: RoomBooking[] = [];
 
 class ApiService {
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const isAssignmentMutation = endpoint.startsWith('/assignments/') && options?.method !== undefined && options.method !== 'GET';
-    const measurement = isAssignmentMutation ? startAssignmentMeasurement(endpoint) : null;
+    const method = options?.method ?? 'GET';
+    const measurement = isMeasuredAssignmentRequest(endpoint)
+      ? startAssignmentMeasurement(endpoint, method)
+      : null;
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       headers: {
         'Content-Type': 'application/json',
@@ -69,11 +71,11 @@ class ApiService {
       ...options,
     });
 
+    const headersAt = performance.now();
     const contentType = response.headers.get('content-type') || '';
+    const bodyReadStartedAt = performance.now();
     const bodyText = await response.text();
-    if (measurement) {
-      finishAssignmentRequest(measurement.operationId, measurement.startedAt, response, new Blob([bodyText]).size);
-    }
+    const bodyReadFinishedAt = performance.now();
 
     const looksLikeJson = (() => {
       const trimmed = bodyText.trim();
@@ -88,12 +90,22 @@ class ApiService {
     })();
 
     let body: unknown = bodyText;
+    const jsonParseStartedAt = performance.now();
     if (bodyText && looksLikeJson) {
       try {
         body = JSON.parse(bodyText);
       } catch {
         body = bodyText;
       }
+    }
+    const jsonParseFinishedAt = performance.now();
+    if (measurement) {
+      finishAssignmentRequest(measurement.operationId, measurement.startedAt, response, {
+        timeToHeadersMs: headersAt - measurement.startedAt,
+        bodyReadMs: bodyReadFinishedAt - bodyReadStartedAt,
+        jsonParseMs: jsonParseFinishedAt - jsonParseStartedAt,
+        responseBytes: new Blob([bodyText]).size,
+      });
     }
 
     if (!response.ok) {

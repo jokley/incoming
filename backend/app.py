@@ -53,14 +53,23 @@ def health_check():
 
 def _is_assignment_request():
     return (request.path.startswith('/api/assignments/')
+            or request.path.startswith('/api/room-assignments')
             or request.path.startswith('/api/official-quota')
             or request.path.startswith('/api/fis/official-quotas'))
 
 
 @app.before_request
 def start_assignment_performance_measurement():
-    if _is_assignment_request():
-        g.assignment_perf = {'api_started': time.perf_counter(), 'db': 0.0, 'queries': 0}
+    performance_enabled = os.environ.get(
+        'ASSIGNMENT_PERFORMANCE_ENABLED', 'true').lower() != 'false'
+    if _is_assignment_request() and performance_enabled:
+        g.assignment_perf = {
+            'api_started': time.perf_counter(),
+            'db': 0.0,
+            'queries': 0,
+            'method': request.method,
+            'path': request.path,
+        }
 
 
 @event.listens_for(Engine, 'before_cursor_execute')
@@ -113,6 +122,11 @@ def report_assignment_performance(response):
     )
     response.headers['X-Assignment-Query-Count'] = str(perf['queries'])
     response.headers['X-Response-Size'] = str(perf['response_bytes'])
+    response.headers['X-Assignment-Measurement'] = 'sprint-1'
+    response.headers['Access-Control-Expose-Headers'] = (
+        'Server-Timing, X-Assignment-Query-Count, X-Response-Size, '
+        'X-Assignment-Measurement'
+    )
     app.logger.info('assignment_performance %s', json.dumps({
         key: round(value, 2) if isinstance(value, float) else value
         for key, value in perf.items() if key != 'api_started'
@@ -1492,18 +1506,38 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     athletes = athletes.all()
     roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
                'forGender': a.for_gender, 'function': a.function} for a in athletes]
+
+    # Load every assignment once. The former per-athlete ``first()`` lookups made
+    # this endpoint issue up to two SQL statements per person. Keeping the first
+    # membership by its stable primary key preserves the existing single-booking
+    # semantics even if inconsistent legacy data contains multiple memberships.
+    booking_by_athlete = {}
+    athlete_ids = [athlete.id for athlete in athletes]
+    membership_rows = []
+    if athlete_ids:
+        membership_rows = db.session.query(
+            RoomBookingOccupant.athlete_id,
+            RoomBooking.counts_as_single,
+        ).join(
+            RoomBooking,
+            RoomBooking.id == RoomBookingOccupant.room_booking_id,
+        ).filter(
+            RoomBookingOccupant.athlete_id.in_(athlete_ids),
+        ).order_by(RoomBookingOccupant.id).all()
+    for athlete_id, counts_as_single in membership_rows:
+        booking_by_athlete.setdefault(athlete_id, bool(counts_as_single))
+
     # The persisted assignment flag is the sole source of truth for operational
     # quota usage. The physical room type and import entitlement stay unchanged.
     assigned = []
     for athlete in athletes:
         if (athlete.function or '').strip().lower() == 'athlete':
             continue
-        membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
-        if not membership or not membership.room_booking:
+        if athlete.id not in booking_by_athlete:
             continue
         assigned.append({'nationCode': athlete.nation_code, 'discipline': athlete.discipline,
             'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
-            'countsAsSingle': bool(membership.room_booking.counts_as_single)})
+            'countsAsSingle': booking_by_athlete[athlete.id]})
     rows = evaluate_quota_usage(roster, assigned)
     approved_by_key = {}
     implemented_by_key = {}
@@ -1511,21 +1545,23 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
             key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
             approved_by_key[key] = approved_by_key.get(key, 0) + 1
-        if athlete.single_room_entitlement:
-            membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
-            booking = membership.room_booking if membership else None
-            if booking and booking.counts_as_single:
-                key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
-                implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
+        if athlete.single_room_entitlement and booking_by_athlete.get(athlete.id, False):
+            key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
+            implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
     approval_state = {}
-    for session in ImportSession.query.all():
-        for approval in session.approvals:
-            details = json.loads(approval.quota_details_json or '{}')
-            key = (details.get('nationCode') or session.nation or '',
-                   details.get('discipline') or session.discipline or '',
-                   details.get('gender') or '')
-            state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
-            state['approved' if approval.decision == 'APPROVED' else 'pending'] += 1
+    approval_rows = db.session.query(
+        ImportApproval.quota_details_json,
+        ImportApproval.decision,
+        ImportSession.nation,
+        ImportSession.discipline,
+    ).join(ImportSession, ImportSession.id == ImportApproval.session_id).all()
+    for details_json, decision, session_nation, session_discipline in approval_rows:
+        details = json.loads(details_json or '{}')
+        key = (details.get('nationCode') or session_nation or '',
+               details.get('discipline') or session_discipline or '',
+               details.get('gender') or '')
+        state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
+        state['approved' if decision == 'APPROVED' else 'pending'] += 1
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
         row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
@@ -2777,7 +2813,7 @@ def update_assigned_unit(booking_id):
     # assignment changes continue to derive the flag from occupancy and status.
     manual_single_override = set(data) == {'countsAsSingle'}
     booking = _save_booking_from_payload(payload, existing_booking=booking, manual_single_override=manual_single_override)
-    return jsonify(booking.to_dict())
+    return _assignment_jsonify(booking.to_dict())
 
 
 @app.route('/api/assignments/bookings/<int:booking_id>/unassign', methods=['POST'])
@@ -2788,7 +2824,7 @@ def unassign_room_booking_unit(booking_id):
     _acknowledge_import_changes(_collect_booking_athlete_ids(booking))
     db.session.delete(booking)
     db.session.commit()
-    return jsonify({'success': True, 'bookingId': str(booking_id)})
+    return _assignment_jsonify({'success': True, 'bookingId': str(booking_id)})
 
 
 @app.route('/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign', methods=['POST'])
@@ -2798,7 +2834,7 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     booking = RoomBooking.query.get_or_404(booking_id)
     membership = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id, athlete_id=athlete_id).first()
     if not membership:
-        return jsonify({'error': 'Not found', 'message': 'Occupant is not part of the booking'}), 404
+        return _assignment_jsonify({'error': 'Not found', 'message': 'Occupant is not part of the booking'}), 404
 
     _acknowledge_import_changes([athlete_id])
     db.session.delete(membership)
@@ -2809,7 +2845,7 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     else:
         _sync_quota_evaluation(booking)
     db.session.commit()
-    return jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
+    return _assignment_jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
 
 
 @app.route('/api/debug/routes', methods=['GET'])
@@ -2833,19 +2869,21 @@ def get_debug_routes():
 @app.route('/api/room-assignments/', methods=['POST'])
 @app.route('/room-assignments', methods=['POST'])
 @app.route('/room-assignments/', methods=['POST'])
+@_measure_assignment_logic
 def create_room_assignment():
     data = request.json
     payload, _, error = _validate_booking_payload(data)
     if error:
         return error
     booking = _save_booking_from_payload(payload)
-    return jsonify(booking.to_dict()), 201
+    return _assignment_jsonify(booking.to_dict()), 201
 
 
 @app.route('/api/room-assignments/<int:assignment_id>', methods=['PUT'])
 @app.route('/api/room-assignments/<int:assignment_id>/', methods=['PUT'])
 @app.route('/room-assignments/<int:assignment_id>', methods=['PUT'])
 @app.route('/room-assignments/<int:assignment_id>/', methods=['PUT'])
+@_measure_assignment_logic
 def update_room_assignment(assignment_id):
     booking = RoomBooking.query.get_or_404(assignment_id)
     data = request.json
@@ -2853,13 +2891,14 @@ def update_room_assignment(assignment_id):
     if error:
         return error
     booking = _save_booking_from_payload(payload, existing_booking=booking)
-    return jsonify(booking.to_dict())
+    return _assignment_jsonify(booking.to_dict())
 
 
 @app.route('/api/room-assignments/<int:assignment_id>', methods=['DELETE'])
 @app.route('/api/room-assignments/<int:assignment_id>/', methods=['DELETE'])
 @app.route('/room-assignments/<int:assignment_id>', methods=['DELETE'])
 @app.route('/room-assignments/<int:assignment_id>/', methods=['DELETE'])
+@_measure_assignment_logic
 def delete_room_assignment(assignment_id):
     booking = RoomBooking.query.get_or_404(assignment_id)
     db.session.delete(booking)

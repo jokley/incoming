@@ -66,10 +66,22 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             warnings = build_quota_warnings([self.person(person) for person in roster], [])
             self.assertEqual({warning['code'] for warning in warnings}, {
                 'QUOTA_OFFICIALS_EXCEEDED', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
-            live = app.test_client().get('/api/fis/official-quotas').get_json()[0]
+            response = app.test_client().get('/api/fis/official-quotas')
+            live = response.get_json()[0]
             self.assertEqual((live['assignedOfficials'], live['officialQuota']), (4, 3))
             self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (2, 1))
             self.assertEqual(live['approvedExtraSingleRooms'], 1)
+            self.assertEqual(live, {
+                'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'F',
+                'athletesEntered': 1, 'officialQuota': 3,
+                'singleRoomsAllowed': 1, 'assignedOfficials': 4,
+                'singleRoomsUsed': 2, 'approvedExtraSingleRooms': 1,
+                'requiredSingleRooms': 2, 'implementedSingleRooms': 2,
+                'remainingSingleRooms': 0, 'openApprovals': 0,
+                'approvedExceptions': 0, 'quotaStatus': 'FULFILLED',
+            })
+            self.assertLessEqual(
+                int(response.headers['X-Assignment-Query-Count']), 3)
 
     def test_changed_stay_reports_existing_booking_hotel_and_partner(self):
         with app.app_context():

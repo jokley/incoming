@@ -1,35 +1,108 @@
+import type { ProfilerOnRenderCallback } from 'react';
+
+type ComponentMeasurement = {
+  commits: number;
+  renderMs: number;
+  commitLatencyMs: number;
+};
+
 export type AssignmentPerformanceDetail = {
   operationId: string;
-  endpoint?: string;
-  dropToRequestMs?: number;
-  apiMs?: number;
-  renderMs?: number;
-  renderCount?: number;
-  requestCount?: number;
+  endpoint: string;
+  method: string;
+  totalMs?: number;
+  timeToHeadersMs?: number;
+  bodyReadMs?: number;
+  jsonParseMs?: number;
   responseBytes?: number;
-  components?: string[];
+  queryCount?: number;
   server?: Record<string, number>;
+  components: Record<string, ComponentMeasurement>;
+  domNodesBefore: number;
+  domNodesAfter?: number;
+  heapBytesBefore?: number;
+  heapBytesAfter?: number;
+  longTaskCount: number;
+  longTaskMs: number;
+  dropToRequestMs?: number;
 };
+
+type BrowserPerformanceMemory = Performance & {
+  memory?: { usedJSHeapSize?: number };
+};
+
+type RequestTimings = {
+  timeToHeadersMs: number;
+  bodyReadMs: number;
+  jsonParseMs: number;
+  responseBytes: number;
+};
+
+// Temporary Sprint-1 diagnostics. Set VITE_ASSIGNMENT_PERFORMANCE=false to
+// disable all browser observers, Profiler callbacks and console reporting.
+export const assignmentPerformanceEnabled =
+  import.meta.env.VITE_ASSIGNMENT_PERFORMANCE !== 'false';
 
 const active = new Map<string, AssignmentPerformanceDetail>();
 let lastDropAt = 0;
+let longTaskObserver: PerformanceObserver | null = null;
 
-export function markAssignmentDrop() {
-  lastDropAt = performance.now();
+function heapBytes() {
+  return (performance as BrowserPerformanceMemory).memory?.usedJSHeapSize;
 }
 
-export function startAssignmentMeasurement(endpoint: string) {
+function domNodes() {
+  return document.getElementsByTagName('*').length;
+}
+
+function ensureLongTaskObserver() {
+  if (longTaskObserver || !('PerformanceObserver' in window)) return;
+  try {
+    longTaskObserver = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        for (const detail of active.values()) {
+          detail.longTaskCount += 1;
+          detail.longTaskMs += entry.duration;
+        }
+      }
+    });
+    longTaskObserver.observe({ type: 'longtask', buffered: false });
+  } catch {
+    // The Long Tasks API is optional (notably unavailable in Firefox/Safari).
+    longTaskObserver = null;
+  }
+}
+
+export function markAssignmentDrop() {
+  if (assignmentPerformanceEnabled) lastDropAt = performance.now();
+}
+
+export function isMeasuredAssignmentRequest(endpoint: string) {
+  return assignmentPerformanceEnabled && (
+    endpoint.startsWith('/assignments/')
+    || endpoint.startsWith('/fis/official-quotas')
+    || endpoint.startsWith('/official-quotas')
+    || endpoint.startsWith('/room-assignments')
+  );
+}
+
+export function startAssignmentMeasurement(endpoint: string, method: string) {
+  if (!assignmentPerformanceEnabled) return null;
+  ensureLongTaskObserver();
   const operationId = crypto.randomUUID();
-  const detail: AssignmentPerformanceDetail = {
+  const startedAt = performance.now();
+  active.set(operationId, {
     operationId,
     endpoint,
-    dropToRequestMs: lastDropAt ? performance.now() - lastDropAt : 0,
-    requestCount: 1,
-    renderCount: 0,
-    components: [],
-  };
-  active.set(operationId, detail);
-  return { operationId, startedAt: performance.now() };
+    method,
+    components: {},
+    domNodesBefore: domNodes(),
+    heapBytesBefore: heapBytes(),
+    longTaskCount: 0,
+    longTaskMs: 0,
+    dropToRequestMs: lastDropAt ? startedAt - lastDropAt : undefined,
+  });
+  return { operationId, startedAt };
 }
 
 function parseServerTiming(value: string | null) {
@@ -42,44 +115,76 @@ function parseServerTiming(value: string | null) {
   return result;
 }
 
+function numericHeader(response: Response, name: string) {
+  const value = response.headers.get(name);
+  return value === null ? undefined : Number(value);
+}
+
 export function finishAssignmentRequest(
   operationId: string,
   startedAt: number,
   response: Response,
-  responseBytes: number,
+  timings: RequestTimings,
 ) {
   const detail = active.get(operationId);
   if (!detail) return;
-  detail.apiMs = performance.now() - startedAt;
-  detail.responseBytes = responseBytes;
+  detail.totalMs = performance.now() - startedAt;
+  detail.timeToHeadersMs = timings.timeToHeadersMs;
+  detail.bodyReadMs = timings.bodyReadMs;
+  detail.jsonParseMs = timings.jsonParseMs;
+  detail.responseBytes = timings.responseBytes;
   detail.server = parseServerTiming(response.headers.get('server-timing'));
+  detail.queryCount = numericHeader(response, 'x-assignment-query-count');
+
+  // State updates happen after the request promise resolves. Two frames retain the
+  // measurement through React render/commit and the browser's DOM update.
   requestAnimationFrame(() => requestAnimationFrame(() => {
-    detail.renderMs = performance.now() - startedAt - (detail.apiMs ?? 0);
-    console.groupCollapsed(`[Assignment Performance] ${detail.endpoint}`);
+    detail.domNodesAfter = domNodes();
+    detail.heapBytesAfter = heapBytes();
+    console.groupCollapsed(`[Assignment Performance] ${detail.method} ${detail.endpoint}`);
     console.table({
-      API: detail.apiMs,
-      DB: detail.server?.db,
-      Quota: detail.server?.quota,
-      Zimmerberechnung: detail.server?.rooms,
-      Assignment: detail.server?.assignment,
-      Serialisierung: detail.server?.serialization,
-      'Frontend Render': detail.renderMs,
-      'Drop bis Request': detail.dropToRequestMs,
-      Requests: detail.requestCount,
-      'Response Bytes': detail.responseBytes,
-      'React Re-Renders': detail.renderCount,
+      'Client total': detail.totalMs,
+      'Time to headers': detail.timeToHeadersMs,
+      'Body read / network': detail.bodyReadMs,
+      'JSON parse': detail.jsonParseMs,
+      'Server total': detail.server?.api,
+      'Database': detail.server?.db,
+      'Serialization': detail.server?.serialization,
+      'Assignment logic': detail.server?.assignment,
+      'Room projection': detail.server?.rooms,
+      'Quota calculation': detail.server?.quota,
+      'SQL queries': detail.queryCount,
+      'Payload bytes': detail.responseBytes,
+      'DOM nodes before': detail.domNodesBefore,
+      'DOM nodes after': detail.domNodesAfter,
+      'Heap bytes before': detail.heapBytesBefore,
+      'Heap bytes after': detail.heapBytesAfter,
+      'Long tasks': detail.longTaskCount,
+      'Long task ms': detail.longTaskMs,
+      'Drop to request': detail.dropToRequestMs,
     });
-    console.info('Neu gerenderte Komponenten:', detail.components);
+    console.table(detail.components);
+    console.info('Raw measurement:', { ...detail });
     console.groupEnd();
     window.dispatchEvent(new CustomEvent('assignment:performance', { detail: { ...detail } }));
     active.delete(operationId);
   }));
 }
 
-export function recordAssignmentRender(component: string, duration: number) {
+export const recordAssignmentRender: ProfilerOnRenderCallback = (
+  id,
+  _phase,
+  actualDuration,
+  _baseDuration,
+  startTime,
+  commitTime,
+) => {
+  if (!assignmentPerformanceEnabled) return;
   for (const detail of active.values()) {
-    detail.renderCount = (detail.renderCount ?? 0) + 1;
-    detail.renderMs = (detail.renderMs ?? 0) + duration;
-    if (!detail.components?.includes(component)) detail.components?.push(component);
+    const component = detail.components[id] ?? { commits: 0, renderMs: 0, commitLatencyMs: 0 };
+    component.commits += 1;
+    component.renderMs += actualDuration;
+    component.commitLatencyMs += Math.max(0, commitTime - startTime);
+    detail.components[id] = component;
   }
-}
+};
