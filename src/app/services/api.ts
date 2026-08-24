@@ -36,6 +36,14 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
 // USE MOCK DATA - Set to true for offline testing
 const USE_MOCK_DATA = false;
 
+export interface SimulationSummary {
+  peopleCreated: number;
+  hotelsUsed: number;
+  roomAssignmentsCreated: number;
+  peopleUnassigned: number;
+  durationMs: number;
+}
+
 // Create mutable copies of mock data that persist within the session
 let mockRoomTypes = [...initialRoomTypes];
 let mockHotels = initialHotels.map(h => ({
@@ -138,6 +146,14 @@ class ApiService {
     const response = await fetch(`${API_BASE_URL}/admin/scenarios/complete/generate`, { method: 'POST' });
     if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Kompletter Testordner konnte nicht generiert werden.');
     await downloadResponse(response, 'Kompletter_Testordner.zip');
+  }
+
+  async createSimulation(): Promise<SimulationSummary> {
+    return this.request<SimulationSummary>('/admin/simulation', { method: 'POST' });
+  }
+
+  async deleteSimulation(): Promise<{ deleted: { people: number; roomAssignments: number } }> {
+    return this.request('/admin/simulation', { method: 'DELETE' });
   }
 
   async getDatabaseStatus(): Promise<DatabaseStatus> { return this.request('/admin/database/status'); }
