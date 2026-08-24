@@ -276,20 +276,37 @@ def _delete_simulation_data():
 def create_simulation():
     """Replace the owned simulation data set and exercise production booking validation."""
     started = time.perf_counter()
+    timings = {}
     try:
+        step_started = time.perf_counter()
         deleted = _delete_simulation_data()
+        timings['Delete simulation'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
         people = [Athlete(**values) for values in build_people(DEFAULT_PERSON_COUNT)]
         db.session.add_all(people)
-        db.session.flush()
+        timings['Generate people'] = (time.perf_counter() - step_started) * 1000
 
+        step_started = time.perf_counter()
+        db.session.flush()
+        timings['Flush'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
         inventories = HotelRoomInventory.query.options(
             db.joinedload(HotelRoomInventory.room_type)).order_by(
                 HotelRoomInventory.hotel_id, HotelRoomInventory.room_type_id,
                 HotelRoomInventory.available_from, HotelRoomInventory.id).all()
+        timings['Load inventory'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        assignment_units = build_assignment_units(people)
+        timings['Build assignment units'] = (time.perf_counter() - step_started) * 1000
+
         assignments = 0
         assigned_people = 0
         hotel_ids = set()
-        for unit_index, unit in enumerate(build_assignment_units(people), start=1):
+        step_started = time.perf_counter()
+        for unit_index, unit in enumerate(assignment_units, start=1):
             candidates = sorted(inventories, key=lambda item: (
                 item.room_type.max_persons != len(unit), item.room_type.max_persons,
                 item.hotel_id, item.room_type_id, item.id))
@@ -311,18 +328,29 @@ def create_simulation():
                 assigned_people += len(unit)
                 hotel_ids.add(inventory.hotel_id)
                 break
+        timings['Assignments'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
         db.session.commit()
+        timings['Commit'] = (time.perf_counter() - step_started) * 1000
     except Exception:
         db.session.rollback()
         app.logger.exception('Simulation generation failed')
         return jsonify({'error': 'SIMULATION_FAILED',
                         'message': 'Simulation konnte nicht sicher erzeugt werden'}), 500
+    total_duration_ms = (time.perf_counter() - started) * 1000
+    timings['Total'] = total_duration_ms
+    app.logger.info(
+        'simulation_generation_performance\n%s',
+        '\n'.join(f'{label + ":":<28}{duration:>12,.0f} ms'
+                  for label, duration in timings.items()),
+    )
     return jsonify({
         'peopleCreated': len(people),
         'hotelsUsed': len(hotel_ids),
         'roomAssignmentsCreated': assignments,
         'peopleUnassigned': len(people) - assigned_people,
-        'durationMs': round((time.perf_counter() - started) * 1000),
+        'durationMs': round(total_duration_ms),
         'replaced': deleted,
     }), 201
 
