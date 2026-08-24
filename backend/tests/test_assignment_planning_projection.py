@@ -68,6 +68,39 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.get_json()
 
+    def test_slim_planning_defers_validations_without_changing_results(self):
+        with app.app_context():
+            db.session.add(self.athlete('Mia', 'Berger'))
+            db.session.commit()
+
+        client = app.test_client()
+        full_response = client.get('/api/assignments/planning-view')
+        slim_response = client.get(
+            '/api/assignments/planning-view?includeValidations=false')
+        self.assertEqual(full_response.status_code, 200)
+        self.assertEqual(slim_response.status_code, 200)
+
+        full = full_response.get_json()
+        slim = slim_response.get_json()
+        self.assertEqual(slim['timeline'], full['timeline'])
+        self.assertEqual(slim['units'], full['units'])
+        self.assertEqual(slim['hotels'], full['hotels'])
+        self.assertEqual(slim['validationByUnit'], {})
+        self.assertLess(len(slim_response.data), len(full_response.data))
+
+        for validation_key, expected in full['validationByUnit'].items():
+            targeted = client.get(
+                f'/api/assignments/planning-view/validations/{validation_key}')
+            self.assertEqual(targeted.status_code, 200)
+            self.assertEqual(targeted.get_json(), {
+                'validationKey': validation_key,
+                'validations': expected,
+            })
+
+        missing = client.get(
+            '/api/assignments/planning-view/validations/missing-unit')
+        self.assertEqual(missing.status_code, 404)
+
     def test_new_athletes_and_nations_appear_without_persisted_units_or_rebuild(self):
         with app.app_context():
             db.session.add(self.athlete('Mia', 'Berger'))
