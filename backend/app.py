@@ -22,6 +22,7 @@ from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
+from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
 from config import RuntimeSettings
 from logging_config import configure_logging
 from database_admin import database_admin
@@ -238,6 +239,177 @@ def download_complete_scenarios():
     memory_file.seek(0)
     return send_file(memory_file, mimetype='application/zip', as_attachment=True,
                      download_name='Kompletter_Testordner.zip')
+
+
+def _delete_simulation_data():
+    """Delete only explicitly owned rows and return auditable row counts."""
+    booking_ids = [row[0] for row in db.session.query(RoomBooking.id).filter_by(
+        created_by=SIMULATION_OWNER).all()]
+    athlete_ids = [row[0] for row in db.session.query(Athlete.id).filter_by(
+        created_by=SIMULATION_OWNER).all()]
+    counts = {'roomAssignments': 0, 'people': 0}
+    if booking_ids:
+        counts['roomAssignmentOccupants'] = RoomBookingOccupant.query.filter(
+            RoomBookingOccupant.room_booking_id.in_(booking_ids)).delete(synchronize_session=False)
+        counts['roomAssignments'] = RoomBooking.query.filter(
+            RoomBooking.id.in_(booking_ids)).delete(synchronize_session=False)
+    if athlete_ids:
+        # Defensive cleanup for simulation people manually assigned after a run.
+        extra_memberships = RoomBookingOccupant.query.filter(
+            RoomBookingOccupant.athlete_id.in_(athlete_ids)).all()
+        extra_booking_ids = {membership.room_booking_id for membership in extra_memberships}
+        for membership in extra_memberships:
+            db.session.delete(membership)
+        db.session.flush()
+        for booking_id in extra_booking_ids:
+            if not RoomBookingOccupant.query.filter_by(room_booking_id=booking_id).first():
+                booking = db.session.get(RoomBooking, booking_id)
+                if booking:
+                    db.session.delete(booking)
+                    counts['roomAssignments'] += 1
+        counts['people'] = Athlete.query.filter(Athlete.id.in_(athlete_ids)).delete(
+            synchronize_session=False)
+    return counts
+
+
+@app.route('/api/admin/simulation', methods=['POST'])
+def create_simulation():
+    """Replace the owned data set and persist its bookings directly through the ORM."""
+    started = time.perf_counter()
+    timings = {}
+    try:
+        step_started = time.perf_counter()
+        deleted = _delete_simulation_data()
+        timings['Delete simulation'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        people = [Athlete(**values) for values in build_people(DEFAULT_PERSON_COUNT)]
+        db.session.add_all(people)
+        timings['Generate people'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        db.session.flush()
+        timings['Flush'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        inventories = HotelRoomInventory.query.options(
+            db.joinedload(HotelRoomInventory.room_type)).order_by(
+                HotelRoomInventory.hotel_id, HotelRoomInventory.room_type_id,
+                HotelRoomInventory.available_from, HotelRoomInventory.id).all()
+        existing_bookings = RoomBooking.query.with_entities(
+            RoomBooking.hotel_id, RoomBooking.room_type_id,
+            RoomBooking.check_in_date, RoomBooking.check_out_date,
+        ).filter(
+            RoomBooking.check_in_date.isnot(None),
+            RoomBooking.check_out_date.isnot(None),
+        ).all()
+        timings['Load inventory'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        assignment_units = build_assignment_units(people)
+        timings['Build assignment units'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        assignments = 0
+        assigned_people = 0
+        hotel_ids = set()
+        bookings_by_slot = {}
+        for hotel_id, room_type_id, check_in_date, check_out_date in existing_bookings:
+            bookings_by_slot.setdefault((hotel_id, room_type_id), []).append(
+                (check_in_date, check_out_date))
+        candidate_slots = []
+        seen_slots = set()
+        for inventory in sorted(inventories, key=lambda item: (
+                item.room_type.max_persons, item.hotel_id, item.room_type_id, item.id)):
+            slot_key = (inventory.hotel_id, inventory.room_type_id)
+            if slot_key not in seen_slots:
+                seen_slots.add(slot_key)
+                candidate_slots.append(inventory)
+        for unit_index, unit in enumerate(assignment_units, start=1):
+            candidates = sorted(candidate_slots, key=lambda item: (
+                item.room_type.max_persons != len(unit), item.room_type.max_persons,
+                item.hotel_id, item.room_type_id))
+            for inventory in candidates:
+                if inventory.room_type.max_persons < len(unit):
+                    continue
+                check_in_date = unit[0].arrival_date
+                check_out_date = unit[0].departure_date
+                inventory_rooms = sum(
+                    item.room_count for item in inventories
+                    if item.hotel_id == inventory.hotel_id
+                    and item.room_type_id == inventory.room_type_id
+                    and item.available_from <= check_in_date
+                    and item.available_until >= check_out_date
+                )
+                if inventory_rooms <= 0:
+                    continue
+                slot_bookings = bookings_by_slot.setdefault(
+                    (inventory.hotel_id, inventory.room_type_id), [])
+                used_rooms = sum(
+                    existing_start <= check_out_date and existing_end >= check_in_date
+                    for existing_start, existing_end in slot_bookings
+                )
+                if used_rooms >= inventory_rooms:
+                    continue
+                counts_as_single = (
+                    inventory.room_type.max_persons == 1
+                    or (inventory.room_type.max_persons == 2 and len(unit) == 1
+                        and unit[0].single_room_status in {'IN_QUOTA', 'APPROVED_EXTRA'})
+                )
+                booking = RoomBooking(
+                    created_by=SIMULATION_OWNER,
+                    hotel_id=inventory.hotel_id,
+                    room_type_id=inventory.room_type_id,
+                    room_number=f'SIM-{unit_index:04d}',
+                    check_in_date=check_in_date,
+                    check_out_date=check_out_date,
+                    counts_as_single=counts_as_single,
+                    occupants=[RoomBookingOccupant(athlete_id=person.id) for person in unit],
+                )
+                db.session.add(booking)
+                slot_bookings.append((check_in_date, check_out_date))
+                assignments += 1
+                assigned_people += len(unit)
+                hotel_ids.add(inventory.hotel_id)
+                break
+        timings['Assignments'] = (time.perf_counter() - step_started) * 1000
+
+        step_started = time.perf_counter()
+        db.session.commit()
+        timings['Commit'] = (time.perf_counter() - step_started) * 1000
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Simulation generation failed')
+        return jsonify({'error': 'SIMULATION_FAILED',
+                        'message': 'Simulation konnte nicht sicher erzeugt werden'}), 500
+    total_duration_ms = (time.perf_counter() - started) * 1000
+    timings['Total'] = total_duration_ms
+    app.logger.info(
+        'simulation_generation_performance\n%s',
+        '\n'.join(f'{label + ":":<28}{duration:>12,.0f} ms'
+                  for label, duration in timings.items()),
+    )
+    return jsonify({
+        'peopleCreated': len(people),
+        'hotelsUsed': len(hotel_ids),
+        'roomAssignmentsCreated': assignments,
+        'peopleUnassigned': len(people) - assigned_people,
+        'durationMs': round(total_duration_ms),
+        'replaced': deleted,
+    }), 201
+
+
+@app.route('/api/admin/simulation', methods=['DELETE'])
+def delete_simulation():
+    try:
+        deleted = _delete_simulation_data()
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Simulation deletion failed')
+        return jsonify({'error': 'SIMULATION_DELETE_FAILED',
+                        'message': 'Simulation konnte nicht sicher gelöscht werden'}), 500
+    return jsonify({'deleted': deleted})
 
 
 @app.before_request
