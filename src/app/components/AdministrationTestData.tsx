@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Check, Database, Download } from 'lucide-react';
+import { AlertTriangle, Check, Database } from 'lucide-react';
 import { Dialog, DialogContent } from './ui/dialog';
 import { ContentCard, DialogFooter, DialogHeader, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { api } from '../services/api';
@@ -8,17 +8,16 @@ type Scope = 'activities' | 'imports' | 'athletes' | 'assignments' | 'all';
 const preserved = ['Hotels', 'Hotelkontingente', 'Zimmertypen', 'Events', 'Nationen', 'Benutzer', 'Rollen', 'Systemeinstellungen'];
 const actions: Array<{ scope: Scope; title: string; description: string; deletes: string[] }> = [
   { scope: 'activities', title: 'Aktivitäten zurücksetzen', description: 'Löscht ausschließlich die systemweiten Aktivitäten und Verlaufsdaten.', deletes: ['Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse'] },
-  { scope: 'imports', title: 'Imports', description: 'Entfernt alle Imports und deren Verlauf.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'] },
-  { scope: 'athletes', title: 'Athleten', description: 'Entfernt alle importierten Athleten und Officials.', deletes: ['Athleten', 'Zimmerpartner', 'Prüfmarkierungen', 'Zimmerbelegungen'] },
-  { scope: 'assignments', title: 'Zuweisungen', description: 'Entfernt alle Zimmerzuweisungen.', deletes: ['Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'] },
-  { scope: 'all', title: 'Alles zurücksetzen', description: 'Stellt den Ausgangszustand für alle Testdaten wieder her.', deletes: ['Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse', 'Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen', 'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus', 'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'] },
+  { scope: 'imports', title: 'Imports zurücksetzen', description: 'Entfernt alle Imports und deren Verlauf.', deletes: ['Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'] },
+  { scope: 'athletes', title: 'Athleten zurücksetzen', description: 'Entfernt alle importierten Athleten und Officials.', deletes: ['Athleten', 'Zimmerpartner', 'Prüfmarkierungen', 'Zimmerbelegungen'] },
+  { scope: 'assignments', title: 'Zuweisungen zurücksetzen', description: 'Entfernt alle Zimmerzuweisungen.', deletes: ['Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'] },
+  { scope: 'all', title: 'Alles zurücksetzen', description: 'Stellt den Ausgangszustand der verwalteten Daten wieder her.', deletes: ['Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse', 'Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen', 'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus', 'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'] },
 ];
 
 export function AdministrationTestData({ embedded = false }: { embedded?: boolean }) {
   const [selected, setSelected] = useState<(typeof actions)[number] | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ tone: 'success' | 'error'; text: string } | null>(null);
-  const [generating, setGenerating] = useState(false);
   useEffect(() => {
     const resetMessage = sessionStorage.getItem('admin-reset-success');
     if (resetMessage) {
@@ -26,15 +25,6 @@ export function AdministrationTestData({ embedded = false }: { embedded?: boolea
       setMessage({ tone: 'success', text: resetMessage });
     }
   }, []);
-  const generateComplete = async () => {
-    setGenerating(true); setMessage(null);
-    try {
-      await api.generateCompleteScenarios();
-      setMessage({ tone: 'success', text: 'Der komplette Testordner wurde erzeugt und heruntergeladen.' });
-    } catch (error) {
-      setMessage({ tone: 'error', text: error instanceof Error ? error.message : 'Generierung fehlgeschlagen.' });
-    } finally { setGenerating(false); }
-  };
   const reset = async () => {
     if (!selected) return;
     setSaving(true); setMessage(null);
@@ -58,14 +48,6 @@ export function AdministrationTestData({ embedded = false }: { embedded?: boolea
         <h3 className="mt-4 font-bold text-[var(--ops-text)]">{action.title}</h3><p className="mt-2 flex-1 text-sm text-[var(--ops-text-muted)]">{action.description}</p>
         <OpsButton className={`mt-5 font-bold text-[var(--ops-on-accent)] shadow-md ${action.scope === 'all' ? 'border-red-400 bg-red-700 hover:bg-red-600' : 'border-[var(--ops-primary)] bg-[var(--ops-primary)] hover:bg-[var(--ops-primary-emphasis)]'}`} onClick={() => setSelected(action)}>{action.title}</OpsButton>
       </ContentCard>)}</div>
-    </ContentCard>
-    <ContentCard className="p-5">
-      <SectionHeader title="Regressionstest-Kette" subtitle="Alle neun chronologisch aufeinander aufbauenden FIS-Dateipaare in einem Download" />
-      <div className="mt-5 flex items-center justify-between gap-4 rounded-xl border border-[var(--ops-primary)] bg-[var(--ops-surface-elevated)] p-4">
-        <div><h3 className="font-bold">Kompletten Testordner generieren</h3><p className="text-sm text-[var(--ops-text-muted)]">Ein ZIP-Archiv mit allen Excel-Dateien in einem flachen Ordner.</p></div>
-        <OpsButton disabled={generating} onClick={generateComplete}><Download className="mr-2 h-4 w-4" />{generating ? 'Wird generiert …' : 'Kompletten Testordner generieren'}</OpsButton>
-      </div>
-      <p className="mt-4 text-xs text-[var(--ops-text-subtle)]">Das Archiv enthält je Szenario <strong>entries.xlsx</strong> und <strong>room_list.xlsx</strong> sowie eine gemeinsame <strong>expected.json</strong>.</p>
     </ContentCard>
     <Dialog open={Boolean(selected)} onOpenChange={open => !open && !saving && setSelected(null)}><DialogContent className="max-w-3xl overflow-hidden border-[var(--ops-border-strong)] bg-[var(--ops-surface-raised)] p-0 text-[var(--ops-text)] shadow-2xl">
       {selected && <><DialogHeader title={selected.title} subtitle="Diese Aktion kann nicht rückgängig gemacht werden." /><div className="max-h-[65vh] overflow-y-auto p-5">
