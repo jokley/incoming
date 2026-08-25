@@ -12,14 +12,15 @@ Beide operativen Hotelansichten verwenden dieselbe, bewusst kompakte Filterfolge
 2. **Alle**
 3. **< 75 %**
 4. **≥ 75 %**
-5. **> 90 %**
-6. **Voll**
-7. **Freie EZ**
-8. **Freie DZ**
+5. **Voll**
+6. **Freie EZ**
+7. **Freie DZ**
 
 `Handlungsbedarf` umfasst Hotels ohne Kapazität, Hotels ab 75 % Auslastung und Hotels mit höchstens zwei freien Kapazitätseinheiten. Dadurch bündelt die Standardsicht nur Zustände, die eine Prüfung oder baldige Entscheidung erfordern. Weitere Filter wurden nicht ergänzt: Region, Suche sowie die bestehenden Ausstattungsfilter erfüllen eigene konkrete Aufgaben; zusätzliche interessante Merkmale würden die Auswahl nur verlängern.
 
-Die Prioritätssortierung lautet: fehlendes Kontingent, voll, über 90 % beziehungsweise höchstens zwei Einheiten frei, ab 75 %, übrige Hotels. Innerhalb einer Stufe wird alphabetisch sortiert. Fehlende Kontingente stehen vor vollen Hotels, weil sie eine Zuweisung vollständig verhindern und zunächst geklärt werden müssen. Bei Filterkombinationen ohne Treffer bleiben die Filter erreichbar, damit der Disponent die Sicht direkt korrigieren kann.
+Der Filter **> 90 %** wurde entfernt, weil er keine zusätzliche operative Entscheidung ermöglicht: Diese Hotels gehören bereits zur Sicht **≥ 75 %** und stehen durch die Standardsortierung unmittelbar hinter den vollständig belegten Hotels. Damit bleiben die drei entscheidenden Kapazitätszustände – ausreichend Reserve, wenig Reserve und voll – vollständig sichtbar, während eine konkurrierende Auswahl entfällt.
+
+Die Standardsortierung lautet: voll belegte Hotels, Hotels ab 75 % und anschließend Hotels unter 75 %. Innerhalb der beiden Auslastungsgruppen wird absteigend nach Auslastung sortiert; bei gleicher Auslastung alphabetisch. So stehen drohende Engpässe automatisch oben, ohne dafür einen eigenen Filter zu benötigen. Bei Filterkombinationen ohne Treffer bleiben die Filter erreichbar, damit der Disponent die Sicht direkt korrigieren kann.
 
 ## Umsetzung
 
@@ -34,7 +35,7 @@ Die Prioritätssortierung lautet: fehlendes Kontingent, voll, über 90 % beziehu
 - Dieselben Begriffe und dieselbe Reihenfolge reduzieren den Orientierungswechsel zwischen Hotels und Zuweisungen.
 - Kritische beziehungsweise nicht nutzbare Hotels erscheinen automatisch zuerst.
 - Freie EZ und DZ lassen sich unmittelbar für neue Zuweisungen finden.
-- Eindeutige, nicht überlappungsfrei behauptete Grenzzeichen vermeiden Fehlinterpretationen bei exakt 75 % und 90 %.
+- Die Reduktion auf zwei Auslastungsbänder vermeidet eine fachlich redundante Auswahl und verkürzt die visuelle Prüfung.
 - Eine leere Ergebnismenge ist kein Workflow-Ende mehr, weil die Filter weiterhin bedienbar bleiben.
 
 ## Gemeinsame Komponenten und automatisch profitierende Seiten
