@@ -2363,7 +2363,13 @@ def delete_room_type(room_type_id):
 @app.route('/hotels', methods=['GET'])
 @app.route('/hotels/', methods=['GET'])
 def get_hotels():
-    hotels = Hotel.query.all()
+    # This collection is a shared read model used by Dashboard, Hotels, Lists
+    # and Analytics.  Load the complete projection in a fixed number of queries
+    # instead of lazily issuing one inventory query per hotel (and potentially
+    # one room-type query per inventory).
+    hotels = Hotel.query.options(
+        db.selectinload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)
+    ).all()
     return jsonify([h.to_dict() for h in hotels])
 
 
@@ -2493,7 +2499,9 @@ def delete_hotel_inventory(hotel_id, inventory_id):
 # Events - CRUD
 @app.route('/api/events', methods=['GET'])
 def get_events():
-    events = Event.query.all()
+    events = Event.query.options(
+        db.selectinload(Event.room_demands).joinedload(EventRoomDemand.room_type)
+    ).all()
     return jsonify([e.to_dict() for e in events])
 
 
@@ -2565,7 +2573,13 @@ def get_athletes():
     latest_athletes_at = latest_athletes_run.started_at if latest_athletes_run else None
     latest_roomlist_at = latest_roomlist_run.started_at if latest_roomlist_run else None
 
-    booking_rows = RoomBookingOccupant.query.join(RoomBooking).all()
+    # Assignment summaries belong to the athlete read model.  Eager-loading
+    # keeps their query count constant as the number of people and rooms grows.
+    booking_rows = RoomBookingOccupant.query.options(
+        db.joinedload(RoomBookingOccupant.athlete),
+        db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.hotel),
+        db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type),
+    ).all()
     assignment_map = {}
     for occupant in booking_rows:
         booking = occupant.room_booking
