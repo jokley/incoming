@@ -20,6 +20,7 @@ import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomBooking, RoomT
 import {
   ContentCard,
   DataPanel,
+  MetricCard,
   SectionHeader,
   StatusChip,
 } from '../design-system';
@@ -58,10 +59,6 @@ const toneAccent: Record<Tone, string> = {
 
 function IconTile({ icon, tone = 'neutral' }: { icon: ReactNode; tone?: Tone }) {
   return <span className={`inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)] ${toneAccent[tone]}`}>{icon}</span>;
-}
-
-function KpiCard({ label, value, helper, trend, tone = 'neutral', icon, href }: { label: string; value: ReactNode; helper: ReactNode; trend?: ReactNode; tone?: Tone; icon: ReactNode; href: string }) {
-  return <ContentCard interactive className="min-h-[6.5rem] p-3" surface="elevated" elevation="none"><Link to={href} className="flex h-full items-start gap-2.5 focus-visible:outline-none"><IconTile icon={icon} tone={tone} /><div className="min-w-0 flex-1"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{label}</div><div className="mt-1.5 text-[var(--ops-type-kpi-size)] font-extrabold leading-none tracking-[-0.04em] text-[var(--ops-text)]">{value}</div><div className="mt-1.5 flex items-center justify-between gap-2 text-xs leading-4 text-[var(--ops-text-muted)]"><span className="truncate">{helper}</span>{trend && <StatusChip tone={tone}>{trend}</StatusChip>}</div></div></Link></ContentCard>;
 }
 
 function TextLink({ children, to }: { children: ReactNode; to: string }) {
@@ -289,11 +286,11 @@ export function Dashboard() {
       <ContentCard className="p-3" surface="raised" elevation="none">
         <SectionHeader title="Operations Center" subtitle="Wo heute gehandelt werden muss – priorisiert nach Dringlichkeit." actions={<StatusChip tone={operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'warning' : 'success'}>{operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="sofort disponieren" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} trend={operations.peopleWithoutRoom > 0 ? 'Sofort' : 'Erledigt'} icon={<WarningAmberRoundedIcon />} href="/assignments?workflow=open" />
-          <KpiCard label="Disposition prüfen" value={formatNumber(operations.pendingImportReviews)} helper="durch Import geändert" tone={operations.pendingImportReviews > 0 ? 'warning' : 'success'} icon={<SyncRoundedIcon />} href="/assignments?workflow=review" />
-          <KpiCard label="Offene Entscheidungen" value={formatNumber(operations.pendingSingleRooms)} helper="Einzelzimmer prüfen" tone={operations.pendingSingleRooms > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?singleRoomStatus=PENDING_APPROVAL" />
-          <KpiCard label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach Reserve priorisiert" tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<ApartmentRoundedIcon />} href="/hotels" />
-          <KpiCard label="Stammdaten prüfen" value={formatNumber(operations.invalidMasterData)} helper="fachliche Korrektur nötig" tone={operations.invalidMasterData > 0 ? 'error' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=invalid" />
+          <MetricCard compact label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} context="Aktuell" helper="Personen" action={operations.peopleWithoutRoom > 0 ? 'Sofort' : 'Erledigt'} tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/assignments?workflow=open" />
+          <MetricCard compact label="Disposition prüfen" value={formatNumber(operations.pendingImportReviews)} context="Aktuell" helper="durch Import geändert" action={operations.pendingImportReviews > 0 ? 'Heute' : 'Erledigt'} tone={operations.pendingImportReviews > 0 ? 'warning' : 'success'} icon={<SyncRoundedIcon />} href="/assignments?workflow=review" />
+          <MetricCard compact label="Offene Entscheidungen" value={formatNumber(operations.pendingSingleRooms)} context="Aktuell" helper="Einzelzimmer" action={operations.pendingSingleRooms > 0 ? 'Heute' : 'Erledigt'} tone={operations.pendingSingleRooms > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?singleRoomStatus=PENDING_APPROVAL" />
+          <MetricCard compact label="Kritische Hotels" value={formatNumber(criticalHotels.length)} context="Aktuell" helper="nach Reserve" action={criticalHotels.length > 0 ? 'Beobachten' : 'Stabil'} tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<ApartmentRoundedIcon />} href="/hotels" />
+          <MetricCard compact label="Stammdaten prüfen" value={formatNumber(operations.invalidMasterData)} context="Aktuell" helper="blockiert Disposition" action={operations.invalidMasterData > 0 ? 'Sofort' : 'Erledigt'} tone={operations.invalidMasterData > 0 ? 'error' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=invalid" />
         </div>
       </ContentCard>
 
