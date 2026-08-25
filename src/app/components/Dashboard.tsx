@@ -1,10 +1,6 @@
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
-import GroupsRoundedIcon from '@mui/icons-material/GroupsRounded';
 import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
-import BedRoundedIcon from '@mui/icons-material/BedRounded';
-import AssignmentTurnedInRoundedIcon from '@mui/icons-material/AssignmentTurnedInRounded';
-import PieChartRoundedIcon from '@mui/icons-material/PieChartRounded';
 import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
 import CalendarMonthRoundedIcon from '@mui/icons-material/CalendarMonthRounded';
 import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
@@ -75,8 +71,8 @@ function TextLink({ children, to }: { children: ReactNode; to: string }) {
 function DashboardSkeleton() {
   return <div role="status" aria-label="Dashboard-Lagebild wird geladen" className="space-y-3 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 animate-pulse">
     <div className="h-8 w-72 rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-overlay)]" />
-    <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
-      {Array.from({ length: 7 }, (_, index) => <div key={index} className="h-[6.5rem] rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />)}
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+      {Array.from({ length: 5 }, (_, index) => <div key={index} className="h-[6.5rem] rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />)}
     </div>
     <div className="h-24 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
     <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
@@ -291,15 +287,13 @@ export function Dashboard() {
   return (
     <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
       <ContentCard className="p-3" surface="raised" elevation="none">
-        <SectionHeader title="Operations Center" subtitle="Projektstatus, heutige Bewegungen und direkte Einstiege in die Arbeitsbereiche." actions={<StatusChip tone={operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'warning' : 'success'}>{operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
-          <KpiCard label="Personen gesamt" value={formatNumber(athletes.length)} helper="im Projekt" tone="primary" trend="Live" icon={<GroupsRoundedIcon />} href="/athletes" />
-          <KpiCard label="Zimmerkontingent" value={formatNumber(operations.roomsAvailable)} helper={`${formatNumber(operations.bedsAvailable)} Betten`} tone="info" icon={<BedRoundedIcon />} href="/hotels" />
-          <KpiCard label="Aktuell disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" tone="success" icon={<AssignmentTurnedInRoundedIcon />} href="/assignments" />
-          <KpiCard label="Freie Zimmer" value={formatNumber(Math.max(operations.roomDelta, 0))} helper="Reserve am Spitzenbedarf" tone={operations.roomDelta <= 0 ? 'error' : 'success'} trend={operations.roomDelta <= 0 ? 'Limit' : 'Reserve'} icon={<PieChartRoundedIcon />} href="/analytics" />
+        <SectionHeader title="Operations Center" subtitle="Wo heute gehandelt werden muss – priorisiert nach Dringlichkeit." actions={<StatusChip tone={operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'warning' : 'success'}>{operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="sofort disponieren" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} trend={operations.peopleWithoutRoom > 0 ? 'Sofort' : 'Erledigt'} icon={<WarningAmberRoundedIcon />} href="/assignments?workflow=open" />
+          <KpiCard label="Disposition prüfen" value={formatNumber(operations.pendingImportReviews)} helper="durch Import geändert" tone={operations.pendingImportReviews > 0 ? 'warning' : 'success'} icon={<SyncRoundedIcon />} href="/assignments?workflow=review" />
+          <KpiCard label="Offene Entscheidungen" value={formatNumber(operations.pendingSingleRooms)} helper="Einzelzimmer prüfen" tone={operations.pendingSingleRooms > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?singleRoomStatus=PENDING_APPROVAL" />
           <KpiCard label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach Reserve priorisiert" tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<ApartmentRoundedIcon />} href="/hotels" />
-          <KpiCard label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="Personen offen" tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/assignments?workflow=open" />
-          <KpiCard label="Operative Konflikte" value={formatNumber(operationalConflicts)} helper={`${operations.invalidMasterData} Stammdatenfehler`} tone={operationalConflicts > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=invalid" />
+          <KpiCard label="Stammdaten prüfen" value={formatNumber(operations.invalidMasterData)} helper="fachliche Korrektur nötig" tone={operations.invalidMasterData > 0 ? 'error' : 'success'} icon={<ShieldRoundedIcon />} href="/athletes?review=invalid" />
         </div>
       </ContentCard>
 
