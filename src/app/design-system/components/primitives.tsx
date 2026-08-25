@@ -1,5 +1,6 @@
 import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from 'react';
 import { clsx } from 'clsx';
+import { AlertTriangle, CheckCircle2, Circle, CircleDot, Info, XCircle } from 'lucide-react';
 
 type Tone = 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info';
 type Density = 'comfortable' | 'compact';
@@ -85,12 +86,17 @@ export const FilterToolbar = Toolbar;
 export const ActionToolbar = Toolbar;
 export const SectionToolbar = Toolbar;
 
-export function StatusChip({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) { return <span data-tone={tone} className={clsx('inline-flex items-center rounded-[var(--ops-radius-sm)] border px-2 py-0.5 text-[11px] font-bold', semanticToneClasses[tone])}>{children}</span>; }
+const statusIcons: Record<Tone, typeof Circle> = { neutral: Circle, primary: CircleDot, success: CheckCircle2, warning: AlertTriangle, error: XCircle, info: Info };
+
+export function StatusChip({ children, tone = 'neutral' }: { children: ReactNode; tone?: Tone }) {
+  const Icon = statusIcons[tone];
+  return <span data-tone={tone} className={clsx('inline-flex items-center gap-1 rounded-[var(--ops-radius-sm)] border px-2 py-0.5 text-[11px] font-bold', semanticToneClasses[tone])}><Icon aria-hidden="true" className="h-3 w-3 shrink-0" />{children}</span>;
+}
 export const ProgressChip = StatusChip;
 export const SeverityBadge = StatusChip;
 
 export function EmptyState({ title, description, action }: { title: ReactNode; description?: ReactNode; action?: ReactNode }) { return <div className="rounded-[var(--ops-radius-xl)] border border-dashed border-[var(--ops-border-strong)] px-6 py-10 text-center"><div className="font-semibold text-[var(--ops-text)]">{title}</div>{description && <p className="mt-2 text-sm text-[var(--ops-text-muted)]">{description}</p>}{action && <div className="mt-4">{action}</div>}</div>; }
-export function LoadingState({ label = 'Laden…' }: { label?: ReactNode }) { return <div role="status" aria-live="polite" className="animate-pulse rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)] p-6 text-sm text-[var(--ops-text-muted)]">{label}</div>; }
+export function LoadingState({ label = 'Laden…' }: { label?: ReactNode }) { return <div role="status" aria-live="polite" aria-busy="true" className="rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4"><span className="sr-only">{label}</span><div aria-hidden="true" className="animate-pulse space-y-3"><div className="h-4 w-44 rounded bg-[var(--ops-surface-overlay)]" /><div className="h-9 w-full rounded-[var(--ops-radius-md)] bg-[var(--ops-surface-elevated)]" /><div className="h-9 w-5/6 rounded-[var(--ops-radius-md)] bg-[var(--ops-surface-elevated)]" /><div className="h-9 w-2/3 rounded-[var(--ops-radius-md)] bg-[var(--ops-surface-elevated)]" /></div></div>; }
 export function ErrorState({ title = 'Fehler', description, action }: { title?: ReactNode; description?: ReactNode; action?: ReactNode }) { return <InfoPanel tone="error" title={title} action={action}>{description}</InfoPanel>; }
 export function InfoPanel({ children, title, tone = 'info', action }: { children?: ReactNode; title?: ReactNode; tone?: Tone; action?: ReactNode }) { return <div data-tone={tone} className={clsx('rounded-[var(--ops-radius-lg)] border p-4', semanticToneClasses[tone])}><div className="flex items-start justify-between gap-3"><div>{title && <div className="font-bold">{title}</div>}{children && <div className="mt-1 text-sm opacity-95">{children}</div>}</div>{action}</div></div>; }
 export const ConfirmationPanel = InfoPanel;
