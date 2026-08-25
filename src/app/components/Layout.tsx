@@ -1,17 +1,24 @@
 import { Outlet, NavLink } from 'react-router';
-import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut, Settings, List, Moon, Sun } from 'lucide-react';
+import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut, Settings, List, Moon, Sun, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
 import { useOpsTheme } from '../design-system';
 
-const navItems = [
-  { to: '/', end: true, label: 'Dashboard', icon: LayoutDashboard },
-  { to: '/athletes', label: 'Athleten', icon: Users },
-  { to: '/room-types', label: 'Zimmertypen', icon: Layers },
-  { to: '/hotels', label: 'Hotels', icon: Hotel },
-  { to: '/events', label: 'Events', icon: Calendar },
+type NavigationItem = { to: string; label: string; icon: LucideIcon; end?: boolean; permission?: 'imports' | 'audit' | 'admin' };
+
+// One workflow-led information architecture feeds both navigation variants.
+// This prevents desktop and compact navigation from exposing different tools.
+const navItems: NavigationItem[] = [
+  { to: '/', end: true, label: 'Lagebild', icon: LayoutDashboard },
   { to: '/assignments', label: 'Zuweisungen', icon: UserCheck },
   { to: '/analytics', label: 'Operations Cockpit', icon: BarChart3 },
+  { to: '/athletes', label: 'Athleten', icon: Users },
   { to: '/lists', label: 'Listen', icon: List },
+  { to: '/hotels', label: 'Hotels', icon: Hotel },
+  { to: '/events', label: 'Events', icon: Calendar },
+  { to: '/room-types', label: 'Zimmertypen', icon: Layers },
+  { to: '/import', label: 'Import', icon: Upload, permission: 'imports' },
+  { to: '/audit', label: 'Aktivitäten', icon: ShieldCheck, permission: 'audit' },
+  { to: '/administration', label: 'Administration', icon: Settings, permission: 'admin' },
 ];
 
 export function Layout() {
@@ -19,6 +26,11 @@ export function Layout() {
   const { mode, toggle } = useOpsTheme();
   const displayName = user?.displayName?.trim() || user?.username || 'Benutzer';
   const initials = displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U';
+  const visibleNavItems = navItems.filter(item => !item.permission
+    || (item.permission === 'imports' && permissions.canManageImports)
+    || (item.permission === 'audit' && permissions.canReadAudit)
+    || (item.permission === 'admin' && permissions.isAdmin));
+  const navLinkClass = (isActive: boolean, compact = false) => `inline-flex ${compact ? 'h-9 text-xs' : 'h-10 text-sm'} shrink-0 items-center rounded-xl px-3 font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)] ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`;
 
   return (
     <div className="flex h-dvh min-h-[40rem] flex-col overflow-hidden bg-[var(--ops-background)] text-[var(--ops-text)]">
@@ -30,14 +42,11 @@ export function Layout() {
                 <h1 className="whitespace-nowrap text-lg font-bold text-blue-600 sm:text-xl">Freestyle WM 2027</h1>
               </div>
               <div className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto lg:flex">
-                {navItems.map(({ to, end, label, icon: Icon }) => (
-                  <NavLink key={to} to={to} end={end} className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}>
+                {visibleNavItems.map(({ to, end, label, icon: Icon }) => (
+                  <NavLink key={to} to={to} end={end} className={({ isActive }) => navLinkClass(isActive)}>
                     <Icon className="mr-2 h-4 w-4" />{label}
                   </NavLink>
                 ))}
-                {permissions.canManageImports && <NavLink to="/import" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><Upload className="mr-2 h-4 w-4" />Import</NavLink>}
-                {permissions.canReadAudit && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><ShieldCheck className="mr-2 h-4 w-4" />Aktivitäten</NavLink>}
-                {permissions.isAdmin && <NavLink to="/administration" className={({ isActive }) => `inline-flex h-10 shrink-0 items-center rounded-xl px-3 text-sm font-medium transition-colors ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`}><Settings className="mr-2 h-4 w-4" />Administration</NavLink>}
               </div>
             </div>
             <div className="flex w-[176px] shrink-0 items-center justify-end gap-2 sm:w-[244px] md:w-[288px]" title={`${displayName} · ${permissions.roleLabel}${permissions.isReadOnly ? ' · Nur-Lese-Modus' : ''}`}>
@@ -60,9 +69,7 @@ export function Layout() {
             </div>
           </div>
           <div className="flex gap-1 overflow-x-auto pb-2 lg:hidden">
-            {navItems.map(({ to, end, label, icon: Icon }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><Icon className="mr-1.5 h-4 w-4" />{label}</NavLink>)}
-            {permissions.canReadAudit && <NavLink to="/audit" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><ShieldCheck className="mr-1.5 h-4 w-4" />Aktivitäten</NavLink>}
-            {permissions.isAdmin && <NavLink to="/administration" className={({ isActive }) => `inline-flex h-9 shrink-0 items-center rounded-xl px-3 text-xs font-medium ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)]'}`}><Settings className="mr-1.5 h-4 w-4" />Administration</NavLink>}
+            {visibleNavItems.map(({ to, end, label, icon: Icon }) => <NavLink key={to} to={to} end={end} className={({ isActive }) => navLinkClass(isActive, true)}><Icon className="mr-1.5 h-4 w-4" />{label}</NavLink>)}
           </div>
         </div>
       </nav>
