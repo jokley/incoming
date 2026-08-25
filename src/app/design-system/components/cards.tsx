@@ -4,50 +4,6 @@ import { Link } from 'react-router';
 import { ContentCard, SectionHeader, StatusChip } from './primitives';
 
 type Tone = 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info';
-type OperationalPriority = 'immediate' | 'today' | 'watch' | 'done';
-
-const priorityPresentation: Record<OperationalPriority, { label: string; tone: Tone }> = {
-  immediate: { label: 'Sofort', tone: 'error' },
-  today: { label: 'Heute', tone: 'warning' },
-  watch: { label: 'Beobachten', tone: 'info' },
-  done: { label: 'Erledigt', tone: 'success' },
-};
-
-/**
- * Shared decision-first card for operational queues. Unlike a generic metric
- * card it always communicates urgency, impact, time context and the next step.
- */
-export function OperationalActionCard({ title, count, impact, context, action, href, priority, icon }: {
-  title: ReactNode;
-  count: ReactNode;
-  impact: ReactNode;
-  context: ReactNode;
-  action: ReactNode;
-  href: string;
-  priority: OperationalPriority;
-  icon?: ReactNode;
-}) {
-  const presentation = priorityPresentation[priority];
-  return <ContentCard interactive className="h-full p-0" surface="elevated" elevation="none">
-    <Link to={href} className="flex h-full min-h-[7.5rem] flex-col p-3 focus-visible:outline-none" aria-label={`${String(title)}: ${String(count)}. ${presentation.label}. ${String(action)}`}>
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex min-w-0 items-center gap-2">
-          {icon && <span className={clsx('inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-[var(--ops-radius-lg)]', toneAccent[presentation.tone])}>{icon}</span>}
-          <div className="truncate text-[11px] font-extrabold uppercase tracking-[0.08em] text-[var(--ops-text-subtle)]">{title}</div>
-        </div>
-        <StatusChip tone={presentation.tone}>{presentation.label}</StatusChip>
-      </div>
-      <div className="mt-2 flex items-baseline gap-2">
-        <span className="font-mono text-[var(--ops-type-kpi-size)] font-extrabold leading-none text-[var(--ops-text)]">{count}</span>
-        <span className="truncate text-xs text-[var(--ops-text-muted)]">{impact}</span>
-      </div>
-      <div className="mt-auto flex items-end justify-between gap-3 pt-2 text-xs">
-        <span className="truncate text-[var(--ops-text-subtle)]">{context}</span>
-        <span className="shrink-0 font-bold text-[var(--ops-primary)]">{action} →</span>
-      </div>
-    </Link>
-  </ContentCard>;
-}
 
 type MetricCardProps = {
   label: ReactNode;
