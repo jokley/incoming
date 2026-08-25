@@ -92,7 +92,13 @@ export function createHotelContactRows(hotels: Hotel[]): HotelContactRow[] {
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
 export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = [], quotaUsage: OfficialQuotaUsage[] = []): ListRow[] {
-  const hotelById = new Map(hotels.map(hotel => [hotel.id, hotel]));
+  const inventoriesByHotelAndRoomType = new Map<string, NonNullable<Hotel['roomInventories']>>();
+  hotels.forEach(hotel => (hotel.roomInventories || []).forEach(inventory => {
+    const key = `${hotel.id}/${inventory.roomType.id}`;
+    const entries = inventoriesByHotelAndRoomType.get(key) || [];
+    entries.push(inventory);
+    inventoriesByHotelAndRoomType.set(key, entries);
+  }));
   const evaluations = evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromBookings(bookings));
   const additionalCostPersonIds = new Set(evaluations.flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId)));
   const assignments = new Map<string, { booking: RoomBooking; roommate: string }>();
@@ -117,7 +123,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
   return athletes.map((athlete) => {
     const assignment = assignments.get(athlete.id);
     const booking = assignment?.booking;
-    const inventory = booking && hotelById.get(booking.hotel.id)?.roomInventories?.find(item =>
+    const inventory = booking && inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType.id}`)?.find(item =>
       item.roomType.id === booking.roomType.id
       && (!booking.checkInDate || item.availableUntil >= booking.checkInDate.slice(0, 10))
       && (!booking.checkOutDate || item.availableFrom <= booking.checkOutDate.slice(0, 10)));
@@ -180,8 +186,15 @@ export function groupListRows(rows: ListRow[], kind: ListKind) {
 
 /** Mirrors the capacity calculation used by the hotel detail for every inventory. */
 export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[]): ContingentRow[] {
+  const bookingsByHotelAndRoomType = new Map<string, RoomBooking[]>();
+  bookings.forEach(booking => {
+    const key = `${booking.hotel.id}/${booking.roomType.id}`;
+    const entries = bookingsByHotelAndRoomType.get(key) || [];
+    entries.push(booking);
+    bookingsByHotelAndRoomType.set(key, entries);
+  });
   return hotels.flatMap((hotel) => (hotel.roomInventories || []).map((inventory) => {
-    const matching = bookings.filter(booking => booking.hotel.id === hotel.id && booking.roomType.id === inventory.roomType.id);
+    const matching = bookingsByHotelAndRoomType.get(`${hotel.id}/${inventory.roomType.id}`) || [];
     const totalRooms = inventory.roomCount;
     const totalBeds = totalRooms * inventory.roomType.maxPersons;
     const occupiedRooms = matching.length;
