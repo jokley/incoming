@@ -28,6 +28,7 @@ import { OccupantCard } from './assignment/OccupantCard';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
+import { compareOperationalHotels, matchesOperationalHotelFilter, OperationalHotelFilters, type OperationalHotelFilter, type OperationalHotelState } from './OperationalHotelFilters';
 import { DialogFooter, DialogHeader, OpsButton, WorkspaceFrame } from '../design-system';
 import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
@@ -128,6 +129,7 @@ export function Assignments() {
   const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
   const [filterImportReview, setFilterImportReview] = useState(requestedWorkflow === 'review');
   const [regionFilter, setRegionFilter] = useState('');
+  const [hotelOperationalFilter, setHotelOperationalFilter] = useState<OperationalHotelFilter>('attention');
 
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [dragOverHotelId, setDragOverHotelId] = useState<string | null>(null);
@@ -364,9 +366,9 @@ export function Assignments() {
       const matchesRegion = !regionFilter || hotel.region === regionFilter;
       const haystack = `${hotel.hotelName} ${hotel.location || ''}`.toLowerCase();
       const matchesSearch = !query || haystack.includes(query);
-      return matchesRegion && matchesSearch;
-    });
-  }, [hotelSearch, regionFilter, synchronizedHotels]);
+      return matchesRegion && matchesSearch && matchesOperationalHotelFilter(assignmentHotelOperationalState(hotel), hotelOperationalFilter);
+    }).sort((a,b)=>compareOperationalHotels(assignmentHotelOperationalState(a),assignmentHotelOperationalState(b)));
+  }, [hotelOperationalFilter, hotelSearch, regionFilter, synchronizedHotels]);
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
 
@@ -717,7 +719,6 @@ export function Assignments() {
 
           <main className="min-h-0 overflow-hidden bg-[var(--ops-assignment-canvas)]">
             {view === 'dispatch' && (
-              filteredHotels.length > 0 ? (
                 <DispatchWorkspace
                   hotels={filteredHotels}
                   additionalCostPersonIds={additionalCostPersonIds}
@@ -743,14 +744,13 @@ export function Assignments() {
                   onHotelSearch={setHotelSearch}
                   regionFilter={regionFilter}
                   onRegionFilter={setRegionFilter}
+                  hotelOperationalFilter={hotelOperationalFilter}
+                  onHotelOperationalFilter={setHotelOperationalFilter}
                   onClearActiveHotel={() => setActiveHotelId(null)}
                   selectedBookingId={selected?.type === 'booking' ? selected.id : null}
                   onSelectBooking={(bookingId) => setSelected({ type: 'booking', id: bookingId })}
                   pendingAction={pendingAction}
                 />
-              ) : (
-                <EmptyCenter text="Keine Hotels für die aktuelle Auswahl gefunden." />
-              )
             )}
 
             {view === 'quotas' && (
@@ -1336,6 +1336,8 @@ function DispatchWorkspace({
   onHotelSearch,
   regionFilter,
   onRegionFilter,
+  hotelOperationalFilter,
+  onHotelOperationalFilter,
   onClearActiveHotel,
   selectedBookingId,
   onSelectBooking,
@@ -1365,6 +1367,8 @@ function DispatchWorkspace({
   onHotelSearch: (value: string) => void;
   regionFilter: string;
   onRegionFilter: (value: string) => void;
+  hotelOperationalFilter: OperationalHotelFilter;
+  onHotelOperationalFilter: (value: OperationalHotelFilter) => void;
   onClearActiveHotel: () => void;
   selectedBookingId: string | null;
   onSelectBooking: (bookingId: string) => void;
@@ -1398,6 +1402,8 @@ function DispatchWorkspace({
           onHotelSearch={onHotelSearch}
           regionFilter={regionFilter}
           onRegionFilter={onRegionFilter}
+          hotelOperationalFilter={hotelOperationalFilter}
+          onHotelOperationalFilter={onHotelOperationalFilter}
           onClearActiveHotel={onClearActiveHotel}
           selectedBookingId={selectedBookingId}
           onSelectBooking={onSelectBooking}
@@ -1433,6 +1439,8 @@ function HotelGridOrDetail({
   onHotelSearch,
   regionFilter,
   onRegionFilter,
+  hotelOperationalFilter,
+  onHotelOperationalFilter,
   onClearActiveHotel,
   selectedBookingId,
   onSelectBooking,
@@ -1462,6 +1470,8 @@ function HotelGridOrDetail({
   onHotelSearch: (value: string) => void;
   regionFilter: string;
   onRegionFilter: (value: string) => void;
+  hotelOperationalFilter: OperationalHotelFilter;
+  onHotelOperationalFilter: (value: OperationalHotelFilter) => void;
   onClearActiveHotel: () => void;
   selectedBookingId: string | null;
   onSelectBooking: (bookingId: string) => void;
@@ -1478,6 +1488,8 @@ function HotelGridOrDetail({
           onHotelSearch={onHotelSearch}
           regionFilter={regionFilter}
           onRegionFilter={onRegionFilter}
+          hotelOperationalFilter={hotelOperationalFilter}
+          onHotelOperationalFilter={onHotelOperationalFilter}
           activeHotelId={activeHotel?.hotelId ?? null}
           draggingUnitId={draggingUnitId}
           draggingValidationKey={draggingValidationKey}
@@ -1525,6 +1537,8 @@ function HotelGridView({
   onHotelSearch,
   regionFilter,
   onRegionFilter,
+  hotelOperationalFilter,
+  onHotelOperationalFilter,
   activeHotelId,
   draggingUnitId,
   draggingValidationKey,
@@ -1542,6 +1556,8 @@ function HotelGridView({
   onHotelSearch: (value: string) => void;
   regionFilter: string;
   onRegionFilter: (value: string) => void;
+  hotelOperationalFilter: OperationalHotelFilter;
+  onHotelOperationalFilter: (value: OperationalHotelFilter) => void;
   activeHotelId: string | null;
   draggingUnitId: string | null;
   draggingValidationKey: string | null;
@@ -1559,6 +1575,7 @@ function HotelGridView({
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--ops-divider)] px-4 py-3">
+        <OperationalHotelFilters value={hotelOperationalFilter} onChange={onHotelOperationalFilter}/>
         <SearchInput value={hotelSearch} onChange={onHotelSearch} placeholder="Hotels oder Orte suchen..." dark />
         <div className="flex items-center gap-1">
           {['', ...regionOptions].map((region) => (
@@ -1588,7 +1605,7 @@ function HotelGridView({
       </div>
 
       <div className="flex-1 overflow-y-auto p-3">
-        <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-3">
+        {hotels.length ? <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-3">
           {hotels.map((hotel) => (
             <HotelCard
               key={hotel.hotelId}
@@ -1604,7 +1621,7 @@ function HotelGridView({
               pending={pendingHotelId === hotel.hotelId}
             />
           ))}
-        </div>
+        </div> : <EmptyCenter text="Keine Hotels für die aktuelle Auswahl gefunden."/>}
       </div>
     </div>
   );
@@ -2820,6 +2837,12 @@ function formatShortDate(value?: string | null) {
   if (!value) return '—';
   const [year, month, day] = value.split('-');
   return year && month && day ? `${day}.${month}.` : value;
+}
+
+function assignmentHotelOperationalState(hotel: AssignmentGridHotel):OperationalHotelState {
+  const summary=summarizeHotel(hotel);
+  const hasFree=(pattern:RegExp)=>summary.roomTypes.some(row=>pattern.test(row.roomTypeName)&&row.usedBeds<row.totalBeds);
+  return {name:hotel.hotelName,occupancy:summary.percent,totalCapacity:summary.totalBeds,freeCapacity:Math.max(0,summary.totalBeds-summary.usedBeds),hasFreeSingle:hasFree(/(^|\W)EZ(\W|$)|einzel/i),hasFreeDouble:hasFree(/(^|\W)DZ(\W|$)|doppel/i)};
 }
 
 function summarizeHotel(hotel: AssignmentGridHotel) {
