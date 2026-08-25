@@ -24,7 +24,6 @@ import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomBooking, RoomT
 import {
   ContentCard,
   DataPanel,
-  LoadingState,
   SectionHeader,
   StatusChip,
 } from '../design-system';
@@ -73,6 +72,21 @@ function TextLink({ children, to }: { children: ReactNode; to: string }) {
   return <Link to={to} className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--ops-primary)] transition-colors hover:text-[var(--ops-primary-emphasis)] focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]">{children}<OpenInNewRoundedIcon fontSize="inherit" /></Link>;
 }
 
+function DashboardSkeleton() {
+  return <div role="status" aria-label="Dashboard-Lagebild wird geladen" className="space-y-3 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 animate-pulse">
+    <div className="h-8 w-72 rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-overlay)]" />
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-7">
+      {Array.from({ length: 7 }, (_, index) => <div key={index} className="h-[6.5rem] rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />)}
+    </div>
+    <div className="h-24 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
+    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+      <div className="h-44 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
+      <div className="h-44 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
+    </div>
+    <span className="sr-only">Dashboard-Lagebild wird geladen…</span>
+  </div>;
+}
+
 export function Dashboard() {
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [hotels, setHotels] = useState<HotelType[]>([]);
@@ -84,34 +98,44 @@ export function Dashboard() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    void loadData();
-  }, []);
+    let cancelled = false;
 
-  const loadData = async () => {
-    try {
+    const loadData = async () => {
       setLoading(true);
-      const [athletesData, hotelsData, roomTypesData, eventsData, assignmentsData, auditData, importData] = await Promise.all([
-        api.getAthletes(),
-        api.getHotels(),
-        api.getRoomTypes(),
-        api.getEvents(),
-        api.getRoomAssignments(),
-        api.getAuditEvents(1).catch(() => ({ items: [], total: 0, pages: 0 })),
-        api.getImportSessions().catch(() => []),
-      ]);
-      setAthletes(athletesData);
-      setHotels(hotelsData);
-      setRoomTypes(roomTypesData);
-      setEvents(eventsData);
-      setAssignments(assignmentsData);
-      setAuditEvents(auditData.items.slice(0, 3));
-      setImportSessions(importData);
-    } catch (err) {
-      console.error('Fehler beim Laden der Daten', err);
-    } finally {
-      setLoading(false);
-    }
-  };
+
+      // Audit and import status enrich the lower dashboard only. They must not
+      // delay the operational KPIs and primary actions above the fold.
+      void api.getAuditEvents(1)
+        .then(data => { if (!cancelled) setAuditEvents(data.items.slice(0, 3)); })
+        .catch(() => undefined);
+      void api.getImportSessions()
+        .then(data => { if (!cancelled) setImportSessions(data); })
+        .catch(() => undefined);
+
+      try {
+        const [athletesData, hotelsData, roomTypesData, eventsData, assignmentsData] = await Promise.all([
+          api.getAthletes(),
+          api.getHotels(),
+          api.getRoomTypes(),
+          api.getEvents(),
+          api.getRoomAssignments(),
+        ]);
+        if (cancelled) return;
+        setAthletes(athletesData);
+        setHotels(hotelsData);
+        setRoomTypes(roomTypesData);
+        setEvents(eventsData);
+        setAssignments(assignmentsData);
+      } catch (err) {
+        console.error('Fehler beim Laden der Daten', err);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+
+    void loadData();
+    return () => { cancelled = true; };
+  }, []);
 
   const operations = useMemo(() => {
     const hotelDates = hotels.flatMap(hotel =>
@@ -262,7 +286,7 @@ export function Dashboard() {
     { id: 'imports', title: `${formatNumber(operationalConflicts)} operative Konflikte`, meta: 'Import und Kontingente', time: 'Live', tone: operationalConflicts > 0 ? 'warning' as Tone : 'success' as Tone, href: '/import' },
   ];
 
-  if (loading) return <LoadingState label="Dashboard-Lagebild wird geladen…" />;
+  if (loading) return <DashboardSkeleton />;
 
   return (
     <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">

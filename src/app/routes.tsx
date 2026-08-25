@@ -1,20 +1,25 @@
+import type { ComponentType } from "react";
 import { createBrowserRouter } from "react-router";
 import { Layout } from "./components/Layout";
 import { Dashboard } from "./components/Dashboard";
-import { Athletes } from "./components/Athletes";
-import { Assignments } from "./components/Assignments";
-import { DataImport } from "./components/DataImport";
-import { RoomAnalytics } from "./components/RoomAnalytics";
-import { RoomTypesManagement } from "./components/RoomTypesManagement";
-import { HotelsManagement } from "./components/HotelsManagement";
-import { EventsManagement } from "./components/EventsManagement";
 import { RouteErrorBoundary } from "./components/RouteErrorBoundary";
-import { AuditLog } from "./components/AuditLog";
-import { AdminRoute } from "./auth/AdminRoute";
-import { AdministrationTestData } from "./components/AdministrationTestData";
-import { Lists } from "./components/Lists";
-import { DatabaseBackups } from "./components/DatabaseBackups";
-import { Administration } from "./components/Administration";
+
+const lazyComponent = <T extends Record<string, unknown>, K extends keyof T>(
+  loader: () => Promise<T>,
+  exportName: K,
+) => async () => ({ Component: (await loader())[exportName] as ComponentType });
+
+const lazyAdminComponent = <T extends Record<string, unknown>, K extends keyof T>(
+  loader: () => Promise<T>,
+  exportName: K,
+) => async () => {
+  const [{ AdminRoute }, module] = await Promise.all([
+    import("./auth/AdminRoute"),
+    loader(),
+  ]);
+  const Page = module[exportName] as ComponentType;
+  return { Component: () => <AdminRoute><Page /></AdminRoute> };
+};
 
 export const router = createBrowserRouter([
   {
@@ -23,18 +28,18 @@ export const router = createBrowserRouter([
     ErrorBoundary: RouteErrorBoundary,
     children: [
       { index: true, Component: Dashboard },
-      { path: "athletes", Component: Athletes },
-      { path: "assignments", Component: Assignments },
-      { path: "room-types", Component: RoomTypesManagement },
-      { path: "hotels", Component: HotelsManagement },
-      { path: "events", Component: EventsManagement },
-      { path: "import", Component: DataImport },
-      { path: "analytics", Component: RoomAnalytics },
-      { path: "lists", Component: Lists },
-      { path: "audit", Component: AuditLog },
-      { path: "administration/test-data", element: <AdminRoute><AdministrationTestData /></AdminRoute> },
-      { path: "administration/database", element: <AdminRoute><DatabaseBackups /></AdminRoute> },
-      { path: "administration", element: <AdminRoute><Administration /></AdminRoute> },
+      { path: "athletes", lazy: lazyComponent(() => import("./components/Athletes"), "Athletes") },
+      { path: "assignments", lazy: lazyComponent(() => import("./components/Assignments"), "Assignments") },
+      { path: "room-types", lazy: lazyComponent(() => import("./components/RoomTypesManagement"), "RoomTypesManagement") },
+      { path: "hotels", lazy: lazyComponent(() => import("./components/HotelsManagement"), "HotelsManagement") },
+      { path: "events", lazy: lazyComponent(() => import("./components/EventsManagement"), "EventsManagement") },
+      { path: "import", lazy: lazyComponent(() => import("./components/DataImport"), "DataImport") },
+      { path: "analytics", lazy: lazyComponent(() => import("./components/RoomAnalytics"), "RoomAnalytics") },
+      { path: "lists", lazy: lazyComponent(() => import("./components/Lists"), "Lists") },
+      { path: "audit", lazy: lazyComponent(() => import("./components/AuditLog"), "AuditLog") },
+      { path: "administration/test-data", lazy: lazyAdminComponent(() => import("./components/AdministrationTestData"), "AdministrationTestData") },
+      { path: "administration/database", lazy: lazyAdminComponent(() => import("./components/DatabaseBackups"), "DatabaseBackups") },
+      { path: "administration", lazy: lazyAdminComponent(() => import("./components/Administration"), "Administration") },
     ],
   },
 ]);
