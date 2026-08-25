@@ -8,15 +8,14 @@ Hotels und Zuweisungen unterstützten dieselbe operative Entscheidung, verwendet
 
 Beide operativen Hotelansichten verwenden dieselbe, bewusst kompakte Filterfolge:
 
-1. **Handlungsbedarf** als Standardsicht
-2. **Alle**
-3. **< 75 %**
-4. **≥ 75 %**
-5. **Voll**
-6. **Freie EZ**
-7. **Freie DZ**
+1. **Alle** als Standardsicht
+2. **< 75 %**
+3. **≥ 75 %**
+4. **Voll**
+5. **Freie EZ**
+6. **Freie DZ**
 
-`Handlungsbedarf` umfasst Hotels ohne Kapazität, Hotels ab 75 % Auslastung und Hotels mit höchstens zwei freien Kapazitätseinheiten. Dadurch bündelt die Standardsicht nur Zustände, die eine Prüfung oder baldige Entscheidung erfordern. Weitere Filter wurden nicht ergänzt: Region, Suche sowie die bestehenden Ausstattungsfilter erfüllen eigene konkrete Aufgaben; zusätzliche interessante Merkmale würden die Auswahl nur verlängern.
+Der Sammelfilter **Handlungsbedarf** wurde entfernt. Seine Ergebnisse überschnitten sich mit **≥ 75 %** und **Voll**, während Hotels mit sehr kleiner Restkapazität durch die gemeinsame Sortierung bereits weit oben erscheinen. Die expliziten Kapazitätsfilter beantworten die operativen Fragen direkter und ohne zusätzliche Interpretation.
 
 Der Filter **> 90 %** wurde entfernt, weil er keine zusätzliche operative Entscheidung ermöglicht: Diese Hotels gehören bereits zur Sicht **≥ 75 %** und stehen durch die Standardsortierung unmittelbar hinter den vollständig belegten Hotels. Damit bleiben die drei entscheidenden Kapazitätszustände – ausreichend Reserve, wenig Reserve und voll – vollständig sichtbar, während eine konkurrierende Auswahl entfällt.
 
@@ -36,6 +35,7 @@ Die Standardsortierung lautet: voll belegte Hotels, Hotels ab 75 % und anschlie�
 - Kritische beziehungsweise nicht nutzbare Hotels erscheinen automatisch zuerst.
 - Freie EZ und DZ lassen sich unmittelbar für neue Zuweisungen finden.
 - Die Reduktion auf zwei Auslastungsbänder vermeidet eine fachlich redundante Auswahl und verkürzt die visuelle Prüfung.
+- Der Verzicht auf den unscharfen Sammelbegriff **Handlungsbedarf** macht die sichtbaren Auswahlmöglichkeiten eindeutig und unmittelbar vergleichbar.
 - Eine leere Ergebnismenge ist kein Workflow-Ende mehr, weil die Filter weiterhin bedienbar bleiben.
 
 ## Gemeinsame Komponenten und automatisch profitierende Seiten

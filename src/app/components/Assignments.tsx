@@ -129,7 +129,7 @@ export function Assignments() {
   const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
   const [filterImportReview, setFilterImportReview] = useState(requestedWorkflow === 'review');
   const [regionFilter, setRegionFilter] = useState('');
-  const [hotelOperationalFilter, setHotelOperationalFilter] = useState<OperationalHotelFilter>('attention');
+  const [hotelOperationalFilter, setHotelOperationalFilter] = useState<OperationalHotelFilter>('all');
 
   const [dragging, setDragging] = useState<DragState | null>(null);
   const [dragOverHotelId, setDragOverHotelId] = useState<string | null>(null);
