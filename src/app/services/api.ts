@@ -513,6 +513,12 @@ class ApiService {
     return this.request<Athlete[]>('/athletes');
   }
 
+  async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
+
+  async updateAthlete(id: string, data: { arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null }): Promise<Athlete> {
+    return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
   async createAthlete(data: {
     lastname: string;
     firstname: string;

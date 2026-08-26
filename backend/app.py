@@ -2688,6 +2688,44 @@ def get_athletes():
     return jsonify(result)
 
 
+@app.route('/api/athletes/<int:athlete_id>', methods=['GET'])
+@app.route('/api/athletes/<int:athlete_id>/', methods=['GET'])
+def get_athlete(athlete_id):
+    return jsonify(Athlete.query.get_or_404(athlete_id).to_dict())
+
+
+def _update_athlete_operations(athlete, data):
+    """Update only accommodation-team-owned fields; FIS fields stay read-only."""
+    protected = {'additionalItems', 'additional_items'}
+    if protected.intersection(data):
+        return jsonify({'error': 'additionalItems is managed exclusively by the FIS import'}), 400
+    for api_key, attribute in (('arrivalDate', 'arrival_date'), ('departureDate', 'departure_date')):
+        if api_key in data:
+            raw = data[api_key]
+            try:
+                parsed = datetime.fromisoformat(raw).date() if raw else None
+            except (TypeError, ValueError):
+                return jsonify({'error': f'{api_key} must be an ISO date'}), 400
+            setattr(athlete, attribute, parsed)
+    if 'internalNote' in data:
+        note = data['internalNote']
+        if note is not None and not isinstance(note, str):
+            return jsonify({'error': 'internalNote must be a string or null'}), 400
+        athlete.internal_note = note.strip() or None if note is not None else None
+    if athlete.arrival_date and athlete.departure_date and athlete.departure_date < athlete.arrival_date:
+        return jsonify({'error': 'departureDate must not be before arrivalDate'}), 400
+    db.session.commit()
+    return jsonify(athlete.to_dict())
+
+
+@app.route('/api/athletes/<int:athlete_id>', methods=['PUT', 'PATCH'])
+@app.route('/api/athletes/<int:athlete_id>/', methods=['PUT', 'PATCH'])
+def update_athlete(athlete_id):
+    athlete = Athlete.query.get_or_404(athlete_id)
+    data = request.get_json(silent=True) or {}
+    return _update_athlete_operations(athlete, data)
+
+
 @app.route('/api/athletes', methods=['POST'])
 @app.route('/api/athletes/', methods=['POST'])
 @app.route('/athletes', methods=['POST'])
