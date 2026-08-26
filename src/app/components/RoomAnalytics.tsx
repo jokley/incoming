@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router';
-import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, ArrowRight, Building2, ChartNoAxesCombined, CircleUserRound, Flag, Loader2, ListChecks } from 'lucide-react';
+import { useNavigate, useSearchParams } from 'react-router';
+import { Bar, BarChart, CartesianGrid, ComposedChart, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { ArrowRight, Building2, ChartNoAxesCombined, Flag, Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
 import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, SplitPageLayout, SplitPaneLayout, SectionHeader, StatusChip } from '../design-system';
 import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
 import { calculateQuotaUsage, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
-import { SingleRoomStatusBadge, singleRoomStatusPresentation } from './SingleRoomStatusBadge';
 
-type ViewKey = 'capacity' | 'hotels' | 'nations' | 'assignments' | 'singleRooms' | 'conflicts';
+type ViewKey = 'capacity' | 'hotels' | 'nations';
 type AnalyticsData = { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] };
 type Tone = 'neutral' | 'success' | 'warning' | 'error' | 'info' | 'primary';
 
@@ -37,12 +36,9 @@ const bookingOnDay = (booking: RoomBooking, date: string) => {
 };
 
 const NAV: Array<{ key: ViewKey; label: string; question: string; icon: typeof Building2 }> = [
-  { key: 'capacity', label: 'Bedarf & Kontingent', question: 'Haben wir genügend Zimmer?', icon: ChartNoAxesCombined },
-  { key: 'hotels', label: 'Hotelrisiken', question: 'Welche Hotels werden kritisch?', icon: Building2 },
-  { key: 'nations', label: 'Nationen', question: 'Wer verursacht welchen Bedarf?', icon: Flag },
-  { key: 'assignments', label: 'Zuweisungsarbeit', question: 'Wer braucht als Nächstes ein Zimmer?', icon: ListChecks },
-  { key: 'singleRooms', label: 'Einzelzimmer', question: 'Welche Entscheidungen sind offen?', icon: CircleUserRound },
-  { key: 'conflicts', label: 'Operative Konflikte', question: 'Wo müssen wir jetzt handeln?', icon: AlertTriangle },
+  { key: 'capacity', label: 'Bedarf & Kontingente', question: 'Wann reicht das Kontingent nicht?', icon: ChartNoAxesCombined },
+  { key: 'hotels', label: 'Hotelrisiken', question: 'Welche Hotels werden wann kritisch?', icon: Building2 },
+  { key: 'nations', label: 'Nationen & Bedarf', question: 'Wer verursacht welchen Bedarf?', icon: Flag },
 ];
 
 function ClickMetric({ onClick, ...props }: Parameters<typeof MetricCard>[0] & { onClick: () => void }) {
@@ -242,8 +238,12 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   const peak = timeline.reduce((best, day) => Number(day[demandKey]) > Number(best?.[demandKey] || -1) ? day : best, timeline[0]);
   const value = (key: keyof CapacityDay) => Number(peak?.[key] || 0);
   const reserve = value(metricConfig.reserve);
+  const riskDays = timeline.filter(day => Number(day[metricConfig.reserve]) < 0);
+  const firstRisk = riskDays[0];
+  const minimum = timeline.reduce((lowest, day) => Number(day[metricConfig.reserve]) < Number(lowest?.[metricConfig.reserve] ?? Number.POSITIVE_INFINITY) ? day : lowest, timeline[0]);
+  const minimumReserve = Number(minimum?.[metricConfig.reserve] || 0);
   return <div className="min-w-0 space-y-4">
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"><ClickMetric onClick={() => navigate('/hotels')} label="Kontingent" value={value(metricConfig.supply)} helper={peak?.label || '—'} trend="Gesamt" tone="info"/><ClickMetric onClick={() => navigate('/assignments')} label="Disponiert" value={value(metricConfig.assigned)} helper={peak?.label || '—'} trend="Belegt" tone="primary"/><ClickMetric onClick={() => navigate('/hotels')} label="Frei" value={value(metricConfig.free)} helper={peak?.label || '—'} trend="Frei" tone="success"/><ClickMetric onClick={() => navigate(source === 'live' ? '/athletes' : '/events')} label={`${source === 'live' ? 'Live' : 'Event'}bedarf`} value={value(demandKey)} helper={peak?.label || '—'} trend={source === 'live' ? 'Live' : 'Plan'} tone="warning"/><ClickMetric onClick={() => navigate('/analytics')} label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} helper={peak?.label || '—'} trend={reserve < 0 ? 'Unterdeckung' : 'Gedeckt'} tone={reserve < 0 ? 'error' : 'success'}/></div>
+    <Kpis><ClickMetric onClick={() => navigate(source === 'live' ? '/athletes' : '/events')} label="Bedarfspeak" value={value(demandKey)} helper={peak?.label || '—'} trend={`${source === 'live' ? 'Live' : 'Plan'} · ${metricConfig.label}`} tone="primary"/><ClickMetric onClick={() => firstRisk && navigate(`/hotels?date=${firstRisk.date}`)} label="Erster Risikotag" value={firstRisk ? firstRisk.label : '—'} helper={firstRisk ? 'Reserve wird negativ' : 'Keine Unterdeckung'} trend={firstRisk ? 'prüfen' : 'gedeckt'} tone={firstRisk ? 'error' : 'success'}/><ClickMetric onClick={() => minimum && navigate(`/hotels?date=${minimum.date}`)} label="Kleinste Reserve" value={`${minimumReserve > 0 ? '+' : ''}${minimumReserve}`} helper={minimum?.label || '—'} trend={minimumReserve < 0 ? 'Unterdeckung' : 'gedeckt'} tone={minimumReserve < 0 ? 'error' : 'success'}/><ClickMetric onClick={() => firstRisk && navigate(`/analytics?view=capacity&date=${firstRisk.date}`)} label="Tage mit Unterdeckung" value={riskDays.length} helper={`von ${timeline.length} betrachteten Tagen`} trend={riskDays.length ? 'Zeitraum analysieren' : 'keine'} tone={riskDays.length ? 'warning' : 'success'}/></Kpis>
     <DataPanel title="Kontingentverlauf" actions={<div className="flex flex-wrap items-end gap-3"><div><div className="mb-1 pl-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Darstellung</div><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['rooms','beds'] as const).map(key => <button type="button" key={key} aria-pressed={metric === key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{key === 'rooms' ? 'Zimmer · EZ & DZ' : 'Betten'}</button>)}</div></div><div><div className="mb-1 pl-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Bedarfsquelle</div><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['event','live'] as const).map(key => <button type="button" key={key} aria-pressed={source === key} onClick={() => setSource(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', source === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{key === 'event' ? 'Event' : 'Live'}</button>)}</div></div></div>}>
       <CapacityChartTable timeline={timeline} config={metricConfig} metric={metric} source={source} onDayClick={day => navigate(`/hotels?date=${day.date}`)}/>
     </DataPanel>
@@ -256,112 +256,103 @@ function HotelsView({ data }: { data: AnalyticsData }) {
   const rows = data.hotels.map(hotel => {
     const hotelBookings = data.bookings.filter(booking => booking.hotel.id === hotel.id);
     const daily = days.map(date => {
-      const rooms = (hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date).reduce((sum, item) => sum + item.roomCount, 0);
-      const occupied = hotelBookings.filter(booking => bookingOnDay(booking, date)).length;
-      return { date, rooms, occupied, reserve: rooms - occupied };
+      const inventories = (hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
+      const rooms = inventories.reduce((sum, item) => sum + item.roomCount, 0);
+      const singleRooms = inventories.filter(item => isSingle(item.roomType)).reduce((sum, item) => sum + item.roomCount, 0);
+      const activeBookings = hotelBookings.filter(booking => bookingOnDay(booking, date));
+      const occupied = activeBookings.length;
+      const occupiedSingle = activeBookings.filter(booking => isSingle(booking.roomType)).length;
+      return { date, rooms, occupied, reserve: rooms - occupied, singleReserve: singleRooms - occupiedSingle };
     }).filter(day => day.rooms > 0 || day.occupied > 0);
-    const peak = daily.reduce((lowest, day) => day.reserve < (lowest?.reserve ?? Number.POSITIVE_INFINITY) ? day : lowest, daily[0]);
-    const reservePercent = peak?.rooms ? Math.round(peak.reserve / peak.rooms * 100) : peak?.occupied ? -100 : 100;
-    return { id: hotel.id, name: hotel.name, date: peak?.date || '', rooms: peak?.rooms || 0, occupied: peak?.occupied || 0, reserve: peak?.reserve || 0, reservePercent };
-  }).sort((a, b) => a.reservePercent - b.reservePercent || a.reserve - b.reserve);
-  const critical = rows.filter(row => row.reservePercent <= 10);
-  const shortages = rows.filter(row => row.reserve < 0);
-  const next = rows[0];
-  return <ViewShell title="Welche Hotels werden kritisch?" subtitle="Priorisiert nach der kleinsten Zimmerreserve an ihrem jeweils kritischsten Tag.">
-    <Kpis><ClickMetric onClick={() => next && navigate(`/hotels?hotelId=${next.id}&date=${next.date}`)} label="Nächstes Risiko" value={next?.name || '—'} helper={next?.date ? formatDay(next.date) : 'kein Zeitraum'} trend={next ? `${next.reserve} Zimmer` : 'stabil'} tone={next && next.reservePercent <= 10 ? 'error' : 'success'}/><ClickMetric onClick={() => navigate('/hotels')} label="Kritische Hotels" value={critical.length} helper="maximal 10 % Reserve" trend={critical.length ? 'prüfen' : 'keine'} tone={critical.length ? 'warning' : 'success'}/><ClickMetric onClick={() => navigate('/assignments')} label="Unterdeckungen" value={shortages.length} helper="Hotels mit negativer Reserve" trend={shortages.length ? 'sofort' : 'gedeckt'} tone={shortages.length ? 'error' : 'success'}/></Kpis>
-    <DataPanel title="Kleinste Zimmerreserve je Hotel" actions={<StatusChip tone={critical.length ? 'warning' : 'success'}>{critical.length ? `${critical.length} kritisch` : 'Alle stabil'}</StatusChip>}><button type="button" onClick={() => next && navigate(`/hotels?hotelId=${next.id}&date=${next.date}`)} className="h-80 w-full p-4 text-left"><ResponsiveContainer width="100%" height="100%"><BarChart data={rows.slice(0, 12)} layout="vertical" margin={{ left: 30 }}><CartesianGrid stroke="var(--ops-divider)" horizontal={false}/><XAxis type="number" stroke="var(--ops-text-muted)"/><YAxis type="category" dataKey="name" width={150} tick={{ fill: 'var(--ops-text-muted)', fontSize: 11 }}/><ChartTip/><Bar dataKey="reserve" name="Zimmerreserve" radius={[0,5,5,0]}>{rows.slice(0, 12).map(row => <Cell key={row.id} fill={row.reserve < 0 ? 'var(--ops-error)' : row.reservePercent <= 10 ? 'var(--ops-warning)' : 'var(--ops-success)'}/>)}</Bar></BarChart></ResponsiveContainer></button></DataPanel>
-    {critical.length > 0 && <DataPanel title="Handlungsbedarf"><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Hotel</th><th>Kritischer Tag</th><th>Kontingent</th><th>Disponiert</th><th>Reserve</th><th>Status</th><th/></tr></thead><tbody>{critical.map(row => <tr key={row.id} onClick={() => navigate(`/hotels?hotelId=${row.id}&date=${row.date}`)} className={rowClass}><td className="p-3 font-bold">{row.name}</td><td>{formatDay(row.date)}</td><td>{row.rooms}</td><td>{row.occupied}</td><td className={clsx('font-bold', row.reserve < 0 ? 'text-[var(--ops-error)]' : 'text-[var(--ops-warning)]')}>{row.reserve > 0 ? '+' : ''}{row.reserve}</td><td><StatusChip tone={row.reserve < 0 ? 'error' : 'warning'}>{row.reserve < 0 ? 'Unterdeckung' : 'knapp'}</StatusChip></td><td><ActionCell/></td></tr>)}</tbody></table></div></DataPanel>}
+    const worst = daily.reduce((lowest, day) => day.reserve < (lowest?.reserve ?? Number.POSITIVE_INFINITY) ? day : lowest, daily[0]);
+    const firstCritical = daily.find(day => day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1);
+    const criticalDays = daily.filter(day => day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1).length;
+    const reservePercent = worst?.rooms ? Math.round(worst.reserve / worst.rooms * 100) : worst?.occupied ? -100 : 100;
+    const cause = worst?.reserve < 0 ? 'Zimmerunterdeckung' : worst?.singleReserve < 0 ? 'EZ-Mix' : reservePercent <= 10 ? 'Reserve ≤ 10 %' : 'Stabil';
+    return { id: hotel.id, name: hotel.name, daily, worst, firstCritical, criticalDays, reservePercent, cause };
+  }).sort((a, b) => (a.firstCritical?.date || '9999').localeCompare(b.firstCritical?.date || '9999') || a.reservePercent - b.reservePercent);
+  const critical = rows.filter(row => row.firstCritical);
+  const worst = [...rows].sort((a, b) => a.reservePercent - b.reservePercent)[0];
+  const criticalTone = (reserve: number, rooms: number) => reserve < 0 ? 'bg-[var(--ops-error)]' : rooms > 0 && reserve / rooms <= .1 ? 'bg-[var(--ops-warning)]' : 'bg-[var(--ops-tone-success-surface)]';
+  return <ViewShell title="Hotelrisiken">
+    <Kpis>
+      <ClickMetric onClick={() => worst && navigate(`/hotels?hotelId=${worst.id}&date=${worst.worst?.date || ''}`)} label="Kleinste Reserve" value={worst?.worst ? `${worst.worst.reserve > 0 ? '+' : ''}${worst.worst.reserve}` : '—'} helper={worst?.name || 'Kein Hotel'} trend={worst?.worst ? formatDay(worst.worst.date) : 'kein Zeitraum'} tone={worst && worst.reservePercent <= 10 ? 'error' : 'success'}/>
+      <ClickMetric onClick={() => critical[0] && navigate(`/hotels?hotelId=${critical[0].id}&date=${critical[0].firstCritical?.date}`)} label="Erster Risikotag" value={critical[0]?.firstCritical ? formatDay(critical[0].firstCritical!.date) : '—'} helper={critical[0]?.name || 'Kein Risiko'} trend={critical.length ? `${critical.length} Hotels betroffen` : 'stabil'} tone={critical.length ? 'warning' : 'success'}/>
+      <ClickMetric onClick={() => navigate('/hotels')} label="Kritische Hoteltage" value={critical.reduce((sum, row) => sum + row.criticalDays, 0)} helper="Reserve maximal 10 %" trend="über den Zeitraum" tone={critical.length ? 'warning' : 'success'}/>
+    </Kpis>
+    <DataPanel title="Risiko über den Zeitraum" actions={<StatusChip tone={critical.length ? 'warning' : 'success'}>{critical.length ? `${critical.length} Hotels kritisch` : 'Alle Hotels stabil'}</StatusChip>}>
+      {!rows.length || !days.length ? <EmptyState title="Keine Hotelzeiträume vorhanden"/> : <div className="overflow-x-auto p-3">
+        <div className="min-w-max">
+          <div className="grid items-end gap-1 text-[10px] text-[var(--ops-text-subtle)]" style={{ gridTemplateColumns: `11rem repeat(${days.length}, 1.5rem)` }}><span>Hotel</span>{days.map((day, index) => <span key={day} className="-rotate-45 origin-bottom-left pb-1">{index % 2 === 0 ? formatDay(day) : ''}</span>)}</div>
+          {rows.map(row => <button type="button" key={row.id} onClick={() => navigate(`/hotels?hotelId=${row.id}&date=${row.firstCritical?.date || row.worst?.date || ''}`)} className="grid items-center gap-1 border-t border-[var(--ops-divider)] py-1 text-left hover:bg-[var(--ops-surface-elevated)]" style={{ gridTemplateColumns: `11rem repeat(${days.length}, 1.5rem)` }}><span className="truncate pr-3 text-xs font-bold" title={row.name}>{row.name}</span>{days.map(day => { const value = row.daily.find(item => item.date === day); return <span key={day} title={`${formatDay(day)} · ${value ? `${value.reserve} Zimmer Reserve` : 'kein Kontingent'}`} className={clsx('h-5 rounded-sm border border-[var(--ops-surface)]', value ? criticalTone(value.reserve, value.rooms) : 'bg-[var(--ops-surface-overlay)]')}/>; })}</button>)}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-4 text-[11px] text-[var(--ops-text-muted)]"><span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-[var(--ops-tone-success-surface)]"/>stabil</span><span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-[var(--ops-warning)]"/>max. 10 % Reserve</span><span><i className="mr-1 inline-block h-2.5 w-2.5 rounded-sm bg-[var(--ops-error)]"/>Unterdeckung</span></div>
+      </div>}
+    </DataPanel>
+    <DataPanel title="Frühester Handlungsbedarf" actions={<span className="text-xs text-[var(--ops-text-muted)]">Verdichtete Analyse · Bearbeitung in Hotels</span>}>
+      {!critical.length ? <EmptyState title="Keine kritischen Hotelzeiträume"/> : <div className="divide-y divide-[var(--ops-divider)]">{critical.slice(0, 8).map((row, index) => <button type="button" key={row.id} onClick={() => navigate(`/hotels?hotelId=${row.id}&date=${row.firstCritical!.date}`)} className="grid w-full grid-cols-[2rem_minmax(9rem,1fr)_7rem_7rem_8rem_auto] items-center gap-3 p-3 text-left text-xs hover:bg-[var(--ops-surface-elevated)]"><b className="font-mono text-[var(--ops-text-subtle)]">{index + 1}</b><b>{row.name}</b><span>{formatDay(row.firstCritical!.date)}</span><span>{row.criticalDays} krit. Tage</span><StatusChip tone={row.worst?.reserve && row.worst.reserve < 0 ? 'error' : 'warning'}>{row.cause}</StatusChip><ArrowRight size={16} className="text-[var(--ops-primary)]"/></button>)}</div>}
+    </DataPanel>
   </ViewShell>;
 }
+
 function NationsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
-  const quotaEvaluation = new Map(quotaAssignmentsFromBookings(data.bookings).map(assignment =>
-    [assignment.personId, assignment.countsAsSingle] as const));
-  const colors = ['var(--ops-primary)', 'var(--ops-success)', 'var(--ops-warning)', 'var(--ops-error)', 'var(--ops-secondary)', 'var(--ops-info)', 'var(--ops-primary-emphasis)', 'var(--ops-text-muted)'];
-  const rows = Object.values(data.athletes.reduce<Record<string, { nation: string; people: number; athletes: number; officials: number; ez: number; dzPeople: number }>>((result, person) => {
+  const quotaEvaluation = new Map(quotaAssignmentsFromBookings(data.bookings).map(assignment => [assignment.personId, assignment.countsAsSingle] as const));
+  const dates = data.athletes.flatMap(person => person.stays?.length ? person.stays.flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)]) : [dayKey(person.arrivalDate), dayKey(person.departureDate)]).filter(Boolean).sort();
+  const days = dates.length ? range(dates[0], dates.at(-1)!) : [];
+  const rows = Object.values(data.athletes.reduce<Record<string, { nation: string; people: Athlete[]; athletes: number; officials: number; ez: number; dzPeople: number }>>((result, person) => {
     const nation = person.nationCode || '—';
-    const row = result[nation] ||= { nation, people: 0, athletes: 0, officials: 0, ez: 0, dzPeople: 0 };
-    row.people += 1;
+    const row = result[nation] ||= { nation, people: [], athletes: 0, officials: 0, ez: 0, dzPeople: 0 };
+    row.people.push(person);
     if (/official|coach|staff|trainer/i.test(person.function || '')) row.officials += 1; else row.athletes += 1;
     if (quotaEvaluation.get(person.id)) row.ez += 1; else row.dzPeople += 1;
     return result;
-  }, {})).map(row => ({ ...row, dz: Math.ceil(row.dzPeople / 2), share: data.athletes.length ? row.people / data.athletes.length * 100 : 0 })).sort((a, b) => b.people - a.people);
-  const leader = rows[0];
-  const NationTooltip = ({ active, payload }: { active?: boolean; payload?: Array<{ payload: typeof rows[number] }> }) => {
-    const row = payload?.[0]?.payload;
-    if (!active || !row) return null;
-    return <div className="rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl"><b className="mb-2 block text-sm">{row.nation}</b><div className="grid grid-cols-[auto_auto] gap-x-6 gap-y-1 text-[var(--ops-text-muted)]"><span>Personen</span><strong className="text-right text-[var(--ops-text)]">{row.people}</strong><span>Zimmer</span><strong className="text-right text-[var(--ops-text)]">{row.ez + row.dz}</strong><span>EZ</span><strong className="text-right text-[var(--ops-text)]">{row.ez}</strong><span>DZ</span><strong className="text-right text-[var(--ops-text)]">{row.dz}</strong><span>Anteil</span><strong className="text-right text-[var(--ops-text)]">{row.share.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</strong></div></div>;
-  };
-  return <ViewShell title="Nationen"><Kpis><ClickMetric onClick={() => navigate('/athletes')} label="Gemeldete Nationen" value={rows.length} helper="mit konkretem Bedarf" trend="Ist" tone="info"/><ClickMetric onClick={() => leader && navigate(`/athletes?nation=${leader.nation}`)} label="Größte Delegation" value={leader?.nation || '—'} helper={`${leader?.people || 0} Personen`} trend={`${leader?.share.toLocaleString('de-DE', { maximumFractionDigits: 1 }) || 0} %`} tone="primary"/></Kpis><DataPanel title="Anteil am Gesamtbedarf"><div className="grid min-h-[24rem] items-center gap-4 p-4 lg:grid-cols-[minmax(0,2fr)_minmax(13rem,1fr)]"><div className="h-[22rem]"><ResponsiveContainer width="100%" height="100%"><PieChart><Tooltip content={<NationTooltip/>}/><Pie data={rows} dataKey="people" nameKey="nation" innerRadius="52%" outerRadius="86%" paddingAngle={1} stroke="var(--ops-surface-raised)" strokeWidth={2} onClick={row => navigate(`/athletes?nation=${row.nation}`)}>{rows.map((row, index) => <Cell key={row.nation} fill={colors[index % colors.length]} className="cursor-pointer outline-none"/>)}</Pie></PieChart></ResponsiveContainer></div><div className="grid grid-cols-2 gap-2 lg:grid-cols-1">{rows.map((row, index) => <button key={row.nation} onClick={() => navigate(`/athletes?nation=${row.nation}`)} className="flex items-center justify-between gap-3 rounded-lg p-2 text-left text-sm hover:bg-[var(--ops-surface-elevated)]"><span className="flex min-w-0 items-center gap-2"><i className="h-3 w-3 shrink-0 rounded-sm" style={{ background: colors[index % colors.length] }}/><b className="truncate">{row.nation}</b></span><span className="font-mono text-[var(--ops-text-muted)]">{row.share.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</span></button>)}</div></div></DataPanel><DataPanel title="Bedarf je Nation"><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Nation</th><th>Personen</th><th>Zimmer</th><th>EZ</th><th>DZ</th><th>Anteil</th><th/></tr></thead><tbody>{rows.map(row => <tr key={row.nation} onClick={() => navigate(`/athletes?nation=${row.nation}`)} className={rowClass}><td className="p-3 font-bold">{row.nation}</td><td>{row.people}</td><td>{row.ez + row.dz}</td><td>{row.ez}</td><td>{row.dz}</td><td>{row.share.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %</td><td><ActionCell/></td></tr>)}</tbody></table>{!rows.length && <EmptyState title="Noch keine Nationenanmeldungen"/>}</div></DataPanel></ViewShell>;
+  }, {})).map(row => {
+    const presence = days.map(date => row.people.filter(person => athleteOnDay(person, date)).length);
+    const bedNights = presence.reduce((sum, count) => sum + count, 0);
+    const stays = row.people.map(person => {
+      const arrival = dayKey(person.arrivalDate || person.stays?.[0]?.arrivalDate); const departure = dayKey(person.departureDate || person.stays?.[0]?.departureDate);
+      return arrival && departure ? Math.max(0, Math.round((new Date(`${departure}T00:00:00Z`).getTime() - new Date(`${arrival}T00:00:00Z`).getTime()) / 86400000)) : 0;
+    });
+    return { ...row, count: row.people.length, dz: Math.ceil(row.dzPeople / 2), share: data.athletes.length ? row.people.length / data.athletes.length * 100 : 0, presence, bedNights, averageStay: stays.length ? stays.reduce((a, b) => a + b, 0) / stays.length : 0, peak: Math.max(...presence, 0) };
+  }).sort((a, b) => b.bedNights - a.bedNights || b.count - a.count);
+  const top = rows.slice(0, 12);
+  const maxNights = Math.max(...top.map(row => row.bedNights), 1);
+  const maxPresence = Math.max(...top.flatMap(row => row.presence), 1);
+  const biggestPeak = [...rows].sort((a, b) => b.peak - a.peak)[0];
+  const highestEz = [...rows].filter(row => row.count).sort((a, b) => b.ez / b.count - a.ez / a.count)[0];
+  return <ViewShell title="Nationen & Bedarfsstruktur">
+    <Kpis>
+      <ClickMetric onClick={() => biggestPeak && navigate(`/lists?kind=people&groupBy=nation&nation=${biggestPeak.nation}`)} label="Höchster Delegationspeak" value={biggestPeak?.peak || 0} helper={biggestPeak?.nation || '—'} trend="gleichzeitig anwesend" tone="primary"/>
+      <ClickMetric onClick={() => rows[0] && navigate(`/lists?kind=people&groupBy=nation&nation=${rows[0].nation}`)} label="Meiste Bettennächte" value={rows[0]?.bedNights || 0} helper={rows[0]?.nation || '—'} trend={`${rows[0]?.share.toLocaleString('de-DE', { maximumFractionDigits: 1 }) || 0} % der Personen`} tone="info"/>
+      <ClickMetric onClick={() => highestEz && navigate(`/lists?kind=people&groupBy=nation&nation=${highestEz.nation}`)} label="Höchster EZ-Anteil" value={highestEz?.count ? `${Math.round(highestEz.ez / highestEz.count * 100)} %` : '—'} helper={highestEz?.nation || '—'} trend="Bedarfsstruktur" tone="warning"/>
+    </Kpis>
+    <DataPanel title="Bedarf nach Nation" actions={<span className="text-xs text-[var(--ops-text-muted)]">Top 12 · sortiert nach Bettennächten</span>}>
+      {!top.length ? <EmptyState title="Noch keine Nationenanmeldungen"/> : <div className="space-y-2 p-4">{top.map((row, index) => <button type="button" key={row.nation} onClick={() => navigate(`/lists?kind=people&groupBy=nation&nation=${row.nation}`)} className="grid w-full grid-cols-[2rem_4rem_minmax(12rem,1fr)_5rem_6rem] items-center gap-3 rounded-lg p-1.5 text-left text-xs hover:bg-[var(--ops-surface-elevated)]"><span className="font-mono text-[var(--ops-text-subtle)]">{index + 1}</span><b>{row.nation}</b><span className="relative h-5 overflow-hidden rounded bg-[var(--ops-surface-overlay)]"><i className="absolute inset-y-0 left-0 bg-[var(--ops-primary)]" style={{ width: `${row.bedNights / maxNights * 100}%` }}/><span className="relative z-10 px-2 font-mono font-bold text-white mix-blend-difference">{row.bedNights} Bettennächte</span></span><span>{row.count} Pers.</span><span>{row.averageStay.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Nächte Ø</span></button>)}</div>}
+    </DataPanel>
+    <DataPanel title="Aufenthaltsprofil der Top-Nationen" actions={<span className="text-xs text-[var(--ops-text-muted)]">Gleichzeitig anwesende Personen</span>}>
+      {!top.length || !days.length ? <EmptyState title="Keine Aufenthaltszeiträume vorhanden"/> : <div className="overflow-x-auto p-3"><div className="min-w-max"><div className="grid items-end gap-1 text-[10px] text-[var(--ops-text-subtle)]" style={{ gridTemplateColumns: `6rem repeat(${days.length}, 1.5rem)` }}><span>Nation</span>{days.map((day, index) => <span key={day} className="-rotate-45 origin-bottom-left pb-1">{index % 2 === 0 ? formatDay(day) : ''}</span>)}</div>{top.map(row => <button type="button" key={row.nation} onClick={() => navigate(`/lists?kind=people&groupBy=nation&nation=${row.nation}`)} className="grid items-center gap-1 border-t border-[var(--ops-divider)] py-1 hover:bg-[var(--ops-surface-elevated)]" style={{ gridTemplateColumns: `6rem repeat(${days.length}, 1.5rem)` }}><b className="text-left text-xs">{row.nation}</b>{row.presence.map((count, index) => <span key={days[index]} title={`${formatDay(days[index])} · ${count} Personen`} className="flex h-5 items-center justify-center rounded-sm text-[9px] font-bold" style={{ background: count ? `color-mix(in srgb, var(--ops-primary) ${Math.max(18, count / maxPresence * 100)}%, var(--ops-surface))` : 'var(--ops-surface-overlay)', color: count / maxPresence > .55 ? 'white' : 'var(--ops-text-muted)' }}>{count || ''}</span>)}</button>)}</div></div>}
+    </DataPanel>
+    <DataPanel title="Zimmer- und Rollenstruktur"><div className="h-80 p-3"><ResponsiveContainer width="100%" height="100%"><BarChart data={top} layout="vertical" margin={{ left: 20, right: 20 }}><CartesianGrid stroke="var(--ops-divider)" horizontal={false}/><XAxis type="number" stroke="var(--ops-text-muted)"/><YAxis type="category" dataKey="nation" width={55} tick={{ fill: 'var(--ops-text-muted)', fontSize: 11 }}/><ChartTip/><Bar dataKey="ez" name="EZ" stackId="rooms" fill="var(--ops-warning)"/><Bar dataKey="dz" name="DZ" stackId="rooms" fill="var(--ops-primary)" radius={[0,4,4,0]}/></BarChart></ResponsiveContainer></div></DataPanel>
+  </ViewShell>;
 }
 
-function AssignmentsView({ data }: { data: AnalyticsData }) {
-  const navigate = useNavigate();
-  const open = data.athletes.filter(athlete => !isAssigned(athlete)).map(athlete => {
-    const arrival = dayKey(athlete.arrivalDate || athlete.stays?.[0]?.arrivalDate);
-    const roomDecisionOpen = athlete.single_room_status === 'PENDING_APPROVAL';
-    const missingStay = !arrival || !dayKey(athlete.departureDate || athlete.stays?.[0]?.departureDate);
-    return { athlete, arrival, roomDecisionOpen, missingStay, priority: missingStay ? 1 : roomDecisionOpen ? 2 : 3 };
-  }).sort((a, b) => a.priority - b.priority || (a.arrival || '9999').localeCompare(b.arrival || '9999') || a.athlete.lastname.localeCompare(b.athlete.lastname));
-  const missingStay = open.filter(item => item.missingStay).length;
-  const blocked = open.filter(item => item.roomDecisionOpen).length;
-  return <ViewShell title="Zuweisungsarbeit"><Kpis><ClickMetric onClick={() => navigate('/assignments?workflow=open')} label="Ohne Zimmer" value={open.length} helper="offene Zuweisungen" trend={open.length ? 'bearbeiten' : 'erledigt'} tone={open.length ? 'error' : 'success'}/><ClickMetric onClick={() => navigate('/athletes?stay=missing')} label="Aufenthalt fehlt" value={missingStay} helper="nicht disponierbar" trend={missingStay ? 'zuerst klären' : 'vollständig'} tone={missingStay ? 'error' : 'success'}/><ClickMetric onClick={() => navigate('/athletes?singleRoomStatus=PENDING_APPROVAL')} label="Durch EZ blockiert" value={blocked} helper="Entscheidung offen" trend={blocked ? 'entscheiden' : 'keine'} tone={blocked ? 'warning' : 'success'}/></Kpis><DataPanel title="Nächste Zuweisungen" actions={<StatusChip tone={open.length ? 'warning' : 'success'}>{open.length ? `${open.length} offen` : 'Alles zugewiesen'}</StatusChip>}><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Priorität</th><th>Person</th><th>Nation</th><th>Anreise</th><th>Blocker</th><th/></tr></thead><tbody>{open.map((item, index) => <tr key={item.athlete.id} onClick={() => navigate(`/assignments?athleteId=${item.athlete.id}`)} className={rowClass}><td className="p-3 font-mono font-bold">{index + 1}</td><td className="font-bold">{item.athlete.firstname} {item.athlete.lastname}</td><td>{item.athlete.nationCode}</td><td>{item.arrival ? formatDay(item.arrival) : '—'}</td><td><StatusChip tone={item.missingStay ? 'error' : item.roomDecisionOpen ? 'warning' : 'info'}>{item.missingStay ? 'Aufenthalt fehlt' : item.roomDecisionOpen ? 'EZ offen' : 'zuweisen'}</StatusChip></td><td><ActionCell/></td></tr>)}</tbody></table>{!open.length && <EmptyState title="Keine offenen Zuweisungen"/>}</div></DataPanel></ViewShell>;
-}
-
-function SingleRoomsView({ data }: { data: AnalyticsData }) {
-  const navigate = useNavigate();
-  const defs: Array<{ status: Athlete['single_room_status']; label: string; tone: Tone; rank: number }> = [
-    { status: 'PENDING_APPROVAL', label: singleRoomStatusPresentation.PENDING_APPROVAL.label, tone: 'warning', rank: 0 },
-    { status: 'IN_QUOTA', label: singleRoomStatusPresentation.IN_QUOTA.label, tone: 'success', rank: 1 },
-    { status: 'APPROVED_EXTRA', label: singleRoomStatusPresentation.APPROVED_EXTRA.label, tone: 'warning', rank: 2 },
-  ];
-  const counts = defs.map(def => ({ ...def, value: data.athletes.filter(a => a.single_room_status === def.status).length }));
-  const people = data.athletes.filter(person => defs.some(def => def.status === person.single_room_status)).sort((a, b) => (defs.find(def => def.status === a.single_room_status)?.rank ?? 9) - (defs.find(def => def.status === b.single_room_status)?.rank ?? 9) || a.lastname.localeCompare(b.lastname));
-  return <ViewShell title="Einzelzimmer"><Kpis>{counts.map(item => <ClickMetric key={item.status} onClick={() => navigate(`/athletes?singleRoomStatus=${item.status}`)} label={item.label} value={item.value} helper="Personen mit Einzelzimmerbedarf" trend={item.status === 'PENDING_APPROVAL' ? 'jetzt entscheiden' : 'anzeigen'} tone={item.tone}/>)}</Kpis><DataPanel title="Einzelzimmerentscheidungen" actions={<StatusChip tone={counts[0].value ? 'warning' : 'success'}>{counts[0].value ? `${counts[0].value} Entscheidungen offen` : 'Keine Entscheidung offen'}</StatusChip>}><div className="overflow-x-auto"><table className={tableClass}><thead className={headClass}><tr><th className="p-3">Person</th><th>Nation</th><th>Disziplin</th><th>Einzelzimmerstatus</th><th/></tr></thead><tbody>{people.map(person => <tr key={person.id} onClick={() => navigate(`/athletes?athleteId=${person.id}`)} className={rowClass}><td className="p-3 font-bold">{person.firstname} {person.lastname}</td><td>{person.nationCode}</td><td>{person.discipline || person.disciplines?.join(', ') || '—'}</td><td><SingleRoomStatusBadge status={person.single_room_status}/></td><td><ActionCell/></td></tr>)}</tbody></table>{!people.length && <EmptyState title="Keine Einzelzimmerentscheidungen vorhanden"/>}</div></DataPanel></ViewShell>;
-}
-
-function ConflictsView({ data }: { data: AnalyticsData }) {
-  const navigate = useNavigate();
-  const personTasks = data.athletes.flatMap(athlete => {
-    const base = { athlete, id: `person-${athlete.id}` };
-    if (athlete.missingFromLatestRoomlistImport && isAssigned(athlete)) return [{ ...base, priority: 1, title: 'Ungültige Zuordnung', detail: 'Person fehlt in der aktuellen Zimmerliste', route: `/assignments?athleteId=${athlete.id}` }];
-    if (!isAssigned(athlete)) return [{ ...base, priority: 2, title: 'Zimmer fehlt', detail: 'Keine gültige Zimmerzuweisung vorhanden', route: `/assignments?athleteId=${athlete.id}` }];
-    if (athlete.hasPendingRoomlistReview) return [{ ...base, priority: 3, title: 'Importkonflikt', detail: athlete.roomlistChangeSummary || 'Zimmerrelevante Daten wurden geändert', route: `/athletes?athleteId=${athlete.id}` }];
-    if (athlete.single_room_status === 'PENDING_APPROVAL') return [{ ...base, priority: 4, title: 'EZ-Entscheidung offen', detail: 'Einzelzimmerbedarf ist noch nicht entschieden', route: `/athletes?athleteId=${athlete.id}` }];
-    return [];
-  });
-  const hotelTasks = data.hotels.flatMap(hotel => {
-    const dates = (hotel.roomInventories || []).flatMap(item => range(dayKey(item.availableFrom), dayKey(item.availableUntil)));
-    const worst = [...new Set(dates)].map(date => ({ date, rooms: (hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date).reduce((sum, item) => sum + item.roomCount, 0), occupied: data.bookings.filter(booking => booking.hotel.id === hotel.id && bookingOnDay(booking, date)).length })).sort((a, b) => (a.rooms - a.occupied) - (b.rooms - b.occupied))[0];
-    if (!worst || worst.occupied <= worst.rooms) return [];
-    return [{ athlete: null, id: `hotel-${hotel.id}`, priority: 1, title: 'Hotel überbucht', detail: `${formatDay(worst.date)} · ${worst.occupied - worst.rooms} Zimmer Unterdeckung`, route: `/hotels?hotelId=${hotel.id}&date=${worst.date}`, subject: hotel.name }];
-  });
-  const conflicts = [...hotelTasks, ...personTasks].sort((a, b) => a.priority - b.priority || a.title.localeCompare(b.title));
-  const critical = conflicts.filter(item => item.priority <= 2).length;
-  return <ViewShell title="Operative Konflikte"><Kpis><ClickMetric onClick={() => navigate('/assignments?workflow=open')} label="Sofort erledigen" value={critical} helper="Überbuchung / Zimmer fehlt" trend="Priorität 1" tone={critical ? 'error' : 'success'}/><ClickMetric onClick={() => navigate('/athletes?review=invalid')} label="Importkonflikte" value={conflicts.filter(item => item.title === 'Importkonflikt' || item.title === 'Ungültige Zuordnung').length} helper="Zuordnung prüfen" trend="Priorität 2" tone="warning"/><ClickMetric onClick={() => navigate('/athletes?singleRoomStatus=PENDING_APPROVAL')} label="EZ-Entscheidungen" value={conflicts.filter(item => item.title === 'EZ-Entscheidung offen').length} helper="noch offen" trend="Priorität 3" tone="warning"/><ClickMetric onClick={() => navigate('/assignments')} label="Aufgaben gesamt" value={conflicts.length} helper="priorisiert" trend={conflicts.length ? 'abarbeiten' : 'alles stabil'} tone={conflicts.length ? 'error' : 'success'}/></Kpis><DataPanel title="Priorisierte Aufgaben" actions={<StatusChip tone={conflicts.length ? 'error' : 'success'}>{conflicts.length ? `${conflicts.length} offen` : 'Keine Konflikte'}</StatusChip>}><div className="divide-y divide-[var(--ops-divider)]">{conflicts.map((item, index) => <button key={item.id} onClick={() => navigate(item.route)} className="group flex w-full items-center gap-4 p-4 text-left hover:bg-[var(--ops-surface-elevated)]"><span className={clsx('flex h-9 w-9 shrink-0 items-center justify-center rounded-full font-mono font-bold', item.priority <= 2 ? 'bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]')}>{index + 1}</span><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><StatusChip tone={item.priority <= 2 ? 'error' : 'warning'}>{item.title}</StatusChip><b>{item.athlete ? `${item.athlete.firstname} ${item.athlete.lastname}` : item.subject}</b></div><p className="mt-1 text-xs text-[var(--ops-text-muted)]">{item.athlete ? `${item.athlete.nationCode} · ${item.athlete.discipline || item.athlete.disciplines?.join(', ') || 'Ohne Disziplin'} · ` : ''}{item.detail}</p></div><ActionCell/></button>)}{!conflicts.length && <div className="p-4"><EmptyState title="Keine operativen Konflikte"/></div>}</div></DataPanel></ViewShell>;
-}
-
-function Navigation({ active, data, onSelect }: { active: ViewKey; data: AnalyticsData; onSelect: (key: ViewKey) => void }) {
-  const openAssignments = data.athletes.filter(a => !isAssigned(a)).length;
-  const openSingleRooms = data.athletes.filter(a => a.single_room_status === 'PENDING_APPROVAL').length;
-  const openConflicts = data.athletes.filter(a => (a.missingFromLatestRoomlistImport && isAssigned(a)) || !isAssigned(a) || a.hasPendingRoomlistReview || a.single_room_status === 'PENDING_APPROVAL').length + data.hotels.filter(hotel => {
-    const dates = (hotel.roomInventories || []).flatMap(item => range(dayKey(item.availableFrom), dayKey(item.availableUntil)));
-    return [...new Set(dates)].some(date => data.bookings.filter(booking => booking.hotel.id === hotel.id && bookingOnDay(booking, date)).length > (hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date).reduce((sum, item) => sum + item.roomCount, 0));
-  }).length;
-  const badges: Partial<Record<ViewKey, number>> = { assignments: openAssignments, singleRooms: openSingleRooms, conflicts: openConflicts };
-  return <ContentCard surface="raised" className="overflow-hidden xl:w-[21rem] xl:shrink-0"><div className="border-b border-[var(--ops-divider)] p-4"><SectionHeader title="Arbeitsbereiche" subtitle="Operative Frage auswählen und handeln" /></div><div className="grid gap-2 p-3 sm:grid-cols-2 xl:grid-cols-1" role="tablist">{NAV.map(item => { const Icon = item.icon; const count = badges[item.key] || 0; return <button key={item.key} type="button" role="tab" aria-selected={active === item.key} onClick={() => onSelect(item.key)} className={clsx('group flex items-center gap-3 rounded-xl border p-3 text-left transition-colors', active === item.key ? 'border-[var(--ops-primary)] bg-[var(--ops-surface-overlay)] shadow-[0_0_0_1px_var(--ops-primary)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-elevated)]')}><span className="rounded-lg bg-[var(--ops-surface-elevated)] p-2 text-[var(--ops-primary)]"><Icon size={19}/></span><span className="min-w-0 flex-1"><b className="block text-sm">{item.label}</b><small className="block leading-5 text-[var(--ops-text-muted)]">{item.question}</small></span>{count > 0 ? <span aria-label={`${count} offene Aufgaben`} className="inline-flex min-w-6 shrink-0 items-center justify-center rounded-full border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-1.5 py-0.5 text-xs font-bold tabular-nums text-[var(--ops-text-muted)]">{count}</span> : <ArrowRight size={16} className="shrink-0 text-[var(--ops-primary)]"/>}</button>; })}</div></ContentCard>;
+function Navigation({ active, onSelect }: { active: ViewKey; onSelect: (key: ViewKey) => void }) {
+  return <ContentCard surface="raised" className="overflow-hidden xl:w-[21rem] xl:shrink-0"><div className="border-b border-[var(--ops-divider)] p-4"><SectionHeader title="Analysen" subtitle="Fragestellung auswählen und Zusammenhänge verstehen" /></div><div className="grid gap-2 p-3 sm:grid-cols-3 xl:grid-cols-1" role="tablist">{NAV.map(item => { const Icon = item.icon; return <button key={item.key} type="button" role="tab" aria-selected={active === item.key} onClick={() => onSelect(item.key)} className={clsx('group flex items-center gap-3 rounded-xl border p-3 text-left transition-colors', active === item.key ? 'border-[var(--ops-primary)] bg-[var(--ops-surface-overlay)] shadow-[0_0_0_1px_var(--ops-primary)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)] hover:bg-[var(--ops-surface-elevated)]')}><span className="rounded-lg bg-[var(--ops-surface-elevated)] p-2 text-[var(--ops-primary)]"><Icon size={19}/></span><span className="min-w-0 flex-1"><b className="block text-sm">{item.label}</b><small className="block leading-5 text-[var(--ops-text-muted)]">{item.question}</small></span><ArrowRight size={16} className="shrink-0 text-[var(--ops-primary)]"/></button>; })}</div></ContentCard>;
 }
 
 export function RoomAnalytics() {
-  const [active, setActive] = useState<ViewKey>('capacity'); const [data, setData] = useState<AnalyticsData>({ hotels: [], events: [], athletes: [], bookings: [] }); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
+  const [params, setParams] = useSearchParams();
+  const requested = params.get('view');
+  const active: ViewKey = NAV.some(item => item.key === requested) ? requested as ViewKey : 'capacity';
+  const [data, setData] = useState<AnalyticsData>({ hotels: [], events: [], athletes: [], bookings: [] }); const [loading, setLoading] = useState(true); const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     const load = () => Promise.all([api.getHotels(), api.getEvents(), api.getAthletes(), api.getRoomAssignments()]).then(([hotels, events, athletes, bookings]) => { setData({ hotels, events, athletes, bookings }); setError(null); }).catch(() => setError('Analytics-Daten konnten nicht geladen werden.')).finally(() => setLoading(false));
-    void load();
-    const refresh = window.setInterval(() => void load(), 30_000);
-    return () => window.clearInterval(refresh);
+    void load(); const refresh = window.setInterval(() => void load(), 30_000); return () => window.clearInterval(refresh);
   }, []);
   const updated = useMemo(() => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date()), [data]);
   const phase = data.bookings.length ? 'Phase 3 · Betrieb' : data.athletes.length ? 'Phase 2 · Durchführung' : 'Phase 1 · Planung';
+  const select = (view: ViewKey) => setParams(current => { const next = new URLSearchParams(current); next.set('view', view); return next; });
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600"/></div>;
-  return <SplitPageLayout><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral">Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<SplitPaneLayout sidebar={<Navigation active={active} data={data} onSelect={setActive}/>}><div role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</div></SplitPaneLayout></SplitPageLayout>;
+  return <SplitPageLayout><PageHeader eyebrow="Unterkunftsplanung · Verstehen" title="Analytics" subtitle="Ursachen, Entwicklungen und Kapazitätsrisiken erkennen." meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral">Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<SplitPaneLayout sidebar={<Navigation active={active} onSelect={select}/>}><div role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>}</div></SplitPaneLayout></SplitPageLayout>;
 }

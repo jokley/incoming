@@ -260,7 +260,6 @@ export function Dashboard() {
   const importStatuses = [
     { id: 'sessions', title: 'Importsessions', count: importSessions.length, helper: `${importSessions.filter(session => !['IMPORTED', 'REPLACED', 'ARCHIVED'].includes(session.status)).length} in Bearbeitung`, tone: importSessions.length > 0 ? 'success' : 'warning' as Tone, href: importSessions[0] ? `/import?sessionId=${importSessions[0].id}` : '/import' },
     { id: 'reviews', title: 'Disposition prüfen', count: operations.pendingImportReviews, helper: 'geänderte bestehende Zuweisungen', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/assignments?workflow=review' },
-    { id: 'decisions', title: 'Einzelzimmer – Prüfung', count: operations.pendingSingleRooms, helper: 'offene Einzelzimmer-Entscheidungen', tone: operations.pendingSingleRooms > 0 ? 'warning' : 'success' as Tone, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' },
     { id: 'validation', title: 'Importprüfungen', count: operationalConflicts, helper: 'Referenzen und Konflikte im Import', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: '/import' },
   ];
 
@@ -295,8 +294,8 @@ export function Dashboard() {
       </ContentCard>
 
       <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Heute</span>} actions={<TextLink to="/assignments">Operations Cockpit öffnen</TextLink>}>
-        <div className="grid grid-cols-2 divide-x divide-y divide-[var(--ops-divider)] md:grid-cols-3 xl:grid-cols-6 xl:divide-y-0">
-          {[{ label: 'Anreisen', value: arrivalsToday, href: `/athletes?movement=arrival&date=${today}` }, { label: 'Abreisen', value: departuresToday, href: `/athletes?movement=departure&date=${today}` }, { label: 'Neue Zimmerzuweisungen', value: assignmentsToday, href: '/assignments' }, { label: 'Offene Zimmerzuweisungen', value: operations.peopleWithoutRoom, href: '/assignments?workflow=open' }, { label: 'Kritische Hotels', value: criticalHotels.length, href: criticalHotels[0] ? `/hotels?hotelId=${criticalHotels[0].hotel.id}` : '/hotels' }, { label: 'Offene Entscheidungen', value: operations.pendingSingleRooms, href: '/athletes?singleRoomStatus=PENDING_APPROVAL' }].map(item => <Link key={item.label} to={item.href} className="px-3 py-2 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-lg font-extrabold">{formatNumber(item.value)}</div></Link>)}
+        <div className="grid grid-cols-1 divide-y divide-[var(--ops-divider)] md:grid-cols-3 md:divide-x md:divide-y-0">
+          {[{ label: 'Anreisen heute', value: arrivalsToday, helper: 'Bewegung vorbereiten', href: `/athletes?movement=arrival&date=${today}` }, { label: 'Abreisen heute', value: departuresToday, helper: 'Abreise abstimmen', href: `/athletes?movement=departure&date=${today}` }, { label: 'Zimmerbezüge heute', value: assignmentsToday, helper: 'bereits disponiert', href: '/assignments' }].map(item => <Link key={item.label} to={item.href} className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{item.helper}</div></div><div className="text-xl font-extrabold">{formatNumber(item.value)}</div></Link>)}
         </div>
       </DataPanel>
 
@@ -315,9 +314,9 @@ export function Dashboard() {
       </div>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
-        <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Hotelübersicht</span>} actions={<StatusChip tone="info">Nach Priorität</StatusChip>} className="xl:col-span-1">
+        <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Kritische Hotels</span>} actions={<StatusChip tone="info">Nach Priorität</StatusChip>} className="xl:col-span-1">
           <div className="space-y-2 p-3">
-            {hotelOverview.slice(0, 4).map(item => <Link to={`/hotels?hotelId=${item.hotel.id}`} key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
+            {criticalHotels.slice(0, 4).map(item => <Link to={`/hotels?hotelId=${item.hotel.id}`} key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
             <div className="pt-2 text-center"><TextLink to="/hotels">Alle Hotels anzeigen</TextLink></div>
           </div>
         </DataPanel>
@@ -328,7 +327,7 @@ export function Dashboard() {
           </div>
         </DataPanel>
 
-        <DataPanel title={<span className="inline-flex items-center gap-2"><TimelineRoundedIcon fontSize="small" />Aktivitäten</span>} actions={<TextLink to="/audit">Alle Aktivitäten</TextLink>}>
+        <DataPanel title={<span className="inline-flex items-center gap-2"><TimelineRoundedIcon fontSize="small" />Relevante Änderungen</span>} actions={<TextLink to="/audit">Alle Aktivitäten</TextLink>}>
           <ol className="relative m-3 space-y-3 border-l border-[var(--ops-divider)] pl-5">
             {activityItems.map((item) => <li key={item.id} className="relative"><span className="absolute -left-[1.58rem] top-1.5 h-2.5 w-2.5 rounded-full bg-[var(--ops-primary)] ring-4 ring-[var(--ops-surface)]" /><Link to={item.href} className="grid grid-cols-[3rem_1fr] gap-3 rounded-[var(--ops-radius-lg)] text-sm transition-colors hover:text-[var(--ops-primary)]"><span className="text-[var(--ops-text-muted)]">{item.time}</span><div><strong>{item.title}</strong><p className="mt-1 text-[var(--ops-text-muted)]">{item.meta}</p></div></Link></li>)}
           </ol>
