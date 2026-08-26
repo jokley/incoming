@@ -45,7 +45,7 @@ export function DatabaseBackups({ embedded = false }: { embedded?: boolean }) {
       await api.restoreDatabaseBackup(selected);
       if (selected.local) setLocal(null);
       setSelected(null);
-      setNotice({ severity: 'success', text: '✓ Backup erfolgreich wiederhergestellt.' });
+      setNotice({ severity: 'success', text: 'Backup erfolgreich wiederhergestellt.' });
       setBusy('reload');
       await reloadAfterRestore();
       setBusy(null);

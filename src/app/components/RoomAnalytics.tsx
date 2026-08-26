@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router';
 import { Bar, BarChart, CartesianGrid, Cell, ComposedChart, Line, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
-import { AlertTriangle, ArrowRight, Building2, CalendarRange, ChartNoAxesCombined, CircleUserRound, Flag, Loader2, ListChecks } from 'lucide-react';
+import { AlertTriangle, ArrowRight, Building2, ChartNoAxesCombined, CircleUserRound, Flag, Loader2, ListChecks } from 'lucide-react';
 import { clsx } from 'clsx';
 import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
@@ -363,5 +363,5 @@ export function RoomAnalytics() {
   const updated = useMemo(() => new Intl.DateTimeFormat('de-DE', { hour: '2-digit', minute: '2-digit' }).format(new Date()), [data]);
   const phase = data.bookings.length ? 'Phase 3 · Betrieb' : data.athletes.length ? 'Phase 2 · Durchführung' : 'Phase 1 · Planung';
   if (loading) return <div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-blue-600"/></div>;
-  return <SplitPageLayout><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral"><CalendarRange className="mr-1 h-3 w-3"/>Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<SplitPaneLayout sidebar={<Navigation active={active} data={data} onSelect={setActive}/>}><div role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</div></SplitPaneLayout></SplitPageLayout>;
+  return <SplitPageLayout><PageHeader eyebrow="Operations Center · Unterkunftsplanung" title="Operations Cockpit" meta={<><StatusChip tone={data.bookings.length ? 'primary' : data.athletes.length ? 'info' : 'neutral'}>{phase}</StatusChip><StatusChip tone="success">Live · 30 s</StatusChip><StatusChip tone="neutral">Aktualisiert {updated} Uhr</StatusChip></>}/>{error && <ErrorState title="Daten nicht verfügbar" description={error}/>}<SplitPaneLayout sidebar={<Navigation active={active} data={data} onSelect={setActive}/>}><div role="tabpanel">{active === 'capacity' && <CapacityView data={data}/>} {active === 'hotels' && <HotelsView data={data}/>} {active === 'nations' && <NationsView data={data}/>} {active === 'assignments' && <AssignmentsView data={data}/>} {active === 'singleRooms' && <SingleRoomsView data={data}/>} {active === 'conflicts' && <ConflictsView data={data}/>}</div></SplitPaneLayout></SplitPageLayout>;
 }
