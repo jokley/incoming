@@ -85,7 +85,7 @@ class BackupServiceTest(unittest.TestCase):
         integrity = Result()
         integrity.stdout = '20260815_01\n'
         def run(command, **kwargs):
-            events.append(command[0])
+            events.append('alembic' if 'alembic' in command else command[0])
             return integrity
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.create_backup', side_effect=lambda category: events.append(f'backup:{category}') or {'filename': 'safety.dump.gz'}), \
@@ -95,7 +95,7 @@ class BackupServiceTest(unittest.TestCase):
             imported.parent.mkdir()
             imported.write_bytes(b'PGDMP-valid')
             result = backup_service.restore_backup({'token': 'a' * 32})
-            self.assertEqual(events, ['validation', 'backup:pre-restore', 'psql', 'pg_restore', 'psql'])
+            self.assertEqual(events, ['validation', 'backup:pre-restore', 'psql', 'pg_restore', 'alembic', 'psql'])
             self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
             self.assertFalse(imported.exists())
 
