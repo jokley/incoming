@@ -262,7 +262,17 @@ def restore_backup(payload):
                                 capture_output=True, text=True)
         if result.returncode:
             raise RuntimeError(result.stderr.strip() or "Wiederherstellung fehlgeschlagen.")
-        # A successful query verifies connectivity and the restored Alembic schema.
+        # A dump can legitimately predate the running application. Bring its
+        # schema forward before the application reconnects (for example, an
+        # older athlete dump has no internal_note column yet).
+        migration = subprocess.run(
+            ["python", "-m", "alembic", "-c", "/opt/backend/alembic.ini", "upgrade", "head"],
+            cwd="/opt/backend", env={**os.environ, "PGPASSWORD": settings["password"]},
+            capture_output=True, text=True,
+        )
+        if migration.returncode:
+            raise RuntimeError(migration.stderr.strip() or "Die Datenbankmigration ist fehlgeschlagen.")
+        # A successful query verifies connectivity and the migrated Alembic schema.
         integrity = subprocess.run(
             ["psql", "-h", settings["host"], "-p", settings["port"], "-U", settings["user"],
              "-d", settings["database"], "-Atc", "SELECT version_num FROM alembic_version"],
