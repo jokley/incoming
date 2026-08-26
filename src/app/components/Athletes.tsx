@@ -13,11 +13,12 @@ import {
   TextField,
   Typography,
 } from '@mui/material';
-import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, Search, ShieldCheck, UserRound } from 'lucide-react';
+import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, MessageSquareText, Search, ShieldCheck, UserRound } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
 import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
+import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
@@ -25,14 +26,15 @@ import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivityInfoBlock } from './activity';
+import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 
-type FilterKey = 'nation' | 'discipline' | 'gender' | 'function' | 'status';
+type FilterKey = 'nation' | 'discipline' | 'gender' | 'function' | 'status' | 'notes';
 type Filters = Record<FilterKey, string>;
 type CountItem = { value: string; label: string; count: number };
 
-const emptyFilters: Filters = { nation: '', discipline: '', gender: '', function: '', status: '' };
+const emptyFilters: Filters = { nation: '', discipline: '', gender: '', function: '', status: '', notes: '' };
 const date = (value?: string | null) => value ? new Date(value).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const genderLabel = (value?: string) => {
   const normalized = value?.trim().toUpperCase();
@@ -95,18 +97,38 @@ function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: s
   </section>;
 }
 
+function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 'Extern'; note?: string | null; athlete: Athlete; onOpen: (athlete: Athlete) => void }) {
+  if (!note?.trim()) return null;
+  return <Tooltip><TooltipTrigger asChild><button type="button" onClick={event => { event.stopPropagation(); onOpen(athlete); }} className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.info}`}><MessageSquareText className="h-3 w-3" aria-hidden="true" />{label}</button></TooltipTrigger><TooltipContent side="top" sideOffset={5} className="max-w-80 whitespace-pre-wrap break-words bg-[var(--ops-text)] text-left text-xs leading-relaxed text-[var(--ops-surface)]">{note}</TooltipContent></Tooltip>;
+}
+
 function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
   const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setStay({
       arrivalDate: athlete?.arrivalDate || '',
       departureDate: athlete?.departureDate || '',
-      note: athlete?.additionalItems || '',
+      note: athlete?.internalNote || '',
     });
+    setSaveError(null);
   }, [athlete]);
+
+  const save = async () => {
+    if (!athlete) return;
+    setSaving(true); setSaveError(null);
+    try {
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null });
+      Object.assign(athlete, updated);
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Änderungen konnten nicht gespeichert werden.');
+    } finally { setSaving(false); }
+  };
 
   const assignmentStatus = athlete ? assignmentLabel(athlete) : '—';
 
@@ -143,6 +165,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
             <ReadonlyField label="FIS-ID" value={athlete?.fisCode} emptyValue="Keine FIS-ID" />
+            <Box sx={{ gridColumn: '1 / -1' }}><ReadonlyField label="Bemerkung Athlet" value={athlete?.additionalItems} emptyValue="Keine FIS-Bemerkung" /></Box>
           </FieldGrid>
         </DialogSection>
 
@@ -150,7 +173,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
           <FieldGrid>
             <TextField fullWidth type="date" label="Anreise" value={stay.arrivalDate} onChange={event => setStay(current => ({ ...current, arrivalDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField fullWidth type="date" label="Abreise" value={stay.departureDate} onChange={event => setStay(current => ({ ...current, departureDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
-            <TextField fullWidth multiline minRows={3} label="Athletenbemerkung" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise zum Aufenthalt' : undefined} sx={{ gridColumn: '1 / -1' }} />
+            <TextField fullWidth multiline minRows={3} label="Bemerkung Intern" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise für das Unterkunftsteam' : undefined} sx={{ gridColumn: '1 / -1' }} />
           </FieldGrid>
         </DialogSection>
 
@@ -192,7 +215,8 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
         <ActivityInfoBlock entityType="athletes" entityId={athlete?.id} createdAt={athlete?.entryDate} updatedAt={athlete?.lastUpdate} />
       </Stack>
     </DialogContent>
-    <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button variant="contained" onClick={onClose}>Schließen</Button></DialogActions>
+    {saveError && <Alert severity="error" sx={{ mx: 3, mt: 2 }}>{saveError}</Alert>}
+    <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button onClick={onClose}>Abbrechen</Button>{permissions.canEdit && <Button variant="contained" onClick={() => void save()} disabled={saving}>{saving ? 'Speichern…' : 'Speichern'}</Button>}</DialogActions>
   </Dialog>;
 }
 
@@ -267,11 +291,12 @@ export function Athletes() {
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
       { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
     ],
+    notes: [{ value: 'present', label: 'Mit Hinweisen', count: athletes.filter(athlete => Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim())).length }],
   }), [athletes]);
 
   const filtered = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
-    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
+    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
     const statusMatches = !filters.status || (filters.status === 'open' ? ['new', 'open'].includes(category) : filters.status === category);
     const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
@@ -283,6 +308,7 @@ export function Athletes() {
       && (!filters.discipline || (athlete.disciplines || [athlete.discipline]).includes(filters.discipline))
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.function || (athlete.function || 'Athlet') === filters.function)
+      && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
       && statusMatches
       && singleRoomMatches
       && reviewMatches
@@ -310,6 +336,7 @@ export function Athletes() {
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
           <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
+          <FilterGroup title="Hinweise" filterKey="notes" items={groups.notes} selected={filters.notes} onSelect={setFilter} />
         </nav>
       </ContentCard>
 
@@ -319,24 +346,26 @@ export function Athletes() {
             <div><SectionHeader title="Athletenliste" /><div className="mt-1 text-sm text-[var(--ops-text-muted)]"><b className="text-[var(--ops-text)]">{filtered.length}</b> von {athletes.length} Personen</div></div>
             <label className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 lg:w-[27rem]">
               <Search className="h-4 w-4 shrink-0 text-[var(--ops-text-muted)]" />
-              <input aria-label="Athleten suchen" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-muted)]" placeholder="Name, Nation, Disziplin, Hotel oder Zimmer" value={search} onChange={event => setSearch(event.target.value)} />
+              <input aria-label="Athleten suchen" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-muted)]" placeholder="Person, Hotel oder Bemerkung suchen" value={search} onChange={event => setSearch(event.target.value)} />
               {search && <button type="button" onClick={() => setSearch('')} className="text-xs font-bold text-[var(--ops-primary)]">Löschen</button>}
             </label>
           </div>
         </div>
-        <div className="min-h-[24rem] overflow-auto xl:min-h-0 xl:flex-1">
-          <table className="w-full min-w-[1120px] border-separate border-spacing-0 text-left text-sm">
+        <div className="min-h-[24rem] overflow-x-hidden overflow-y-auto xl:min-h-0 xl:flex-1">
+          <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+            <colgroup><col className="w-[17%]"/><col className="w-[6%]"/><col className="w-[15%]"/><col className="w-[8%]"/><col className="w-[8%]"/><col className="w-[14%]"/><col className="w-[7%]"/><col className="w-[9%]"/><col className="w-[8%]"/><col className="w-[8%]"/></colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
-              <tr>{['Name', 'Nation', 'Disziplin', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Status', 'Import'].map(label => <th key={label} className="border-b border-[var(--ops-border)] px-3 py-3 whitespace-nowrap">{label}</th>)}</tr>
+              <tr>{['Name', 'Nation', 'Disziplin', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5"><SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
-                <Cell><div className="min-w-28"><b className="block font-bold text-[var(--ops-text)]">{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block text-[11px] font-medium text-[var(--ops-text-subtle)]">{athlete.function || 'Athlet'}</span></div></Cell>
+                <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={athlete.disciplines?.join(', ') || athlete.discipline || undefined}>{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
-                <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
+                <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <span className="block truncate" title={athlete.assignment.hotelName}><InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink></span> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
                 <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
+                <Cell><div className="flex flex-col items-start gap-1"><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={setSelectedAthlete}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={setSelectedAthlete}/></div></Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
                 <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, roomTypeId: athlete.assignment?.roomTypeId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>
               </tr>)}
@@ -352,5 +381,5 @@ export function Athletes() {
 }
 
 function Cell({ children }: { children: ReactNode }) {
-  return <td className="border-b border-[var(--ops-divider)] px-3 py-3 align-middle text-[var(--ops-text-muted)]">{children}</td>;
+  return <td className="min-w-0 border-b border-[var(--ops-divider)] px-2 py-3 align-middle text-[var(--ops-text-muted)]">{children}</td>;
 }

@@ -25,12 +25,15 @@ export interface ListRow {
   surcharge: string;
   quotaEvaluation: 'EZ' | 'DZ' | '—';
   roommate: string;
-  remark: string;
+  athleteRemark: string;
+  internalNote: string;
   assigned: boolean;
 }
 
 export interface ListFilters {
   search: string;
+  athleteRemark: string;
+  internalNote: string;
   selection: string;
   discipline: string;
   assignedOnly: boolean;
@@ -148,7 +151,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       surcharge: additionalCostPersonIds.has(athlete.id) ? 'Ja' : 'Nein',
       quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
       roommate: value(assignment?.roommate || athlete.sharedWithName),
-      remark: value(athlete.additionalItems),
+      athleteRemark: value(athlete.additionalItems),
+      internalNote: value(athlete.internalNote),
       assigned: Boolean(booking),
     };
   });
@@ -161,6 +165,8 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
     const selection = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent;
     if (filters.selection && selection !== filters.selection) return false;
     if (filters.discipline && row.discipline !== filters.discipline) return false;
+    if (filters.athleteRemark && !row.athleteRemark.toLocaleLowerCase('de').includes(filters.athleteRemark.trim().toLocaleLowerCase('de'))) return false;
+    if (filters.internalNote && !row.internalNote.toLocaleLowerCase('de').includes(filters.internalNote.trim().toLocaleLowerCase('de'))) return false;
     return !query || Object.values(row).some((item) => String(item).toLocaleLowerCase('de').includes(query));
   });
 }

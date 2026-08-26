@@ -118,6 +118,7 @@ export interface Athlete {
   lastMeal?: string | null;
   specialMeal?: string | null;
   additionalItems?: string | null;
+  internalNote?: string | null;
   tvPictureStatus?: string | null;
   tvPictureDate?: string | null;
   entryDate?: string | null;
