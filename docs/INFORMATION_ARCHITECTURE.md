@@ -399,12 +399,13 @@ Rohdatenexport nach **Listen**.
   `/assignments?hotelId=…&date=…&workflow=open`, `/athletes?…` oder
   `/events?eventId=…`
 
-**Bewusst beibehalten und abzugrenzen**  
-Kapazitätsverläufe, Hotelrisiken und Nationenvergleiche sind richtig verortet.
-Die aktuellen Analysebereiche „Zuweisungsarbeit“, „Einzelzimmer“ und „Operative
-Konflikte“ beantworten dagegen operative Fragen und sollten in der Zielarchitektur
-nur noch Ursachen/Aggregate erklären oder entfallen. Die zugehörigen Einzelfälle
-bleiben ausschließlich in ihren Arbeitsseiten.
+**Umgesetzte Analysebereiche**
+Analytics besteht bewusst nur aus „Bedarf & Kontingente“, „Hotelrisiken“ und
+„Nationen & Bedarf“. „Zuweisungsarbeit“, „Einzelzimmer“ und „Operative
+Konflikte“ sind keine Analysebereiche: Die zugehörigen Einzelfälle und offenen
+Entscheidungen bleiben ausschließlich in Übersicht, Zuweisungen, Hotels und
+Athleten. Ein weiterer Analysebereich entsteht erst, wenn eine eigenständige
+Managementfrage und belastbare Verlaufs- oder Ursachendaten vorliegen.
 
 ### 3.6 Listen – „Welche Daten muss ich nachschlagen, drucken oder exportieren?“
 
@@ -426,7 +427,8 @@ Empfänger operativer Unterlagen.
 **Zulässige KPIs und Informationen**
 
 - Ergebnisanzahl und bei gruppierten Listen eine sachliche Gruppensumme.
-- Personen je Hotel, Personen je Nation, Hotelkontakte und Hotelkontingente.
+- eine gemeinsame Personenliste mit Gruppierung nach Hotel oder Nation sowie
+  Hotelkontakte und Hotelkontingente.
 - dichte Tabellen, Suche, Fachfilter, Sortierung, Gruppierung, Summenzeile,
   Druck- und Exportmetadaten (Filter, Datenstand, Erstellungszeitpunkt).
 - Deep Link aus jeder geeigneten Zeile; kein Bearbeiten in der Liste.
@@ -443,14 +445,16 @@ Athleten**; Analyse nach **Analytics**; Stammdatenpflege nach **Administration**
 
 **Sinnvolle Deep Links**
 
-- `?kind=hotels|nations|hotelContacts|contingents` plus persistierbare Filter
+- `?kind=people&groupBy=hotel|nation`, `?kind=hotelContacts|contingents` plus
+  persistierbare Filter
 - Zeilenlinks zu `/athletes?athleteId=…` und `/hotels?hotelId=…`
 - Export behält Filter, Sortierung, Gruppierung und Datenstand bei
 
 **Bewusst beibehalten**  
 Nur-Lese-Prinzip, Spezialfilter, sortierbare Tabellen, Gruppierungen und
-Excel-Export sind bereits optimal abgegrenzt. Keine operativen Warnungen oder
-Analytics-Widgets ergänzen.
+Excel-Export sind bereits optimal abgegrenzt. Hotel und Nation sind alternative
+Gruppierungen derselben Personenliste und keine getrennten Listenprodukte. Keine
+operativen Warnungen oder Analytics-Widgets ergänzen.
 
 ### 3.7 Import – „Was hat sich geändert und was verhindert die Übernahme?“
 
