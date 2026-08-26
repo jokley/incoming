@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, Clock3, Hotel, RefreshCw, Users } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import type { ImportChangeDetail, ImportChangeType } from '../../types';
 import { StatusChip } from '../../design-system';
 
@@ -78,14 +78,14 @@ export function OccupantStays({ occupants, compact = false }: { occupants: Array
 
 export type AssignmentStatus = 'review' | 'import-changed' | 'roommate-changed' | 'stay-changed' | 'hotel-changed' | 'room-type-changed' | 'open' | 'partial' | 'assigned';
 const STATUS = {
-  review: { label: 'Disposition prüfen', tone: 'warning', icon: AlertTriangle },
-  'import-changed': { label: 'Import geändert', tone: 'warning', icon: RefreshCw },
-  'roommate-changed': { label: 'Zimmerpartner geändert', tone: 'warning', icon: Users },
-  'stay-changed': { label: 'Aufenthalt geändert', tone: 'warning', icon: Clock3 },
-  'hotel-changed': { label: 'Hotel geändert', tone: 'warning', icon: Hotel },
-  'room-type-changed': { label: 'Zimmerart geändert', tone: 'warning', icon: RefreshCw },
-  open: { label: 'Offen', tone: 'warning', icon: Clock3 },
-  partial: { label: 'Teilweise disponiert', tone: 'info', icon: Clock3 },
-  assigned: { label: 'Zugewiesen', tone: 'success', icon: CheckCircle2 },
+  review: { label: 'Disposition prüfen', tone: 'warning' },
+  'import-changed': { label: 'Import geändert', tone: 'warning' },
+  'roommate-changed': { label: 'Zimmerpartner geändert', tone: 'warning' },
+  'stay-changed': { label: 'Aufenthalt geändert', tone: 'warning' },
+  'hotel-changed': { label: 'Hotel geändert', tone: 'warning' },
+  'room-type-changed': { label: 'Zimmerart geändert', tone: 'warning' },
+  open: { label: 'Offen', tone: 'warning' },
+  partial: { label: 'Teilweise disponiert', tone: 'info' },
+  assigned: { label: 'Zugewiesen', tone: 'success' },
 } as const;
-export function AssignmentStatusChip({ status }: { status: AssignmentStatus }) { const item = STATUS[status]; const Icon = item.icon; return <StatusChip tone={item.tone}><Icon className="mr-1 h-3 w-3" />{item.label}</StatusChip>; }
+export function AssignmentStatusChip({ status }: { status: AssignmentStatus }) { const item = STATUS[status]; return <StatusChip tone={item.tone}>{item.label}</StatusChip>; }
