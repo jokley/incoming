@@ -99,14 +99,29 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
   const permissions = usePermissions();
   const navigate = useNavigate();
   const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setStay({
       arrivalDate: athlete?.arrivalDate || '',
       departureDate: athlete?.departureDate || '',
-      note: athlete?.additionalItems || '',
+      note: athlete?.internalNote || '',
     });
+    setSaveError(null);
   }, [athlete]);
+
+  const save = async () => {
+    if (!athlete) return;
+    setSaving(true); setSaveError(null);
+    try {
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null });
+      Object.assign(athlete, updated);
+      onClose();
+    } catch (error) {
+      setSaveError(error instanceof Error ? error.message : 'Änderungen konnten nicht gespeichert werden.');
+    } finally { setSaving(false); }
+  };
 
   const assignmentStatus = athlete ? assignmentLabel(athlete) : '—';
 
@@ -143,6 +158,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
             <ReadonlyField label="FIS-ID" value={athlete?.fisCode} emptyValue="Keine FIS-ID" />
+            <Box sx={{ gridColumn: '1 / -1' }}><ReadonlyField label="Bemerkung Athlet" value={athlete?.additionalItems} emptyValue="Keine FIS-Bemerkung" /></Box>
           </FieldGrid>
         </DialogSection>
 
@@ -150,7 +166,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
           <FieldGrid>
             <TextField fullWidth type="date" label="Anreise" value={stay.arrivalDate} onChange={event => setStay(current => ({ ...current, arrivalDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField fullWidth type="date" label="Abreise" value={stay.departureDate} onChange={event => setStay(current => ({ ...current, departureDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
-            <TextField fullWidth multiline minRows={3} label="Athletenbemerkung" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise zum Aufenthalt' : undefined} sx={{ gridColumn: '1 / -1' }} />
+            <TextField fullWidth multiline minRows={3} label="Bemerkung Intern" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise für das Unterkunftsteam' : undefined} sx={{ gridColumn: '1 / -1' }} />
           </FieldGrid>
         </DialogSection>
 
@@ -192,7 +208,8 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
         <ActivityInfoBlock entityType="athletes" entityId={athlete?.id} createdAt={athlete?.entryDate} updatedAt={athlete?.lastUpdate} />
       </Stack>
     </DialogContent>
-    <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button variant="contained" onClick={onClose}>Schließen</Button></DialogActions>
+    {saveError && <Alert severity="error" sx={{ mx: 3, mt: 2 }}>{saveError}</Alert>}
+    <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button onClick={onClose}>Abbrechen</Button>{permissions.canEdit && <Button variant="contained" onClick={() => void save()} disabled={saving}>{saving ? 'Speichern…' : 'Speichern'}</Button>}</DialogActions>
   </Dialog>;
 }
 
@@ -271,7 +288,7 @@ export function Athletes() {
 
   const filtered = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
-    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''}`.toLocaleLowerCase('de');
+    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
     const statusMatches = !filters.status || (filters.status === 'open' ? ['new', 'open'].includes(category) : filters.status === category);
     const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
@@ -319,7 +336,7 @@ export function Athletes() {
             <div><SectionHeader title="Athletenliste" /><div className="mt-1 text-sm text-[var(--ops-text-muted)]"><b className="text-[var(--ops-text)]">{filtered.length}</b> von {athletes.length} Personen</div></div>
             <label className="flex min-w-0 items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2 lg:w-[27rem]">
               <Search className="h-4 w-4 shrink-0 text-[var(--ops-text-muted)]" />
-              <input aria-label="Athleten suchen" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-muted)]" placeholder="Name, Nation, Disziplin, Hotel oder Zimmer" value={search} onChange={event => setSearch(event.target.value)} />
+              <input aria-label="Athleten suchen" className="min-w-0 flex-1 bg-transparent text-sm text-[var(--ops-text)] outline-none placeholder:text-[var(--ops-text-muted)]" placeholder="Person, Hotel oder Bemerkung suchen" value={search} onChange={event => setSearch(event.target.value)} />
               {search && <button type="button" onClick={() => setSearch('')} className="text-xs font-bold text-[var(--ops-primary)]">Löschen</button>}
             </label>
           </div>

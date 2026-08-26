@@ -388,8 +388,8 @@ class Athlete(db.Model):
     gender = db.Column(db.String(10))
     for_gender = db.Column(db.String(10))  # Competition gender
     phone = db.Column(db.String(50))
-    # Schema contract: there is deliberately no generic ``comment`` column on
-    # athletes. Existing operational notes are stored in ``additional_items``.
+    # FIS master data and operational accommodation notes are deliberately
+    # separate: imports own ``additional_items``; users own ``internal_note``.
     email = db.Column(db.String(100))
     present = db.Column(db.Boolean, default=False)
 
@@ -432,6 +432,7 @@ class Athlete(db.Model):
 
     # Additional
     additional_items = db.Column(db.String(200))
+    internal_note = db.Column(db.Text)
     stance = db.Column(db.String(10))  # R/L for snowboard
     tv_picture_status = db.Column(db.String(100))
     tv_picture_date = db.Column(db.Date)
@@ -495,6 +496,7 @@ class Athlete(db.Model):
             'lastMeal': self.last_meal,
             'specialMeal': self.special_meal,
             'additionalItems': self.additional_items,
+            'internalNote': self.internal_note,
             'tvPictureStatus': self.tv_picture_status,
             'tvPictureDate': self.tv_picture_date.isoformat() if self.tv_picture_date else None,
             'entryDate': self.entry_date.isoformat() if self.entry_date else None,
