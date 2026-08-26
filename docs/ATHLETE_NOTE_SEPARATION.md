@@ -34,3 +34,9 @@ Der Athletendialog zeigt `additionalItems` als schreibgeschützte **Bemerkung At
 ## Nutzen
 
 Die klare Datenhoheit verhindert, dass ein FIS-Import operative Teamhinweise überschreibt oder manuelle Eingaben importierte Stammdaten verfälschen. Die Trennung macht Quelle, Änderungsrecht und Lebensdauer sichtbar, erhöht die Importsicherheit und schafft eine stabile Grundlage für weitere operative Workflows.
+
+## UX-Ergänzung: Hinweise in der Athletenliste
+
+Die Athletenliste zeigt vorhandene interne und externe Hinweise als kompakte Chips in einer gemeinsamen Spalte. Die Texte bleiben im Tooltip verfügbar; ein Klick öffnet den bestehenden Athletendialog. Ein kombinierter Filter **Mit Hinweisen** reduziert die Liste auf Personen mit mindestens einer Besonderheit.
+
+Die Tabelle verwendet ein festes, prozentuales Spaltenraster. Weniger wichtige Inhalte wie Disziplin, Funktion und Hotel werden bei Platzmangel einzeilig gekürzt und behalten ihren vollständigen Wert als Browser-Tooltip. Die neue Hinweisspalte nutzt dadurch vorhandenen Platz, während der Tabellencontainer horizontales Überlaufen verhindert. Nur zwei tatsächlich vorhandene Chips erhöhen die jeweilige Zeilenhöhe.
