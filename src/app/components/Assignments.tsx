@@ -26,6 +26,7 @@ import { ImportConflictNotice } from './ImportConflictNotice';
 import { AssignmentStatusChip, PendingChanges } from './assignment/AssignmentInfo';
 import { OccupantCard } from './assignment/OccupantCard';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
+import { FisRulesPanel } from './FisRulesPanel';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
 import { compareOperationalHotels, matchesOperationalHotelFilter, OperationalHotelFilters, type OperationalHotelFilter, type OperationalHotelState } from './OperationalHotelFilters';
@@ -46,7 +47,7 @@ import type {
   RoomBookingUnit,
 } from '../types';
 
-type AppView = 'dispatch' | 'quotas';
+type AppView = 'dispatch' | 'quotas' | 'fis-rules';
 type QueueStatus = 'pending' | 'all';
 type FilterMode = 'synchronized' | 'queue';
 type RoomCategoryFilter = '' | 'ez' | 'dz';
@@ -773,6 +774,7 @@ export function Assignments() {
               />
               </AssignmentPerformanceBoundary>
             )}
+            {view === 'fis-rules' && <FisRulesPanel />}
           </main>
 
         </div>
@@ -854,6 +856,7 @@ function TopBar({
           {[
             { id: 'dispatch', label: 'Disposition' },
             { id: 'quotas', label: 'Quoten' },
+            { id: 'fis-rules', label: 'FIS Rules' },
           ].map((item) => (
             <button
               key={item.id}
