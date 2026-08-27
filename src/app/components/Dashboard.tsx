@@ -293,7 +293,7 @@ export function Dashboard() {
         </div>
       </ContentCard>
 
-      <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Heute</span>} actions={<TextLink to="/assignments">Operations Cockpit öffnen</TextLink>}>
+      <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Heute</span>} actions={<TextLink to="/assignments">Zuweisungen öffnen</TextLink>}>
         <div className="grid grid-cols-1 divide-y divide-[var(--ops-divider)] md:grid-cols-3 md:divide-x md:divide-y-0">
           {[{ label: 'Anreisen heute', value: arrivalsToday, helper: 'Bewegung vorbereiten', href: `/athletes?movement=arrival&date=${today}` }, { label: 'Abreisen heute', value: departuresToday, helper: 'Abreise abstimmen', href: `/athletes?movement=departure&date=${today}` }, { label: 'Zimmerbezüge heute', value: assignmentsToday, helper: 'bereits disponiert', href: '/assignments' }].map(item => <Link key={item.label} to={item.href} className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{item.helper}</div></div><div className="text-xl font-extrabold">{formatNumber(item.value)}</div></Link>)}
         </div>
