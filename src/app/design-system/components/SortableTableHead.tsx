@@ -19,9 +19,9 @@ export function sortTableRows<T, K extends string>(rows: T[], sort: SortState<K>
 export function SortableTableHead<K extends string>({ column, label, sort, onSort, align = 'left' }: { column: K; label: ReactNode; sort: SortState<K>; onSort: (column: K) => void; align?: 'left' | 'right' | 'center' }) {
   const active = sort.key === column;
   const Icon = active ? sort.direction === 'asc' ? ArrowUp : ArrowDown : ChevronsUpDown;
-  return <th scope="col" aria-sort={active ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'} className={`whitespace-nowrap px-2 py-1 text-${align} font-extrabold`}>
-    <button type="button" onClick={() => onSort(column)} className={`inline-flex w-full items-center gap-1 ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'} hover:text-[var(--ops-text)]`}>
-      {label}<Icon aria-hidden size={12}/>
+  return <th scope="col" aria-sort={active ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'} className={`overflow-hidden px-2 py-1 text-${align} font-extrabold`}>
+    <button type="button" onClick={() => onSort(column)} className={`flex w-full min-w-0 items-center gap-1 overflow-hidden ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'} hover:text-[var(--ops-text)]`}>
+      <span className="min-w-0 truncate whitespace-nowrap">{label}</span><Icon aria-hidden className="shrink-0" size={12}/>
     </button>
   </th>;
 }

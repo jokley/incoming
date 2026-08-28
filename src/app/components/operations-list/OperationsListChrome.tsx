@@ -2,12 +2,13 @@ import type { ReactNode } from 'react';
 import { FileSpreadsheet, Search } from 'lucide-react';
 import { ContentCard, OpsButton, Toolbar } from '../../design-system';
 
-export type SummaryMetric = { id: string; label: string; value: string | number; emphasis?: boolean };
+export type SummaryMetric = { id: string; label: string; value: string | number | null | undefined; emphasis?: boolean };
 
 export function OperationsSummaryHeader({ metrics, hidden = false }: { metrics: SummaryMetric[]; hidden?: boolean }) {
-  if (hidden) return null;
+  const validMetrics = metrics.filter(metric => metric.value !== null && metric.value !== undefined && metric.value !== '' && (typeof metric.value !== 'number' || Number.isFinite(metric.value)));
+  if (hidden || validMetrics.length === 0) return null;
   return <ContentCard className="grid min-h-[3.75rem] grid-flow-col auto-cols-fr divide-x divide-[var(--ops-divider)] overflow-hidden" elevation="none">
-    {metrics.map(metric => <div key={metric.id} className="flex min-w-0 flex-col justify-center px-4 py-2.5">
+    {validMetrics.map(metric => <div key={metric.id} className="flex min-w-0 flex-col justify-center px-4 py-2.5">
       <div className={`${metric.emphasis ? 'text-lg' : 'text-base'} leading-5 font-extrabold tabular-nums text-[var(--ops-text)]`}>{metric.value}</div>
       <div className="text-[9px] font-bold uppercase tracking-[.1em] text-[var(--ops-text-subtle)]">{metric.label}</div>
     </div>)}
