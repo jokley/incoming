@@ -1,8 +1,9 @@
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { evaluateAllQuotaGroups, isEvaluatedAsSingle, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
+import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus';
 
-export type ListKind = 'hotels' | 'nations' | 'contingents';
+export type ListKind = 'none' | 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
 export interface ListRow {
   id: string;
@@ -28,6 +29,9 @@ export interface ListRow {
   athleteRemark: string;
   internalNote: string;
   assigned: boolean;
+  workCategory: WorkCategory;
+  importChanged: boolean;
+  singleRoomPending: boolean;
 }
 
 export interface ListFilters {
@@ -36,6 +40,13 @@ export interface ListFilters {
   internalNote: string;
   selection: string;
   discipline: string;
+  nation: string;
+  role: string;
+  hotel: string;
+  status: '' | WorkCategory;
+  hint: '' | 'internal' | 'athlete' | 'import' | 'single-room' | 'surcharge' | 'without-room';
+  movement: '' | 'arrival' | 'departure';
+  period: '' | 'today' | 'tomorrow' | 'week';
   assignedOnly: boolean;
 }
 
@@ -80,6 +91,16 @@ export interface HotelContactRow {
   phone: string;
   email: string;
   comment: string;
+  region: string;
+  hasHalfBoard: boolean;
+  hasSR: boolean;
+  contingents: number;
+  totalRooms: number;
+  totalBeds: number;
+  freeRooms: number;
+  freeBeds: number;
+  occupiedRooms: number;
+  occupiedBeds: number;
 }
 
 const value = (entry?: string | null) => entry?.trim() || '—';
@@ -88,8 +109,16 @@ const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)
 const roomTypeCode = (name?: string | null) => name?.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || 'ZI';
 
 /** Read-only hotel master-data projection for the event contact directory. */
-export function createHotelContactRows(hotels: Hotel[]): HotelContactRow[] {
-  return hotels.map(hotel => ({ id: hotel.id, hotel: hotel.name, location: value(hotel.location), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment) }))
+export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] = []): HotelContactRow[] {
+  return hotels.map(hotel => {
+    const inventories = hotel.roomInventories || [];
+    const hotelBookings = bookings.filter(booking => booking.hotel.id === hotel.id);
+    const totalRooms = inventories.reduce((sum, inventory) => sum + inventory.roomCount, 0);
+    const totalBeds = inventories.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0);
+    const occupiedRooms = hotelBookings.length;
+    const occupiedBeds = hotelBookings.reduce((sum, booking) => sum + Math.max(booking.occupants.length, booking.countsAsSingle ? 1 : 0), 0);
+    return { id: hotel.id, hotel: hotel.name, location: value(hotel.location), region: value(hotel.region), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment), hasHalfBoard: inventories.some(inventory => inventory.hasHalfBoard), hasSR: inventories.some(inventory => inventory.hasSR), contingents: inventories.length, totalRooms, totalBeds, freeRooms: Math.max(0, totalRooms - occupiedRooms), freeBeds: Math.max(0, totalBeds - occupiedBeds), occupiedRooms, occupiedBeds };
+  })
     .sort((a, b) => a.hotel.localeCompare(b.hotel, 'de'));
 }
 
@@ -154,6 +183,9 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       athleteRemark: value(athlete.additionalItems),
       internalNote: value(athlete.internalNote),
       assigned: Boolean(booking),
+      workCategory: athleteWorkCategory(athlete),
+      importChanged: Boolean(athlete.importChangeTypes?.length || athlete.hasPendingRoomlistReview),
+      singleRoomPending: athlete.single_room_status === 'PENDING_APPROVAL',
     };
   });
 }
@@ -162,9 +194,30 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
   const query = filters.search.trim().toLocaleLowerCase('de');
   return rows.filter((row) => {
     if (filters.assignedOnly && !row.assigned) return false;
-    const selection = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent;
+    const selection = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : kind === 'disciplines' ? row.discipline : kind === 'roles' ? row.role : row.contingent;
     if (filters.selection && selection !== filters.selection) return false;
     if (filters.discipline && row.discipline !== filters.discipline) return false;
+    if (filters.nation && row.nation !== filters.nation) return false;
+    if (filters.role && row.role !== filters.role) return false;
+    if (filters.hotel && row.hotel !== filters.hotel) return false;
+    if (filters.status && row.workCategory !== filters.status) return false;
+    if (filters.hint === 'internal' && row.internalNote === '—') return false;
+    if (filters.hint === 'athlete' && row.athleteRemark === '—') return false;
+    if (filters.hint === 'import' && !row.importChanged) return false;
+    if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.singleRoomPending) return false;
+    if (filters.hint === 'surcharge' && row.surcharge !== 'Ja') return false;
+    if (filters.hint === 'without-room' && row.assigned) return false;
+    if (filters.movement) {
+      const date = filters.movement === 'arrival' ? row.arrival : row.departure;
+      const base = new Date(); base.setUTCHours(0, 0, 0, 0);
+      const tomorrow = new Date(base); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+      const week = new Date(base); week.setUTCDate(week.getUTCDate() + 7);
+      const isoDate = date ? new Date(`${date}T00:00:00Z`) : null;
+      if (!isoDate) return false;
+      if (filters.period === 'today' && isoDate.getTime() !== base.getTime()) return false;
+      if (filters.period === 'tomorrow' && isoDate.getTime() !== tomorrow.getTime()) return false;
+      if (filters.period === 'week' && (isoDate < base || isoDate >= week)) return false;
+    }
     if (filters.athleteRemark && !row.athleteRemark.toLocaleLowerCase('de').includes(filters.athleteRemark.trim().toLocaleLowerCase('de'))) return false;
     if (filters.internalNote && !row.internalNote.toLocaleLowerCase('de').includes(filters.internalNote.trim().toLocaleLowerCase('de'))) return false;
     return !query || Object.values(row).some((item) => String(item).toLocaleLowerCase('de').includes(query));
@@ -174,7 +227,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
 export function groupListRows(rows: ListRow[], kind: ListKind) {
   const groups = new Map<string, ListRow[]>();
   rows.forEach((row) => {
-    const primary = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent;
+    const primary = kind === 'none' ? 'Alle Personen' : kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : kind === 'disciplines' ? row.discipline : kind === 'roles' ? row.role : row.contingent;
     if (!groups.has(primary)) groups.set(primary, []);
     groups.get(primary)!.push(row);
   });

@@ -12,7 +12,7 @@ const navItems: NavigationItem[] = [
   { to: '/assignments', label: 'Zuweisungen', icon: UserCheck },
   { to: '/analytics', label: 'Analytics', icon: BarChart3 },
   { to: '/athletes', label: 'Athleten', icon: Users },
-  { to: '/lists', label: 'Listen', icon: List },
+  { to: '/lists', label: 'Operations Listen', icon: List },
   { to: '/hotels', label: 'Hotels', icon: Hotel },
   { to: '/events', label: 'Events', icon: Calendar },
   { to: '/room-types', label: 'Zimmertypen', icon: Layers },
