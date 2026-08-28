@@ -20,6 +20,34 @@ const listColumns: Array<{ key: keyof ListRow & string; label: string }> = [
 ].map(([key, label]) => ({ key, label }));
 const options = <T,>(rows: T[], get: (row: T) => string) => [...new Set(rows.map(get).filter(value => value && value !== '—'))].sort((a, b) => a.localeCompare(b, 'de'));
 
+type PersonView = 'hotel' | 'nation' | 'discipline' | 'role' | 'arrivals-today' | 'departures-today' | 'upcoming-arrivals' | 'upcoming-departures' | 'without-room' | 'single-room' | 'surcharge' | 'room-change' | 'with-roommate' | 'without-roommate' | 'review-assignment' | 'review-master-data' | 'import-changes' | 'internal-note' | 'athlete-note';
+const personViews: Array<{ group: string; items: Array<{ id: PersonView; label: string }> }> = [
+  { group: 'Personen', items: [{ id: 'hotel', label: 'Nach Hotel' }, { id: 'nation', label: 'Nach Nation' }, { id: 'discipline', label: 'Nach Disziplin' }, { id: 'role', label: 'Nach Funktion' }] },
+  { group: 'Bewegungen', items: [{ id: 'arrivals-today', label: 'Anreisen heute' }, { id: 'departures-today', label: 'Abreisen heute' }, { id: 'upcoming-arrivals', label: 'Kommende Anreisen' }, { id: 'upcoming-departures', label: 'Kommende Abreisen' }] },
+  { group: 'Unterkunft', items: [{ id: 'without-room', label: 'Ohne Zimmer' }, { id: 'single-room', label: 'Einzelzimmer' }, { id: 'surcharge', label: 'Mehrpreis' }, { id: 'room-change', label: 'Zimmerwechsel' }, { id: 'with-roommate', label: 'Mit Zimmerpartner' }, { id: 'without-roommate', label: 'Ohne Zimmerpartner' }] },
+  { group: 'Aufgaben', items: [{ id: 'review-assignment', label: 'Disposition prüfen' }, { id: 'review-master-data', label: 'Stammdaten prüfen' }, { id: 'import-changes', label: 'Importänderungen' }, { id: 'internal-note', label: 'Mit Bemerkung Intern' }, { id: 'athlete-note', label: 'Mit Bemerkung Athlet' }] },
+];
+const today = () => new Date().toISOString().slice(0, 10);
+const personViewMatches = (row: ListRow, view: PersonView) => {
+  const current = today();
+  if (view === 'arrivals-today') return row.arrival === current;
+  if (view === 'departures-today') return row.departure === current;
+  if (view === 'upcoming-arrivals') return row.arrival > current;
+  if (view === 'upcoming-departures') return row.departure > current;
+  if (view === 'without-room') return !row.assigned;
+  if (view === 'single-room') return row.quotaEvaluation === 'EZ' || row.singleRoomPending;
+  if (view === 'surcharge') return row.surcharge === 'Ja';
+  if (view === 'room-change') return row.workCategory === 'review' && row.assigned;
+  if (view === 'with-roommate') return row.roommate !== '—';
+  if (view === 'without-roommate') return row.assigned && row.roommate === '—' && row.quotaEvaluation !== 'EZ';
+  if (view === 'review-assignment') return row.workCategory === 'review';
+  if (view === 'review-master-data') return row.workCategory === 'conflict';
+  if (view === 'import-changes') return row.importChanged;
+  if (view === 'internal-note') return row.internalNote !== '—';
+  if (view === 'athlete-note') return row.athleteRemark !== '—';
+  return true;
+};
+
 type Group = ReturnType<typeof groupListRows>[number];
 function GroupSummary({ group }: { group: Group }) {
   const roomRows = new Map<string, ListRow>(); group.rows.forEach(row => row.assigned && roomRows.set(`${row.hotel}/${row.room}`, row));
