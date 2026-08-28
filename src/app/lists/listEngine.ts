@@ -1,8 +1,9 @@
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { evaluateAllQuotaGroups, isEvaluatedAsSingle, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
+import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus';
 
-export type ListKind = 'hotels' | 'nations' | 'contingents';
+export type ListKind = 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
 export interface ListRow {
   id: string;
@@ -28,6 +29,9 @@ export interface ListRow {
   athleteRemark: string;
   internalNote: string;
   assigned: boolean;
+  workCategory: WorkCategory;
+  importChanged: boolean;
+  singleRoomPending: boolean;
 }
 
 export interface ListFilters {
@@ -154,6 +158,9 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       athleteRemark: value(athlete.additionalItems),
       internalNote: value(athlete.internalNote),
       assigned: Boolean(booking),
+      workCategory: athleteWorkCategory(athlete),
+      importChanged: Boolean(athlete.importChangeTypes?.length || athlete.hasPendingRoomlistReview),
+      singleRoomPending: athlete.single_room_status === 'PENDING_APPROVAL',
     };
   });
 }
@@ -162,7 +169,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
   const query = filters.search.trim().toLocaleLowerCase('de');
   return rows.filter((row) => {
     if (filters.assignedOnly && !row.assigned) return false;
-    const selection = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent;
+    const selection = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : kind === 'disciplines' ? row.discipline : kind === 'roles' ? row.role : row.contingent;
     if (filters.selection && selection !== filters.selection) return false;
     if (filters.discipline && row.discipline !== filters.discipline) return false;
     if (filters.athleteRemark && !row.athleteRemark.toLocaleLowerCase('de').includes(filters.athleteRemark.trim().toLocaleLowerCase('de'))) return false;
@@ -174,7 +181,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
 export function groupListRows(rows: ListRow[], kind: ListKind) {
   const groups = new Map<string, ListRow[]>();
   rows.forEach((row) => {
-    const primary = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : row.contingent;
+    const primary = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : kind === 'disciplines' ? row.discipline : kind === 'roles' ? row.role : row.contingent;
     if (!groups.has(primary)) groups.set(primary, []);
     groups.get(primary)!.push(row);
   });
