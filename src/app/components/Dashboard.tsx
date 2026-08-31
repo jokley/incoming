@@ -18,7 +18,7 @@ import { athleteWorkCategory } from '../services/workflowStatus';
 import type { ImportSession } from '../data/importSessions';
 import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomBooking, RoomType } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
+import { buildCapacityTimeline, buildHotelRiskRows, capacitySummary, type DemandSource } from '../services/planningCalculations';
 import {
   ContentCard,
   DataPanel,
@@ -42,14 +42,6 @@ const formatNumber = (value: number) => new Intl.NumberFormat('de-DE').format(va
 const formatPercent = (value: number) => `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(value)}%`;
 const formatDate = (value?: string | null) => value ? new Date(value).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'offen';
 const dayKey = (value?: string | null) => value?.slice(0, 10) || '';
-const dateRange = (from: string, until: string) => {
-  const result: string[] = [];
-  for (let date = new Date(`${from}T00:00:00Z`), end = new Date(`${until}T00:00:00Z`); date <= end; date.setUTCDate(date.getUTCDate() + 1)) result.push(date.toISOString().slice(0, 10));
-  return result;
-};
-const athleteOnDay = (athlete: Athlete, date: string) => (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }])
-  .some(stay => Boolean(stay.arrivalDate && stay.departureDate && dayKey(stay.arrivalDate) <= date && dayKey(stay.departureDate) > date));
-const bookingOnDay = (booking: RoomBooking, date: string) => (!booking.checkInDate || dayKey(booking.checkInDate) <= date) && (!booking.checkOutDate || dayKey(booking.checkOutDate) > date);
 const signed = (value: number) => `${value > 0 ? '+' : ''}${formatNumber(value)}`;
 
 const getStatusTone = (percent: number): Tone => {
@@ -97,7 +89,7 @@ function DashboardSkeleton() {
       {Array.from({ length: 5 }, (_, index) => <div key={index} className="h-[6.5rem] rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />)}
     </div>
     <div className="h-24 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
-    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+    <div className="grid grid-cols-1 gap-2 xl:grid-cols-2">
       <div className="h-44 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
       <div className="h-44 rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface)]" />
     </div>
@@ -114,7 +106,7 @@ export function Dashboard() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [importSessions, setImportSessions] = useState<ImportSession[]>([]);
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
-  const [demandSource, setDemandSource] = useState<'event' | 'live'>('live');
+  const [demandSource, setDemandSource] = useState<DemandSource>('live');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -254,60 +246,26 @@ export function Dashboard() {
     };
   }, [assignments.length, athletes, events, hotels, roomTypes.length]);
 
+  const capacityTimeline = useMemo(() => buildCapacityTimeline({ athletes, hotels, events, bookings: assignments }), [assignments, athletes, events, hotels]);
   const capacity = useMemo(() => {
-    const dates = [
-      ...events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]),
-      ...hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])),
-      ...athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])),
-      ...assignments.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)]),
-    ].filter(Boolean).sort();
-    const days = dates.length ? dateRange(dates[0], dates.at(-1)!) : [];
-    const timeline = days.map(date => {
-      const inventory = hotels.flatMap(hotel => hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
-      const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
-      const roomSupply = inventory.reduce((sum, item) => sum + item.roomCount, 0);
-      const eventPlans = events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date).map(eventRoomPlan);
-      const livePlan = calculateRoomPlan(athletes.filter(athlete => athleteOnDay(athlete, date)).length);
-      const activeBookings = assignments.filter(booking => bookingOnDay(booking, date));
-      const assignedRooms = activeBookings.length;
-      const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
-      return {
-        date, roomSupply, bedSupply, assignedRooms, assignedBeds,
-        eventRooms: eventPlans.reduce((sum, plan) => sum + plan.rooms, 0),
-        eventBeds: eventPlans.reduce((sum, plan) => sum + plan.beds, 0),
-        liveRooms: livePlan.rooms, liveBeds: livePlan.beds,
-      };
-    });
-    const roomDemandKey = demandSource === 'event' ? 'eventRooms' : 'liveRooms';
-    const peak = timeline.reduce((best, day) => day[roomDemandKey] > (best?.[roomDemandKey] ?? -1) ? day : best, timeline[0]);
-    const demandRooms = peak?.[roomDemandKey] || 0;
-    const demandBeds = peak?.[demandSource === 'event' ? 'eventBeds' : 'liveBeds'] || 0;
-    return {
-      date: peak?.date,
-      rooms: Math.max(0, ...timeline.map(day => day.roomSupply)),
-      beds: Math.max(0, ...timeline.map(day => day.bedSupply)),
-      demandRooms,
-      demandBeds,
-      assignedRooms: peak?.assignedRooms || 0,
-      assignedBeds: peak?.assignedBeds || 0,
-      reserveRooms: (peak?.roomSupply || 0) - demandRooms,
-      reserveBeds: (peak?.bedSupply || 0) - demandBeds,
-    };
-  }, [assignments, athletes, demandSource, events, hotels]);
+    const { peak, critical, firstRisk } = capacitySummary(capacityTimeline, demandSource);
+    const demandRooms = peak?.[demandSource === 'event' ? 'plannedRooms' : 'demandRooms'] || 0;
+    const demandBeds = peak?.[demandSource === 'event' ? 'plannedBeds' : 'demandBeds'] || 0;
+    return { date: peak?.date, criticalDate: critical?.date, firstRiskDate: firstRisk?.date, rooms: peak?.roomSupply || 0, beds: peak?.bedSupply || 0, demandRooms, demandBeds, assignedRooms: peak?.assignedRooms || 0, assignedBeds: peak?.assignedBeds || 0, reserveRooms: peak?.[demandSource === 'event' ? 'eventRoomReserve' : 'liveRoomReserve'] || 0, reserveBeds: peak?.[demandSource === 'event' ? 'eventBedReserve' : 'liveBedReserve'] || 0 };
+  }, [capacityTimeline, demandSource]);
 
   const roomChanges = athletes.filter(athlete => athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')).length;
   const importChanges = athletes.filter(athlete => Boolean(athlete.importChangeTypes?.length)).length;
   const exceededQuotas = quotaUsage.filter(row => row.assignedOfficials > row.officialQuota || row.singleRoomsUsed > row.singleRoomsAllowed).length;
 
-  const hotelOverview = useMemo(() => hotels.map(hotel => {
-    const rooms = hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount, 0) || 0;
-    const beds = hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0) || 0;
-    const assigned = assignments.filter(assignment => assignment.hotel?.id === hotel.id).length;
-    const percent = rooms > 0 ? (assigned / rooms) * 100 : 0;
-    return { hotel, rooms, beds, assigned, remaining: Math.max(rooms - assigned, 0), availableBeds: Math.max(beds - assigned, 0), percent, tone: getStatusTone(percent) };
-  }).sort((a, b) => a.remaining - b.remaining || b.percent - a.percent), [assignments, hotels]);
-
-  const criticalHotels = hotelOverview.filter(item => item.rooms > 0 && (item.percent >= 90 || item.remaining <= 2));
+  const criticalHotels = useMemo(() => buildHotelRiskRows(hotels, assignments)
+    .filter(item => Boolean(item.firstCritical))
+    .map(item => {
+      const day = item.worst!;
+      const percent = day.rooms > 0 ? (day.occupied / day.rooms) * 100 : 100;
+      const beds = item.hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0) || 0;
+      return { hotel: item.hotel, rooms: day.rooms, remaining: Math.max(day.reserve, 0), availableBeds: Math.max(beds - day.occupied, 0), percent, tone: getStatusTone(percent) };
+    }).sort((a, b) => a.remaining - b.remaining || b.percent - a.percent), [assignments, hotels]);
   const reserveTone: Tone = capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : capacity.reserveRooms <= 2 || capacity.reserveBeds <= 4 ? 'warning' : 'success';
   const reserveStatus = reserveTone === 'error' ? 'Unterdeckung' : reserveTone === 'warning' ? 'Reserve niedrig' : 'Kapazität gedeckt';
   // Kontingentquoten sind Planungshinweise, keine operativen Importkonflikte.
@@ -321,7 +279,7 @@ export function Dashboard() {
       { id: 'overbooked', title: 'Hotel überbucht', detail: `${overbooked} Hotels haben keine verbleibende Zimmerreserve.`, tone: overbooked ? 'error' : 'success', status: overbooked ? 'Sofort' : 'Erledigt', href: '/hotels?filter=critical' },
       { id: 'import-conflicts', title: 'Importkonflikte', detail: `${operationalConflicts} Datensätze blockieren oder gefährden die Disposition.`, tone: operationalConflicts ? 'error' : 'success', status: operationalConflicts ? 'Prüfen' : 'Erledigt', href: '/import' },
       { id: 'quota-exceeded', title: 'Kontingent überschritten', detail: `${exceededQuotas} Kontingentgruppen liegen über der zulässigen Belegung.`, tone: exceededQuotas ? 'warning' : 'success', status: exceededQuotas ? 'Entscheiden' : 'Erledigt', href: '/assignments?view=quotas' },
-    ] as AlertItem[];
+    ].filter(alert => alert.tone !== 'success') as AlertItem[];
   }, [criticalHotels, exceededQuotas, operationalConflicts, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
   const today = new Date().toLocaleDateString('en-CA');
@@ -354,10 +312,10 @@ export function Dashboard() {
   if (loading) return <DashboardSkeleton />;
 
   return (
-    <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
-      <ContentCard className="p-3" surface="raised" elevation="none">
+    <div className="space-y-1.5 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
+      <ContentCard className="p-2.5" surface="raised" elevation="none">
         <SectionHeader title="Bedarf & Kontingente" subtitle="Reicht das Kontingent für den aktuellen Bedarf?" actions={<div className="flex items-center gap-3"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1" aria-label="Bedarfsquelle">{(['event', 'live'] as const).map(source => <button type="button" key={source} aria-pressed={demandSource === source} onClick={() => setDemandSource(source)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${demandSource === source ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]'}`}>{source === 'event' ? 'Event' : 'Live'}</button>)}</div><StatusChip tone={reserveTone}>{reserveStatus}</StatusChip></div>} />
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+        <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
           <MetricCard compact label="Kontingent" value={<CapacityValue rooms={capacity.rooms} beds={capacity.beds}/>} helper="maximal im Zeitraum" tone="primary" icon={<ApartmentRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
           <MetricCard compact label="Bedarf" value={<CapacityValue rooms={capacity.demandRooms} beds={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · Peak`} tone="info" icon={<TimelineRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
           <MetricCard compact label="Disponiert" value={<DispositionValue rooms={capacity.assignedRooms} roomTarget={capacity.demandRooms} beds={capacity.assignedBeds} bedTarget={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · am Peak`} tone="primary" icon={<CheckRoundedIcon />} href="/assignments" />
@@ -366,9 +324,9 @@ export function Dashboard() {
         </div>
       </ContentCard>
 
-      <ContentCard className="p-3" surface="raised" elevation="none">
+      <ContentCard className="p-2.5" surface="raised" elevation="none">
         <SectionHeader title="Disposition" subtitle="Wie weit ist die Unterkunfts-Disposition?" actions={<TextLink to="/assignments">Zuweisungen öffnen</TextLink>} />
-        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
+        <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
           <MetricCard compact label="Athleten gesamt" value={formatNumber(athletes.length)} helper="Personen" tone="neutral" href="/lists?entity=persons" />
           <MetricCard compact label="Disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" action={operations.peopleWithoutRoom ? 'In Arbeit' : 'Vollständig'} tone={operations.peopleWithoutRoom ? 'primary' : 'success'} href="/lists?entity=persons&assignedOnly=true" />
           <MetricCard compact label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="offene Personen" action={operations.peopleWithoutRoom ? 'Sofort' : 'Erledigt'} tone={operations.peopleWithoutRoom ? 'error' : 'success'} href="/lists?entity=persons&hint=without-room" />
@@ -378,10 +336,10 @@ export function Dashboard() {
         </div>
       </ContentCard>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1.02fr]">
+      <div className="grid grid-cols-1 gap-2 xl:grid-cols-[1fr_1.02fr]">
         <DataPanel title={<span className="inline-flex items-center gap-2"><WarningAmberRoundedIcon fontSize="small" />Entscheidungen</span>}>
           <div className="grid grid-cols-1 gap-2 p-2 md:grid-cols-2 xl:grid-cols-3">
-            {criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-3" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-2 text-xs leading-5 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-2"><TextLink to={alert.href}>Details anzeigen</TextLink></div></ContentCard>)}
+            {criticalAlerts.length === 0 ? <ContentCard className="col-span-full flex items-center justify-center gap-3 p-4" surface="elevated" elevation="none"><IconTile tone="success" icon={<CheckRoundedIcon />} /><strong className="text-sm text-[var(--ops-success)]">Keine offenen Entscheidungen</strong></ContentCard> : criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-3" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-2 text-xs leading-5 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-2"><TextLink to={alert.href}>Details anzeigen</TextLink></div></ContentCard>)}
           </div>
         </DataPanel>
 
@@ -392,7 +350,7 @@ export function Dashboard() {
         </DataPanel>
       </div>
 
-      <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
+      <div className="grid grid-cols-1 gap-2 xl:grid-cols-[1.15fr_0.55fr_0.8fr]">
         <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Kritische Hotels</span>} actions={<StatusChip tone="info">Nach Priorität</StatusChip>} className="xl:col-span-1">
           <div className="space-y-2 p-3">
             {criticalHotels.slice(0, 4).map(item => <Link to={`/hotels?hotelId=${item.hotel.id}`} key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
