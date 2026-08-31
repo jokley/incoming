@@ -17,6 +17,8 @@ import { describeAuditEvent } from '../services/auditActivity';
 import { athleteWorkCategory } from '../services/workflowStatus';
 import type { ImportSession } from '../data/importSessions';
 import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomBooking, RoomType } from '../types';
+import type { OfficialQuotaUsage } from '../services/fisRules';
+import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
 import {
   ContentCard,
   DataPanel,
@@ -39,6 +41,16 @@ type AlertItem = {
 const formatNumber = (value: number) => new Intl.NumberFormat('de-DE').format(value);
 const formatPercent = (value: number) => `${new Intl.NumberFormat('de-DE', { maximumFractionDigits: 1 }).format(value)}%`;
 const formatDate = (value?: string | null) => value ? new Date(value).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : 'offen';
+const dayKey = (value?: string | null) => value?.slice(0, 10) || '';
+const dateRange = (from: string, until: string) => {
+  const result: string[] = [];
+  for (let date = new Date(`${from}T00:00:00Z`), end = new Date(`${until}T00:00:00Z`); date <= end; date.setUTCDate(date.getUTCDate() + 1)) result.push(date.toISOString().slice(0, 10));
+  return result;
+};
+const athleteOnDay = (athlete: Athlete, date: string) => (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }])
+  .some(stay => Boolean(stay.arrivalDate && stay.departureDate && dayKey(stay.arrivalDate) <= date && dayKey(stay.departureDate) > date));
+const bookingOnDay = (booking: RoomBooking, date: string) => (!booking.checkInDate || dayKey(booking.checkInDate) <= date) && (!booking.checkOutDate || dayKey(booking.checkOutDate) > date);
+const signed = (value: number) => `${value > 0 ? '+' : ''}${formatNumber(value)}`;
 
 const getStatusTone = (percent: number): Tone => {
   if (percent >= 100) return 'error';
@@ -65,6 +77,11 @@ function TextLink({ children, to }: { children: ReactNode; to: string }) {
   return <Link to={to} className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--ops-primary)] transition-colors hover:text-[var(--ops-primary-emphasis)] focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)]">{children}<OpenInNewRoundedIcon fontSize="inherit" /></Link>;
 }
 
+function CapacityValue({ rooms, beds, signedValues = false }: { rooms: number; beds: number; signedValues?: boolean }) {
+  const value = signedValues ? signed : formatNumber;
+  return <span className="block space-y-1 text-left text-base leading-tight tracking-[-0.02em]"><span className="block">{value(rooms)} <small className="font-sans text-[11px] font-bold tracking-normal text-[var(--ops-text-muted)]">Zimmer</small></span><span className="block">{value(beds)} <small className="font-sans text-[11px] font-bold tracking-normal text-[var(--ops-text-muted)]">Betten</small></span></span>;
+}
+
 function DashboardSkeleton() {
   return <div role="status" aria-label="Dashboard-Lagebild wird geladen" className="space-y-3 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 animate-pulse">
     <div className="h-8 w-72 rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-overlay)]" />
@@ -88,6 +105,8 @@ export function Dashboard() {
   const [assignments, setAssignments] = useState<RoomBooking[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [importSessions, setImportSessions] = useState<ImportSession[]>([]);
+  const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
+  const [demandSource, setDemandSource] = useState<'event' | 'live'>('live');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -104,6 +123,7 @@ export function Dashboard() {
       void api.getImportSessions()
         .then(data => { if (!cancelled) setImportSessions(data); })
         .catch(() => undefined);
+      void api.getOfficialQuotaUsage().then(data => { if (!cancelled) setQuotaUsage(data); }).catch(() => undefined);
 
       try {
         const [athletesData, hotelsData, roomTypesData, eventsData, assignmentsData] = await Promise.all([
@@ -226,6 +246,51 @@ export function Dashboard() {
     };
   }, [assignments.length, athletes, events, hotels, roomTypes.length]);
 
+  const capacity = useMemo(() => {
+    const dates = [
+      ...events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]),
+      ...hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])),
+      ...athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])),
+      ...assignments.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)]),
+    ].filter(Boolean).sort();
+    const days = dates.length ? dateRange(dates[0], dates.at(-1)!) : [];
+    const timeline = days.map(date => {
+      const inventory = hotels.flatMap(hotel => hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
+      const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
+      const roomSupply = inventory.reduce((sum, item) => sum + item.roomCount, 0);
+      const eventPlans = events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date).map(eventRoomPlan);
+      const livePlan = calculateRoomPlan(athletes.filter(athlete => athleteOnDay(athlete, date)).length);
+      const activeBookings = assignments.filter(booking => bookingOnDay(booking, date));
+      const assignedRooms = activeBookings.length;
+      const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
+      return {
+        date, roomSupply, bedSupply, assignedRooms, assignedBeds,
+        eventRooms: eventPlans.reduce((sum, plan) => sum + plan.rooms, 0),
+        eventBeds: eventPlans.reduce((sum, plan) => sum + plan.beds, 0),
+        liveRooms: livePlan.rooms, liveBeds: livePlan.beds,
+      };
+    });
+    const roomDemandKey = demandSource === 'event' ? 'eventRooms' : 'liveRooms';
+    const peak = timeline.reduce((best, day) => day[roomDemandKey] > (best?.[roomDemandKey] ?? -1) ? day : best, timeline[0]);
+    const demandRooms = peak?.[roomDemandKey] || 0;
+    const demandBeds = peak?.[demandSource === 'event' ? 'eventBeds' : 'liveBeds'] || 0;
+    return {
+      date: peak?.date,
+      rooms: Math.max(0, ...timeline.map(day => day.roomSupply)),
+      beds: Math.max(0, ...timeline.map(day => day.bedSupply)),
+      demandRooms,
+      demandBeds,
+      assignedRooms: peak?.assignedRooms || 0,
+      assignedBeds: peak?.assignedBeds || 0,
+      reserveRooms: (peak?.roomSupply || 0) - demandRooms,
+      reserveBeds: (peak?.bedSupply || 0) - demandBeds,
+    };
+  }, [assignments, athletes, demandSource, events, hotels]);
+
+  const roomChanges = athletes.filter(athlete => athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')).length;
+  const importChanges = athletes.filter(athlete => Boolean(athlete.importChangeTypes?.length)).length;
+  const exceededQuotas = quotaUsage.filter(row => row.assignedOfficials > row.officialQuota || row.singleRoomsUsed > row.singleRoomsAllowed).length;
+
   const hotelOverview = useMemo(() => hotels.map(hotel => {
     const rooms = hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount, 0) || 0;
     const beds = hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0) || 0;
@@ -239,19 +304,17 @@ export function Dashboard() {
   const operationalConflicts = operations.invalidMasterData;
 
   const criticalAlerts = useMemo<AlertItem[]>(() => {
-    const alerts: AlertItem[] = [];
-    if (operations.peopleWithoutRoom > 0) alerts.push({ id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: 'error', status: 'sofort', href: '/lists?view=without-room' });
-    criticalHotels.slice(0, 2).forEach(item => alerts.push({ id: `hotel-${item.hotel.id}`, title: item.percent >= 100 ? 'Hotel überbucht' : 'Hotelreserve kritisch', detail: `${item.hotel.name}: ${item.remaining} Zimmer Reserve bei ${formatPercent(item.percent)} Auslastung.`, tone: item.percent >= 100 ? 'error' : 'warning', status: 'Hotel', href: `/hotels?hotelId=${item.hotel.id}` }));
-    if (operations.invalidMasterData > 0) alerts.push({ id: 'invalid-master-data', title: 'Ungültige Stammdaten', detail: `${operations.invalidMasterData} Personen benötigen eine fachliche Korrektur.`, tone: 'error', status: 'Fehler', href: '/lists?view=review-master-data' });
-    if (operations.pendingImportReviews > 0) alerts.push({ id: 'assignment-reviews', title: 'Disposition prüfen', detail: `${operations.pendingImportReviews} bestehende Dispositionen wurden durch einen späteren Import berührt.`, tone: 'warning', status: 'Prüfen', href: '/lists?view=review-assignment' });
-    if (operations.pendingSingleRooms > 0) alerts.push({ id: 'single-rooms', title: 'Einzelzimmer – Prüfung', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning', status: 'Entscheidung', href: '/lists?view=single-room' });
-    return (alerts.length > 0 ? alerts : [{ id: 'stable', title: 'Keine kritischen Hinweise', detail: 'Aktuell besteht kein unmittelbarer operativer Handlungsbedarf.', tone: 'success' as Tone, status: 'stabil', href: '/assignments' }]).slice(0, 3);
-  }, [criticalHotels, operations.invalidMasterData, operations.pendingImportReviews, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
+    const overbooked = criticalHotels.filter(item => item.percent >= 100).length;
+    return [
+      { id: 'open-assignments', title: 'Personen ohne Zimmer', detail: `${operations.peopleWithoutRoom} Personen sind noch keiner Unterkunft zugewiesen.`, tone: operations.peopleWithoutRoom ? 'error' : 'success', status: operations.peopleWithoutRoom ? 'Sofort' : 'Erledigt', href: '/lists?entity=persons&hint=without-room' },
+      { id: 'single-rooms', title: 'Einzelzimmer entscheiden', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: operations.pendingSingleRooms ? 'warning' : 'success', status: operations.pendingSingleRooms ? 'Heute' : 'Erledigt', href: '/lists?entity=persons&hint=single-room' },
+      { id: 'overbooked', title: 'Hotel überbucht', detail: `${overbooked} Hotels haben keine verbleibende Zimmerreserve.`, tone: overbooked ? 'error' : 'success', status: overbooked ? 'Sofort' : 'Erledigt', href: '/hotels?filter=critical' },
+      { id: 'import-conflicts', title: 'Importkonflikte', detail: `${operationalConflicts} Datensätze blockieren oder gefährden die Disposition.`, tone: operationalConflicts ? 'error' : 'success', status: operationalConflicts ? 'Prüfen' : 'Erledigt', href: '/import' },
+      { id: 'quota-exceeded', title: 'Kontingent überschritten', detail: `${exceededQuotas} Kontingentgruppen liegen über der zulässigen Belegung.`, tone: exceededQuotas ? 'warning' : 'success', status: exceededQuotas ? 'Entscheiden' : 'Erledigt', href: '/assignments?view=quotas' },
+    ] as AlertItem[];
+  }, [criticalHotels, exceededQuotas, operationalConflicts, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
   const today = new Date().toLocaleDateString('en-CA');
-  const arrivalsToday = athletes.filter(athlete => athlete.arrivalDate === today).length;
-  const departuresToday = athletes.filter(athlete => athlete.departureDate === today).length;
-  const assignmentsToday = assignments.filter(assignment => assignment.checkInDate === today).length;
   const upcomingMovements = useMemo(() => athletes.flatMap(athlete => [
     athlete.arrivalDate && athlete.arrivalDate >= today ? { id: `arrival-${athlete.id}`, athlete, date: athlete.arrivalDate, kind: 'Anreise' as const } : null,
     athlete.departureDate && athlete.departureDate >= today ? { id: `departure-${athlete.id}`, athlete, date: athlete.departureDate, kind: 'Abreise' as const } : null,
@@ -259,7 +322,7 @@ export function Dashboard() {
 
   const importStatuses = [
     { id: 'sessions', title: 'Importsessions', count: importSessions.length, helper: `${importSessions.filter(session => !['IMPORTED', 'REPLACED', 'ARCHIVED'].includes(session.status)).length} in Bearbeitung`, tone: importSessions.length > 0 ? 'success' : 'warning' as Tone, href: importSessions[0] ? `/import?sessionId=${importSessions[0].id}` : '/import' },
-    { id: 'reviews', title: 'Disposition prüfen', count: operations.pendingImportReviews, helper: 'geänderte bestehende Zuweisungen', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/lists?view=review-assignment' },
+    { id: 'reviews', title: 'Disposition prüfen', count: operations.pendingImportReviews, helper: 'geänderte bestehende Zuweisungen', tone: operations.pendingImportReviews > 0 ? 'warning' : 'success' as Tone, href: '/lists?entity=persons&status=review' },
     { id: 'validation', title: 'Importprüfungen', count: operationalConflicts, helper: 'Referenzen und Konflikte im Import', tone: operationalConflicts > 0 ? 'error' : 'success' as Tone, href: '/import' },
   ];
 
@@ -283,25 +346,31 @@ export function Dashboard() {
   return (
     <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
       <ContentCard className="p-3" surface="raised" elevation="none">
-        <SectionHeader title="Operations Center" subtitle="Wo heute gehandelt werden muss – priorisiert nach Dringlichkeit." actions={<StatusChip tone={operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'warning' : 'success'}>{operationalConflicts > 0 || operations.peopleWithoutRoom > 0 ? 'Handlungsbedarf' : 'Operations stabil'}</StatusChip>} />
+        <SectionHeader title="Bedarf & Kontingente" subtitle="Reicht das Kontingent für den aktuellen Bedarf?" actions={<div className="flex items-center gap-3"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1" aria-label="Bedarfsquelle">{(['event', 'live'] as const).map(source => <button type="button" key={source} aria-pressed={demandSource === source} onClick={() => setDemandSource(source)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${demandSource === source ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]'}`}>{source === 'event' ? 'Event' : 'Live'}</button>)}</div><StatusChip tone={capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : 'success'}>{capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'Unterdeckung' : 'Kapazität gedeckt'}</StatusChip></div>} />
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-          <MetricCard compact label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} context="Aktuell" helper="Personen" action={operations.peopleWithoutRoom > 0 ? 'Sofort' : 'Erledigt'} tone={operations.peopleWithoutRoom > 0 ? 'error' : 'success'} icon={<WarningAmberRoundedIcon />} href="/lists?view=without-room" />
-          <MetricCard compact label="Disposition prüfen" value={formatNumber(operations.pendingImportReviews)} context="Aktuell" helper="durch Import geändert" action={operations.pendingImportReviews > 0 ? 'Heute' : 'Erledigt'} tone={operations.pendingImportReviews > 0 ? 'warning' : 'success'} icon={<SyncRoundedIcon />} href="/lists?view=review-assignment" />
-          <MetricCard compact label="Offene Entscheidungen" value={formatNumber(operations.pendingSingleRooms)} context="Aktuell" helper="Einzelzimmer" action={operations.pendingSingleRooms > 0 ? 'Heute' : 'Erledigt'} tone={operations.pendingSingleRooms > 0 ? 'warning' : 'success'} icon={<ShieldRoundedIcon />} href="/lists?view=single-room" />
-          <MetricCard compact label="Kritische Hotels" value={formatNumber(criticalHotels.length)} context="Aktuell" helper="nach Reserve" action={criticalHotels.length > 0 ? 'Beobachten' : 'Stabil'} tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<ApartmentRoundedIcon />} href="/hotels" />
-          <MetricCard compact label="Stammdaten prüfen" value={formatNumber(operations.invalidMasterData)} context="Aktuell" helper="blockiert Disposition" action={operations.invalidMasterData > 0 ? 'Sofort' : 'Erledigt'} tone={operations.invalidMasterData > 0 ? 'error' : 'success'} icon={<ShieldRoundedIcon />} href="/lists?view=review-master-data" />
+          <MetricCard compact label="Kontingent" value={<CapacityValue rooms={capacity.rooms} beds={capacity.beds}/>} helper="maximal im Zeitraum" tone="primary" icon={<ApartmentRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
+          <MetricCard compact label="Bedarf" value={<CapacityValue rooms={capacity.demandRooms} beds={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · Peak`} tone="info" icon={<TimelineRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
+          <MetricCard compact label="Disponiert" value={<CapacityValue rooms={capacity.assignedRooms} beds={capacity.assignedBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · am Peak`} tone="primary" icon={<CheckRoundedIcon />} href="/assignments" />
+          <MetricCard compact label="Reserve" value={<CapacityValue rooms={capacity.reserveRooms} beds={capacity.reserveBeds} signedValues/>} helper={capacity.date ? formatDate(capacity.date) : 'Kein Zeitraum'} action={capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'Prüfen' : 'Gedeckt'} tone={capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : 'success'} icon={<ShieldRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}${capacity.date ? `&date=${capacity.date}` : ''}`} />
+          <MetricCard compact label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach verbleibender Reserve" action={criticalHotels.length > 0 ? 'Prüfen' : 'Stabil'} tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<WarningAmberRoundedIcon />} href="/hotels?filter=critical" />
         </div>
       </ContentCard>
 
-      <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Heute</span>} actions={<TextLink to="/assignments">Zuweisungen öffnen</TextLink>}>
-        <div className="grid grid-cols-1 divide-y divide-[var(--ops-divider)] md:grid-cols-3 md:divide-x md:divide-y-0">
-          {[{ label: 'Anreisen heute', value: arrivalsToday, helper: 'Bewegung vorbereiten', href: '/lists?entity=persons&movement=arrival&period=today' }, { label: 'Abreisen heute', value: departuresToday, helper: 'Abreise abstimmen', href: '/lists?entity=persons&movement=departure&period=today' }, { label: 'Zimmerbezüge heute', value: assignmentsToday, helper: 'bereits disponiert', href: '/assignments' }].map(item => <Link key={item.label} to={item.href} className="flex items-center justify-between gap-4 px-4 py-3 transition-colors hover:bg-[var(--ops-surface-overlay)]"><div><div className="text-[10px] font-bold uppercase tracking-[0.06em] text-[var(--ops-text-subtle)]">{item.label}</div><div className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{item.helper}</div></div><div className="text-xl font-extrabold">{formatNumber(item.value)}</div></Link>)}
+      <ContentCard className="p-3" surface="raised" elevation="none">
+        <SectionHeader title="Disposition" subtitle="Wie weit ist die Unterkunfts-Disposition?" actions={<TextLink to="/assignments">Zuweisungen öffnen</TextLink>} />
+        <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
+          <MetricCard compact label="Athleten gesamt" value={formatNumber(athletes.length)} helper="Personen" tone="neutral" href="/lists?entity=persons" />
+          <MetricCard compact label="Disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" action={operations.peopleWithoutRoom ? 'In Arbeit' : 'Vollständig'} tone={operations.peopleWithoutRoom ? 'primary' : 'success'} href="/assignments" />
+          <MetricCard compact label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="offene Personen" action={operations.peopleWithoutRoom ? 'Sofort' : 'Erledigt'} tone={operations.peopleWithoutRoom ? 'error' : 'success'} href="/lists?entity=persons&hint=without-room" />
+          <MetricCard compact label="Offene Einzelzimmer" value={formatNumber(operations.pendingSingleRooms)} helper="Entscheidung ausstehend" action={operations.pendingSingleRooms ? 'Heute' : 'Erledigt'} tone={operations.pendingSingleRooms ? 'warning' : 'success'} href="/lists?entity=persons&hint=single-room" />
+          <MetricCard compact label="Zimmerwechsel" value={formatNumber(roomChanges)} helper="seit letztem Import" action={roomChanges ? 'Prüfen' : 'Keine'} tone={roomChanges ? 'warning' : 'success'} href="/lists?entity=persons&hint=room-change" />
+          <MetricCard compact label="Importänderungen" value={formatNumber(importChanges)} helper="seit letztem Import" action={importChanges ? 'Prüfen' : 'Keine'} tone={importChanges ? 'info' : 'success'} href="/lists?entity=persons&hint=import" />
         </div>
-      </DataPanel>
+      </ContentCard>
 
       <div className="grid grid-cols-1 gap-3 xl:grid-cols-[1fr_1.02fr]">
-        <DataPanel title={<span className="inline-flex items-center gap-2"><WarningAmberRoundedIcon fontSize="small" />Kritische Hinweise</span>}>
-          <div className="grid grid-cols-1 gap-2 p-2 md:grid-cols-3">
+        <DataPanel title={<span className="inline-flex items-center gap-2"><WarningAmberRoundedIcon fontSize="small" />Entscheidungen</span>}>
+          <div className="grid grid-cols-1 gap-2 p-2 md:grid-cols-2 xl:grid-cols-3">
             {criticalAlerts.map(alert => <ContentCard key={alert.id} className="p-3" surface="elevated" elevation="none"><div className="flex items-start justify-between gap-3"><div className="flex items-center gap-3"><IconTile tone={alert.tone} icon={alert.tone === 'warning' ? <ShieldRoundedIcon /> : <WarningAmberRoundedIcon />} /><h3 className="text-sm font-extrabold uppercase text-[var(--ops-text)]">{alert.title}</h3></div><StatusChip tone={alert.tone}>{alert.status}</StatusChip></div><p className="mt-2 text-xs leading-5 text-[var(--ops-text-muted)]">{alert.detail}</p><div className="mt-2"><TextLink to={alert.href}>Details anzeigen</TextLink></div></ContentCard>)}
           </div>
         </DataPanel>

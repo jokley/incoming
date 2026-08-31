@@ -31,6 +31,7 @@ export interface ListRow {
   assigned: boolean;
   workCategory: WorkCategory;
   importChanged: boolean;
+  roomChanged: boolean;
   singleRoomPending: boolean;
 }
 
@@ -44,7 +45,7 @@ export interface ListFilters {
   role: string;
   hotel: string;
   status: '' | WorkCategory;
-  hint: '' | 'internal' | 'athlete' | 'import' | 'single-room' | 'surcharge' | 'without-room';
+  hint: '' | 'internal' | 'athlete' | 'import' | 'room-change' | 'single-room' | 'surcharge' | 'without-room';
   movement: '' | 'arrival' | 'departure';
   period: '' | 'today' | 'tomorrow' | 'week';
   assignedOnly: boolean;
@@ -185,6 +186,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       assigned: Boolean(booking),
       workCategory: athleteWorkCategory(athlete),
       importChanged: Boolean(athlete.importChangeTypes?.length || athlete.hasPendingRoomlistReview),
+      roomChanged: Boolean(athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')),
       singleRoomPending: athlete.single_room_status === 'PENDING_APPROVAL',
     };
   });
@@ -204,6 +206,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
     if (filters.hint === 'internal' && row.internalNote === '—') return false;
     if (filters.hint === 'athlete' && row.athleteRemark === '—') return false;
     if (filters.hint === 'import' && !row.importChanged) return false;
+    if (filters.hint === 'room-change' && !row.roomChanged) return false;
     if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.singleRoomPending) return false;
     if (filters.hint === 'surcharge' && row.surcharge !== 'Ja') return false;
     if (filters.hint === 'without-room' && row.assigned) return false;
