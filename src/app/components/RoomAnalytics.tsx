@@ -194,10 +194,12 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
 
 function CapacityView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const [metric, setMetric] = useState<'beds' | 'rooms'>('rooms');
   const hasNations = data.athletes.length > 0;
-  const [source, setSource] = useState<DemandSource>(() => hasNations ? 'live' : 'event');
-  useEffect(() => setSource(hasNations ? 'live' : 'event'), [hasNations]);
+  const requestedSource = params.get('source');
+  const [source, setSource] = useState<DemandSource>(() => requestedSource === 'event' || requestedSource === 'live' ? requestedSource : hasNations ? 'live' : 'event');
+  useEffect(() => { if (requestedSource === 'event' || requestedSource === 'live') setSource(requestedSource); }, [requestedSource]);
   const dates = [
     ...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]),
     ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])),
