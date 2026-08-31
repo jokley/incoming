@@ -20,8 +20,8 @@ export function SortableTableHead<K extends string>({ column, label, sort, onSor
   const active = sort.key === column;
   const Icon = active ? sort.direction === 'asc' ? ArrowUp : ArrowDown : ChevronsUpDown;
   return <th scope="col" aria-sort={active ? sort.direction === 'asc' ? 'ascending' : 'descending' : 'none'} className={`overflow-hidden px-2 py-1 text-${align} font-extrabold`}>
-    <button type="button" onClick={() => onSort(column)} className={`flex w-full min-w-0 items-center gap-1 overflow-hidden ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'} hover:text-[var(--ops-text)]`}>
-      <span className="min-w-0 truncate whitespace-nowrap">{label}</span><Icon aria-hidden className="shrink-0" size={12}/>
+    <button type="button" onClick={() => onSort(column)} title={typeof label === 'string' ? label : undefined} className={`flex w-full min-w-0 items-center overflow-hidden ${align === 'right' ? 'justify-end' : align === 'center' ? 'justify-center' : 'justify-start'} hover:text-[var(--ops-text)]`}>
+      <span className="min-w-0 flex-1 truncate whitespace-nowrap">{label}</span><span className="ml-1 flex h-4 w-4 shrink-0 items-center justify-center"><Icon aria-hidden size={12}/></span>
     </button>
   </th>;
 }
