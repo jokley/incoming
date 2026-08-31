@@ -82,6 +82,14 @@ function CapacityValue({ rooms, beds, signedValues = false }: { rooms: number; b
   return <span className="block space-y-1 text-left text-base leading-tight tracking-[-0.02em]"><span className="block">{value(rooms)} <small className="font-sans text-[11px] font-bold tracking-normal text-[var(--ops-text-muted)]">Zimmer</small></span><span className="block">{value(beds)} <small className="font-sans text-[11px] font-bold tracking-normal text-[var(--ops-text-muted)]">Betten</small></span></span>;
 }
 
+function DispositionValue({ rooms, roomTarget, beds, bedTarget }: { rooms: number; roomTarget: number; beds: number; bedTarget: number }) {
+  const progress = (value: number, target: number) => target > 0 ? Math.min((value / target) * 100, 100) : 0;
+  return <span className="block space-y-1 text-left text-sm leading-tight tracking-[-0.02em]">
+    <span className="block"><b>{formatNumber(rooms)} / {formatNumber(roomTarget)}</b> Zimmer <small className="font-bold text-[var(--ops-text-muted)]">({formatPercent(progress(rooms, roomTarget))})</small></span>
+    <span className="block"><b>{formatNumber(beds)} / {formatNumber(bedTarget)}</b> Betten <small className="font-bold text-[var(--ops-text-muted)]">({formatPercent(progress(beds, bedTarget))})</small></span>
+  </span>;
+}
+
 function DashboardSkeleton() {
   return <div role="status" aria-label="Dashboard-Lagebild wird geladen" className="space-y-3 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 animate-pulse">
     <div className="h-8 w-72 rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-overlay)]" />
@@ -300,6 +308,8 @@ export function Dashboard() {
   }).sort((a, b) => a.remaining - b.remaining || b.percent - a.percent), [assignments, hotels]);
 
   const criticalHotels = hotelOverview.filter(item => item.rooms > 0 && (item.percent >= 90 || item.remaining <= 2));
+  const reserveTone: Tone = capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : capacity.reserveRooms <= 2 || capacity.reserveBeds <= 4 ? 'warning' : 'success';
+  const reserveStatus = reserveTone === 'error' ? 'Unterdeckung' : reserveTone === 'warning' ? 'Reserve niedrig' : 'Kapazität gedeckt';
   // Kontingentquoten sind Planungshinweise, keine operativen Importkonflikte.
   const operationalConflicts = operations.invalidMasterData;
 
@@ -346,12 +356,12 @@ export function Dashboard() {
   return (
     <div className="space-y-2 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
       <ContentCard className="p-3" surface="raised" elevation="none">
-        <SectionHeader title="Bedarf & Kontingente" subtitle="Reicht das Kontingent für den aktuellen Bedarf?" actions={<div className="flex items-center gap-3"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1" aria-label="Bedarfsquelle">{(['event', 'live'] as const).map(source => <button type="button" key={source} aria-pressed={demandSource === source} onClick={() => setDemandSource(source)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${demandSource === source ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]'}`}>{source === 'event' ? 'Event' : 'Live'}</button>)}</div><StatusChip tone={capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : 'success'}>{capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'Unterdeckung' : 'Kapazität gedeckt'}</StatusChip></div>} />
+        <SectionHeader title="Bedarf & Kontingente" subtitle="Reicht das Kontingent für den aktuellen Bedarf?" actions={<div className="flex items-center gap-3"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1" aria-label="Bedarfsquelle">{(['event', 'live'] as const).map(source => <button type="button" key={source} aria-pressed={demandSource === source} onClick={() => setDemandSource(source)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${demandSource === source ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]'}`}>{source === 'event' ? 'Event' : 'Live'}</button>)}</div><StatusChip tone={reserveTone}>{reserveStatus}</StatusChip></div>} />
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
           <MetricCard compact label="Kontingent" value={<CapacityValue rooms={capacity.rooms} beds={capacity.beds}/>} helper="maximal im Zeitraum" tone="primary" icon={<ApartmentRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
           <MetricCard compact label="Bedarf" value={<CapacityValue rooms={capacity.demandRooms} beds={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · Peak`} tone="info" icon={<TimelineRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
-          <MetricCard compact label="Disponiert" value={<CapacityValue rooms={capacity.assignedRooms} beds={capacity.assignedBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · am Peak`} tone="primary" icon={<CheckRoundedIcon />} href="/assignments" />
-          <MetricCard compact label="Reserve" value={<CapacityValue rooms={capacity.reserveRooms} beds={capacity.reserveBeds} signedValues/>} helper={capacity.date ? formatDate(capacity.date) : 'Kein Zeitraum'} action={capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'Prüfen' : 'Gedeckt'} tone={capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : 'success'} icon={<ShieldRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}${capacity.date ? `&date=${capacity.date}` : ''}`} />
+          <MetricCard compact label="Disponiert" value={<DispositionValue rooms={capacity.assignedRooms} roomTarget={capacity.demandRooms} beds={capacity.assignedBeds} bedTarget={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · am Peak`} tone="primary" icon={<CheckRoundedIcon />} href="/assignments" />
+          <MetricCard compact label="Reserve" value={<CapacityValue rooms={capacity.reserveRooms} beds={capacity.reserveBeds} signedValues/>} helper={capacity.date ? formatDate(capacity.date) : 'Kein Zeitraum'} action={reserveTone === 'error' ? 'Sofort prüfen' : reserveTone === 'warning' ? 'Beobachten' : 'Gedeckt'} tone={reserveTone} icon={<ShieldRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}${capacity.date ? `&date=${capacity.date}` : ''}`} />
           <MetricCard compact label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach verbleibender Reserve" action={criticalHotels.length > 0 ? 'Prüfen' : 'Stabil'} tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<WarningAmberRoundedIcon />} href="/hotels?filter=critical" />
         </div>
       </ContentCard>
@@ -360,7 +370,7 @@ export function Dashboard() {
         <SectionHeader title="Disposition" subtitle="Wie weit ist die Unterkunfts-Disposition?" actions={<TextLink to="/assignments">Zuweisungen öffnen</TextLink>} />
         <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-6">
           <MetricCard compact label="Athleten gesamt" value={formatNumber(athletes.length)} helper="Personen" tone="neutral" href="/lists?entity=persons" />
-          <MetricCard compact label="Disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" action={operations.peopleWithoutRoom ? 'In Arbeit' : 'Vollständig'} tone={operations.peopleWithoutRoom ? 'primary' : 'success'} href="/assignments" />
+          <MetricCard compact label="Disponiert" value={formatNumber(operations.assignedPeople)} helper="Personen mit Zimmer" action={operations.peopleWithoutRoom ? 'In Arbeit' : 'Vollständig'} tone={operations.peopleWithoutRoom ? 'primary' : 'success'} href="/lists?entity=persons&assignedOnly=true" />
           <MetricCard compact label="Ohne Zimmer" value={formatNumber(operations.peopleWithoutRoom)} helper="offene Personen" action={operations.peopleWithoutRoom ? 'Sofort' : 'Erledigt'} tone={operations.peopleWithoutRoom ? 'error' : 'success'} href="/lists?entity=persons&hint=without-room" />
           <MetricCard compact label="Offene Einzelzimmer" value={formatNumber(operations.pendingSingleRooms)} helper="Entscheidung ausstehend" action={operations.pendingSingleRooms ? 'Heute' : 'Erledigt'} tone={operations.pendingSingleRooms ? 'warning' : 'success'} href="/lists?entity=persons&hint=single-room" />
           <MetricCard compact label="Zimmerwechsel" value={formatNumber(roomChanges)} helper="seit letztem Import" action={roomChanges ? 'Prüfen' : 'Keine'} tone={roomChanges ? 'warning' : 'success'} href="/lists?entity=persons&hint=room-change" />
@@ -375,7 +385,7 @@ export function Dashboard() {
           </div>
         </DataPanel>
 
-        <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Nächste Bewegungen</span>} actions={<TextLink to="/athletes">Personen öffnen</TextLink>}>
+        <DataPanel title={<span className="inline-flex items-center gap-2"><CalendarMonthRoundedIcon fontSize="small" />Nächste Bewegungen</span>} actions={<TextLink to="/lists?entity=persons&movement=arrival&period=week">Anreisen dieser Woche</TextLink>}>
           <div className="divide-y divide-[var(--ops-divider)] p-3">
             {upcomingMovements.length > 0 ? upcomingMovements.map(item => <Link to={`/athletes?athleteId=${item.athlete.id}`} key={item.id} className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-3 rounded-[var(--ops-radius-lg)] px-3 py-2 text-xs transition-colors hover:bg-[var(--ops-surface-overlay)]"><IconTile tone={item.kind === 'Anreise' ? 'info' : 'neutral'} icon={item.kind === 'Anreise' ? <LoginRoundedIcon fontSize="small" /> : <LogoutRoundedIcon fontSize="small" />} /><strong>{item.athlete.firstname} {item.athlete.lastname}</strong><span className="text-[var(--ops-text-muted)]">{item.athlete.nationCode}</span><span className="text-[var(--ops-text-muted)]">{item.kind} · {formatDate(item.date)}</span></Link>) : <p className="px-3 py-6 text-center text-sm text-[var(--ops-text-muted)]">Keine bevorstehenden An- oder Abreisen erfasst.</p>}
           </div>
@@ -386,7 +396,8 @@ export function Dashboard() {
         <DataPanel title={<span className="inline-flex items-center gap-2"><ApartmentRoundedIcon fontSize="small" />Kritische Hotels</span>} actions={<StatusChip tone="info">Nach Priorität</StatusChip>} className="xl:col-span-1">
           <div className="space-y-2 p-3">
             {criticalHotels.slice(0, 4).map(item => <Link to={`/hotels?hotelId=${item.hotel.id}`} key={item.hotel.id} className="grid gap-3 rounded-[var(--ops-radius-lg)] p-2 transition-colors hover:bg-[var(--ops-surface-overlay)] md:grid-cols-[1fr_9rem_10rem]"><div><div className="mb-2 flex items-center justify-between"><strong>{item.hotel.name}</strong><StatusChip tone={item.tone}>{formatPercent(item.percent)}</StatusChip></div><div className="h-2 overflow-hidden rounded-full bg-[var(--ops-surface-overlay)]"><div className="h-full rounded-full bg-[var(--ops-primary)]" style={{ width: `${Math.min(item.percent, 100)}%` }} /></div></div><div className="text-sm text-[var(--ops-text-muted)]">{item.tone === 'error' ? 'Ausgelastet' : 'Verfügbar'}<br />{item.remaining} Zimmer frei</div><div className="text-sm text-[var(--ops-text-muted)]">{item.availableBeds} Betten verfügbar<br />{item.rooms} Zimmer gesamt</div></Link>)}
-            <div className="pt-2 text-center"><TextLink to="/hotels">Alle Hotels anzeigen</TextLink></div>
+            {criticalHotels.length === 0 && <p className="rounded-[var(--ops-radius-lg)] border border-dashed border-[var(--ops-border)] px-3 py-5 text-center text-sm text-[var(--ops-text-muted)]">Keine kritischen Hotels – alle Reserven sind stabil.</p>}
+            <div className="pt-2 text-center"><TextLink to="/hotels?filter=critical">Kritische Hotels öffnen</TextLink></div>
           </div>
         </DataPanel>
 
