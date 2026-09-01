@@ -6,14 +6,13 @@ import { clsx } from 'clsx';
 import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
 import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, SplitPageLayout, SplitPaneLayout, SectionHeader, StatusChip } from '../design-system';
-import { calculateRoomPlan, eventRoomPlan } from '../services/planningCalculations';
+import { buildCapacityTimeline, buildHotelRiskRows, calculateRoomPlan, eventRoomPlan, type CapacityDay, type DemandSource } from '../services/planningCalculations';
 import { calculateQuotaUsage, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
 
 type ViewKey = 'capacity' | 'hotels' | 'nations';
 type AnalyticsData = { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] };
 type Tone = 'neutral' | 'success' | 'warning' | 'error' | 'info' | 'primary';
 
-const isSingle = (room: { name: string; maxPersons: number }) => room.maxPersons === 1 || /(^|\W)EZ(\W|$)/i.test(room.name);
 const dayKey = (value?: string | null) => value?.slice(0, 10) || '';
 const formatDay = (value: string) => new Date(`${value}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
 const formatFullDay = (value: string) => new Date(`${value}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'UTC' });
@@ -29,12 +28,7 @@ const athleteOnDay = (athlete: Athlete, date: string) => {
   const stays = athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }];
   return stays.some(stay => Boolean(stay.arrivalDate && stay.departureDate && dayKey(stay.arrivalDate) <= date && dayKey(stay.departureDate) > date));
 };
-const bookingOnDay = (booking: RoomBooking, date: string) => {
-  const from = dayKey(booking.checkInDate);
-  const until = dayKey(booking.checkOutDate);
-  // Legacy bookings without dates still consume a room; dated stays use hotel-night semantics.
-  return (!from || from <= date) && (!until || until > date);
-};
+
 
 const NAV: Array<{ key: ViewKey; label: string; question: string; icon: typeof Building2 }> = [
   { key: 'capacity', label: 'Bedarf & Kontingente', question: 'Wann reicht das Kontingent nicht?', icon: ChartNoAxesCombined },
@@ -60,17 +54,6 @@ function NationTooltip({ active, payload }: { active?: boolean; payload?: Array<
   const values = [['Personen', row.count], ['Zimmer', row.ez + row.dz], ['EZ', row.ez], ['DZ', row.dz], ['Anteil', `${row.share.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %`], ['Bettennächte', row.bedNights], ['Aufenthalt Ø', `${row.averageStay.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Nächte`]];
   return <div className="rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl"><b className="mb-2 block border-b border-[var(--ops-divider)] pb-2 text-sm">Nation {row.nation}</b>{values.map(([label, value]) => <div key={label} className="flex min-w-52 justify-between gap-6 py-0.5"><span className="text-[var(--ops-text-muted)]">{label}</span><strong className="font-mono">{value}</strong></div>)}</div>;
 }
-type CapacityDay = {
-  date: string; label: string; roomSupply: number; assignedRooms: number; freeRooms: number; plannedRooms: number; demandRooms: number;
-  bedSupply: number; assignedBeds: number; freeBeds: number; plannedBeds: number; demandBeds: number;
-  ezSupply: number; assignedEz: number; freeEz: number; plannedEz: number; demandEz: number;
-  dzSupply: number; assignedDz: number; freeDz: number; plannedDz: number; demandDz: number;
-  eventRoomReserve: number; eventBedReserve: number; eventEzReserve: number; eventDzReserve: number;
-  liveRoomReserve: number; liveBedReserve: number; liveEzReserve: number; liveDzReserve: number;
-};
-
-type DemandSource = 'event' | 'live';
-
 function CapacityTooltip({ active, payload, metric, source }: { active?: boolean; payload?: Array<{ payload: CapacityDay }>; metric: 'beds' | 'rooms'; source: DemandSource }) {
   const day = payload?.[0]?.payload;
   if (!active || !day) return null;
@@ -200,46 +183,7 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   const requestedSource = params.get('source');
   const [source, setSource] = useState<DemandSource>(() => requestedSource === 'event' || requestedSource === 'live' ? requestedSource : hasNations ? 'live' : 'event');
   useEffect(() => { if (requestedSource === 'event' || requestedSource === 'live') setSource(requestedSource); }, [requestedSource]);
-  const dates = [
-    ...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]),
-    ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])),
-    ...data.athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])),
-    ...data.bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)]),
-  ].filter(Boolean).sort();
-  const days = dates.length ? range(dates[0], dates.at(-1)!) : [];
-  const timeline: CapacityDay[] = days.map(date => {
-    const inventory = data.hotels.flatMap(h => h.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
-    const events = data.events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date);
-    const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
-    const supply = calculateRoomPlan(bedSupply);
-    const plans = events.map(eventRoomPlan);
-    const plannedBeds = plans.reduce((sum, plan) => sum + plan.beds, 0);
-    const plannedRooms = plans.reduce((sum, plan) => sum + plan.rooms, 0);
-    const actualPeople = data.athletes.filter(athlete => athleteOnDay(athlete, date));
-    const livePlan = calculateRoomPlan(actualPeople.length);
-    const activeBookings = data.bookings.filter(booking => bookingOnDay(booking, date));
-    const assignedRooms = activeBookings.length;
-    const assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0);
-    const assignedEz = calculateQuotaUsage(quotaAssignmentsFromBookings(activeBookings));
-    const assignedDz = Math.max(0, assignedBeds - assignedEz);
-    const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0);
-    const plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0);
-    // Real assignments replace the planning split while the still-free rooms retain
-    // the 50/50 planning assumption. This keeps all four stack segments equal to
-    // the calculated room contingent at every point in the project.
-    const freeRooms = Math.max(supply.rooms - assignedRooms, 0);
-    const freeEz = freeRooms / 2;
-    const freeDz = freeRooms - freeEz;
-    return {
-      date, label: formatDay(date), roomSupply: supply.rooms, bedSupply, ezSupply: assignedEz + freeEz, dzSupply: assignedDz + freeDz,
-      plannedRooms, plannedBeds, plannedEz, plannedDz,
-      demandRooms: livePlan.rooms, demandBeds: livePlan.beds, demandEz: livePlan.singleRooms, demandDz: livePlan.doubleRooms,
-      assignedRooms, assignedBeds, assignedEz, assignedDz,
-      freeRooms, freeBeds: Math.max(bedSupply - assignedBeds, 0), freeEz, freeDz,
-      eventRoomReserve: supply.rooms - plannedRooms, eventBedReserve: bedSupply - plannedBeds, eventEzReserve: supply.singleRooms - plannedEz, eventDzReserve: supply.doubleRooms - plannedDz,
-      liveRoomReserve: supply.rooms - livePlan.rooms, liveBedReserve: bedSupply - livePlan.beds, liveEzReserve: supply.singleRooms - livePlan.singleRooms, liveDzReserve: supply.doubleRooms - livePlan.doubleRooms,
-    };
-  });
+  const timeline = buildCapacityTimeline(data);
   const metricConfig = {
     beds: { label: 'Betten', supply: 'bedSupply', demand: 'demandBeds', assigned: 'assignedBeds', free: 'freeBeds', plan: 'plannedBeds', reserve: source === 'event' ? 'eventBedReserve' : 'liveBedReserve', group: 'beds' as const },
     rooms: { label: 'Zimmer', supply: 'roomSupply', demand: 'demandRooms', assigned: 'assignedRooms', free: 'freeRooms', plan: 'plannedRooms', reserve: source === 'event' ? 'eventRoomReserve' : 'liveRoomReserve', group: 'rooms' as const },
@@ -263,20 +207,7 @@ function HotelsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
   const dates = [...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])), ...data.bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)])].filter(Boolean).sort();
   const days = dates.length ? range(dates[0], dates.at(-1)!) : [];
-  const rows = data.hotels.map(hotel => {
-    const hotelBookings = data.bookings.filter(booking => booking.hotel.id === hotel.id);
-    const daily = days.map(date => {
-      const inventories = (hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
-      const rooms = inventories.reduce((sum, item) => sum + item.roomCount, 0);
-      const singleRooms = inventories.filter(item => isSingle(item.roomType)).reduce((sum, item) => sum + item.roomCount, 0);
-      const activeBookings = hotelBookings.filter(booking => bookingOnDay(booking, date));
-      const occupied = activeBookings.length;
-      const occupiedSingle = activeBookings.filter(booking => isSingle(booking.roomType)).length;
-      return { date, rooms, occupied, reserve: rooms - occupied, singleReserve: singleRooms - occupiedSingle };
-    }).filter(day => day.rooms > 0 || day.occupied > 0);
-    const worst = daily.reduce((lowest, day) => day.reserve < (lowest?.reserve ?? Number.POSITIVE_INFINITY) ? day : lowest, daily[0]);
-    const firstCritical = daily.find(day => day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1);
-    const criticalDays = daily.filter(day => day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1).length;
+  const rows = buildHotelRiskRows(data.hotels, data.bookings).map(({ hotel, daily, worst, firstCritical, criticalDays }) => {
     const reservePercent = worst?.rooms ? Math.round(worst.reserve / worst.rooms * 100) : worst?.occupied ? -100 : 100;
     const cause = worst?.reserve < 0 ? 'Zimmerunterdeckung' : worst?.singleReserve < 0 ? 'EZ-Mix' : reservePercent <= 10 ? 'Reserve ≤ 10 %' : 'Stabil';
     return { id: hotel.id, name: hotel.name, daily, worst, firstCritical, criticalDays, reservePercent, cause };
