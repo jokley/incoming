@@ -17,7 +17,6 @@ import { describeAuditEvent } from '../services/auditActivity';
 import { athleteWorkCategory } from '../services/workflowStatus';
 import type { ImportSession } from '../data/importSessions';
 import type { Athlete, AuditEvent, Event, Hotel as HotelType, RoomBooking, RoomType } from '../types';
-import type { OfficialQuotaUsage } from '../services/fisRules';
 import { buildCapacityTimeline, buildHotelRiskRows, capacitySummary, type DemandSource } from '../services/planningCalculations';
 import {
   ContentCard,
@@ -105,7 +104,6 @@ export function Dashboard() {
   const [assignments, setAssignments] = useState<RoomBooking[]>([]);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [importSessions, setImportSessions] = useState<ImportSession[]>([]);
-  const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
   const [demandSource, setDemandSource] = useState<DemandSource>('live');
   const [loading, setLoading] = useState(true);
 
@@ -123,7 +121,6 @@ export function Dashboard() {
       void api.getImportSessions()
         .then(data => { if (!cancelled) setImportSessions(data); })
         .catch(() => undefined);
-      void api.getOfficialQuotaUsage().then(data => { if (!cancelled) setQuotaUsage(data); }).catch(() => undefined);
 
       try {
         const [athletesData, hotelsData, roomTypesData, eventsData, assignmentsData] = await Promise.all([
@@ -251,12 +248,24 @@ export function Dashboard() {
     const { peak, critical, firstRisk } = capacitySummary(capacityTimeline, demandSource);
     const demandRooms = peak?.[demandSource === 'event' ? 'plannedRooms' : 'demandRooms'] || 0;
     const demandBeds = peak?.[demandSource === 'event' ? 'plannedBeds' : 'demandBeds'] || 0;
-    return { date: peak?.date, criticalDate: critical?.date, firstRiskDate: firstRisk?.date, rooms: peak?.roomSupply || 0, beds: peak?.bedSupply || 0, demandRooms, demandBeds, assignedRooms: peak?.assignedRooms || 0, assignedBeds: peak?.assignedBeds || 0, reserveRooms: peak?.[demandSource === 'event' ? 'eventRoomReserve' : 'liveRoomReserve'] || 0, reserveBeds: peak?.[demandSource === 'event' ? 'eventBedReserve' : 'liveBedReserve'] || 0 };
+    return {
+      date: peak?.date,
+      criticalDate: critical?.date,
+      firstRiskDate: firstRisk?.date,
+      firstRiskRooms: firstRisk?.[demandSource === 'event' ? 'eventRoomReserve' : 'liveRoomReserve'],
+      rooms: peak?.roomSupply || 0,
+      beds: peak?.bedSupply || 0,
+      demandRooms,
+      demandBeds,
+      assignedRooms: peak?.assignedRooms || 0,
+      assignedBeds: peak?.assignedBeds || 0,
+      reserveRooms: peak?.[demandSource === 'event' ? 'eventRoomReserve' : 'liveRoomReserve'] || 0,
+      reserveBeds: peak?.[demandSource === 'event' ? 'eventBedReserve' : 'liveBedReserve'] || 0,
+    };
   }, [capacityTimeline, demandSource]);
 
   const roomChanges = athletes.filter(athlete => athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')).length;
   const importChanges = athletes.filter(athlete => Boolean(athlete.importChangeTypes?.length)).length;
-  const exceededQuotas = quotaUsage.filter(row => row.assignedOfficials > row.officialQuota || row.singleRoomsUsed > row.singleRoomsAllowed).length;
 
   const criticalHotels = useMemo(() => buildHotelRiskRows(hotels, assignments)
     .filter(item => Boolean(item.firstCritical))
@@ -266,6 +275,11 @@ export function Dashboard() {
       const beds = item.hotel.roomInventories?.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0) || 0;
       return { hotel: item.hotel, rooms: day.rooms, remaining: Math.max(day.reserve, 0), availableBeds: Math.max(beds - day.occupied, 0), percent, tone: getStatusTone(percent) };
     }).sort((a, b) => a.remaining - b.remaining || b.percent - a.percent), [assignments, hotels]);
+  const criticalHotelsAtPeak = useMemo(() => capacity.date ? buildHotelRiskRows(hotels, assignments)
+    .filter(item => {
+      const day = item.daily.find(entry => entry.date === capacity.date);
+      return day && (day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1);
+    }).length : 0, [assignments, capacity.date, hotels]);
   const reserveTone: Tone = capacity.reserveRooms < 0 || capacity.reserveBeds < 0 ? 'error' : capacity.reserveRooms <= 2 || capacity.reserveBeds <= 4 ? 'warning' : 'success';
   const reserveStatus = reserveTone === 'error' ? 'Unterdeckung' : reserveTone === 'warning' ? 'Reserve niedrig' : 'Kapazität gedeckt';
   // Kontingentquoten sind Planungshinweise, keine operativen Importkonflikte.
@@ -278,9 +292,9 @@ export function Dashboard() {
       ...(operations.pendingSingleRooms > 0 ? [{ id: 'single-rooms', title: 'Einzelzimmer entscheiden', detail: `${operations.pendingSingleRooms} Einzelzimmer-Anfragen warten auf eine Entscheidung.`, tone: 'warning' as const, status: 'Heute', href: '/lists?entity=persons&hint=single-room' }] : []),
       ...(overbooked > 0 ? [{ id: 'overbooked', title: 'Hotel überbucht', detail: `${overbooked} Hotels haben keine verbleibende Zimmerreserve.`, tone: 'error' as const, status: 'Sofort', href: '/hotels?filter=critical' }] : []),
       ...(operationalConflicts > 0 ? [{ id: 'import-conflicts', title: 'Importkonflikte', detail: `${operationalConflicts} Datensätze blockieren oder gefährden die Disposition.`, tone: 'error' as const, status: 'Prüfen', href: '/import' }] : []),
-      ...(exceededQuotas > 0 ? [{ id: 'quota-exceeded', title: 'Kontingent überschritten', detail: `${exceededQuotas} Kontingentgruppen liegen über der zulässigen Belegung.`, tone: 'warning' as const, status: 'Entscheiden', href: '/assignments?view=quotas' }] : []),
+      ...(capacity.firstRiskDate && capacity.firstRiskRooms !== undefined ? [{ id: 'capacity-shortage', title: 'Kapazitätsengpass', detail: `Erster Engpass am ${formatDate(capacity.firstRiskDate)} · ${signed(capacity.firstRiskRooms)} Zimmer Reserve.`, tone: 'error' as const, status: 'Sofort', href: `/analytics?view=capacity&source=${demandSource}&date=${capacity.firstRiskDate}` }] : []),
     ];
-  }, [criticalHotels, exceededQuotas, operationalConflicts, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
+  }, [capacity.firstRiskDate, capacity.firstRiskRooms, criticalHotels, demandSource, operationalConflicts, operations.pendingSingleRooms, operations.peopleWithoutRoom]);
 
   const today = new Date().toLocaleDateString('en-CA');
   const upcomingMovements = useMemo(() => athletes.flatMap(athlete => [
@@ -315,12 +329,13 @@ export function Dashboard() {
     <div className="space-y-1.5 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
       <ContentCard className="p-2.5" surface="raised" elevation="none">
         <SectionHeader title="Bedarf & Kontingente" subtitle="Reicht das Kontingent für den aktuellen Bedarf?" actions={<div className="flex items-center gap-3"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1" aria-label="Bedarfsquelle">{(['event', 'live'] as const).map(source => <button type="button" key={source} aria-pressed={demandSource === source} onClick={() => setDemandSource(source)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${demandSource === source ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]'}`}>{source === 'event' ? 'Event' : 'Live'}</button>)}</div><StatusChip tone={reserveTone}>{reserveStatus}</StatusChip></div>} />
-        <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
-          <MetricCard compact label="Kontingent" value={<CapacityValue rooms={capacity.rooms} beds={capacity.beds}/>} helper="am Bedarfspeak" tone="primary" icon={<ApartmentRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
-          <MetricCard compact label="Bedarf" value={<CapacityValue rooms={capacity.demandRooms} beds={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · Peak`} tone="info" icon={<TimelineRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
-          <MetricCard compact label="Disponiert" value={<DispositionValue rooms={capacity.assignedRooms} roomTarget={capacity.demandRooms} beds={capacity.assignedBeds} bedTarget={capacity.demandBeds}/>} helper={`${demandSource === 'event' ? 'Event' : 'Live'} · am Peak`} tone="primary" icon={<CheckRoundedIcon />} href="/assignments" />
-          <MetricCard compact label="Reserve" value={<CapacityValue rooms={capacity.reserveRooms} beds={capacity.reserveBeds} signedValues/>} helper={capacity.date ? `Bedarfspeak · ${formatDate(capacity.date)}` : 'Kein Zeitraum'} action={reserveTone === 'error' ? 'Sofort prüfen' : reserveTone === 'warning' ? 'Beobachten' : 'Gedeckt'} tone={reserveTone} icon={<ShieldRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}${capacity.date ? `&date=${capacity.date}` : ''}`} />
-          <MetricCard compact label="Kritische Hotels" value={formatNumber(criticalHotels.length)} helper="nach verbleibender Reserve" action={criticalHotels.length > 0 ? 'Prüfen' : 'Stabil'} tone={criticalHotels.length > 0 ? 'warning' : 'success'} icon={<WarningAmberRoundedIcon />} href="/hotels?filter=critical" />
+        <p className="mt-2 text-xs font-semibold text-[var(--ops-text-muted)]">Gemeinsamer Bezug: Bedarfspeak {capacity.date ? `am ${formatDate(capacity.date)}` : 'ohne verfügbaren Zeitraum'} · Quelle {demandSource === 'event' ? 'Event' : 'Live'}</p>
+        <div className="mt-1.5 grid grid-cols-1 gap-2 md:grid-cols-2 xl:grid-cols-5">
+          <MetricCard compact label="Kontingent" value={<CapacityValue rooms={capacity.rooms} beds={capacity.beds}/>} tone="primary" icon={<ApartmentRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
+          <MetricCard compact label="Bedarf" value={<CapacityValue rooms={capacity.demandRooms} beds={capacity.demandBeds}/>} tone="info" icon={<TimelineRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}`} />
+          <MetricCard compact label="Disponiert" value={<DispositionValue rooms={capacity.assignedRooms} roomTarget={capacity.demandRooms} beds={capacity.assignedBeds} bedTarget={capacity.demandBeds}/>} tone="primary" icon={<CheckRoundedIcon />} href="/assignments" />
+          <MetricCard compact label="Reserve" value={<CapacityValue rooms={capacity.reserveRooms} beds={capacity.reserveBeds} signedValues/>} helper={capacity.firstRiskDate && capacity.firstRiskRooms !== undefined ? <span className="whitespace-normal"><b>Erster Kapazitätsengpass</b><br />{formatDate(capacity.firstRiskDate)} · {signed(capacity.firstRiskRooms)} Zimmer</span> : undefined} tone={reserveTone} icon={<ShieldRoundedIcon />} href={`/analytics?view=capacity&source=${demandSource}${capacity.firstRiskDate ? `&date=${capacity.firstRiskDate}` : ''}`} />
+          <MetricCard compact label="Kritische Hotels" value={formatNumber(criticalHotelsAtPeak)} tone={criticalHotelsAtPeak > 0 ? 'warning' : 'success'} icon={<WarningAmberRoundedIcon />} href="/hotels?filter=critical" />
         </div>
       </ContentCard>
 
