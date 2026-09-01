@@ -1716,9 +1716,10 @@ function HotelCard({
             <div key={row.roomTypeId}>
               <div className="mb-1 flex items-center justify-between gap-2 text-[9px]">
                 <span className="truncate text-[10px] font-bold text-[var(--ops-text-subtle)]">{row.roomTypeName}</span>
-                <span className="whitespace-nowrap font-mono text-[10px] font-bold text-[var(--ops-text)]">{row.usedBeds} / <span className="text-[var(--ops-success)]">{row.totalBeds - row.usedBeds}</span></span>
+                <span className="whitespace-nowrap font-mono text-[10px] font-bold text-[var(--ops-text)]">{row.usedBeds} / {row.totalBeds} belegt</span>
               </div>
               <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1" />
+              <div className="mt-1 text-right text-[9px] font-bold text-[var(--ops-success)]">{Math.max(0, row.totalBeds - row.usedBeds)} frei</div>
             </div>
           ))}
         </div>

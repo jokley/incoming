@@ -73,7 +73,7 @@ export function Layout() {
           </div>
         </div>
       </nav>
-      <main className="mx-auto min-h-0 w-full max-w-[1920px] flex-1 overflow-y-auto px-3 py-4 sm:px-5 lg:overflow-hidden lg:px-6">
+      <main className="mx-auto min-h-0 w-full max-w-[1920px] flex-1 overflow-x-hidden overflow-y-auto px-3 py-4 sm:px-5 lg:px-6">
         <Outlet />
       </main>
     </div>
