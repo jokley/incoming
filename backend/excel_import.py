@@ -11,7 +11,8 @@ from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
 from quota_service import evaluate_quota_usage, quota_key
-from models import Athlete, Event, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
+from models import Athlete, Competition, Event, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
+from competitions import COMPETITIONS, COMPETITION_BY_IMPORT_CODE
 
 
 PREVIEW_STORE = {}
@@ -461,6 +462,15 @@ def parse_entries_list(df, athlete_maps):
     people = []
     seen_keys = {}
 
+    competition_columns = [column for column in df.columns if str(column).upper().startswith('WSC_')]
+    unknown_columns = sorted(set(competition_columns) - set(COMPETITION_BY_IMPORT_CODE))
+    if unknown_columns:
+        errors.append({
+            'code': 'ENTRY_UNKNOWN_COMPETITION_COLUMNS',
+            'message': 'ENTRIES-LIST contains competition columns absent from the official mapping',
+            'details': {'columns': unknown_columns},
+        })
+
     missing_columns = validate_required_columns(df, ENTRY_REQUIRED_COLUMNS)
     if missing_columns:
         errors.append({
@@ -523,6 +533,10 @@ def parse_entries_list(df, athlete_maps):
             'firstname': firstname,
             'nationCode': nation_code,
             'industryName': discipline,
+            'competitionImportCodes': [
+                column for column in competition_columns
+                if column in COMPETITION_BY_IMPORT_CODE and parse_boolean(row.get(column))
+            ],
             'forGender': normalize_whitespace(row.get('For_gender')) or None,
             'gender': normalize_whitespace(row.get('Gender')) or None,
             'phone': normalize_whitespace(row.get('Phone')) or None,
@@ -1332,16 +1346,6 @@ def create_fis_import_preview(entries_path, roomlist_path):
     athlete_maps = _build_existing_athlete_maps()
 
     people_result = parse_entries_list(entries_df, athlete_maps)
-    inferred_discipline = apply_import_level_discipline(people_result['people'], entries_path, roomlist_path)
-    if inferred_discipline:
-        people_result['warnings'].append({
-            'code': 'ENTRY_DISCIPLINE_INFERRED',
-            'message': f'Discipline inferred as {inferred_discipline}',
-            'details': {
-                'discipline': inferred_discipline,
-                'source': 'filename_or_event_range',
-            },
-        })
     room_result = parse_room_list(room_df, people_result['people'])
     quota_checks = []
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'], quota_checks)
@@ -1361,7 +1365,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
         'entriesColumns': list(entries_df.columns),
         'roomColumns': list(room_df.columns),
         'dayColumns': room_result['dayColumns'],
-        'detectedDiscipline': next((person.get('industryName') for person in people_result['people'] if person.get('industryName')), None),
+        'detectedDiscipline': None,
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
         'quotaChecks': quota_checks,
@@ -1530,6 +1534,22 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     db.session.flush()
 
     athlete_maps = _build_existing_athlete_maps()
+    # Synchronise the official catalogue before memberships.  Existing IDs are
+    # retained so filters and references remain stable between imports.
+    competitions_by_import_code = {}
+    for import_code, code, name, sport, gender, team_competition in COMPETITIONS:
+        competition = Competition.query.filter_by(import_code=import_code).first()
+        if not competition:
+            competition = Competition(import_code=import_code, code=code)
+            db.session.add(competition)
+        competition.name = name
+        competition.sport = sport
+        competition.gender = gender
+        competition.team_competition = team_competition
+        competition.active = True
+        competitions_by_import_code[import_code] = competition
+    db.session.flush()
+
     persisted_people = {}
     created = 0
     updated = 0
@@ -1569,6 +1589,12 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
             updated += 1
 
         _apply_person_record(athlete, person, now)
+        athlete.competitions = [
+            competitions_by_import_code[code]
+            for code in person.get('competitionImportCodes', [])
+        ]
+        # This field remains readable for old clients, but is not authoritative.
+        athlete.discipline = ' • '.join(c.name for c in athlete.competitions) or athlete.discipline
         room = room_by_person.get(person.get('matchKey'))
         requests_single = bool(room and normalize_string(room.get('roomType')) == 'single')
         group = quota_key({**person, 'discipline': person.get('industryName')})

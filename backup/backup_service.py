@@ -11,6 +11,7 @@ import sys
 import threading
 import time
 import uuid
+import urllib.parse
 from urllib.parse import unquote
 
 BACKUP_LOCK = threading.Lock()
@@ -227,24 +228,99 @@ def resolve_restore_source(payload, settings):
     return settings["directory"] / category / filename, False
 
 
-def disconnect_application(settings):
-    """Release application locks immediately before the short restore window."""
-    command = ["psql", "-h", settings["host"], "-p", settings["port"], "-U", settings["user"],
-               "-d", settings["database"], "-v", "ON_ERROR_STOP=1", "-Atc",
-               "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
-               "WHERE datname = current_database() AND pid <> pg_backend_pid()"]
-    process = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
-                             capture_output=True, text=True)
+def _database_url(settings, database):
+    """Build an Alembic URL without leaking or mis-parsing escaped credentials."""
+    user = urllib.parse.quote(settings['user'], safe='')
+    password = urllib.parse.quote(settings['password'], safe='')
+    host = settings['host']
+    return f"postgresql://{user}:{password}@{host}:{settings['port']}/{urllib.parse.quote(database, safe='')}"
+
+
+def _quoted_identifier(value):
+    return '"' + value.replace('"', '""') + '"'
+
+
+def _postgres_command(settings, sql, database='postgres'):
+    """Execute control-plane SQL against a database other than the restore target."""
+    process = subprocess.run(
+        ['psql', '-h', settings['host'], '-p', settings['port'], '-U', settings['user'],
+         '-d', database, '-v', 'ON_ERROR_STOP=1', '-Atc', sql],
+        env={**os.environ, 'PGPASSWORD': settings['password']}, capture_output=True, text=True,
+    )
     if process.returncode:
-        raise RuntimeError("Die Datenbank konnte nicht für die Wiederherstellung vorbereitet werden.")
+        raise RuntimeError(process.stderr.strip() or 'PostgreSQL control command failed.')
+    return process
+
+
+def _terminate_database_connections(settings, database):
+    literal = database.replace("'", "''")
+    _postgres_command(settings, "SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                      f"WHERE datname = '{literal}' AND pid <> pg_backend_pid()")
+
+
+def _drop_database(settings, database):
+    _terminate_database_connections(settings, database)
+    _postgres_command(settings, f'DROP DATABASE IF EXISTS {_quoted_identifier(database)}')
+
+
+def _verify_database(settings, database):
+    process = _postgres_command(
+        settings, 'SELECT version_num FROM alembic_version', database=database)
+    if not process.stdout.strip():
+        raise RuntimeError('Die Integritätsprüfung des Backups ist fehlgeschlagen.')
+
+
+def _activate_staged_database(settings, staging, rollback):
+    """Swap a fully verified database into service, compensating any failed rename."""
+    production = settings['database']
+    _terminate_database_connections(settings, production)
+    _postgres_command(settings, f'ALTER DATABASE {_quoted_identifier(production)} '
+                      f'RENAME TO {_quoted_identifier(rollback)}')
+    try:
+        _postgres_command(settings, f'ALTER DATABASE {_quoted_identifier(staging)} '
+                          f'RENAME TO {_quoted_identifier(production)}')
+    except Exception:
+        # The original database is intact; restore its name before reporting failure.
+        _postgres_command(settings, f'ALTER DATABASE {_quoted_identifier(rollback)} '
+                          f'RENAME TO {_quoted_identifier(production)}')
+        raise
+
+    try:
+        _verify_database(settings, production)
+    except Exception:
+        # Even a post-swap connectivity failure rolls back to the untouched database.
+        _terminate_database_connections(settings, production)
+        failed = f'{staging}_failed'
+        _postgres_command(settings, f'ALTER DATABASE {_quoted_identifier(production)} '
+                          f'RENAME TO {_quoted_identifier(failed)}')
+        _postgres_command(settings, f'ALTER DATABASE {_quoted_identifier(rollback)} '
+                          f'RENAME TO {_quoted_identifier(production)}')
+        _drop_database(settings, failed)
+        raise
+    try:
+        _drop_database(settings, rollback)
+    except Exception as cleanup_error:
+        # Activation already succeeded and was verified. An orphaned rollback
+        # database is safe and can be removed by operations; do not report the
+        # restore as failed or attempt to remove the active database.
+        log('restore_rollback_cleanup_failed', level='error', database=rollback,
+            error=str(cleanup_error))
 
 
 def restore_backup(payload):
-    """Run the one restore workflow, including its mandatory safety backup."""
+    """Restore into an isolated database and atomically activate it after validation.
+
+    Restoring with ``--clean`` into the live schema is unsafe when the running
+    schema contains dependencies absent from an older archive.  A staging
+    database avoids that dependency-order problem and keeps production intact
+    through archive restore and schema migration failures.
+    """
     if not RESTORE_LOCK.acquire(blocking=False):
         raise RuntimeError("Eine Wiederherstellung läuft bereits.")
     imported = False
     source = None
+    staging = None
+    settings = None
     try:
         settings = config()
         source, imported = resolve_restore_source(payload, settings)
@@ -253,10 +329,16 @@ def restore_backup(payload):
         validate_dump(source, settings)
         # This must finish successfully before pg_restore is ever invoked.
         safety_backup = create_backup("pre-restore")
-        disconnect_application(settings)
+        suffix = uuid.uuid4().hex[:10]
+        # Keep the random suffix even for unusually long configured DB names.
+        prefix = settings['database'][:40]
+        staging = f'{prefix}_restore_{suffix}'
+        rollback = f'{prefix}_rollback_{suffix}'
+        _postgres_command(settings, f'CREATE DATABASE {_quoted_identifier(staging)} '
+                          f'OWNER {_quoted_identifier(settings["user"])} TEMPLATE template0')
         command = ["pg_restore", "-h", settings["host"], "-p", settings["port"],
-                   "-U", settings["user"], "-d", settings["database"], "--clean",
-                   "--if-exists", "--no-owner", "--no-privileges", "--exit-on-error",
+                   "-U", settings["user"], "-d", staging, "--no-owner",
+                   "--no-privileges", "--exit-on-error", "--single-transaction",
                    str(source)]
         result = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
                                 capture_output=True, text=True)
@@ -267,22 +349,29 @@ def restore_backup(payload):
         # older athlete dump has no internal_note column yet).
         migration = subprocess.run(
             ["python", "-m", "alembic", "-c", "/opt/backend/alembic.ini", "upgrade", "head"],
-            cwd="/opt/backend", env={**os.environ, "PGPASSWORD": settings["password"]},
+            cwd="/opt/backend", env={**os.environ, "PGPASSWORD": settings["password"],
+                                      "DATABASE_URL": _database_url(settings, staging)},
             capture_output=True, text=True,
         )
         if migration.returncode:
             raise RuntimeError(migration.stderr.strip() or "Die Datenbankmigration ist fehlgeschlagen.")
         # A successful query verifies connectivity and the migrated Alembic schema.
-        integrity = subprocess.run(
-            ["psql", "-h", settings["host"], "-p", settings["port"], "-U", settings["user"],
-             "-d", settings["database"], "-Atc", "SELECT version_num FROM alembic_version"],
-            env={**os.environ, "PGPASSWORD": settings["password"]}, capture_output=True, text=True)
-        if integrity.returncode or not integrity.stdout.strip():
-            raise RuntimeError("Die Integritätsprüfung des Backups ist fehlgeschlagen.")
+        _verify_database(settings, staging)
+        _activate_staged_database(settings, staging, rollback)
+        staging = None
         if imported:
             source.unlink(missing_ok=True)
         log("restore_succeeded", safetyBackup=safety_backup["filename"])
         return {"status": "success", "safetyBackup": safety_backup["filename"]}
+    except Exception:
+        # Before activation this only removes the disposable database. Production
+        # was never modified; cleanup failures must not hide the restore error.
+        if staging and settings:
+            try:
+                _drop_database(settings, staging)
+            except Exception as cleanup_error:
+                log('restore_staging_cleanup_failed', level='error', error=str(cleanup_error))
+        raise
     finally:
         RESTORE_LOCK.release()
 
