@@ -4,6 +4,7 @@ import { Alert, Dialog, DialogContent, DialogTitle, Snackbar } from '@mui/materi
 import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
+import { competitionDisplayName } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange, ImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
@@ -91,10 +92,10 @@ export function DataImport() {
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
     const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
     const name=`${p.firstname} ${p.lastname}`;
-    return [name, p.nationCode, p.discipline || '—', p.function || '—', entitlement, importStatuses(statusesFor('persons',String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
+    return [name, p.nationCode, competitionDisplayName(p.discipline) || '—', p.function || '—', entitlement, importStatuses(statusesFor('persons',String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
-    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),String(record.discipline??'—'),'—','—',importStatuses(['Entfernt'])]);
+    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—',importStatuses(['Entfernt'])]);
   });
   const roomRows = preview?.rooms.map(r => {
     const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
@@ -110,14 +111,14 @@ export function DataImport() {
 
   return <div className="h-full min-h-0 bg-[var(--ops-background)] text-[var(--ops-text)]">
     <SplitPageLayout className="flex h-full min-h-0 flex-col gap-5 space-y-0">
-      <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="FIS-Importsessions prüfen, entscheiden und kontrolliert abschließen." meta={selected ? <><StatusChip tone={selected.errors ? 'error' : selected.warnings ? 'warning' : 'success'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.nation} · {selected.discipline}</span></> : <StatusChip tone="primary">Neue Importsession</StatusChip>} />
+      <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="FIS-Importsessions prüfen, entscheiden und kontrolliert abschließen." meta={selected ? <><StatusChip tone={selected.errors ? 'error' : selected.warnings ? 'warning' : 'success'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.nation} · {competitionDisplayName(selected.discipline)}</span></> : <StatusChip tone="primary">Neue Importsession</StatusChip>} />
       <div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
         <ContentCard surface="raised" className="min-h-0 flex-1 overflow-hidden">
           <div className="h-full overflow-y-auto">
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
-              <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} - {selected.discipline}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>
+              <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} - {competitionDisplayName(selected.discipline)}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>
               <StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip>
             </div>
             <div className="space-y-4 p-5">

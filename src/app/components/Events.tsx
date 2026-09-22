@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { usePermissions } from '../auth/AuthProvider';
 import { Plus, Pencil, Trash2, Loader2, Calendar, X, TrendingUp } from 'lucide-react';
 import { api } from '../services/api';
+import { competitionDisplayName } from '../services/competitionPresentation';
 import { Event, EventRoomDemand, RoomType } from '../types';
 
 export function EventsManagement() {
@@ -253,7 +254,7 @@ export function EventsManagement() {
                   <div className="flex-1">
                     <div className="flex items-center gap-2 mb-1">
                       <Calendar className="w-5 h-5 text-blue-600" />
-                      <h4 className="font-semibold text-gray-900">{event.discipline}</h4>
+                      <h4 className="font-semibold text-gray-900">{competitionDisplayName(event.discipline)}</h4>
                     </div>
                     <p className="text-sm text-gray-600">
                       {new Date(event.startDate).toLocaleDateString('de-DE')} - {new Date(event.endDate).toLocaleDateString('de-DE')}
@@ -297,7 +298,7 @@ export function EventsManagement() {
         <div className="bg-white rounded-lg shadow">
           <div className="px-6 py-4 border-b bg-gray-50 flex justify-between items-center">
             <h3 className="text-lg font-semibold">
-              {selectedEvent ? `${selectedEvent.discipline} - Zimmerbedarf` : 'Event auswählen'}
+              {selectedEvent ? `${competitionDisplayName(selectedEvent.discipline)} - Zimmerbedarf` : 'Event auswählen'}
             </h3>
             {selectedEvent && (
               <button
@@ -485,7 +486,7 @@ export function EventsManagement() {
                       <div key={event.id} className="flex mb-2 items-center">
                         <div className="w-48 flex-shrink-0 pr-4">
                           <p className={`text-sm font-medium truncate ${isSelected ? 'text-blue-600' : 'text-gray-900'}`}>
-                            {event.discipline}
+                            {competitionDisplayName(event.discipline)}
                           </p>
                           <p className="text-xs text-gray-500">{totalBeds} Betten</p>
                         </div>

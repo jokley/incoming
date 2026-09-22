@@ -21,6 +21,7 @@ import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHe
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
+import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
@@ -78,7 +79,7 @@ function countValues(athletes: Athlete[], getValue: (athlete: Athlete) => string
 function countCompetitionValues(athletes: Athlete[]): CountItem[] {
   const counts = new Map<string, { label: string; athletes: Set<string> }>();
   athletes.forEach(athlete => athlete.competitions?.forEach(competition => {
-    const current = counts.get(competition.id) || { label: competition.name, athletes: new Set<string>() };
+    const current = counts.get(competition.id) || { label: competitionDisplayName(competition.name), athletes: new Set<string>() };
     current.athletes.add(athlete.id); counts.set(competition.id, current);
   }));
   return [...counts].map(([value, item]) => ({ value, label: item.label, count: item.athletes.size }))
@@ -177,8 +178,8 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Vorname" value={athlete?.firstname} />
             <ReadonlyField label="Nachname" value={athlete?.lastname} />
             <ReadonlyField label="Nation" value={athlete?.nationCode} />
-            <ReadonlyField label="Wettbewerbe" value={athlete?.disciplines?.join(' • ') || athlete?.discipline} />
-            <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${stay.discipline})` : ''}`).join(', ')} />
+            <ReadonlyField label="Wettbewerbe" value={competitionDisplayList(athlete?.disciplines, athlete?.discipline)} />
+            <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${competitionDisplayName(stay.discipline)})` : ''}`).join(', ')} />
             <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
             <ReadonlyField label="FIS-ID" value={athlete?.fisCode} emptyValue="Keine FIS-ID" />
@@ -381,7 +382,7 @@ export function Athletes() {
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5"><SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
-                <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={athlete.disciplines?.join(' • ') || athlete.discipline || undefined}>{athlete.disciplines?.join(' • ') || athlete.discipline || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
+                <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <span className="block truncate" title={athlete.assignment.hotelName}><InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink></span> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
                 <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>

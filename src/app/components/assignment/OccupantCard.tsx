@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { competitionDisplayName } from '../../services/competitionPresentation';
 
 import { AssignmentStatusChip, type AssignmentStatus } from './AssignmentInfo';
 
@@ -35,7 +36,7 @@ export function OccupantCard({ person, status, fallbackArrival, fallbackDepartur
   const name = person.name || `${person.firstname || ''} ${person.lastname || ''}`.trim() || '—';
   const context = [
     !hideNation && (person.nationCode || '—'),
-    !hideDiscipline && (person.discipline || '—'),
+    !hideDiscipline && (competitionDisplayName(person.discipline) || '—'),
     !hideRole && (person.function || 'Athlet'),
   ].filter((value): value is string => Boolean(value));
   const contextLabel = context.join(' · ');

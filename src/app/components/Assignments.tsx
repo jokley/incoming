@@ -35,6 +35,7 @@ import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
+import { competitionDisplayName } from '../services/competitionPresentation';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaUsageKey } from '../services/quotaEvaluation';
 import type {
@@ -1079,7 +1080,7 @@ function QueueSidebar({
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
-          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, competitionDisplayName(value)]))} />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
@@ -1187,7 +1188,7 @@ function QueueUnitCard({
   const contextValues = (values: Array<string | null | undefined>, fallback: string) =>
     Array.from(new Set(values.map(value => value?.trim()).filter((value): value is string => Boolean(value)))).join(' + ') || fallback;
   const nations = contextValues(unit.occupants.map(occupant => occupant.nationCode), unit.nationCode || '—');
-  const disciplines = contextValues(unit.occupants.map(occupant => occupant.discipline), '—');
+  const disciplines = contextValues(unit.occupants.map(occupant => competitionDisplayName(occupant.discipline)), '—');
   const roles = unit.occupants.map(occupant => occupant.function?.trim() || 'Athlet');
   const roleContext = contextValues(roles, 'Athlet');
   const hasMixedRoles = new Set(roles).size > 1;
@@ -2027,7 +2028,7 @@ function AthletesPanel({
               >
                 <td className="px-3 py-2.5 text-xs font-semibold text-[var(--ops-assignment-text-body)]">{athlete.firstname} {athlete.lastname}</td>
                 <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.nationCode}</td>
-                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.discipline || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{competitionDisplayName(athlete.discipline) || '—'}</td>
                 <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{normalizeGender(athlete.gender) || '—'}</td>
                 <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.arrivalDate || '—'}</td>
                 <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.departureDate || '—'}</td>
@@ -2169,7 +2170,7 @@ function QuotasPanel({
         <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Quotengruppen filtern</div>
         <div className="grid gap-2 sm:grid-cols-3">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
-          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, competitionDisplayName(value)]))} />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Herren', F: 'Damen' }} />
         </div>
       </div>
@@ -2188,7 +2189,7 @@ function QuotasPanel({
                 <div className="mb-5 flex items-start justify-between gap-4">
                   <div className="flex items-center gap-3">
                     <div className="flex h-11 min-w-11 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div>
-                    <div><div className="font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {card.discipline} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quotengruppe</div></div>
+                    <div><div className="font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {competitionDisplayName(card.discipline)} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quotengruppe</div></div>
                   </div>
                   <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
                 </div>
@@ -2305,7 +2306,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   return <div className="flex h-full flex-col">
     <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
       <div className="flex items-start justify-between gap-4">
-        <div className="flex items-center gap-3"><div className="flex h-12 min-w-12 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div><div><div className="text-lg font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {card.discipline} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quoten- und Regelstatus</div></div></div>
+        <div className="flex items-center gap-3"><div className="flex h-12 min-w-12 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div><div><div className="text-lg font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {competitionDisplayName(card.discipline)} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quoten- und Regelstatus</div></div></div>
         <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
       </div>
     </header>

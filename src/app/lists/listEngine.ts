@@ -2,6 +2,7 @@ import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { evaluateAllQuotaGroups, isEvaluatedAsSingle, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
 import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus';
+import { competitionDisplayList } from '../services/competitionPresentation';
 
 export type ListKind = 'none' | 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
@@ -170,7 +171,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       roomType: value(booking?.roomType.name || athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
-      discipline: value(athlete.discipline || athlete.disciplines?.join(', ')),
+      discipline: value(competitionDisplayList(athlete.disciplines, athlete.discipline)),
       role: value(athlete.function),
       arrival: iso(booking?.checkInDate || athlete.arrivalDate),
       departure: iso(booking?.checkOutDate || athlete.departureDate),
