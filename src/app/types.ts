@@ -73,6 +73,17 @@ export interface Event {
   roomDemands?: EventRoomDemand[];
 }
 
+export interface Competition {
+  id: string;
+  importCode: string;
+  code: string;
+  name: string;
+  sport: string;
+  gender: string;
+  teamCompetition: boolean;
+  active: boolean;
+}
+
 export interface Athlete {
   id: string;
   function?: string;
@@ -81,6 +92,7 @@ export interface Athlete {
   fisCode?: string;
   sourceRecordIds?: string[];
   disciplines?: string[];
+  competitions?: Competition[];
   stays?: Array<{ arrivalDate?: string | null; departureDate?: string | null; discipline?: string | null }>;
   lastname: string;
   firstname: string;
