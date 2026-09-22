@@ -4,6 +4,7 @@ import tempfile
 import io
 import unittest
 from unittest.mock import MagicMock, patch
+from sqlalchemy.exc import OperationalError
 
 from flask import Flask
 
@@ -63,6 +64,16 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(payload['alembicVersion'], '20260815_01')
         self.assertEqual(payload['backupCount'], 1)
         self.assertEqual(payload['backupStatus'], 'success')
+        self.assertEqual(payload['databaseStatus'], 'available')
+
+    @patch('database_admin.db.session.rollback')
+    @patch('database_admin.db.session.execute')
+    def test_status_reports_unavailable_instead_of_raising_500(self, execute, rollback):
+        execute.side_effect = OperationalError('SELECT', {}, Exception('offline'))
+        response = self.client.get('/api/admin/database/status')
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.get_json()['databaseStatus'], 'unavailable')
+        rollback.assert_called_once()
 
     @patch('database_admin.urllib.request.urlopen')
     def test_import_and_restore_delegate_without_backend_restore_logic(self, urlopen):

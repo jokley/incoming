@@ -90,12 +90,16 @@ class BackupServiceTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.create_backup', side_effect=lambda category: events.append(f'backup:{category}') or {'filename': 'safety.dump.gz'}), \
                 patch('backup_service.validate_dump', side_effect=lambda *_: events.append('validation')), \
+                patch('backup_service._postgres_command', side_effect=lambda *args, **kwargs: events.append('postgres-control') or integrity), \
+                patch('backup_service._verify_database', side_effect=lambda *_: events.append('verification')), \
+                patch('backup_service._activate_staged_database', side_effect=lambda *_: events.append('activation')), \
                 patch('backup_service.subprocess.run', side_effect=run):
             imported = Path(directory, '.imports', 'a' * 32 + '.dump')
             imported.parent.mkdir()
             imported.write_bytes(b'PGDMP-valid')
             result = backup_service.restore_backup({'token': 'a' * 32})
-            self.assertEqual(events, ['validation', 'backup:pre-restore', 'psql', 'pg_restore', 'alembic', 'psql'])
+            self.assertEqual(events, ['validation', 'backup:pre-restore', 'postgres-control',
+                                      'pg_restore', 'alembic', 'verification', 'activation'])
             self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
             self.assertFalse(imported.exists())
 
@@ -120,6 +124,50 @@ class BackupServiceTest(unittest.TestCase):
             restore = next(command for command in commands if command[0] == 'pg_restore'
                            and '--list' not in command)
             self.assertEqual(restore[-1], str(dump))
+            self.assertIn('--single-transaction', restore)
+            self.assertNotIn('--clean', restore)
+
+    def test_failed_staged_restore_never_disconnects_or_modifies_production(self):
+        failed = Result()
+        failed.returncode = 1
+        failed.stderr = 'broken archive'
+        commands = []
+
+        def control(settings, sql, database='postgres'):
+            commands.append(sql)
+            return Result()
+
+        with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
+                patch('backup_service.create_backup', return_value={'filename': 'safety.dump.gz'}), \
+                patch('backup_service.validate_dump'), \
+                patch('backup_service._postgres_command', side_effect=control), \
+                patch('backup_service._terminate_database_connections') as terminate, \
+                patch('backup_service.subprocess.run', return_value=failed):
+            dump = Path(directory, 'manual', 'incoming.dump.gz')
+            dump.parent.mkdir(); dump.write_bytes(b'PGDMP-valid')
+            with self.assertRaisesRegex(RuntimeError, 'broken archive'):
+                backup_service.restore_backup({'category': 'manual', 'filename': dump.name})
+
+        terminate.assert_called_once()  # cleanup of staging only
+        self.assertNotEqual(terminate.call_args.args[1], 'incoming')
+        self.assertTrue(any(sql.startswith('CREATE DATABASE') for sql in commands))
+        self.assertTrue(any(sql.startswith('DROP DATABASE') for sql in commands))
+
+    def test_activation_compensates_when_staging_rename_fails(self):
+        settings = {'database': 'incoming', 'host': 'postgres', 'port': '5432',
+                    'user': 'incoming', 'password': 'secret'}
+        sql = []
+        def control(_settings, statement, database='postgres'):
+            sql.append(statement)
+            if 'restore_x" RENAME TO "incoming"' in statement:
+                raise RuntimeError('rename failed')
+            return Result()
+        with patch('backup_service._terminate_database_connections'), \
+                patch('backup_service._postgres_command', side_effect=control):
+            with self.assertRaisesRegex(RuntimeError, 'rename failed'):
+                backup_service._activate_staged_database(settings, 'incoming_restore_x',
+                                                          'incoming_rollback_x')
+        self.assertEqual(sql[-1], 'ALTER DATABASE "incoming_rollback_x" RENAME TO "incoming"')
 
 
 if __name__ == '__main__':
