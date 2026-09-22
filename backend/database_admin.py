@@ -9,6 +9,7 @@ import urllib.request
 
 from flask import Blueprint, current_app, jsonify, request, send_file
 from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import db
 
@@ -38,12 +39,29 @@ def last_status():
 
 @database_admin.get('/api/admin/database/status')
 def database_status():
-    version = db.session.execute(text('SHOW server_version')).scalar_one()
-    size = db.session.execute(text('SELECT pg_database_size(current_database())')).scalar_one()
-    alembic = db.session.execute(text('SELECT version_num FROM alembic_version')).scalar_one_or_none()
     status = last_status()
     files = backup_files()
+    try:
+        version = db.session.execute(text('SHOW server_version')).scalar_one()
+        size = db.session.execute(text('SELECT pg_database_size(current_database())')).scalar_one()
+        alembic = db.session.execute(text('SELECT version_num FROM alembic_version')).scalar_one_or_none()
+    except SQLAlchemyError:
+        # A terminated connection or unavailable schema must not turn this
+        # diagnostic endpoint into an unhandled 500 response.
+        db.session.rollback()
+        current_app.logger.exception('Database status check failed')
+        return jsonify({
+            'databaseStatus': 'unavailable',
+            'postgresVersion': None,
+            'databaseSize': None,
+            'alembicVersion': None,
+            'lastBackup': status,
+            'backupSize': status.get('size') if status and status.get('status') == 'success' else None,
+            'backupCount': len(files),
+            'backupStatus': status.get('status') if status else 'never',
+        }), 503
     return jsonify({
+        'databaseStatus': 'available',
         'postgresVersion': version,
         'databaseSize': size,
         'alembicVersion': alembic,

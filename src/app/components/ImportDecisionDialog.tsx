@@ -5,6 +5,7 @@ import { ArrowUpRight, Loader2, Users } from 'lucide-react';
 import { DialogFooter, DialogHeader, InfoPanel, OpsButton, SectionHeader, StatusChip } from '../design-system';
 import type { ImportDecision } from '../data/importSessions';
 import { api } from '../services/api';
+import { competitionDisplayName } from '../services/competitionPresentation';
 import { SingleRoomStatusBadge, type SingleRoomStatus } from './SingleRoomStatusBadge';
 
 const value = (input?: string | number | null) => input === undefined || input === null || input === '' ? '—' : String(input);
@@ -29,7 +30,7 @@ export function ImportDecisionDialog({ decisionId, onClose, onOpenSession }: { d
         {decision && <>
           <section><SectionHeader title="Entscheidung" subtitle="Fachlicher Beschluss und Importkontext"/><div className="mt-3 grid gap-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4 sm:grid-cols-2 lg:grid-cols-4">
             <Fact label="Status"><StatusChip tone={decision.decision === 'APPROVED' ? 'success' : decision.decision === 'PENDING' ? 'warning' : 'neutral'}>{status[decision.decision]}</StatusChip></Fact>
-            <Fact label="Zeitpunkt" text={dateTime(decision.approvalDate || decision.timestamp)}/><Fact label="Bearbeiter" text={decision.user}/><Fact label="Nation" text={decision.nation}/><Fact label="Disziplin" text={decision.discipline}/><Fact label="Gender" text={decision.gender}/><Fact label="Importversion" text={decision.importVersion ? `Version ${decision.importVersion}` : null}/><Fact label="Importsession" text={`IS-${decision.importSession.id}`}/>
+            <Fact label="Zeitpunkt" text={dateTime(decision.approvalDate || decision.timestamp)}/><Fact label="Bearbeiter" text={decision.user}/><Fact label="Nation" text={decision.nation}/><Fact label="Disziplin" text={competitionDisplayName(decision.discipline)}/><Fact label="Gender" text={decision.gender}/><Fact label="Importversion" text={decision.importVersion ? `Version ${decision.importVersion}` : null}/><Fact label="Importsession" text={`IS-${decision.importSession.id}`}/>
           </div></section>
           <section><SectionHeader title="Kommunikation" subtitle="Dokumentierte Abstimmung und fachliche Begründung"/><div className="mt-3 grid gap-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4 sm:grid-cols-2">
             <Fact label="Kommunikationsart" text={decision.approvalMethod ? method[decision.approvalMethod] : null}/><Fact label="Ansprechpartner" text={decision.approvalBy}/><Fact label="Kostenübernahme" text={decision.costCoverage}/><Fact label="Dispositionsnotiz" text={decision.comment}/><div className="sm:col-span-2"><Fact label="Fachliche Begründung" text={decision.description}/></div>

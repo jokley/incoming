@@ -42,25 +42,37 @@ Backend erzeugt.
 Die Administration delegiert Import und Wiederherstellung über
 `POST /api/admin/database/import` und `POST /api/admin/database/restore` an
 denselben internen Backup-Service. Der Service validiert PostgreSQL-Custom-Dumps,
-erstellt zwingend ein Sicherheitsbackup, beendet blockierende
-Anwendungsverbindungen, führt `pg_restore` aus und prüft danach die
-Alembic-Version. Temporäre Imports werden ausschließlich nach einem vollständig
-erfolgreichen Ablauf gelöscht.
+erstellt zwingend ein Sicherheitsbackup und stellt den Dump zunächst in einer
+neuen, isolierten Datenbank wieder her. `pg_restore --single-transaction` und
+alle ausstehenden Alembic-Migrationen müssen dort erfolgreich sein. Erst danach
+wird die geprüfte Datenbank durch Umbenennen aktiviert. Bis zu diesem kurzen
+Umschaltpunkt bleibt die produktive Datenbank unverändert. Schlägt das
+Umschalten oder die anschließende Integritätsprüfung fehl, erhält die bisherige
+Datenbank ihren ursprünglichen Namen zurück. Temporäre Imports werden
+ausschließlich nach einem vollständig erfolgreichen Ablauf gelöscht.
+
+Der konfigurierte `POSTGRES_USER` muss Eigentümer der Produktivdatenbank sein
+und Datenbanken erstellen, umbenennen und löschen dürfen (`CREATEDB`; beim
+offiziellen PostgreSQL-Container ist der initiale Benutzer entsprechend
+berechtigt). Das Wiederherstellen direkt in das aktive Schema mit `--clean` ist
+ausdrücklich nicht unterstützt: neuere Fremdschlüssel können sonst das Löschen
+älterer, im Dump enthaltener Constraints verhindern.
 
 Der folgende CLI-Ablauf bleibt für betriebliche Notfälle verfügbar:
 
 1. Wartungsfenster ankündigen, schreibenden Zugriff stoppen und den gewünschten
    Dump anhand der Statusdatei sowie Größe auswählen.
 2. Vor dem Restore ein zusätzliches Backup erstellen und dessen Erfolg prüfen.
-3. Ziel-Datenbank bewusst neu anlegen oder eine leere, separate Prüf-Datenbank
-   verwenden. Danach den komprimierten Custom-Dump streamen:
+3. Eine leere, separate Prüf-Datenbank anlegen. Niemals `--clean` gegen die
+   aktive Produktivdatenbank ausführen. Danach den Custom-Dump transaktional
+   einspielen:
 
 ```bash
 docker compose stop backend
 docker compose run --rm --entrypoint sh backup -c \
   'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore \
-   --host=postgres --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" \
-   --clean --if-exists --no-owner --exit-on-error \
+   --host=postgres --username="$POSTGRES_USER" --dbname=incoming_restore_check \
+   --single-transaction --no-owner --no-privileges --exit-on-error \
    /backups/automatic/incoming-2026-08-16_030000.dump.gz'
 docker compose start backend
 ```

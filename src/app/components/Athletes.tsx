@@ -21,6 +21,7 @@ import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHe
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
+import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
@@ -30,11 +31,11 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 
-type FilterKey = 'nation' | 'discipline' | 'gender' | 'function' | 'status' | 'notes';
-type Filters = Record<FilterKey, string>;
+type FilterKey = 'nation' | 'sport' | 'gender' | 'function' | 'status' | 'notes';
+type Filters = Record<FilterKey, string> & { competitions: string[] };
 type CountItem = { value: string; label: string; count: number };
 
-const emptyFilters: Filters = { nation: '', discipline: '', gender: '', function: '', status: '', notes: '' };
+const emptyFilters: Filters = { nation: '', sport: '', competitions: [], gender: '', function: '', status: '', notes: '' };
 const date = (value?: string | null) => value ? new Date(value).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const genderLabel = (value?: string) => {
   const normalized = value?.trim().toUpperCase();
@@ -73,6 +74,23 @@ function countValues(athletes: Athlete[], getValue: (athlete: Athlete) => string
   return [...counts.entries()]
     .map(([value, count]) => ({ value, label: getLabel(value), count }))
     .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+}
+
+function countCompetitionValues(athletes: Athlete[]): CountItem[] {
+  const counts = new Map<string, { label: string; athletes: Set<string> }>();
+  athletes.forEach(athlete => athlete.competitions?.forEach(competition => {
+    const current = counts.get(competition.id) || { label: competitionDisplayName(competition.name), athletes: new Set<string>() };
+    current.athletes.add(athlete.id); counts.set(competition.id, current);
+  }));
+  return [...counts].map(([value, item]) => ({ value, label: item.label, count: item.athletes.size }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'de'));
+}
+
+function CompetitionFilter({ items, selected, onToggle }: { items: CountItem[]; selected: string[]; onToggle: (id: string) => void }) {
+  return <section><h3 className="mb-2 px-2 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[var(--ops-text-subtle)]">Wettbewerbe</h3><div className="space-y-1">{items.map(item => {
+    const active = selected.includes(item.value);
+    return <button key={item.value} type="button" aria-pressed={active} onClick={() => onToggle(item.value)} className={clsx('flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm', active ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]' : 'border-transparent hover:bg-[var(--ops-surface-elevated)]')}><span className="min-w-0 flex-1 truncate font-semibold">{item.label}</span><span className="text-xs">{item.count}</span>{active && <Check className="h-3.5 w-3.5" />}</button>;
+  })}</div></section>;
 }
 
 function FilterGroup({ title, filterKey, items, selected, onSelect }: { title: string; filterKey: FilterKey; items: CountItem[]; selected: string; onSelect: (key: FilterKey, value: string) => void }) {
@@ -160,8 +178,8 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Vorname" value={athlete?.firstname} />
             <ReadonlyField label="Nachname" value={athlete?.lastname} />
             <ReadonlyField label="Nation" value={athlete?.nationCode} />
-            <ReadonlyField label="Disziplinen" value={athlete?.disciplines?.join(', ') || athlete?.discipline} />
-            <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${stay.discipline})` : ''}`).join(', ')} />
+            <ReadonlyField label="Wettbewerbe" value={competitionDisplayList(athlete?.disciplines, athlete?.discipline)} />
+            <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${competitionDisplayName(stay.discipline)})` : ''}`).join(', ')} />
             <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
             <ReadonlyField label="FIS-ID" value={athlete?.fisCode} emptyValue="Keine FIS-ID" />
@@ -256,7 +274,7 @@ export function Athletes() {
   const requestedMovement = query.get('movement') || '';
   const requestedDate = query.get('date') || '';
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, discipline: requestedDiscipline, status: requestedStatus });
+  const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, competitions: requestedDiscipline ? [requestedDiscipline] : [], status: requestedStatus });
   const [search, setSearch] = useState('');
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
   const [decisionId, setDecisionId] = useState<string | null>(null);
@@ -281,7 +299,8 @@ export function Athletes() {
 
   const groups = useMemo(() => ({
     nation: countValues(athletes, athlete => athlete.nationCode),
-    discipline: countValues(athletes, athlete => athlete.discipline || ''),
+    sport: countValues(athletes, athlete => athlete.competitions?.[0]?.sport || ''),
+    competitions: countCompetitionValues(athletes),
     gender: countValues(athletes, athlete => genderLabel(athlete.gender || athlete.forGender)),
     function: countValues(athletes, athlete => athlete.function || 'Athlet'),
     status: [
@@ -305,7 +324,8 @@ export function Athletes() {
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
-      && (!filters.discipline || (athlete.disciplines || [athlete.discipline]).includes(filters.discipline))
+      && (!filters.sport || athlete.competitions?.some(competition => competition.sport === filters.sport))
+      && (!filters.competitions.length || athlete.competitions?.some(competition => filters.competitions.includes(competition.id) || filters.competitions.includes(competition.name)))
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.function || (athlete.function || 'Athlet') === filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
@@ -315,7 +335,7 @@ export function Athletes() {
       && movementMatches;
   }), [athletes, filters, requestedDate, requestedMovement, requestedReview, requestedSingleRoomStatus, search]);
 
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const activeFilterCount = Object.entries(filters).filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value)).length;
   const setFilter = (key: FilterKey, value: string) => setFilters(current => ({ ...current, [key]: value }));
 
   if (loading) return <div className="flex h-64 items-center justify-center"><CircularProgress /></div>;
@@ -332,7 +352,8 @@ export function Athletes() {
         </div>
         <nav aria-label="Athletenfilter" className="space-y-5 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           <FilterGroup title="Nationen" filterKey="nation" items={groups.nation} selected={filters.nation} onSelect={setFilter} />
-          <FilterGroup title="Disziplinen" filterKey="discipline" items={groups.discipline} selected={filters.discipline} onSelect={setFilter} />
+          <FilterGroup title="Sport" filterKey="sport" items={groups.sport} selected={filters.sport} onSelect={setFilter} />
+          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || athletes.some(athlete => athlete.competitions?.some(c => c.id === item.value && c.sport === filters.sport)))} selected={filters.competitions} onToggle={id => setFilters(current => ({ ...current, competitions: current.competitions.includes(id) ? current.competitions.filter(value => value !== id) : [...current.competitions, id] }))} />
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
           <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
@@ -355,13 +376,13 @@ export function Athletes() {
           <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
             <colgroup><col className="w-[17%]"/><col className="w-[6%]"/><col className="w-[15%]"/><col className="w-[8%]"/><col className="w-[8%]"/><col className="w-[14%]"/><col className="w-[7%]"/><col className="w-[9%]"/><col className="w-[8%]"/><col className="w-[8%]"/></colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
-              <tr>{['Name', 'Nation', 'Disziplin', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
+              <tr>{['Name', 'Nation', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5"><SingleRoomStatusBadge status={athlete.single_room_status} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
-                <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={athlete.disciplines?.join(', ') || athlete.discipline || undefined}>{athlete.disciplines?.join(', ') || athlete.discipline || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
+                <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <span className="block truncate" title={athlete.assignment.hotelName}><InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink></span> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
                 <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
