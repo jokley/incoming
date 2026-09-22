@@ -364,6 +364,35 @@ class EventRoomDemand(db.Model):
         }
 
 
+class AthleteCompetition(db.Model):
+    """Membership only: accommodation facts intentionally remain on Athlete."""
+    __tablename__ = 'athlete_competition'
+    athlete_id = db.Column(db.Integer, db.ForeignKey('athlete.id', ondelete='CASCADE'), primary_key=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey('competition.id', ondelete='CASCADE'), primary_key=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+
+
+class Competition(db.Model):
+    """Centrally defined competition represented by one official import column."""
+    __tablename__ = 'competition'
+    id = db.Column(db.Integer, primary_key=True)
+    import_code = db.Column(db.String(50), nullable=False, unique=True, index=True)
+    code = db.Column(db.String(30), nullable=False, unique=True)
+    name = db.Column(db.String(120), nullable=False)
+    sport = db.Column(db.String(80), nullable=False, index=True)
+    gender = db.Column(db.String(10), nullable=False)
+    team_competition = db.Column(db.Boolean, nullable=False, default=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    athletes = db.relationship('Athlete', secondary='athlete_competition', back_populates='competitions')
+
+    def to_dict(self):
+        return {
+            'id': str(self.id), 'importCode': self.import_code, 'code': self.code,
+            'name': self.name, 'sport': self.sport, 'gender': self.gender,
+            'teamCompetition': self.team_competition, 'active': self.active,
+        }
+
+
 class Athlete(db.Model):
     """Athleten und Staff"""
     __tablename__ = 'athlete'
@@ -456,6 +485,11 @@ class Athlete(db.Model):
     roomlist_change_acknowledged_at = db.Column(db.DateTime)
     roomlist_change_acknowledged_summary = db.Column(db.String(500))
 
+    competitions = db.relationship(
+        'Competition', secondary='athlete_competition', lazy='selectin',
+        back_populates='athletes', order_by='Competition.name',
+    )
+
     def to_dict(self):
         return {
             'id': str(self.id),
@@ -466,7 +500,9 @@ class Athlete(db.Model):
             'lastname': self.lastname,
             'firstname': self.firstname,
             'nationCode': self.nation_code,
-            'discipline': self.discipline,
+            'discipline': self.discipline,  # legacy compatibility only
+            'competitions': [competition.to_dict() for competition in self.competitions],
+            'disciplines': [competition.name for competition in self.competitions],
             'gender': self.gender,
             'forGender': self.for_gender,
             'phone': self.phone,

@@ -1,6 +1,6 @@
 from flask import Flask, g, request, jsonify, send_from_directory, send_file, has_request_context
 from flask_cors import CORS
-from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
+from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
 from quota_service import evaluate_quota_usage
 from datetime import datetime
@@ -17,7 +17,7 @@ import uuid
 import time
 from contextlib import contextmanager
 from functools import wraps
-from sqlalchemy import text, func, event
+from sqlalchemy import text, func, event, or_
 from sqlalchemy.engine import Engine
 from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
@@ -1496,7 +1496,9 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     if discipline:
-        athletes = athletes.filter(Athlete.discipline == discipline)
+        athletes = athletes.filter(
+            or_(Athlete.competitions.any(Competition.name == discipline), Athlete.discipline == discipline)
+        )
 
     athletes = athletes.all()
     roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
@@ -2559,13 +2561,24 @@ def delete_event_demand(event_id, demand_id):
     return jsonify({'error': 'Berechneter Zimmerbedarf kann nicht manuell geändert werden.'}), 405
 
 
+# Competition catalogue (read-only; maintained by the official import mapping)
+@app.route('/api/competitions', methods=['GET'])
+def get_competitions():
+    return jsonify([
+        competition.to_dict()
+        for competition in Competition.query.filter_by(active=True).order_by(
+            Competition.sport, Competition.name
+        ).all()
+    ])
+
+
 # Athletes
 @app.route('/api/athletes', methods=['GET'])
 @app.route('/api/athletes/', methods=['GET'])
 @app.route('/athletes', methods=['GET'])
 @app.route('/athletes/', methods=['GET'])
 def get_athletes():
-    athletes = Athlete.query.all()
+    athletes = Athlete.query.options(db.selectinload(Athlete.competitions)).all()
 
     latest_athletes_run = ImportRun.query.filter_by(import_type='athletes').order_by(ImportRun.started_at.desc()).first()
     latest_roomlist_run = ImportRun.query.filter_by(import_type='roomlist').order_by(ImportRun.started_at.desc()).first()
@@ -2616,7 +2629,11 @@ def get_athletes():
         record_ids = {record.id for record in records}
         data['id'] = str(min(record_ids))
         data['sourceRecordIds'] = [str(value) for value in sorted(record_ids)]
-        data['disciplines'] = sorted({record.discipline for record in records if record.discipline})
+        competitions = {competition.id: competition for record in records for competition in record.competitions}
+        data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
+        data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
+        if not data['disciplines']:
+            data['disciplines'] = sorted({record.discipline for record in records if record.discipline})
         data['stays'] = [
             {
                 'arrivalDate': record.arrival_date.isoformat() if record.arrival_date else None,
@@ -3003,7 +3020,9 @@ def get_hotels_capacity_overview():
     if nation:
         booking_query = booking_query.filter(Athlete.nation_code == nation)
     if discipline:
-        booking_query = booking_query.filter(Athlete.discipline == discipline)
+        booking_query = booking_query.filter(
+            or_(Athlete.competitions.any(Competition.name == discipline), Athlete.discipline == discipline)
+        )
     if start_date and end_date:
         booking_query = booking_query.filter(
             RoomBooking.check_in_date.isnot(None),
@@ -3094,7 +3113,9 @@ def get_hotel_reservations(hotel_id):
     if nation:
         q = q.filter(Athlete.nation_code == nation)
     if discipline:
-        q = q.filter(Athlete.discipline == discipline)
+        q = q.filter(
+            or_(Athlete.competitions.any(Competition.name == discipline), Athlete.discipline == discipline)
+        )
     if start_date and end_date:
         q = q.filter(RoomAssignment.check_in_date <= end_date, RoomAssignment.check_out_date >= start_date)
 
