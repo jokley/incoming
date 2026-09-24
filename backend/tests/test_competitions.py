@@ -68,3 +68,39 @@ def test_unknown_wsc_column_is_blocking_instead_of_inferred():
     }])
     result = parse_entries_list(frame, {'by_fis_code': {}, 'by_competitor_id': {}, 'by_name_key': {}})
     assert result['errors'][0]['code'] == 'ENTRY_UNKNOWN_COMPETITION_COLUMNS'
+
+
+def test_person_based_disposition_uses_real_brazil_roster_memberships():
+    """Regression roster taken from the supplied FIS ENTRIES-LIST files."""
+    from quota_service import disposition_by_quota_group
+
+    people = [
+        {'personId': 229814, 'function': 'Athlete', 'nationCode': 'BRA', 'gender': 'M',
+         'quotaDisciplines': ['Snowboard Cross']},  # Noah BETHONICO
+        {'personId': 240003, 'function': 'Athlete', 'nationCode': 'BRA', 'gender': 'M',
+         'quotaDisciplines': ['Snowboard Big Air', 'Snowboard Slopestyle']},  # Luca MERIMEE MANTOVANI
+        {'personId': 142877, 'function': 'Athlete', 'nationCode': 'BRA', 'gender': 'M',
+         'quotaDisciplines': ['Snowboard Halfpipe']},  # Patrick BURGENER
+        {'personId': 229815, 'function': 'Athlete', 'nationCode': 'BRA', 'gender': 'M',
+         'quotaDisciplines': ['Snowboard Halfpipe']},  # Augustinho TEIXEIRA
+    ]
+
+    result = disposition_by_quota_group(people, {229814, 240003})
+
+    assert result[('BRA', 'Snowboard Cross', 'M')] == {
+        'peopleTotal': 1, 'peopleAssigned': 1}
+    assert result[('BRA', 'Snowboard Big Air', 'M')] == {
+        'peopleTotal': 1, 'peopleAssigned': 1}
+    assert result[('BRA', 'Snowboard Slopestyle', 'M')] == {
+        'peopleTotal': 1, 'peopleAssigned': 1}
+    assert result[('BRA', 'Snowboard Halfpipe', 'M')] == {
+        'peopleTotal': 2, 'peopleAssigned': 0}
+
+
+def test_disposition_deduplicates_competitions_with_the_same_quota_discipline():
+    from quota_service import disposition_by_quota_group
+
+    person = {'personId': 7, 'function': 'Athlete', 'nationCode': 'SUI', 'gender': 'F',
+              'quotaDisciplines': ['Moguls', 'Moguls']}
+    assert disposition_by_quota_group([person], {7}) == {
+        ('SUI', 'Moguls', 'F'): {'peopleTotal': 1, 'peopleAssigned': 1}}

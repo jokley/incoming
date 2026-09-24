@@ -15,6 +15,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app import app  # noqa: E402
 from models import (  # noqa: E402
     Athlete,
+    Competition,
+    Event,
+    EventCompetition,
     FisRoomAssignment,
     Hotel,
     HotelRoomInventory,
@@ -186,6 +189,46 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(grid_bookings[0]['roomNumber'], 'Zimmer 01')
         self.assertEqual(grid_bookings[0]['occupants'][0]['arrivalDate'], '2027-03-10')
         self.assertEqual(grid_bookings[0]['occupants'][0]['departureDate'], '2027-03-14')
+
+    def test_quota_api_projects_one_person_assignment_to_all_memberships(self):
+        with app.app_context():
+            big_air = Competition(import_code='BA', code='6182', name='Big Air M',
+                display_name='Snowboard Big Air', sport='Snowboard', gender='M',
+                team_competition=False, quota_discipline='Snowboard Big Air')
+            slopestyle = Competition(import_code='SS', code='6188', name='Slopestyle M',
+                display_name='Snowboard Slopestyle', sport='Snowboard', gender='M',
+                team_competition=False, quota_discipline='Snowboard Slopestyle')
+            luca = self.athlete('Luca', 'MERIMEE MANTOVANI', nation='BRA', gender='M')
+            luca.competitions = [big_air, slopestyle]
+            event = Event(name='WSC Montafon 2027', year=2027)
+            mapping = EventCompetition(event=event, competition=big_air,
+                fis_codex='6182', import_code='WSC_BA_M_6182', official_name="Men's Big Air")
+            db.session.add_all([big_air, slopestyle, luca, event, mapping])
+            db.session.flush()
+            booking = RoomBooking(hotel_id=Hotel.query.one().id,
+                room_type_id=RoomType.query.one().id, room_number='Slot 01')
+            db.session.add(booking)
+            db.session.flush()
+            db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=luca.id))
+            db.session.commit()
+
+        response = app.test_client().get('/api/fis/official-quotas?nationCode=BRA')
+        self.assertEqual(response.status_code, 200)
+        disposition = {row['discipline']: (row['peopleAssigned'], row['peopleTotal'])
+                       for row in response.get_json()}
+        self.assertEqual(disposition, {
+            'Snowboard Big Air': (1, 1),
+            'Snowboard Slopestyle': (1, 1),
+        })
+
+        with app.app_context():
+            mapping = EventCompetition.query.one()
+            mapping.fis_codex = '9999'
+            mapping.import_code = 'CHANGED_BA_M'
+            db.session.commit()
+        changed = app.test_client().get('/api/fis/official-quotas?nationCode=BRA').get_json()
+        self.assertEqual({row['discipline']: (row['peopleAssigned'], row['peopleTotal'])
+                          for row in changed}, disposition)
 
     def test_pending_import_context_is_projected_into_assigned_booking(self):
         with app.app_context():
