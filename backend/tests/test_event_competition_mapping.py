@@ -2,7 +2,8 @@ import pandas as pd
 from flask import Flask
 
 from competitions import COMPETITIONS
-from excel_import import ImportValidationError, PREVIEW_STORE, confirm_fis_import, parse_entries_list
+from excel_import import (ImportValidationError, PREVIEW_STORE, confirm_fis_import,
+                          normalize_event_id, parse_entries_list)
 from models import Athlete, Competition, Event, EventCompetition, db
 
 
@@ -91,7 +92,7 @@ def test_final_import_resolves_membership_through_selected_event_mapping():
         db.session.add_all([comp, event, mapping]); db.session.commit()
         token = 'event-import-test'
         PREVIEW_STORE[token] = {
-            'createdAt': __import__('datetime').datetime.utcnow(), 'eventId': event.id,
+            'createdAt': __import__('datetime').datetime.utcnow(), 'eventId': str(event.id),
             'errors': [], 'warnings': [], 'quotaChecks': [], 'rooms': [],
             'dispositionAnalysis': {'changes': []},
             'people': [{'matchKey':'123', 'fisCode':'123', 'firstname':'Ada', 'lastname':'Test',
@@ -103,6 +104,16 @@ def test_final_import_resolves_membership_through_selected_event_mapping():
         assert result['summary']['peopleCreated'] == 1
         assert athlete.competitions == [comp]
         assert db.session.query(Athlete.id).distinct().count() == 1
+
+
+def test_event_id_normalization_accepts_multipart_string_and_rejects_invalid_values():
+    assert normalize_event_id('1') == 1
+    for value in (None, '', 'abc'):
+        try:
+            normalize_event_id(value)
+            assert False, f'{value!r} must not be accepted as an event id'
+        except ImportValidationError as exc:
+            assert exc.code == 'INVALID_EVENT_ID'
 
 
 def test_final_import_rejects_mapping_deactivated_after_preview():

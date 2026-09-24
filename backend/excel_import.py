@@ -37,6 +37,16 @@ class ImportValidationError(ValueError):
             'import_code': self.import_code, 'message': str(self),
         }.items() if value is not None}
 
+
+def normalize_event_id(value):
+    """Return the integer PK representation used by PostgreSQL event queries."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        raise ImportValidationError(
+            'INVALID_EVENT_ID', 'Die Event-ID muss eine ganze Zahl sein.'
+        ) from None
+
 DISCIPLINE_FILENAME_ALIASES = {
     'bigair': 'Big Air',
     'big_air': 'Big Air',
@@ -1571,8 +1581,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     db.session.flush()
 
     athlete_maps = _build_existing_athlete_maps()
-    event_id = preview.get('eventId')
-    event = Event.query.get(event_id) if event_id else None
+    event_id = normalize_event_id(preview.get('eventId'))
+    event = Event.query.get(event_id)
     if not event:
         raise ImportValidationError('EVENT_NOT_FOUND', 'Das ausgewählte Import-Event existiert nicht mehr.', event_id=event_id)
     if not event.active:

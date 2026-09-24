@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from functools import wraps
 from sqlalchemy import text, func, event, or_
 from sqlalchemy.engine import Engine
-from excel_import import ImportValidationError, InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
+from excel_import import ImportValidationError, InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type, normalize_event_id
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
@@ -1614,9 +1614,13 @@ def _save_uploaded_excel(file_storage):
 @app.route('/api/import/fis/preview', methods=['POST'])
 @app.route('/api/import/fis/preview/', methods=['POST'])
 def preview_fis_import():
-    event_id = request.form.get('eventId')
-    if not event_id:
+    raw_event_id = request.form.get('eventId')
+    if not raw_event_id:
         return jsonify({'error': 'EVENT_REQUIRED', 'message': 'Bitte ein Event für den Import auswählen.'}), 400
+    try:
+        event_id = normalize_event_id(raw_event_id)
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()), 400
     event_context = Event.query.options(
         db.selectinload(Event.competition_mappings).joinedload(EventCompetition.competition)
     ).filter_by(id=event_id).first()
@@ -2675,7 +2679,11 @@ def update_event_competition(event_id, mapping_id):
 @app.route('/api/admin/events/<int:event_id>/copy-mappings', methods=['POST'])
 def copy_event_competitions(event_id):
     target = Event.query.get_or_404(event_id)
-    source = Event.query.get_or_404((request.get_json() or {}).get('sourceEventId'))
+    try:
+        source_event_id = normalize_event_id((request.get_json() or {}).get('sourceEventId'))
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()), 400
+    source = Event.query.get_or_404(source_event_id)
     existing = {row.competition_id for row in target.competition_mappings}
     copies = [EventCompetition(event_id=target.id, competition_id=row.competition_id,
         fis_codex=row.fis_codex, import_code=row.import_code,
