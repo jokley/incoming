@@ -1,11 +1,11 @@
 import { type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Alert, Dialog, DialogContent, DialogTitle, Snackbar } from '@mui/material';
+import { Alert, Dialog, DialogContent, DialogTitle, MenuItem, Snackbar, TextField } from '@mui/material';
 import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
 import { competitionDisplayName } from '../services/competitionPresentation';
-import type { FisImportIssue, FisImportPreview, ImportChange, ImportChangeType } from '../types';
+import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange, ImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
@@ -39,9 +39,10 @@ export function DataImport() {
   const [shownDecisionId, setShownDecisionId] = useState<string | null>(searchParams.get('decisionId'));
   const [savingTask, setSavingTask] = useState(false);
   const [duplicateNotice, setDuplicateNotice] = useState(false);
+  const [events, setEvents] = useState<ChampionshipEvent[]>([]), [eventId, setEventId] = useState('');
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
-  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
+  useEffect(() => { (async () => { try { const [loaded, activeEvents] = await Promise.all([api.getImportSessions(), api.getChampionshipEvents()]); setSessions(loaded); setEvents(activeEvents); setEventId(activeEvents[0]?.id ?? ''); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
   const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); setFiles([]); setSuccess(null); };
   const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); };
   const handleFiles = (incoming: FileList | File[] | null | undefined) => {
@@ -50,7 +51,7 @@ export function DataImport() {
     setFiles([...new Map(accepted.map(f => [f.name.toLowerCase(), f])).values()]); setPreview(null); setSuccess(null); setError(null);
   };
   const cancel = () => { setFiles([]); if (!selected) setPreview(null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id); if (result.alreadyImported) { setSuccess(result.message ?? 'Diese Meldeliste wurde bereits importiert.'); setDuplicateNotice(true); setFiles([]); return; } setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id, eventId); if (result.alreadyImported) { setSuccess(result.message ?? 'Diese Meldeliste wurde bereits importiert.'); setDuplicateNotice(true); setFiles([]); return; } setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { await api.cancelImportSession(selected.id); setSelected(null); setPreview(null); setFiles([]); setSuccess('Importsession wurde abgebrochen und vollständig bereinigt.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
   const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = await api.approveImportSession(selected.id); setSelected(updated); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
   const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); try { const result = await api.importSession(selected.id); setSuccess(`Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`); setSelected(await api.getImportSession(selected.id)); await refreshSessions(); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
@@ -115,7 +116,7 @@ export function DataImport() {
       <div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
         <ContentCard surface="raised" className="min-h-0 flex-1 overflow-hidden">
-          <div className="h-full overflow-y-auto">
+          <div className="h-full overflow-y-auto"><div className="border-b border-[var(--ops-divider)] p-5"><TextField select fullWidth label="Event" value={eventId} onChange={e=>setEventId(e.target.value)} disabled={loading||confirming}>{events.map(event=><MenuItem key={event.id} value={event.id}>{event.name}</MenuItem>)}</TextField></div>
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
               <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} - {competitionDisplayName(selected.discipline)}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>

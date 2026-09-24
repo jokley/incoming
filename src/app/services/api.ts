@@ -16,6 +16,7 @@ import type {
   AssignmentValidationView,
   FisMockFilePair
 } from '../types';
+import type { ChampionshipEvent, EventCompetitionMapping } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
 import type { OfficialQuotaUsage } from './fisRules';
 import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
@@ -836,11 +837,32 @@ class ApiService {
   // IMPORT
   // ============================================================================
 
-  async previewFisImport(files: File[], createSession = false, sessionId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; message?: string }> {
+  async getChampionshipEvents(): Promise<ChampionshipEvent[]> { return this.request('/championship-events'); }
+  async getCompetitions(): Promise<import('../types').Competition[]> { return this.request('/competitions'); }
+  async getAdminEvents(): Promise<ChampionshipEvent[]> { return this.request('/admin/events'); }
+  async getAdminEvent(id: string): Promise<ChampionshipEvent> { return this.request(`/admin/events/${id}`); }
+  async createChampionshipEvent(data: Partial<ChampionshipEvent>): Promise<ChampionshipEvent> {
+    return this.request('/admin/events', { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateChampionshipEvent(id: string, data: Partial<ChampionshipEvent>): Promise<ChampionshipEvent> {
+    return this.request(`/admin/events/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async addEventCompetition(eventId: string, data: Partial<EventCompetitionMapping>): Promise<EventCompetitionMapping> {
+    return this.request(`/admin/events/${eventId}/competitions`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateEventCompetition(eventId: string, mappingId: string, data: Partial<EventCompetitionMapping>): Promise<EventCompetitionMapping> {
+    return this.request(`/admin/events/${eventId}/competitions/${mappingId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async copyEventMappings(eventId: string, sourceEventId: string): Promise<{created:number;event:ChampionshipEvent}> {
+    return this.request(`/admin/events/${eventId}/copy-mappings`, { method: 'POST', body: JSON.stringify({ sourceEventId }) });
+  }
+
+  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; message?: string }> {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
     if (createSession) formData.append('createSession', 'true');
     if (sessionId) formData.append('sessionId', sessionId);
+    if (eventId) formData.append('eventId', eventId);
 
     const response = await fetch(`${API_BASE_URL}/import/fis/preview`, {
       method: 'POST',
