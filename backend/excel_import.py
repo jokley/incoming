@@ -11,8 +11,8 @@ from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
 from quota_service import evaluate_quota_usage, quota_key
-from models import Athlete, Competition, Event, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
-from competitions import COMPETITIONS, COMPETITION_BY_IMPORT_CODE
+from models import Athlete, Competition, AccommodationEvent, Event, EventCompetition, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
+from competitions import COMPETITION_BY_IMPORT_CODE
 
 
 PREVIEW_STORE = {}
@@ -21,6 +21,21 @@ PREVIEW_TTL_SECONDS = 60 * 60
 
 class InvalidExcelFileError(ValueError):
     pass
+
+
+class ImportValidationError(ValueError):
+    """Expected event/mapping validation failure suitable for a 4xx response."""
+    def __init__(self, code, message, *, event_id=None, import_code=None):
+        super().__init__(message)
+        self.code = code
+        self.event_id = event_id
+        self.import_code = import_code
+
+    def to_dict(self):
+        return {key: value for key, value in {
+            'error': self.code, 'event_id': str(self.event_id) if self.event_id is not None else None,
+            'import_code': self.import_code, 'message': str(self),
+        }.items() if value is not None}
 
 DISCIPLINE_FILENAME_ALIASES = {
     'bigair': 'Big Air',
@@ -284,7 +299,7 @@ def infer_discipline_from_events(people):
     if not ranges:
         return None
 
-    events = Event.query.all()
+    events = AccommodationEvent.query.all()
     if not events:
         return None
 
@@ -456,18 +471,21 @@ def _daterange_nights(check_in_date, check_out_date):
     return nights
 
 
-def parse_entries_list(df, athlete_maps):
+def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=None):
+    competition_mapping = COMPETITION_BY_IMPORT_CODE if competition_mapping is None else competition_mapping
     errors = []
     warnings = []
     people = []
     seen_keys = {}
 
     competition_columns = [column for column in df.columns if str(column).upper().startswith('WSC_')]
-    unknown_columns = sorted(set(competition_columns) - set(COMPETITION_BY_IMPORT_CODE))
+    unknown_columns = sorted(set(competition_columns) - set(competition_mapping))
     if unknown_columns:
         errors.append({
             'code': 'ENTRY_UNKNOWN_COMPETITION_COLUMNS',
-            'message': 'ENTRIES-LIST contains competition columns absent from the official mapping',
+            'message': (f'Unbekannter Competition-Code {unknown_columns[0]} für Event {event_name}'
+                        if event_name and len(unknown_columns) == 1 else
+                        'ENTRIES-LIST contains competition columns absent from the selected event mapping'),
             'details': {'columns': unknown_columns},
         })
 
@@ -535,12 +553,12 @@ def parse_entries_list(df, athlete_maps):
             'industryName': discipline,
             'competitionImportCodes': [
                 column for column in competition_columns
-                if column in COMPETITION_BY_IMPORT_CODE and parse_boolean(row.get(column))
+                if column in competition_mapping and parse_boolean(row.get(column))
             ],
             'quotaDisciplines': sorted({
-                COMPETITION_BY_IMPORT_CODE[column].quota_discipline
+                competition_mapping[column].quota_discipline
                 for column in competition_columns
-                if column in COMPETITION_BY_IMPORT_CODE and parse_boolean(row.get(column))
+                if column in competition_mapping and parse_boolean(row.get(column))
             }),
             'forGender': normalize_whitespace(row.get('For_gender')) or None,
             'gender': normalize_whitespace(row.get('Gender')) or None,
@@ -1344,13 +1362,16 @@ def cleanup_preview_store():
         PREVIEW_STORE.pop(token, None)
 
 
-def create_fis_import_preview(entries_path, roomlist_path):
+def create_fis_import_preview(entries_path, roomlist_path, event=None):
     cleanup_preview_store()
     entries_df = load_first_sheet(entries_path)
     room_df = load_first_sheet(roomlist_path)
     athlete_maps = _build_existing_athlete_maps()
 
-    people_result = parse_entries_list(entries_df, athlete_maps)
+    mapping = None
+    if event is not None:
+        mapping = {row.import_code: row.competition for row in event.competition_mappings if row.active}
+    people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None)
     room_result = parse_room_list(room_df, people_result['people'])
     quota_checks = []
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'], quota_checks)
@@ -1360,11 +1381,21 @@ def create_fis_import_preview(entries_path, roomlist_path):
     )
 
     blocking_errors = people_result['errors'] + room_result['errors']
+    unknown = next((issue for issue in blocking_errors
+                    if issue.get('code') == 'ENTRY_UNKNOWN_COMPETITION_COLUMNS'), None)
+    if event is not None and unknown:
+        import_codes = unknown.get('details', {}).get('columns', [])
+        import_code = import_codes[0] if len(import_codes) == 1 else None
+        raise ImportValidationError(
+            'UNKNOWN_COMPETITION_CODE', unknown['message'],
+            event_id=event.id, import_code=import_code,
+        )
     disposition_analysis['changes'] = build_import_changes(
         disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors
     )
     preview = {
         'createdAt': datetime.utcnow(),
+        'eventId': event.id if event else None,
         'people': people_result['people'],
         'rooms': room_result['rooms'],
         'entriesColumns': list(entries_df.columns),
@@ -1382,6 +1413,7 @@ def create_fis_import_preview(entries_path, roomlist_path):
 
     return {
         'previewToken': preview_token,
+        'eventId': str(event.id) if event else None,
         'isValid': len(blocking_errors) == 0,
         'summary': {
             'people': {
@@ -1539,27 +1571,24 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     db.session.flush()
 
     athlete_maps = _build_existing_athlete_maps()
-    # Synchronise the official catalogue before memberships.  Existing IDs are
-    # retained so filters and references remain stable between imports.
-    competitions_by_import_code = {}
-    active_import_codes = {definition.import_code for definition in COMPETITIONS}
-    Competition.query.filter(~Competition.import_code.in_(active_import_codes)).update(
-        {'active': False}, synchronize_session=False)
-    for definition in COMPETITIONS:
-        import_code, code, name, sport, gender, team_competition, display_name, quota_discipline = definition
-        competition = Competition.query.filter_by(import_code=import_code).first()
-        if not competition:
-            competition = Competition(import_code=import_code, code=code)
-            db.session.add(competition)
-        competition.name = name
-        competition.sport = sport
-        competition.gender = gender
-        competition.team_competition = team_competition
-        competition.display_name = display_name
-        competition.quota_discipline = quota_discipline
-        competition.active = True
-        competitions_by_import_code[import_code] = competition
-    db.session.flush()
+    event_id = preview.get('eventId')
+    event = Event.query.get(event_id) if event_id else None
+    if not event:
+        raise ImportValidationError('EVENT_NOT_FOUND', 'Das ausgewählte Import-Event existiert nicht mehr.', event_id=event_id)
+    if not event.active:
+        raise ImportValidationError('EVENT_INACTIVE', f'Event {event.name} ist inaktiv.', event_id=event.id)
+    competitions_by_import_code = {
+        mapping.import_code: mapping.competition
+        for mapping in event.competition_mappings if mapping.active
+    }
+    for person in preview.get('people', []):
+        for import_code in person.get('competitionImportCodes', []):
+            if import_code not in competitions_by_import_code:
+                raise ImportValidationError(
+                    'UNKNOWN_COMPETITION_CODE',
+                    f'Unbekannter Competition-Code {import_code} für Event {event.name}',
+                    event_id=event.id, import_code=import_code,
+                )
 
     persisted_people = {}
     created = 0

@@ -86,6 +86,18 @@ export interface Competition {
   active: boolean;
 }
 
+export interface EventCompetitionMapping {
+  id: string; eventId: string; competitionId: string; fisCodex: string;
+  importCode: string; officialName: string; active: boolean; displayName: string;
+  sport: string; gender: string; quotaDiscipline: string; teamCompetition: boolean;
+}
+
+export interface ChampionshipEvent {
+  id: string; name: string; year?: number; active: boolean;
+  fisEventId?: string; sectorCode?: string;
+  competitionMappings?: EventCompetitionMapping[];
+}
+
 export interface Athlete {
   id: string;
   function?: string;
@@ -427,6 +439,7 @@ export interface FisImportPreviewRoom {
 
 export interface FisImportPreview {
   previewToken: string;
+  eventId?: string | null;
   isValid: boolean;
   detectedDiscipline?: string | null;
   summary: {
