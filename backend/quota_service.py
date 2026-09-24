@@ -88,15 +88,19 @@ def evaluate_quota_usage(people, assigned_people=()):
             if (person.get('function') or '').strip().lower() == 'athlete':
                 athletes[key] = athletes.get(key, 0) + 1
     for person in assigned_people:
-        if (person.get('function') or '').strip().lower() == 'athlete':
-            continue
-        key = quota_key(person)
-        if not key[2]:
-            continue
-        keys.add(key)
-        assigned[key] = assigned.get(key, 0) + 1
-        if person.get('countsAsSingle'):
-            singles[key] = singles.get(key, 0) + 1
+        is_athlete = (person.get('function') or '').strip().lower() == 'athlete'
+        # Athlete room requests follow every distinct quota discipline from the
+        # person's competition memberships. Officials intentionally retain the
+        # existing single-discipline assignment semantics.
+        person_keys = quota_keys(person) if is_athlete else {quota_key(person)}
+        for key in person_keys:
+            if not key[2]:
+                continue
+            keys.add(key)
+            if not is_athlete:
+                assigned[key] = assigned.get(key, 0) + 1
+            if person.get('countsAsSingle'):
+                singles[key] = singles.get(key, 0) + 1
 
     rows = []
     for nation, discipline, gender in sorted(keys):
