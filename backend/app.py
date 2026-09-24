@@ -2,7 +2,8 @@ from flask import Flask, g, request, jsonify, send_from_directory, send_file, ha
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
-from quota_service import evaluate_quota_usage
+from quota_service import (disposition_by_quota_group, evaluate_quota_usage,
+                           single_room_usage_by_quota_group)
 from datetime import datetime
 import hashlib
 import os
@@ -1139,6 +1140,7 @@ def _build_room_booking_units():
                 'lastname': athlete.lastname,
                 'nationCode': athlete.nation_code,
                 'discipline': athlete.discipline,
+                'quotaDisciplines': sorted({c.quota_discipline for c in athlete.competitions}),
                 'gender': _normalize_gender(athlete),
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
@@ -1286,6 +1288,7 @@ def _build_assignment_planning_view(validation_keys=None):
                                     'firstname': occ.athlete.firstname,
                                     'lastname': occ.athlete.lastname,
                                     'discipline': occ.athlete.discipline,
+                                    'quotaDisciplines': sorted({c.quota_discipline for c in occ.athlete.competitions}),
                                     'gender': _normalize_gender(occ.athlete),
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
@@ -1415,28 +1418,12 @@ def _validate_booking_payload(data, existing_booking=None):
         'check_in_date': check_in_date,
         'check_out_date': check_out_date,
         'athlete_ids': unique_athlete_ids,
-        'counts_as_single': bool(data.get('countsAsSingle', False)),
+        'counts_as_single': bool(data.get(
+            'countsAsSingle', existing_booking.counts_as_single if existing_booking else False)),
     }, room_type, None
 
 
-def _automatic_quota_evaluation(room_type, athlete_ids):
-    """Initialize quota evaluation while leaving the physical room type untouched."""
-    if not room_type:
-        return False
-    if room_type.max_persons == 1:
-        return True
-    if room_type.max_persons != 2 or len(athlete_ids) != 1:
-        return False
-    athlete = db.session.get(Athlete, athlete_ids[0])
-    return bool(athlete and athlete.single_room_status in {'IN_QUOTA', 'APPROVED_EXTRA'})
-
-
-def _sync_quota_evaluation(booking):
-    athlete_ids = sorted(row[0] for row in db.session.query(RoomBookingOccupant.athlete_id).filter_by(room_booking_id=booking.id).all())
-    booking.counts_as_single = _automatic_quota_evaluation(booking.room_type, athlete_ids)
-
-
-def _save_booking_from_payload(payload, existing_booking=None, manual_single_override=False, commit=True):
+def _save_booking_from_payload(payload, existing_booking=None, commit=True):
     if existing_booking is None:
         booking = RoomBooking(
             created_by=payload.get('created_by'),
@@ -1462,8 +1449,6 @@ def _save_booking_from_payload(payload, existing_booking=None, manual_single_ove
     for athlete_id in payload['athlete_ids']:
         db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
     db.session.flush()
-    if not manual_single_override:
-        _sync_quota_evaluation(booking)
     _acknowledge_import_changes(payload['athlete_ids'])
     if commit:
         db.session.commit()
@@ -1486,8 +1471,6 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
             remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
             if remaining == 0:
                 db.session.delete(booking)
-            else:
-                _sync_quota_evaluation(booking)
     db.session.commit()
 
 
@@ -1503,7 +1486,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         )
 
     athletes = athletes.all()
-    roster = [{'nationCode': a.nation_code, 'discipline': a.discipline,
+    roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
                'quotaDisciplines': sorted({c.quota_discipline for c in a.competitions}),
                'gender': a.gender, 'forGender': a.for_gender,
                'function': a.function} for a in athletes]
@@ -1540,6 +1523,15 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
             'countsAsSingle': booking_by_athlete[athlete.id]})
     rows = evaluate_quota_usage(roster, assigned)
+    # Resolve accommodation through the person-to-booking membership. The same
+    # persisted assignment applies to every distinct quota discipline of a
+    # multi-competition athlete; EventCompetition carries no accommodation.
+    disposition = disposition_by_quota_group(roster, booking_by_athlete)
+    single_room_usage = single_room_usage_by_quota_group(
+        roster,
+        {athlete_id for athlete_id, counts_as_single in booking_by_athlete.items()
+         if counts_as_single},
+    )
     approved_by_key = {}
     implemented_by_key = {}
     for athlete in athletes:
@@ -1565,6 +1557,8 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         state['approved' if decision == 'APPROVED' else 'pending'] += 1
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
+        row.update(disposition.get(key, {'peopleTotal': 0, 'peopleAssigned': 0}))
+        row['singleRoomsUsed'] = single_room_usage.get(key, 0)
         row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
         row['requiredSingleRooms'] = row['singleRoomsUsed']
         row['implementedSingleRooms'] = implemented_by_key.get(key, 0)
@@ -2731,6 +2725,7 @@ def get_athletes():
             'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
             'checkOutDate': booking.check_out_date.isoformat() if booking.check_out_date else None,
             'bookingId': str(booking.id),
+            'countsAsSingle': bool(booking.counts_as_single),
         }
         if current is None:
             assignment_map[athlete.id] = summary
@@ -2799,6 +2794,7 @@ def get_athletes():
             'checkInDate': None,
             'checkOutDate': None,
             'bookingId': None,
+            'countsAsSingle': False,
         }
         raw_pending_review = bool(
             a.roomlist_changed_at and (
@@ -3012,10 +3008,7 @@ def update_assigned_unit(booking_id):
     if error:
         return error
     _detach_athletes_from_existing_bookings(payload['athlete_ids'], exclude_booking_id=booking.id)
-    # An explicit EZ toggle is the supported manual override. All actual
-    # assignment changes continue to derive the flag from occupancy and status.
-    manual_single_override = set(data) == {'countsAsSingle'}
-    booking = _save_booking_from_payload(payload, existing_booking=booking, manual_single_override=manual_single_override)
+    booking = _save_booking_from_payload(payload, existing_booking=booking)
     return _assignment_jsonify(booking.to_dict())
 
 
@@ -3045,8 +3038,6 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
     if remaining == 0:
         db.session.delete(booking)
-    else:
-        _sync_quota_evaluation(booking)
     db.session.commit()
     return _assignment_jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
 

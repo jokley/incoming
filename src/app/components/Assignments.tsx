@@ -2069,7 +2069,7 @@ type QuotaCard = {
   peopleAssigned: number;
 };
 
-function buildQuotaCards(rows: OfficialQuotaUsage[], allUnits: RoomBookingUnit[], assignedUnits: RoomBookingUnit[]): QuotaCard[] {
+function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
   const cards = new Map<string, QuotaCard>();
   for (const row of rows) {
     const key = `${row.nationCode}::${row.discipline || '—'}::${row.gender}`;
@@ -2104,17 +2104,12 @@ function buildQuotaCards(rows: OfficialQuotaUsage[], allUnits: RoomBookingUnit[]
     current.remainingSingleRooms += row.remainingSingleRooms || 0;
     current.openApprovals += row.openApprovals || 0;
     current.approvedExceptions += row.approvedExceptions || 0;
+    current.peopleTotal += row.peopleTotal || 0;
+    current.peopleAssigned += row.peopleAssigned || 0;
     if (row.quotaStatus === 'DECISION_REQUIRED' || (row.quotaStatus === 'EXCEPTION_APPROVED' && current.quotaStatus === 'FULFILLED')) current.quotaStatus = row.quotaStatus;
     cards.set(key, current);
   }
 
-  for (const card of cards.values()) {
-    const matches = (unit: RoomBookingUnit) => unit.nationCode === card.nationCode
-      && unit.occupants.some((occupant) => (occupant.discipline || '—') === card.discipline
-        && normalizeGender(occupant.gender) === card.gender);
-    card.peopleTotal = allUnits.filter(matches).reduce((sum, unit) => sum + unit.occupants.length, 0);
-    card.peopleAssigned = assignedUnits.filter(matches).reduce((sum, unit) => sum + unit.occupants.length, 0);
-  }
   return [...cards.values()].sort((a, b) => a.nationCode.localeCompare(b.nationCode)
     || a.discipline.localeCompare(b.discipline) || a.gender.localeCompare(b.gender));
 }
@@ -2151,7 +2146,7 @@ function QuotasPanel({
   genderOptions: string[];
   refreshing: boolean;
 }) {
-  const cards = buildQuotaCards(rows, allUnits, assignedUnits);
+  const cards = buildQuotaCards(rows);
   const issues = cards.filter((card) => getQuotaState(card).tone !== 'success').length;
   return (
     <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
@@ -2264,7 +2259,9 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
   const people = new Map<string, SingleRoomControlPerson>();
   allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
     if (occupant.nationCode !== card.nationCode
-      || (occupant.discipline || '—') !== card.discipline
+      || !(occupant.quotaDisciplines?.length
+        ? occupant.quotaDisciplines.includes(card.discipline)
+        : (occupant.discipline || '—') === card.discipline)
       || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
@@ -2287,7 +2284,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   hotels: AssignmentGridHotel[];
   onShowDecision: (decisionId: string) => void;
 }) {
-  const card = buildQuotaCards(rows, allUnits, assignedUnits).find((candidate) => candidate.key === quotaKey);
+  const card = buildQuotaCards(rows).find((candidate) => candidate.key === quotaKey);
   if (!card) return <EmptyCenter text="Quote nicht mehr verfügbar." />;
   const state = getQuotaState(card);
   const StateIcon = state.icon;

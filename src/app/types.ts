@@ -175,6 +175,7 @@ export interface Athlete {
     checkInDate?: string | null;
     checkOutDate?: string | null;
     bookingId?: string | null;
+    countsAsSingle?: boolean;
   };
   assignments?: NonNullable<Athlete['assignment']>[];
 }
@@ -231,6 +232,7 @@ export interface RoomBookingUnitOccupant {
   lastname: string;
   nationCode: string;
   discipline?: string | null;
+  quotaDisciplines?: string[];
   gender?: string | null;
   function?: string | null;
   arrivalDate?: string | null;
@@ -303,6 +305,7 @@ export interface AssignmentGridBooking {
     firstname: string;
     lastname: string;
     discipline?: string | null;
+    quotaDisciplines?: string[];
     gender?: string | null;
     function?: string | null;
     arrivalDate?: string | null;
