@@ -1,6 +1,6 @@
 from flask import Flask, g, request, jsonify, send_from_directory, send_file, has_request_context
 from flask_cors import CORS
-from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
+from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
 from quota_service import evaluate_quota_usage
 from datetime import datetime
@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from functools import wraps
 from sqlalchemy import text, func, event, or_
 from sqlalchemy.engine import Engine
-from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
+from excel_import import ImportValidationError, InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type, normalize_event_id
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
@@ -743,7 +743,7 @@ def ensure_reference_data():
 
     event_map = {
         (event.discipline, event.start_date, event.end_date): event
-        for event in Event.query.all()
+        for event in AccommodationEvent.query.all()
     }
     existing_demands = {
         (demand.event_id, demand.room_type_id, demand.room_count)
@@ -754,7 +754,7 @@ def ensure_reference_data():
         event_key = (discipline, datetime.fromisoformat(start_date).date(), datetime.fromisoformat(end_date).date())
         event = event_map.get(event_key)
         if event is None:
-            event = Event(discipline=discipline, start_date=event_key[1], end_date=event_key[2])
+            event = AccommodationEvent(discipline=discipline, start_date=event_key[1], end_date=event_key[2])
             db.session.add(event)
             db.session.flush()
             event_map[event_key] = event
@@ -1614,6 +1614,22 @@ def _save_uploaded_excel(file_storage):
 @app.route('/api/import/fis/preview', methods=['POST'])
 @app.route('/api/import/fis/preview/', methods=['POST'])
 def preview_fis_import():
+    raw_event_id = request.form.get('eventId')
+    if not raw_event_id:
+        return jsonify({'error': 'EVENT_REQUIRED', 'message': 'Bitte ein Event für den Import auswählen.'}), 400
+    try:
+        event_id = normalize_event_id(raw_event_id)
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()), 400
+    event_context = Event.query.options(
+        db.selectinload(Event.competition_mappings).joinedload(EventCompetition.competition)
+    ).filter_by(id=event_id).first()
+    if not event_context:
+        return jsonify({'error': 'EVENT_NOT_FOUND', 'event_id': event_id,
+                        'message': 'Das ausgewählte Event wurde nicht gefunden.'}), 404
+    if not event_context.active:
+        return jsonify({'error': 'EVENT_INACTIVE', 'event_id': event_id,
+                        'message': f'Event {event_context.name} ist inaktiv.'}), 422
     uploaded_files = []
     if request.files.get('entriesList'):
         uploaded_files.append(('entriesList', request.files.get('entriesList')))
@@ -1675,8 +1691,9 @@ def preview_fis_import():
         room_path = detected['roomlist']
         source_hash = hashlib.sha256(
             Path(entries_path).read_bytes() + b'\0' + Path(room_path).read_bytes()
+            + b'\0event:' + str(event_context.id).encode('ascii')
         ).hexdigest()
-        result = create_fis_import_preview(entries_path, room_path)
+        result = create_fis_import_preview(entries_path, room_path, event_context)
         session_id = request.form.get('sessionId')
         if request.form.get('createSession') == 'true' or session_id:
             nations = sorted({person.get('nationCode') for person in result['people'] if person.get('nationCode')})
@@ -1757,10 +1774,17 @@ def preview_fis_import():
             db.session.commit()
             result['session'] = session.to_dict(include_preview=True)
         return jsonify(result), 200
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 400
+    except ImportValidationError as exc:
+        db.session.rollback()
+        return jsonify(exc.to_dict()), 422
+    except (InvalidExcelFileError, ValueError) as exc:
+        db.session.rollback()
+        return jsonify({'error': 'INVALID_IMPORT_FILE', 'message': str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unexpected FIS preview failure for event %s', event_id)
+        return jsonify({'error': 'INTERNAL_SERVER_ERROR',
+                        'message': 'Die Importvorschau konnte technisch nicht erstellt werden.'}), 500
     finally:
         for path in temp_files:
             if path and os.path.exists(path):
@@ -1778,8 +1802,16 @@ def confirm_previewed_fis_import():
     try:
         result = confirm_fis_import(preview_token)
         return jsonify(result), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    except ImportValidationError as exc:
+        db.session.rollback()
+        return jsonify(exc.to_dict()), 422
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': 'INVALID_IMPORT', 'message': str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unexpected FIS confirmation failure')
+        return jsonify({'error': 'INTERNAL_SERVER_ERROR'}), 500
 
 
 @app.route('/api/import/sessions', methods=['GET'])
@@ -1923,6 +1955,11 @@ def import_approved_session(session_id):
         db.session.commit()
         result['session'] = session.to_dict()
         return jsonify(result)
+    except ImportValidationError as exc:
+        db.session.rollback()
+        session.status, session.error_message = 'ERROR', str(exc)
+        db.session.commit()
+        return jsonify(exc.to_dict()), 422
     except Exception as exc:
         db.session.rollback()
         session.status, session.error_message = 'ERROR', str(exc)
@@ -2192,7 +2229,7 @@ def import_events(lines, section_info, end_line):
             # Get or create event
             event_key = f"{discipline}_{von}_{bis}"
             if event_key not in events_dict:
-                event = Event(
+                event = AccommodationEvent(
                     discipline=discipline,
                     start_date=von,
                     end_date=bis
@@ -2505,8 +2542,8 @@ def delete_hotel_inventory(hotel_id, inventory_id):
 # Events - CRUD
 @app.route('/api/events', methods=['GET'])
 def get_events():
-    events = Event.query.options(
-        db.selectinload(Event.room_demands).joinedload(EventRoomDemand.room_type)
+    events = AccommodationEvent.query.options(
+        db.selectinload(AccommodationEvent.room_demands).joinedload(EventRoomDemand.room_type)
     ).all()
     return jsonify([e.to_dict() for e in events])
 
@@ -2514,7 +2551,7 @@ def get_events():
 @app.route('/api/events', methods=['POST'])
 def create_event():
     data = request.json
-    event = Event(
+    event = AccommodationEvent(
         discipline=data['discipline'],
         start_date=datetime.fromisoformat(data['startDate']).date(),
         end_date=datetime.fromisoformat(data['endDate']).date(),
@@ -2528,7 +2565,7 @@ def create_event():
 
 @app.route('/api/events/<int:event_id>', methods=['PUT'])
 def update_event(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = AccommodationEvent.query.get_or_404(event_id)
     data = request.json
 
     if 'discipline' in data:
@@ -2548,7 +2585,7 @@ def update_event(event_id):
 
 @app.route('/api/events/<int:event_id>', methods=['DELETE'])
 def delete_event(event_id):
-    event = Event.query.get_or_404(event_id)
+    event = AccommodationEvent.query.get_or_404(event_id)
     db.session.delete(event)
     db.session.commit()
     return '', 204
@@ -2574,6 +2611,87 @@ def get_competitions():
             Competition.sport, Competition.name
         ).all()
     ])
+
+
+# Championship event administration.  The existing /api/events endpoints stay
+# dedicated to accommodation demand until that domain is scoped in a later sprint.
+@app.route('/api/championship-events', methods=['GET'])
+def list_active_championship_events():
+    return jsonify([event.to_dict() for event in Event.query.filter_by(active=True).order_by(Event.year, Event.name).all()])
+
+
+@app.route('/api/admin/events', methods=['GET', 'POST'])
+def administer_events():
+    if request.method == 'GET':
+        return jsonify([event.to_dict() for event in Event.query.order_by(Event.year, Event.name).all()])
+    data = request.get_json() or {}
+    if not str(data.get('name', '')).strip():
+        return jsonify({'error': 'Name ist erforderlich.'}), 400
+    event = Event(name=data['name'].strip(), year=data.get('year'),
+                  active=bool(data.get('active', True)), fis_event_id=data.get('fisEventId'),
+                  sector_code=data.get('sectorCode'))
+    db.session.add(event)
+    db.session.commit()
+    return jsonify(event.to_dict()), 201
+
+
+@app.route('/api/admin/events/<int:event_id>', methods=['GET', 'PUT'])
+def administer_event(event_id):
+    event_record = Event.query.get_or_404(event_id)
+    if request.method == 'GET':
+        return jsonify(event_record.to_dict(include_mappings=True))
+    data = request.get_json() or {}
+    for source, target in (('name', 'name'), ('year', 'year'), ('active', 'active'),
+                           ('fisEventId', 'fis_event_id'), ('sectorCode', 'sector_code')):
+        if source in data:
+            setattr(event_record, target, data[source])
+    db.session.commit()
+    return jsonify(event_record.to_dict(include_mappings=True))
+
+
+@app.route('/api/admin/events/<int:event_id>/competitions', methods=['POST'])
+def add_event_competition(event_id):
+    Event.query.get_or_404(event_id)
+    data = request.get_json() or {}
+    Competition.query.get_or_404(data.get('competitionId'))
+    mapping = EventCompetition(event_id=event_id, competition_id=data['competitionId'],
+        fis_codex=str(data.get('fisCodex', '')).strip(), import_code=str(data.get('importCode', '')).strip(),
+        official_name=str(data.get('officialName', '')).strip(), active=bool(data.get('active', True)))
+    if not all((mapping.fis_codex, mapping.import_code, mapping.official_name)):
+        return jsonify({'error': 'Official Name, Codex und Import Code sind erforderlich.'}), 400
+    db.session.add(mapping)
+    db.session.commit()
+    return jsonify(mapping.to_dict()), 201
+
+
+@app.route('/api/admin/events/<int:event_id>/competitions/<int:mapping_id>', methods=['PUT'])
+def update_event_competition(event_id, mapping_id):
+    mapping = EventCompetition.query.filter_by(id=mapping_id, event_id=event_id).first_or_404()
+    data = request.get_json() or {}
+    for source, target in (('officialName', 'official_name'), ('fisCodex', 'fis_codex'),
+                           ('importCode', 'import_code'), ('active', 'active')):
+        if source in data:
+            setattr(mapping, target, data[source])
+    db.session.commit()
+    return jsonify(mapping.to_dict())
+
+
+@app.route('/api/admin/events/<int:event_id>/copy-mappings', methods=['POST'])
+def copy_event_competitions(event_id):
+    target = Event.query.get_or_404(event_id)
+    try:
+        source_event_id = normalize_event_id((request.get_json() or {}).get('sourceEventId'))
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()), 400
+    source = Event.query.get_or_404(source_event_id)
+    existing = {row.competition_id for row in target.competition_mappings}
+    copies = [EventCompetition(event_id=target.id, competition_id=row.competition_id,
+        fis_codex=row.fis_codex, import_code=row.import_code,
+        official_name=row.official_name, active=row.active)
+        for row in source.competition_mappings if row.competition_id not in existing]
+    db.session.add_all(copies)
+    db.session.commit()
+    return jsonify({'created': len(copies), 'event': target.to_dict(include_mappings=True)})
 
 
 # Athletes
@@ -3183,9 +3301,9 @@ def get_room_availability():
         # Calculate demand
         demand_query = EventRoomDemand.query.filter_by(room_type_id=rt.id)
         if start_date and end_date:
-            demand_query = demand_query.join(Event).filter(
-                Event.start_date <= end_date,
-                Event.end_date >= start_date
+            demand_query = demand_query.join(AccommodationEvent).filter(
+                AccommodationEvent.start_date <= end_date,
+                AccommodationEvent.end_date >= start_date
             )
 
         demands = demand_query.all()
@@ -3220,7 +3338,7 @@ def get_room_availability():
 def get_occupancy_timeline():
     """Get room occupancy over time"""
     # Get all events with their demands
-    events = Event.query.all()
+    events = AccommodationEvent.query.all()
 
     timeline = []
     for event in events:

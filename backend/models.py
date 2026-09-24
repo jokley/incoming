@@ -315,7 +315,7 @@ class HotelRoomInventory(db.Model):
         }
 
 
-class Event(db.Model):
+class AccommodationEvent(db.Model):
     """Events/Disziplinen mit Bedarf an Zimmern"""
     __tablename__ = 'event'
 
@@ -386,6 +386,7 @@ class Competition(db.Model):
     quota_discipline = db.Column(db.String(120), nullable=False, index=True)
     active = db.Column(db.Boolean, nullable=False, default=True)
     athletes = db.relationship('Athlete', secondary='athlete_competition', back_populates='competitions')
+    event_mappings = db.relationship('EventCompetition', back_populates='competition', cascade='all, delete-orphan')
 
     def to_dict(self):
         return {
@@ -395,6 +396,55 @@ class Competition(db.Model):
             'quotaDiscipline': self.quota_discipline,
             'teamCompetition': self.team_competition, 'active': self.active,
         }
+
+
+class Event(db.Model):
+    """Top-level championship context (accommodation scoping follows later)."""
+    __tablename__ = 'championship_event'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(160), nullable=False, unique=True)
+    year = db.Column(db.Integer)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    fis_event_id = db.Column(db.String(50))
+    sector_code = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    competition_mappings = db.relationship('EventCompetition', back_populates='event', cascade='all, delete-orphan')
+
+    def to_dict(self, include_mappings=False):
+        result = {'id': str(self.id), 'name': self.name, 'year': self.year,
+                  'active': self.active, 'fisEventId': self.fis_event_id,
+                  'sectorCode': self.sector_code}
+        if include_mappings:
+            result['competitionMappings'] = [mapping.to_dict() for mapping in self.competition_mappings]
+        return result
+
+
+class EventCompetition(db.Model):
+    """Event-dependent external FIS identity of a stable Competition."""
+    __tablename__ = 'event_competition'
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='CASCADE'), nullable=False, index=True)
+    competition_id = db.Column(db.Integer, db.ForeignKey('competition.id', ondelete='CASCADE'), nullable=False, index=True)
+    fis_codex = db.Column(db.String(30), nullable=False)
+    import_code = db.Column(db.String(50), nullable=False)
+    official_name = db.Column(db.String(120), nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    __table_args__ = (
+        db.UniqueConstraint('event_id', 'competition_id', name='uq_event_competition_competition'),
+        db.UniqueConstraint('event_id', 'import_code', name='uq_event_competition_import_code'),
+    )
+    event = db.relationship('Event', back_populates='competition_mappings')
+    competition = db.relationship('Competition', back_populates='event_mappings')
+
+    def to_dict(self):
+        competition = self.competition
+        return {'id': str(self.id), 'eventId': str(self.event_id),
+                'competitionId': str(self.competition_id), 'fisCodex': self.fis_codex,
+                'importCode': self.import_code, 'officialName': self.official_name,
+                'active': self.active, 'displayName': competition.display_name,
+                'sport': competition.sport, 'gender': competition.gender,
+                'quotaDiscipline': competition.quota_discipline,
+                'teamCompetition': competition.team_competition}
 
 
 class Athlete(db.Model):
