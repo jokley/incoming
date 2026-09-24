@@ -1,6 +1,6 @@
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { evaluateAllQuotaGroups, isEvaluatedAsSingle, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
+import { isEvaluatedAsSingle } from '../services/quotaEvaluation';
 import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus';
 import { competitionDisplayList } from '../services/competitionPresentation';
 
@@ -125,7 +125,7 @@ export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] 
 }
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
-export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = [], quotaUsage: OfficialQuotaUsage[] = []): ListRow[] {
+export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = [], _quotaUsage: OfficialQuotaUsage[] = []): ListRow[] {
   const inventoriesByHotelAndRoomType = new Map<string, NonNullable<Hotel['roomInventories']>>();
   hotels.forEach(hotel => (hotel.roomInventories || []).forEach(inventory => {
     const key = `${hotel.id}/${inventory.roomType.id}`;
@@ -133,8 +133,6 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
     entries.push(inventory);
     inventoriesByHotelAndRoomType.set(key, entries);
   }));
-  const evaluations = evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromBookings(bookings));
-  const additionalCostPersonIds = new Set(evaluations.flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId)));
   const assignments = new Map<string, { booking: RoomBooking; roommate: string }>();
   const counters = new Map<string, number>();
   const displayRoomByBooking = new Map<string, string>();
@@ -179,7 +177,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       lastMeal: value(athlete.lastMeal),
       specialMeal: value(athlete.specialMeal),
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
-      surcharge: additionalCostPersonIds.has(athlete.id) ? 'Ja' : 'Nein',
+      surcharge: isEvaluatedAsSingle(booking) ? 'Ja' : 'Nein',
       quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
       roommate: value(assignment?.roommate || athlete.sharedWithName),
       athleteRemark: value(athlete.additionalItems),

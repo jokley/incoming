@@ -211,6 +211,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=luca.id))
             db.session.commit()
+            booking_id = booking.id
 
         response = app.test_client().get('/api/fis/official-quotas?nationCode=BRA')
         self.assertEqual(response.status_code, 200)
@@ -220,6 +221,29 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             'Snowboard Big Air': (1, 1),
             'Snowboard Slopestyle': (1, 1),
         })
+        self.assertEqual({row['discipline']: row['singleRoomsUsed']
+                          for row in response.get_json()}, {
+            'Snowboard Big Air': 0,
+            'Snowboard Slopestyle': 0,
+        })
+        self.assertFalse(app.test_client().get('/api/athletes').get_json()[0]
+                         ['assignment']['countsAsSingle'])
+
+        toggled = app.test_client().put(
+            f'/api/assignments/bookings/{booking_id}', json={'countsAsSingle': True})
+        self.assertEqual(toggled.status_code, 200)
+        self.assertTrue(toggled.get_json()['countsAsSingle'])
+        self.assertEqual(toggled.get_json()['roomType']['name'], 'Double')
+        quota_with_override = app.test_client().get(
+            '/api/fis/official-quotas?nationCode=BRA').get_json()
+        self.assertEqual({row['discipline']: row['singleRoomsUsed']
+                          for row in quota_with_override}, {
+            'Snowboard Big Air': 1,
+            'Snowboard Slopestyle': 1,
+        })
+        athlete_payload = app.test_client().get('/api/athletes').get_json()[0]
+        self.assertTrue(athlete_payload['assignment']['countsAsSingle'])
+        self.assertEqual(athlete_payload['assignment']['roomTypeName'], 'Double')
 
         with app.app_context():
             mapping = EventCompetition.query.one()
@@ -229,6 +253,64 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         changed = app.test_client().get('/api/fis/official-quotas?nationCode=BRA').get_json()
         self.assertEqual({row['discipline']: (row['peopleAssigned'], row['peopleTotal'])
                           for row in changed}, disposition)
+        self.assertEqual({row['discipline']: row['singleRoomsUsed'] for row in changed}, {
+            'Snowboard Big Air': 1,
+            'Snowboard Slopestyle': 1,
+        })
+
+        untoggled = app.test_client().put(
+            f'/api/assignments/bookings/{booking_id}', json={'countsAsSingle': False})
+        self.assertEqual(untoggled.status_code, 200)
+        self.assertFalse(untoggled.get_json()['countsAsSingle'])
+        self.assertEqual(untoggled.get_json()['roomType']['name'], 'Double')
+        quota_without_override = app.test_client().get(
+            '/api/fis/official-quotas?nationCode=BRA').get_json()
+        self.assertEqual({row['discipline']: row['singleRoomsUsed']
+                          for row in quota_without_override}, {
+            'Snowboard Big Air': 0,
+            'Snowboard Slopestyle': 0,
+        })
+        self.assertEqual({row['discipline']: (row['peopleAssigned'], row['peopleTotal'])
+                          for row in quota_without_override}, disposition)
+
+        with app.app_context():
+            single = RoomType(name='Single', max_persons=1)
+            db.session.add(single)
+            db.session.flush()
+            db.session.add(HotelRoomInventory(hotel_id=Hotel.query.one().id,
+                room_type_id=single.id, available_from=date(2027, 3, 1),
+                available_until=date(2027, 3, 31), room_count=1))
+            db.session.commit()
+            single_id = single.id
+        physical_single = app.test_client().put(
+            f'/api/assignments/bookings/{booking_id}', json={'roomTypeId': str(single_id)})
+        self.assertEqual(physical_single.status_code, 200)
+        self.assertEqual(physical_single.get_json()['roomType']['name'], 'Single')
+        self.assertFalse(physical_single.get_json()['countsAsSingle'])
+        quota_in_physical_single = app.test_client().get(
+            '/api/fis/official-quotas?nationCode=BRA').get_json()
+        self.assertEqual({row['discipline']: row['singleRoomsUsed']
+                          for row in quota_in_physical_single}, {
+            'Snowboard Big Air': 0,
+            'Snowboard Slopestyle': 0,
+        })
+        self.assertFalse(app.test_client().get('/api/athletes').get_json()[0]
+                         ['assignment']['countsAsSingle'])
+
+        physical_single_with_override = app.test_client().put(
+            f'/api/assignments/bookings/{booking_id}', json={'countsAsSingle': True})
+        self.assertEqual(physical_single_with_override.status_code, 200)
+        self.assertEqual(physical_single_with_override.get_json()['roomType']['name'], 'Single')
+        self.assertTrue(physical_single_with_override.get_json()['countsAsSingle'])
+        quota_in_overridden_physical_single = app.test_client().get(
+            '/api/fis/official-quotas?nationCode=BRA').get_json()
+        self.assertEqual({row['discipline']: row['singleRoomsUsed']
+                          for row in quota_in_overridden_physical_single}, {
+            'Snowboard Big Air': 1,
+            'Snowboard Slopestyle': 1,
+        })
+        self.assertTrue(app.test_client().get('/api/athletes').get_json()[0]
+                        ['assignment']['countsAsSingle'])
 
     def test_pending_import_context_is_projected_into_assigned_booking(self):
         with app.app_context():
@@ -313,7 +395,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()['occupants'][0]['athlete']['id'], athlete_id)
 
-    def test_exclusive_occupancy_follows_status_and_actual_double_room_occupancy(self):
+    def test_quota_single_flag_is_not_derived_from_entitlement_or_occupancy(self):
         with app.app_context():
             entitled = self.athlete('Lina', 'Frei')
             entitled.single_room_status = 'IN_QUOTA'
@@ -330,7 +412,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             'roomNumber': 'Slot 01', 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
         })
         self.assertEqual(created.status_code, 201)
-        self.assertTrue(created.get_json()['countsAsSingle'])
+        self.assertFalse(created.get_json()['countsAsSingle'])
         booking_id = created.get_json()['id']
 
         shared = client.post('/api/assignments/bookings', json={
@@ -344,11 +426,11 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         removed = client.post(f'/api/assignments/bookings/{booking_id}/occupants/{partner_id}/unassign')
         self.assertEqual(removed.status_code, 200)
         with app.app_context():
-            self.assertTrue(db.session.get(RoomBooking, int(booking_id)).counts_as_single)
+            self.assertFalse(db.session.get(RoomBooking, int(booking_id)).counts_as_single)
 
-        overridden = client.put(f'/api/assignments/bookings/{booking_id}', json={'countsAsSingle': False})
+        overridden = client.put(f'/api/assignments/bookings/{booking_id}', json={'countsAsSingle': True})
         self.assertEqual(overridden.status_code, 200)
-        self.assertFalse(overridden.get_json()['countsAsSingle'])
+        self.assertTrue(overridden.get_json()['countsAsSingle'])
 
     def test_non_entitled_single_occupant_is_not_marked_exclusive(self):
         with app.app_context():

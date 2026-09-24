@@ -42,7 +42,7 @@ export interface QuotaSummary {
 }
 
 /** Persisted `countsAsSingle` is the only operational quota classification. */
-export const isEvaluatedAsSingle = (booking?: Pick<RoomBooking, 'countsAsSingle'> | null) =>
+export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | null) =>
   Boolean(booking?.countsAsSingle);
 
 export const quotaUsageKey = (nation?: string | null, discipline?: string | null, gender?: string | null) =>
@@ -53,22 +53,24 @@ export const isAdditionalCostQuota = (row?: Pick<OfficialQuotaUsage, 'singleRoom
 
 /** Converts live room assignments into the calculation's room-type-independent input. */
 export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssignment[] {
-  return bookings.flatMap(booking => booking.occupants.map(({ athlete }) => ({
-    personId: athlete.id,
-    bookingId: booking.id,
-    nationCode: athlete.nationCode,
-    discipline: athlete.discipline || athlete.disciplines?.[0],
-    gender: athlete.gender,
-    function: athlete.function,
-    countsAsSingle: isEvaluatedAsSingle(booking),
-  })));
+  return bookings.flatMap(booking => booking.occupants.flatMap(({ athlete }) => {
+    const quotaDisciplines = athlete.competitions?.map(item => item.quotaDiscipline) || [];
+    const disciplines = [...new Set(quotaDisciplines.length
+      ? quotaDisciplines : [athlete.discipline || athlete.disciplines?.[0]])];
+    return disciplines.filter(Boolean).map(discipline => ({ personId: athlete.id, bookingId: booking.id,
+      nationCode: athlete.nationCode, discipline, gender: athlete.gender, function: athlete.function,
+      countsAsSingle: isEvaluatedAsSingle(booking) }));
+  }));
 }
 
 export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): QuotaAssignment[] {
   return hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings.flatMap(booking =>
-    booking.occupants.map(person => ({ personId: person.athleteId, bookingId: booking.bookingId,
-      nationCode: person.nationCode, discipline: person.discipline, gender: person.gender,
-      function: person.function, countsAsSingle: Boolean(booking.countsAsSingle) })))));
+    booking.occupants.flatMap(person => [...new Set(person.quotaDisciplines?.length
+      ? person.quotaDisciplines : [person.discipline])].filter(Boolean).map(discipline => ({
+        personId: person.athleteId, bookingId: booking.bookingId,
+        nationCode: person.nationCode, discipline, gender: person.gender,
+        function: person.function, countsAsSingle: Boolean(booking.countsAsSingle),
+      }))))));
 }
 
 /** Reconciles quota definitions with the current disposition for every consumer. */

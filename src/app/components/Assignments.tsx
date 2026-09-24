@@ -2259,7 +2259,9 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
   const people = new Map<string, SingleRoomControlPerson>();
   allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
     if (occupant.nationCode !== card.nationCode
-      || (occupant.discipline || '—') !== card.discipline
+      || !(occupant.quotaDisciplines?.length
+        ? occupant.quotaDisciplines.includes(card.discipline)
+        : (occupant.discipline || '—') === card.discipline)
       || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);

@@ -55,6 +55,19 @@ def disposition_by_quota_group(people, assigned_person_ids=()):
     }
 
 
+def single_room_usage_by_quota_group(people, single_room_person_ids=()):
+    """Count persisted quota-single overrides once per person and quota group."""
+    single_room_person_ids = set(single_room_person_ids)
+    usage = {}
+    for person in people:
+        if person.get('personId') not in single_room_person_ids:
+            continue
+        for key in quota_keys(person):
+            if key[2]:
+                usage[key] = usage.get(key, 0) + 1
+    return usage
+
+
 def evaluate_quota_usage(people, assigned_people=()):
     """Return quota rows for a roster and its assigned officials.
 

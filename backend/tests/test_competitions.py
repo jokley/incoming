@@ -98,9 +98,12 @@ def test_person_based_disposition_uses_real_brazil_roster_memberships():
 
 
 def test_disposition_deduplicates_competitions_with_the_same_quota_discipline():
-    from quota_service import disposition_by_quota_group
+    from quota_service import (disposition_by_quota_group,
+                               single_room_usage_by_quota_group)
 
     person = {'personId': 7, 'function': 'Athlete', 'nationCode': 'SUI', 'gender': 'F',
               'quotaDisciplines': ['Moguls', 'Moguls']}
     assert disposition_by_quota_group([person], {7}) == {
         ('SUI', 'Moguls', 'F'): {'peopleTotal': 1, 'peopleAssigned': 1}}
+    assert single_room_usage_by_quota_group([person], {7}) == {
+        ('SUI', 'Moguls', 'F'): 1}
