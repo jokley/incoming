@@ -31,6 +31,30 @@ def quota_keys(person):
     }
 
 
+def disposition_by_quota_group(people, assigned_person_ids=()):
+    """Count distinct people and room assignments in every quota group.
+
+    Accommodation remains attached to the person. A person's single assignment
+    is therefore visible in each distinct quota discipline they participate in,
+    while competitions sharing a quota discipline still contribute only once.
+    """
+    assigned_person_ids = set(assigned_person_ids)
+    totals = {}
+    assigned = {}
+    for person in people:
+        person_id = person.get('personId')
+        for key in quota_keys(person):
+            if not key[2]:
+                continue
+            totals[key] = totals.get(key, 0) + 1
+            if person_id in assigned_person_ids:
+                assigned[key] = assigned.get(key, 0) + 1
+    return {
+        key: {'peopleTotal': total, 'peopleAssigned': assigned.get(key, 0)}
+        for key, total in totals.items()
+    }
+
+
 def evaluate_quota_usage(people, assigned_people=()):
     """Return quota rows for a roster and its assigned officials.
 

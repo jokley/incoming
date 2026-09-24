@@ -2,7 +2,7 @@ from flask import Flask, g, request, jsonify, send_from_directory, send_file, ha
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
-from quota_service import evaluate_quota_usage
+from quota_service import disposition_by_quota_group, evaluate_quota_usage
 from datetime import datetime
 import hashlib
 import os
@@ -1503,7 +1503,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         )
 
     athletes = athletes.all()
-    roster = [{'nationCode': a.nation_code, 'discipline': a.discipline,
+    roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
                'quotaDisciplines': sorted({c.quota_discipline for c in a.competitions}),
                'gender': a.gender, 'forGender': a.for_gender,
                'function': a.function} for a in athletes]
@@ -1540,6 +1540,10 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
             'countsAsSingle': booking_by_athlete[athlete.id]})
     rows = evaluate_quota_usage(roster, assigned)
+    # Resolve accommodation through the person-to-booking membership. The same
+    # persisted assignment applies to every distinct quota discipline of a
+    # multi-competition athlete; EventCompetition carries no accommodation.
+    disposition = disposition_by_quota_group(roster, booking_by_athlete)
     approved_by_key = {}
     implemented_by_key = {}
     for athlete in athletes:
@@ -1565,6 +1569,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         state['approved' if decision == 'APPROVED' else 'pending'] += 1
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
+        row.update(disposition.get(key, {'peopleTotal': 0, 'peopleAssigned': 0}))
         row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
         row['requiredSingleRooms'] = row['singleRoomsUsed']
         row['implementedSingleRooms'] = implemented_by_key.get(key, 0)

@@ -16,6 +16,8 @@ export interface OfficialQuotaUsage {
   openApprovals: number;
   approvedExceptions: number;
   quotaStatus: 'FULFILLED' | 'DECISION_REQUIRED' | 'EXCEPTION_APPROVED';
+  peopleTotal: number;
+  peopleAssigned: number;
 }
 
 /**
