@@ -21,6 +21,16 @@ def quota_key(person):
     )
 
 
+def quota_keys(person):
+    """Return distinct quota groups; multiple competitions may share a group."""
+    disciplines = person.get('quotaDisciplines') or [person.get('discipline') or '']
+    return {
+        (person.get('nationCode') or '', discipline, normalize_gender(
+            person.get('gender') or person.get('forGender')))
+        for discipline in disciplines
+    }
+
+
 def evaluate_quota_usage(people, assigned_people=()):
     """Return quota rows for a roster and its assigned officials.
 
@@ -34,12 +44,12 @@ def evaluate_quota_usage(people, assigned_people=()):
     singles = {}
     keys = set()
     for person in people:
-        key = quota_key(person)
-        if not key[2]:
-            continue
-        keys.add(key)
-        if (person.get('function') or '').strip().lower() == 'athlete':
-            athletes[key] = athletes.get(key, 0) + 1
+        for key in quota_keys(person):
+            if not key[2]:
+                continue
+            keys.add(key)
+            if (person.get('function') or '').strip().lower() == 'athlete':
+                athletes[key] = athletes.get(key, 0) + 1
     for person in assigned_people:
         if (person.get('function') or '').strip().lower() == 'athlete':
             continue

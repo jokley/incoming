@@ -537,6 +537,11 @@ def parse_entries_list(df, athlete_maps):
                 column for column in competition_columns
                 if column in COMPETITION_BY_IMPORT_CODE and parse_boolean(row.get(column))
             ],
+            'quotaDisciplines': sorted({
+                COMPETITION_BY_IMPORT_CODE[column].quota_discipline
+                for column in competition_columns
+                if column in COMPETITION_BY_IMPORT_CODE and parse_boolean(row.get(column))
+            }),
             'forGender': normalize_whitespace(row.get('For_gender')) or None,
             'gender': normalize_whitespace(row.get('Gender')) or None,
             'phone': normalize_whitespace(row.get('Phone')) or None,
@@ -1537,7 +1542,11 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     # Synchronise the official catalogue before memberships.  Existing IDs are
     # retained so filters and references remain stable between imports.
     competitions_by_import_code = {}
-    for import_code, code, name, sport, gender, team_competition in COMPETITIONS:
+    active_import_codes = {definition.import_code for definition in COMPETITIONS}
+    Competition.query.filter(~Competition.import_code.in_(active_import_codes)).update(
+        {'active': False}, synchronize_session=False)
+    for definition in COMPETITIONS:
+        import_code, code, name, sport, gender, team_competition, display_name, quota_discipline = definition
         competition = Competition.query.filter_by(import_code=import_code).first()
         if not competition:
             competition = Competition(import_code=import_code, code=code)
@@ -1546,6 +1555,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
         competition.sport = sport
         competition.gender = gender
         competition.team_competition = team_competition
+        competition.display_name = display_name
+        competition.quota_discipline = quota_discipline
         competition.active = True
         competitions_by_import_code[import_code] = competition
     db.session.flush()

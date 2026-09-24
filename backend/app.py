@@ -1497,12 +1497,16 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     if discipline:
         athletes = athletes.filter(
-            or_(Athlete.competitions.any(Competition.name == discipline), Athlete.discipline == discipline)
+            or_(Athlete.competitions.any(Competition.quota_discipline == discipline),
+                Athlete.competitions.any(Competition.name == discipline),
+                Athlete.discipline == discipline)
         )
 
     athletes = athletes.all()
-    roster = [{'nationCode': a.nation_code, 'discipline': a.discipline, 'gender': a.gender,
-               'forGender': a.for_gender, 'function': a.function} for a in athletes]
+    roster = [{'nationCode': a.nation_code, 'discipline': a.discipline,
+               'quotaDisciplines': sorted({c.quota_discipline for c in a.competitions}),
+               'gender': a.gender, 'forGender': a.for_gender,
+               'function': a.function} for a in athletes]
 
     # Load every assignment once. The former per-athlete ``first()`` lookups made
     # this endpoint issue up to two SQL statements per person. Keeping the first

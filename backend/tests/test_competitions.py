@@ -1,25 +1,64 @@
 import pandas as pd
 
-from competitions import COMPETITION_BY_IMPORT_CODE
+from competitions import COMPETITIONS, COMPETITION_BY_IMPORT_CODE
 from excel_import import parse_entries_list
+from quota_service import evaluate_quota_usage
 
 
-def test_official_mapping_contains_production_columns():
-    assert COMPETITION_BY_IMPORT_CODE['WSC_BA_M_6182'][2] == "Men's Big Air"
-    assert COMPETITION_BY_IMPORT_CODE['WSC_DM_M_8217'][3] == 'Freestyle Ski'
-    assert COMPETITION_BY_IMPORT_CODE['WSC_PRT_A_6180'][5] is True
+EXPECTED_CODES = {
+    '6170', '6172', '6174', '6175', '6177', '6178', '6180', '6182',
+    '6183', '6188', '6190', '6191', '6192', '6193', '8171', '8172',
+    '8178', '8179', '8180', '8181', '8183', '8184', '8185', '8186',
+    '8187', '8188', '8193', '8194', '8195', '8196', '8197',
+}
+
+
+def test_catalogue_is_complete_and_uses_2027_codex_values():
+    assert len(COMPETITIONS) == 31
+    assert {competition.code for competition in COMPETITIONS} == EXPECTED_CODES
+    assert len(COMPETITION_BY_IMPORT_CODE) == len(COMPETITIONS)
+
+
+def test_catalogue_carries_official_and_presentation_metadata():
+    parallel = COMPETITION_BY_IMPORT_CODE['WSC_PGS_M_6170']
+    assert parallel.name == "Men's Parallel Giant Slalom"
+    assert parallel.display_name == 'Parallel Giant Slalom'
+    assert parallel.quota_discipline == 'Parallel'
+    assert parallel.sport == 'Snowboard'
+    assert parallel.gender == 'M'
+    assert parallel.team_competition is False
+
+    team = COMPETITION_BY_IMPORT_CODE['WSC_DMT_A_8188']
+    assert team.name == 'Dual Moguls Team'
+    assert team.display_name == 'Dual Moguls Team'
+    assert team.quota_discipline == 'Moguls'
+    assert team.sport == 'Freestyle Ski'
+    assert team.gender == 'A'
+    assert team.team_competition is True
 
 
 def test_every_yes_column_creates_a_membership_without_duplicate_person():
     frame = pd.DataFrame([{
         'Function': 'Athlete', 'Lastname': 'MERIMEE MANTOVANI',
         'Firstname': 'Luca', 'Nationcode': 'BRA', 'Fiscode': '9190576',
-        'WSC_BA_M_6182': 'YES', 'WSC_SS_M_6188': 'YES',
+        'Gender': 'M', 'WSC_BA_M_6182': 'YES', 'WSC_SS_M_6188': 'YES',
         'WSC_SBX_M_6191': 'NO',
     }])
     result = parse_entries_list(frame, {'by_fis_code': {}, 'by_competitor_id': {}, 'by_name_key': {}})
     assert len(result['people']) == 1
     assert result['people'][0]['competitionImportCodes'] == ['WSC_BA_M_6182', 'WSC_SS_M_6188']
+    assert result['people'][0]['quotaDisciplines'] == ['Snowboard Big Air', 'Snowboard Slopestyle']
+
+
+def test_quota_counts_each_athlete_once_per_group_and_in_distinct_groups():
+    people = [{
+        'function': 'Athlete', 'nationCode': 'SUI', 'gender': 'M',
+        'quotaDisciplines': ['Moguls', 'Moguls', 'Freeski Big Air'],
+    }]
+    rows = evaluate_quota_usage(people)
+    assert {(row['discipline'], row['athletesEntered']) for row in rows} == {
+        ('Moguls', 1), ('Freeski Big Air', 1),
+    }
 
 
 def test_unknown_wsc_column_is_blocking_instead_of_inferred():
