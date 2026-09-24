@@ -10,7 +10,7 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
-from quota_service import evaluate_quota_usage, quota_key
+from quota_service import evaluate_quota_usage, quota_key, quota_keys
 from models import Athlete, Competition, AccommodationEvent, Event, EventCompetition, FisRoomAssignment, ImportRun, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 from competitions import COMPETITION_BY_IMPORT_CODE
 
@@ -856,10 +856,12 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                 },
             })
         if imported_single_rooms > single_room_entitlement:
+            group = (nation_code, discipline, gender)
             single_room_people = [person for person in requested
                 if person.get('countsAsSingle')
-                and (person.get('function') or '').strip().lower() != 'athlete'
-                and quota_key(person) == (nation_code, discipline, gender)]
+                and (group in quota_keys(person)
+                     if (person.get('function') or '').strip().lower() == 'athlete'
+                     else quota_key(person) == group)]
             excess_count = imported_single_rooms - single_room_entitlement
             candidates = [{
                 'personKey': person.get('matchKey'),
@@ -906,14 +908,20 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks):
     for person in people:
         person['singleRoomEntitlement'] = None
         room = room_by_person.get(person.get('matchKey'))
-        if ((person.get('function') or '').strip().lower() == 'athlete'
-                or not room or normalize_string(room.get('roomType')) != 'single'):
+        if not room or normalize_string(room.get('roomType')) != 'single':
             continue
-        key = quota_key({**person, 'discipline': person.get('industryName')})
-        used = allocated.get(key, 0)
-        if used < allowances.get(key, 0):
+        quota_person = {**person, 'discipline': person.get('industryName')}
+        is_athlete = (person.get('function') or '').strip().lower() == 'athlete'
+        groups = quota_keys(quota_person) if is_athlete else {quota_key(quota_person)}
+        within_quota = True
+        for key in groups:
+            used = allocated.get(key, 0)
+            if used < allowances.get(key, 0):
+                allocated[key] = used + 1
+            else:
+                within_quota = False
+        if within_quota:
             person['singleRoomEntitlement'] = 'IN_QUOTA'
-            allocated[key] = used + 1
         else:
             person['singleRoomEntitlement'] = 'APPROVAL_REQUIRED'
 
@@ -1647,21 +1655,24 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
         athlete.discipline = ' • '.join(c.name for c in athlete.competitions) or athlete.discipline
         room = room_by_person.get(person.get('matchKey'))
         requests_single = bool(room and normalize_string(room.get('roomType')) == 'single')
-        group = quota_key({**person, 'discipline': person.get('industryName')})
-        used = allocated_in_quota.get(group, 0)
-        if requests_single and (person.get('function') or '').strip().lower() != 'athlete':
+        quota_person = {**person, 'discipline': person.get('industryName')}
+        is_athlete = (person.get('function') or '').strip().lower() == 'athlete'
+        groups = quota_keys(quota_person) if is_athlete else {quota_key(quota_person)}
+        if requests_single:
             if person.get('matchKey') in approved_extra_single_room_decisions:
                 athlete.single_room_entitlement = 'APPROVED_EXTRA'
                 athlete.single_room_status = 'APPROVED_EXTRA'
                 athlete.single_room_decision_id = approved_extra_single_room_decisions.get(person.get('matchKey'))
-            elif used < single_room_allowances.get(group, 0):
-                athlete.single_room_entitlement = 'IN_QUOTA'
-                athlete.single_room_status = 'IN_QUOTA'
-                athlete.single_room_decision_id = None
-                allocated_in_quota[group] = used + 1
             else:
-                athlete.single_room_entitlement = None
-                athlete.single_room_status = 'PENDING_APPROVAL'
+                within_quota = True
+                for group in groups:
+                    used = allocated_in_quota.get(group, 0)
+                    if used < single_room_allowances.get(group, 0):
+                        allocated_in_quota[group] = used + 1
+                    else:
+                        within_quota = False
+                athlete.single_room_entitlement = 'IN_QUOTA' if within_quota else None
+                athlete.single_room_status = 'IN_QUOTA' if within_quota else 'PENDING_APPROVAL'
                 athlete.single_room_decision_id = None
         else:
             athlete.single_room_entitlement = None
