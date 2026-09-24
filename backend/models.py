@@ -379,16 +379,20 @@ class Competition(db.Model):
     import_code = db.Column(db.String(50), nullable=False, unique=True, index=True)
     code = db.Column(db.String(30), nullable=False, unique=True)
     name = db.Column(db.String(120), nullable=False)
+    display_name = db.Column(db.String(120), nullable=False)
     sport = db.Column(db.String(80), nullable=False, index=True)
     gender = db.Column(db.String(10), nullable=False)
     team_competition = db.Column(db.Boolean, nullable=False, default=False)
+    quota_discipline = db.Column(db.String(120), nullable=False, index=True)
     active = db.Column(db.Boolean, nullable=False, default=True)
     athletes = db.relationship('Athlete', secondary='athlete_competition', back_populates='competitions')
 
     def to_dict(self):
         return {
             'id': str(self.id), 'importCode': self.import_code, 'code': self.code,
-            'name': self.name, 'sport': self.sport, 'gender': self.gender,
+            'name': self.name, 'displayName': self.display_name,
+            'sport': self.sport, 'gender': self.gender,
+            'quotaDiscipline': self.quota_discipline,
             'teamCompetition': self.team_competition, 'active': self.active,
         }
 

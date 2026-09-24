@@ -78,9 +78,11 @@ export interface Competition {
   importCode: string;
   code: string;
   name: string;
+  displayName: string;
   sport: string;
   gender: string;
   teamCompetition: boolean;
+  quotaDiscipline: string;
   active: boolean;
 }
 
