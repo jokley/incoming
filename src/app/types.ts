@@ -439,6 +439,7 @@ export interface FisImportPreviewRoom {
 
 export interface FisImportPreview {
   previewToken: string;
+  eventId?: string | null;
   isValid: boolean;
   detectedDiscipline?: string | null;
   summary: {

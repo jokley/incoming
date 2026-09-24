@@ -43,7 +43,7 @@ export function DataImport() {
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
   useEffect(() => { (async () => { try { const [loaded, activeEvents] = await Promise.all([api.getImportSessions(), api.getChampionshipEvents()]); setSessions(loaded); setEvents(activeEvents); setEventId(activeEvents[0]?.id ?? ''); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
-  const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); setFiles([]); setSuccess(null); };
+  const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); if (full.preview?.eventId) setEventId(full.preview.eventId); setFiles([]); setSuccess(null); };
   const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); };
   const handleFiles = (incoming: FileList | File[] | null | undefined) => {
     if (!incoming) return; const accepted = Array.from(incoming).filter(f => /\.xlsx?$/i.test(f.name));
@@ -116,7 +116,7 @@ export function DataImport() {
       <div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
         <ContentCard surface="raised" className="min-h-0 flex-1 overflow-hidden">
-          <div className="h-full overflow-y-auto"><div className="border-b border-[var(--ops-divider)] p-5"><TextField select fullWidth label="Event" value={eventId} onChange={e=>setEventId(e.target.value)} disabled={loading||confirming}>{events.map(event=><MenuItem key={event.id} value={event.id}>{event.name}</MenuItem>)}</TextField></div>
+          <div className="h-full overflow-y-auto"><div className="border-b border-[var(--ops-divider)] p-5"><TextField select size="small" label="Event" value={eventId} onChange={e=>{setEventId(e.target.value);setPreview(null);setFiles([]);}} disabled={loading||confirming} sx={{minWidth:280,maxWidth:420}}>{events.map(event=><MenuItem key={event.id} value={event.id}>{event.name}</MenuItem>)}</TextField></div>
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
               <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} - {competitionDisplayName(selected.discipline)}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>

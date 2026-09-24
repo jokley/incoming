@@ -876,7 +876,7 @@ class ApiService {
       }
       if (response.status === 403) throw new Error('FORBIDDEN');
       const payload = await response.json().catch(() => null);
-      throw new Error(payload?.error || `Preview failed: ${response.statusText}`);
+      throw new Error(payload?.message || payload?.error || `Preview failed: ${response.statusText}`);
     }
 
     return response.json();

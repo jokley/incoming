@@ -22,6 +22,21 @@ PREVIEW_TTL_SECONDS = 60 * 60
 class InvalidExcelFileError(ValueError):
     pass
 
+
+class ImportValidationError(ValueError):
+    """Expected event/mapping validation failure suitable for a 4xx response."""
+    def __init__(self, code, message, *, event_id=None, import_code=None):
+        super().__init__(message)
+        self.code = code
+        self.event_id = event_id
+        self.import_code = import_code
+
+    def to_dict(self):
+        return {key: value for key, value in {
+            'error': self.code, 'event_id': str(self.event_id) if self.event_id is not None else None,
+            'import_code': self.import_code, 'message': str(self),
+        }.items() if value is not None}
+
 DISCIPLINE_FILENAME_ALIASES = {
     'bigair': 'Big Air',
     'big_air': 'Big Air',
@@ -1366,6 +1381,15 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
     )
 
     blocking_errors = people_result['errors'] + room_result['errors']
+    unknown = next((issue for issue in blocking_errors
+                    if issue.get('code') == 'ENTRY_UNKNOWN_COMPETITION_COLUMNS'), None)
+    if event is not None and unknown:
+        import_codes = unknown.get('details', {}).get('columns', [])
+        import_code = import_codes[0] if len(import_codes) == 1 else None
+        raise ImportValidationError(
+            'UNKNOWN_COMPETITION_CODE', unknown['message'],
+            event_id=event.id, import_code=import_code,
+        )
     disposition_analysis['changes'] = build_import_changes(
         disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors
     )
@@ -1389,6 +1413,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
 
     return {
         'previewToken': preview_token,
+        'eventId': str(event.id) if event else None,
         'isValid': len(blocking_errors) == 0,
         'summary': {
             'people': {
@@ -1549,11 +1574,21 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     event_id = preview.get('eventId')
     event = Event.query.get(event_id) if event_id else None
     if not event:
-        raise ValueError('Import event is missing')
+        raise ImportValidationError('EVENT_NOT_FOUND', 'Das ausgewählte Import-Event existiert nicht mehr.', event_id=event_id)
+    if not event.active:
+        raise ImportValidationError('EVENT_INACTIVE', f'Event {event.name} ist inaktiv.', event_id=event.id)
     competitions_by_import_code = {
         mapping.import_code: mapping.competition
         for mapping in event.competition_mappings if mapping.active
     }
+    for person in preview.get('people', []):
+        for import_code in person.get('competitionImportCodes', []):
+            if import_code not in competitions_by_import_code:
+                raise ImportValidationError(
+                    'UNKNOWN_COMPETITION_CODE',
+                    f'Unbekannter Competition-Code {import_code} für Event {event.name}',
+                    event_id=event.id, import_code=import_code,
+                )
 
     persisted_people = {}
     created = 0

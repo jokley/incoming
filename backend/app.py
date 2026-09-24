@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from functools import wraps
 from sqlalchemy import text, func, event, or_
 from sqlalchemy.engine import Engine
-from excel_import import InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
+from excel_import import ImportValidationError, InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
@@ -1615,9 +1615,17 @@ def _save_uploaded_excel(file_storage):
 @app.route('/api/import/fis/preview/', methods=['POST'])
 def preview_fis_import():
     event_id = request.form.get('eventId')
-    event_context = Event.query.filter_by(id=event_id, active=True).first() if event_id else None
+    if not event_id:
+        return jsonify({'error': 'EVENT_REQUIRED', 'message': 'Bitte ein Event für den Import auswählen.'}), 400
+    event_context = Event.query.options(
+        db.selectinload(Event.competition_mappings).joinedload(EventCompetition.competition)
+    ).filter_by(id=event_id).first()
     if not event_context:
-        return jsonify({'error': 'Bitte ein aktives Event für den Import auswählen.'}), 400
+        return jsonify({'error': 'EVENT_NOT_FOUND', 'event_id': event_id,
+                        'message': 'Das ausgewählte Event wurde nicht gefunden.'}), 404
+    if not event_context.active:
+        return jsonify({'error': 'EVENT_INACTIVE', 'event_id': event_id,
+                        'message': f'Event {event_context.name} ist inaktiv.'}), 422
     uploaded_files = []
     if request.files.get('entriesList'):
         uploaded_files.append(('entriesList', request.files.get('entriesList')))
@@ -1679,6 +1687,7 @@ def preview_fis_import():
         room_path = detected['roomlist']
         source_hash = hashlib.sha256(
             Path(entries_path).read_bytes() + b'\0' + Path(room_path).read_bytes()
+            + b'\0event:' + str(event_context.id).encode('ascii')
         ).hexdigest()
         result = create_fis_import_preview(entries_path, room_path, event_context)
         session_id = request.form.get('sessionId')
@@ -1761,10 +1770,17 @@ def preview_fis_import():
             db.session.commit()
             result['session'] = session.to_dict(include_preview=True)
         return jsonify(result), 200
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 400
+    except ImportValidationError as exc:
+        db.session.rollback()
+        return jsonify(exc.to_dict()), 422
+    except (InvalidExcelFileError, ValueError) as exc:
+        db.session.rollback()
+        return jsonify({'error': 'INVALID_IMPORT_FILE', 'message': str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unexpected FIS preview failure for event %s', event_id)
+        return jsonify({'error': 'INTERNAL_SERVER_ERROR',
+                        'message': 'Die Importvorschau konnte technisch nicht erstellt werden.'}), 500
     finally:
         for path in temp_files:
             if path and os.path.exists(path):
@@ -1782,8 +1798,16 @@ def confirm_previewed_fis_import():
     try:
         result = confirm_fis_import(preview_token)
         return jsonify(result), 200
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
+    except ImportValidationError as exc:
+        db.session.rollback()
+        return jsonify(exc.to_dict()), 422
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify({'error': 'INVALID_IMPORT', 'message': str(exc)}), 400
+    except Exception:
+        db.session.rollback()
+        app.logger.exception('Unexpected FIS confirmation failure')
+        return jsonify({'error': 'INTERNAL_SERVER_ERROR'}), 500
 
 
 @app.route('/api/import/sessions', methods=['GET'])
@@ -1927,6 +1951,11 @@ def import_approved_session(session_id):
         db.session.commit()
         result['session'] = session.to_dict()
         return jsonify(result)
+    except ImportValidationError as exc:
+        db.session.rollback()
+        session.status, session.error_message = 'ERROR', str(exc)
+        db.session.commit()
+        return jsonify(exc.to_dict()), 422
     except Exception as exc:
         db.session.rollback()
         session.status, session.error_message = 'ERROR', str(exc)
