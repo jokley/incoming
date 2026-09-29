@@ -18,6 +18,7 @@ export interface QuotaAssignment {
   gender?: string | null;
   function?: string | null;
   countsAsSingle: boolean;
+  singleRoomStatus?: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
 }
 
 export interface PersonQuotaEvaluation extends QuotaAssignment {
@@ -45,11 +46,12 @@ export interface QuotaSummary {
 export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | null) =>
   Boolean(booking?.countsAsSingle);
 
+/** A surcharge is an approved import exception, never an operational room flag. */
+export const hasSingleRoomSurcharge = (person?: { single_room_status?: string | null } | null) =>
+  person?.single_room_status === 'APPROVED_EXTRA';
+
 export const quotaUsageKey = (nation?: string | null, discipline?: string | null, gender?: string | null) =>
   `${nation || ''}|${discipline || ''}|${normalizeGender(gender)}`;
-
-export const isAdditionalCostQuota = (row?: Pick<OfficialQuotaUsage, 'singleRoomsUsed' | 'singleRoomsAllowed'> | null) =>
-  Boolean(row && evaluateQuotaUsageRow(row).hasViolation);
 
 /** Converts live room assignments into the calculation's room-type-independent input. */
 export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssignment[] {
@@ -59,7 +61,7 @@ export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssi
       ? quotaDisciplines : [athlete.discipline || athlete.disciplines?.[0]])];
     return disciplines.filter(Boolean).map(discipline => ({ personId: athlete.id, bookingId: booking.id,
       nationCode: athlete.nationCode, discipline, gender: athlete.gender, function: athlete.function,
-      countsAsSingle: isEvaluatedAsSingle(booking) }));
+      countsAsSingle: isEvaluatedAsSingle(booking), singleRoomStatus: athlete.single_room_status }));
   }));
 }
 
@@ -70,6 +72,7 @@ export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): Quo
         personId: person.athleteId, bookingId: booking.bookingId,
         nationCode: person.nationCode, discipline, gender: person.gender,
         function: person.function, countsAsSingle: Boolean(booking.countsAsSingle),
+        singleRoomStatus: person.single_room_status,
       }))))));
 }
 
@@ -88,18 +91,15 @@ export function calculateQuotaUsage(assignments: QuotaAssignment[]): number {
 }
 
 /**
- * Marks only the deterministic overflow tail as additional cost. Input order is
- * disposition order, so an existing assignment keeps its result when new ones
- * are appended. No approval status or physical room type participates.
+ * Marks approved import exceptions as additional cost. Operational quota usage
+ * and the physical room type deliberately do not determine surcharge status.
  */
-export function calculateAdditionalCosts(assignments: QuotaAssignment[], allowedSingleRooms: number): PersonQuotaEvaluation[] {
-  let used = 0;
-  const allowance = Math.max(0, allowedSingleRooms);
-  return assignments.map(assignment => {
-    const additionalCost = assignment.countsAsSingle && used >= allowance;
-    if (assignment.countsAsSingle) used += 1;
-    return { ...assignment, groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender), additionalCost };
-  });
+export function calculateAdditionalCosts(assignments: QuotaAssignment[], _allowedSingleRooms: number): PersonQuotaEvaluation[] {
+  return assignments.map(assignment => ({
+    ...assignment,
+    groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender),
+    additionalCost: assignment.singleRoomStatus === 'APPROVED_EXTRA',
+  }));
 }
 
 export function evaluateQuotaGroup(definition: QuotaDefinition, assignments: QuotaAssignment[]): QuotaGroupEvaluation {

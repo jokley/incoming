@@ -1911,9 +1911,10 @@ function HotelDetailView({
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              {entry.booking.countsAsSingle ? <span className={`rounded-md border px-1.5 py-0.5 font-bold ${entry.booking.occupants.some(person => additionalCostPersonIds.has(person.athleteId)) ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]' : 'border-[var(--ops-tone-info-border)] bg-[var(--ops-tone-info-surface)] text-[var(--ops-tone-info-text)]'}`}>{entry.booking.occupants.some(person => additionalCostPersonIds.has(person.athleteId)) ? 'Einzelzimmer – Mehrpreis' : 'Einzelzimmer'}</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
+                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-info-border)] bg-[var(--ops-tone-info-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-info-text)]">Einzelzimmer</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
                               </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-[var(--ops-success)]">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
+                              {entry.booking.occupants.some(person => additionalCostPersonIds.has(person.athleteId)) && <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">Mehrpreis</span>}
                               {canAddPartner && (
                                 <span className={`${isBookingDropTarget ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)]'}`}>
                                   Partner hinzufügen
@@ -2265,7 +2266,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
-    if (!booking?.countsAsSingle) return;
+    if (!booking || (!booking.countsAsSingle && occupant.single_room_status !== 'APPROVED_EXTRA')) return;
     people.set(occupant.athleteId, {
       athleteId: occupant.athleteId,
       name: occupant.name,
@@ -2309,7 +2310,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     </header>
     <div className="flex-1 space-y-4 overflow-auto p-6">
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Mehrpreise" value={`${quotaEvaluation.overflow}`} warning={singlesOver} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="space-y-3">
