@@ -22,7 +22,7 @@ import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
-import { hasSingleRoomSurcharge } from '../services/quotaEvaluation';
+import { hasSingleRoomSurcharge, showStandaloneSingleRoomSurcharge } from '../services/quotaEvaluation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
@@ -382,7 +382,7 @@ export function Athletes() {
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomStatusBadge status={athlete.single_room_status} />{hasSingleRoomSurcharge(athlete) && <StatusChip tone="warning">Mehrpreis</StatusChip>}</div></div></Cell>
+                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomStatusBadge status={athlete.single_room_status} />{showStandaloneSingleRoomSurcharge(athlete) && <StatusChip tone="warning">Mehrpreis</StatusChip>}</div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
                 <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
