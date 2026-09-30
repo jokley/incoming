@@ -37,7 +37,7 @@ import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaUsageKey } from '../services/quotaEvaluation';
+import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, uniqueQuotaContext } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
   AssignmentGridHotel,
@@ -387,8 +387,8 @@ export function Assignments() {
     };
   }, [allUnitsCombined.length, assignedUnits.length]);
 
-  const quotaViolations = useMemo(
-    () => currentQuotaUsage.filter((row) => row.assignedOfficials > row.officialQuota || evaluateQuotaUsageRow(row).hasViolation),
+  const actionableQuotaCases = useMemo(
+    () => actionableQuotaCaseCount(currentQuotaUsage),
     [currentQuotaUsage]
   );
   const pendingQuotaDecisions = useMemo(
@@ -656,7 +656,7 @@ export function Assignments() {
           view={view}
           onViewChange={setView}
           progress={queueProgress}
-          violations={quotaViolations.length}
+          actionableQuotaCases={actionableQuotaCases}
           saving={saving}
           onRefresh={handleRefresh}
           quotaRows={currentQuotaUsage}
@@ -829,7 +829,7 @@ function TopBar({
   view,
   onViewChange,
   progress,
-  violations,
+  actionableQuotaCases,
   saving,
   onRefresh,
   quotaRows,
@@ -838,7 +838,7 @@ function TopBar({
   view: AppView;
   onViewChange: (view: AppView) => void;
   progress: { done: number; total: number; percent: number };
-  violations: number;
+  actionableQuotaCases: number;
   saving: boolean;
   onRefresh: () => void;
   quotaRows: OfficialQuotaUsage[];
@@ -888,9 +888,9 @@ function TopBar({
           </span>
         </div>
 
-        {violations > 0 && (
+        {actionableQuotaCases > 0 && (
           <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
-            {violations} Handlungsbedarf
+            {actionableQuotaCases} Handlungsbedarf
           </div>
         )}
 
@@ -909,8 +909,9 @@ function TopBar({
 }
 
 function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage[]; onOpen: () => void; refreshing: boolean }) {
-  const row = rows[0];
-  if (!row) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
+  if (!rows.length) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
+  const row = uniqueQuotaContext(buildQuotaCards(rows));
+  if (!row) return null;
 
   return (
     <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, als EZ gewertete Personen ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
@@ -2151,7 +2152,7 @@ function QuotasPanel({
   refreshing: boolean;
 }) {
   const cards = buildQuotaCards(rows);
-  const issues = cards.filter((card) => getQuotaState(card).tone !== 'success').length;
+  const issues = cards.filter(quotaRequiresAction).length;
   return (
     <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
       <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
