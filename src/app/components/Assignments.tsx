@@ -35,7 +35,7 @@ import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
-import { competitionDisplayName } from '../services/competitionPresentation';
+import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaUsageKey } from '../services/quotaEvaluation';
 import type {
@@ -312,10 +312,13 @@ export function Assignments() {
     const values = new Set<string>();
     for (const unit of allUnitsCombined) {
       for (const occupant of unit.occupants) {
-        if (occupant.discipline) values.add(occupant.discipline);
+        const disciplines = occupant.quotaDisciplines?.length
+          ? occupant.quotaDisciplines
+          : occupant.discipline ? [occupant.discipline] : [];
+        disciplines.forEach((discipline) => values.add(discipline));
       }
     }
-    return Array.from(values).sort();
+    return Array.from(values).sort((a, b) => disciplineDisplayName(a).localeCompare(disciplineDisplayName(b)));
   }, [allUnitsCombined]);
 
   const genderOptions = useMemo(() => {
@@ -887,7 +890,7 @@ function TopBar({
 
         {violations > 0 && (
           <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
-            {violations} Quote
+            {violations} Handlungsbedarf
           </div>
         )}
 
@@ -1080,7 +1083,7 @@ function QueueSidebar({
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
-          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, competitionDisplayName(value)]))} />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, disciplineDisplayName(value)]))} />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
@@ -2166,7 +2169,7 @@ function QuotasPanel({
         <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Quotengruppen filtern</div>
         <div className="grid gap-2 sm:grid-cols-3">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
-          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, competitionDisplayName(value)]))} />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, disciplineDisplayName(value)]))} />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Herren', F: 'Damen' }} />
         </div>
       </div>
@@ -2798,8 +2801,8 @@ function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
 function matchesAssignmentFilters(unit: RoomBookingUnit, filters: AssignmentFilterCriteria) {
   if (filters.status === 'pending' && unit.isFullyAssigned) return false;
   if (filters.nation && unit.nationCode !== filters.nation) return false;
-  if (filters.discipline && !unit.occupants.some((occupant) => occupant.discipline === filters.discipline)) return false;
-  if (filters.gender && !unit.occupants.some((occupant) => normalizeGender(occupant.gender) === filters.gender)) return false;
+  if ((filters.discipline || filters.gender) && !unit.occupants.some((occupant) =>
+    matchesDisciplineAndGender(occupant, filters.discipline, filters.gender))) return false;
   if (filters.roomCategory && getUnitRoomCategory(unit) !== filters.roomCategory) return false;
   if (filters.importReview && !unit.occupants.some((occupant) => occupant.hasPendingReview)) return false;
 
