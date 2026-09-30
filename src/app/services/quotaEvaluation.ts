@@ -50,6 +50,12 @@ export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | nul
 export const hasSingleRoomSurcharge = (person?: { single_room_status?: string | null } | null) =>
   person?.single_room_status === 'APPROVED_EXTRA';
 
+/** Labels for independent operational-single and approved-surcharge badges. */
+export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null) => [
+  ...(countsAsSingle ? ['Einzelzimmer'] : []),
+  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
+];
+
 export const quotaUsageKey = (nation?: string | null, discipline?: string | null, gender?: string | null) =>
   `${nation || ''}|${discipline || ''}|${normalizeGender(gender)}`;
 

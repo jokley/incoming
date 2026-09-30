@@ -432,6 +432,96 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(overridden.status_code, 200)
         self.assertTrue(overridden.get_json()['countsAsSingle'])
 
+    def test_approved_extra_initializes_single_flag_independent_of_room_type(self):
+        with app.app_context():
+            approved_double = self.athlete('Patrick', 'Burgener')
+            approved_double.single_room_status = 'APPROVED_EXTRA'
+            approved_single = self.athlete('Anna', 'Single')
+            approved_single.single_room_status = 'APPROVED_EXTRA'
+            approved_explicit_false = self.athlete('Eva', 'Override')
+            approved_explicit_false.single_room_status = 'APPROVED_EXTRA'
+            ordinary_single = self.athlete('Nina', 'Ordinary')
+            single = RoomType(name='Single', max_persons=1)
+            db.session.add_all([
+                approved_double, approved_single, approved_explicit_false,
+                ordinary_single, single,
+            ])
+            db.session.flush()
+            hotel = Hotel.query.one()
+            db.session.add(HotelRoomInventory(
+                hotel_id=hotel.id,
+                room_type_id=single.id,
+                available_from=date(2027, 3, 1),
+                available_until=date(2027, 3, 31),
+                room_count=2,
+            ))
+            db.session.commit()
+            hotel_id = str(hotel.id)
+            double_id = str(RoomType.query.filter_by(name='Double').one().id)
+            single_id = str(single.id)
+            athlete_ids = {
+                'approved_double': str(approved_double.id),
+                'approved_single': str(approved_single.id),
+                'approved_explicit_false': str(approved_explicit_false.id),
+                'ordinary_single': str(ordinary_single.id),
+            }
+
+        client = app.test_client()
+
+        def assign(athlete_key, room_type_id, room_number):
+            return client.post('/api/assignments/bookings', json={
+                'athleteIds': [athlete_ids[athlete_key]],
+                'hotelId': hotel_id,
+                'roomTypeId': room_type_id,
+                'roomNumber': room_number,
+                'checkInDate': '2027-03-10',
+                'checkOutDate': '2027-03-14',
+            })
+
+        approved_in_double = assign('approved_double', double_id, 'DZ 01')
+        self.assertEqual(approved_in_double.status_code, 201)
+        self.assertTrue(approved_in_double.get_json()['countsAsSingle'])
+        approved_double_id = approved_in_double.get_json()['id']
+
+        disabled = client.put(
+            f'/api/assignments/bookings/{approved_double_id}',
+            json={'countsAsSingle': False},
+        )
+        self.assertEqual(disabled.status_code, 200)
+        self.assertFalse(disabled.get_json()['countsAsSingle'])
+
+        unrelated_update = client.put(
+            f'/api/assignments/bookings/{approved_double_id}',
+            json={'roomNumber': 'DZ 01 updated'},
+        )
+        self.assertEqual(unrelated_update.status_code, 200)
+        self.assertFalse(unrelated_update.get_json()['countsAsSingle'])
+        with app.app_context():
+            self.assertEqual(
+                db.session.get(Athlete, int(athlete_ids['approved_double'])).single_room_status,
+                'APPROVED_EXTRA',
+            )
+
+        explicit_false = client.post('/api/assignments/bookings', json={
+            'athleteIds': [athlete_ids['approved_explicit_false']],
+            'hotelId': hotel_id,
+            'roomTypeId': double_id,
+            'roomNumber': 'DZ 02',
+            'checkInDate': '2027-03-10',
+            'checkOutDate': '2027-03-14',
+            'countsAsSingle': False,
+        })
+        self.assertEqual(explicit_false.status_code, 201)
+        self.assertFalse(explicit_false.get_json()['countsAsSingle'])
+
+        approved_in_single = assign('approved_single', single_id, 'EZ 01')
+        self.assertEqual(approved_in_single.status_code, 201)
+        self.assertTrue(approved_in_single.get_json()['countsAsSingle'])
+
+        ordinary_in_single = assign('ordinary_single', single_id, 'EZ 02')
+        self.assertEqual(ordinary_in_single.status_code, 201)
+        self.assertFalse(ordinary_in_single.get_json()['countsAsSingle'])
+
     def test_non_entitled_single_occupant_is_not_marked_exclusive(self):
         with app.app_context():
             athlete = self.athlete('Noah', 'Keller')

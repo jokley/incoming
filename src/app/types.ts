@@ -252,6 +252,7 @@ export interface RoomBookingUnitOccupant {
   assignedHotelName?: string | null;
   assignedRoomTypeId?: string | null;
   assignedRoomNumber?: string | null;
+  countsAsSingle?: boolean;
 }
 
 export interface RoomBookingUnitWarning {
