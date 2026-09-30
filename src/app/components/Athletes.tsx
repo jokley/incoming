@@ -22,7 +22,7 @@ import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
-import { hasSingleRoomSurcharge } from '../services/quotaEvaluation';
+import { hasSingleRoomSurcharge, showStandaloneSingleRoomSurcharge } from '../services/quotaEvaluation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';

@@ -1365,8 +1365,8 @@ def _validate_booking_payload(data, existing_booking=None):
     if len(unique_athlete_ids) > room_type.max_persons:
         return None, None, _booking_error('CAPACITY_EXCEEDED', f'Room type max occupancy is {room_type.max_persons}')
 
-    existing_athlete_count = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).count()
-    if existing_athlete_count != len(unique_athlete_ids):
+    athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
+    if len(athletes) != len(unique_athlete_ids):
         return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
 
     check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
@@ -1419,8 +1419,11 @@ def _validate_booking_payload(data, existing_booking=None):
         'check_in_date': check_in_date,
         'check_out_date': check_out_date,
         'athlete_ids': unique_athlete_ids,
-        'counts_as_single': bool(data.get(
-            'countsAsSingle', existing_booking.counts_as_single if existing_booking else False)),
+        'counts_as_single': (
+            any(athlete.single_room_status == 'APPROVED_EXTRA' for athlete in athletes)
+            or bool(data.get(
+                'countsAsSingle', existing_booking.counts_as_single if existing_booking else False))
+        ),
     }, room_type, None
 
 
