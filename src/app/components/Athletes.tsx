@@ -25,7 +25,7 @@ import { competitionDisplayList, competitionDisplayName } from '../services/comp
 import { hasSingleRoomSurcharge, showStandaloneSingleRoomSurcharge } from '../services/quotaEvaluation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
-import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
+import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivityInfoBlock } from './activity';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
@@ -227,7 +227,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Importdatum" value={date(athlete?.athletesLastSeenAt)} />
             <ReadonlyField label="Importstatus" value={athlete ? importLabel(athlete) : undefined} />
             <ReadonlyField label="Quelle" value="FIS-Import" />
-            <Box><Typography variant="caption" color="text.secondary">Einzelzimmerstatus</Typography><Box sx={{ mt: 0.75 }}><SingleRoomStatusBadge status={athlete?.single_room_status} /></Box></Box>
+            <Box><Typography variant="caption" color="text.secondary">Einzelzimmerstatus</Typography><Box sx={{ mt: 0.75 }}><SingleRoomAssignmentBadges status={athlete?.single_room_status} countsAsSingle={athlete?.assignment?.countsAsSingle} /></Box></Box>
             {athlete?.single_room_decision_id && <Box sx={{ display: 'flex', alignItems: 'end' }}><Button size="small" variant="text" onClick={() => { onClose(); onShowDecision(String(athlete.single_room_decision_id)); }}>Entscheidung anzeigen</Button></Box>}
           </FieldGrid>
         </DialogSection>
@@ -382,7 +382,7 @@ export function Athletes() {
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomStatusBadge status={athlete.single_room_status} />{showStandaloneSingleRoomSurcharge(athlete) && <StatusChip tone="warning">Mehrpreis</StatusChip>}</div></div></Cell>
+                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
                 <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
