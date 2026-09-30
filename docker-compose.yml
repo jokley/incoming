@@ -4,8 +4,8 @@ services:
   backend:
     build: ./backend
     container_name: freestyle-wm-backend
-    ports:
-      - "5000:5000"
+    expose:
+      - "5000"
     volumes:
       - ./backend:/app
       - postgres-backups:/backups:ro
@@ -88,8 +88,8 @@ services:
       context: .
       dockerfile: Dockerfile.frontend
     container_name: freestyle-wm-frontend
-    ports:
-      - "5173:5173"
+    expose:
+      - "5173"
     volumes:
       - ./src:/app/src
       - ./public:/app/public
