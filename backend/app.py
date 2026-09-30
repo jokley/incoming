@@ -1165,6 +1165,7 @@ def _build_room_booking_units():
                 'assignedHotelName': athlete_booking.hotel.name if athlete_booking and athlete_booking.hotel else None,
                 'assignedRoomTypeId': str(athlete_booking.room_type_id) if athlete_booking else None,
                 'assignedRoomNumber': athlete_booking.room_number if athlete_booking else None,
+                'countsAsSingle': bool(athlete_booking.counts_as_single) if athlete_booking else False,
             })
 
         warnings = _derive_assignment_warnings(unit_athletes, room_type)
@@ -1421,6 +1422,19 @@ def _validate_booking_payload(data, existing_booking=None):
         'counts_as_single': bool(data.get(
             'countsAsSingle', existing_booking.counts_as_single if existing_booking else False)),
     }, room_type, None
+
+
+def _initialize_new_booking_counts_as_single(data):
+    """Apply the approved-extra default only when a new booking omits the flag."""
+    if 'countsAsSingle' in data:
+        return data
+    athlete_ids = [int(athlete_id) for athlete_id in data.get('athleteIds', [])]
+    initialized = dict(data)
+    initialized['countsAsSingle'] = Athlete.query.filter(
+        Athlete.id.in_(athlete_ids),
+        Athlete.single_room_status == 'APPROVED_EXTRA',
+    ).first() is not None
+    return initialized
 
 
 def _save_booking_from_payload(payload, existing_booking=None, commit=True):
@@ -2968,8 +2982,9 @@ def create_room_booking():
         'roomNumber': data.get('roomNumber'),
         'checkInDate': data.get('checkInDate'),
         'checkOutDate': data.get('checkOutDate'),
-        'countsAsSingle': data.get('countsAsSingle', False),
     }
+    if 'countsAsSingle' in data:
+        payload_data['countsAsSingle'] = data['countsAsSingle']
 
     existing_booking = None
     if data.get('assignedBookingId'):
@@ -2980,6 +2995,9 @@ def create_room_booking():
             if tuple(_collect_booking_athlete_ids(booking)) == athlete_id_tuple:
                 existing_booking = booking
                 break
+
+    if existing_booking is None:
+        payload_data = _initialize_new_booking_counts_as_single(payload_data)
 
     payload, _, error = _validate_booking_payload(payload_data, existing_booking=existing_booking)
     if error:
@@ -3065,7 +3083,7 @@ def get_debug_routes():
 @app.route('/room-assignments/', methods=['POST'])
 @_measure_assignment_logic
 def create_room_assignment():
-    data = request.json
+    data = _initialize_new_booking_counts_as_single(request.json or {})
     payload, _, error = _validate_booking_payload(data)
     if error:
         return error

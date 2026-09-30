@@ -50,8 +50,26 @@ export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | nul
 export const hasSingleRoomSurcharge = (person?: { single_room_status?: string | null } | null) =>
   person?.single_room_status === 'APPROVED_EXTRA';
 
+/** Labels for independent operational-single and approved-surcharge badges. */
+export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null) => [
+  ...(countsAsSingle ? ['Einzelzimmer'] : []),
+  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
+];
+
 export const quotaUsageKey = (nation?: string | null, discipline?: string | null, gender?: string | null) =>
   `${nation || ''}|${discipline || ''}|${normalizeGender(gender)}`;
+
+export const quotaRequiresAction = (row: Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals'>) =>
+  row.quotaStatus === 'DECISION_REQUIRED' || row.openApprovals > 0;
+
+export const actionableQuotaCaseCount = (rows: Array<Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals'>>) =>
+  rows.filter(quotaRequiresAction).length;
+
+/** Numeric quota KPIs are meaningful only for one nation/discipline/gender context. */
+export function uniqueQuotaContext<T extends Pick<OfficialQuotaUsage, 'nationCode' | 'discipline' | 'gender'>>(rows: T[]): T | null {
+  if (rows.length !== 1) return null;
+  return rows[0];
+}
 
 /** Converts live room assignments into the calculation's room-type-independent input. */
 export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssignment[] {

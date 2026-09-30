@@ -25,7 +25,7 @@ import {
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { AssignmentStatusChip, PendingChanges } from './assignment/AssignmentInfo';
 import { OccupantCard } from './assignment/OccupantCard';
-import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
+import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
 import { FisRulesPanel } from './FisRulesPanel';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
@@ -35,9 +35,9 @@ import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
-import { competitionDisplayName } from '../services/competitionPresentation';
+import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaUsageKey } from '../services/quotaEvaluation';
+import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, uniqueQuotaContext } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
   AssignmentGridHotel,
@@ -312,10 +312,13 @@ export function Assignments() {
     const values = new Set<string>();
     for (const unit of allUnitsCombined) {
       for (const occupant of unit.occupants) {
-        if (occupant.discipline) values.add(occupant.discipline);
+        const disciplines = occupant.quotaDisciplines?.length
+          ? occupant.quotaDisciplines
+          : occupant.discipline ? [occupant.discipline] : [];
+        disciplines.forEach((discipline) => values.add(discipline));
       }
     }
-    return Array.from(values).sort();
+    return Array.from(values).sort((a, b) => disciplineDisplayName(a).localeCompare(disciplineDisplayName(b)));
   }, [allUnitsCombined]);
 
   const genderOptions = useMemo(() => {
@@ -384,8 +387,8 @@ export function Assignments() {
     };
   }, [allUnitsCombined.length, assignedUnits.length]);
 
-  const quotaViolations = useMemo(
-    () => currentQuotaUsage.filter((row) => row.assignedOfficials > row.officialQuota || evaluateQuotaUsageRow(row).hasViolation),
+  const actionableQuotaCases = useMemo(
+    () => actionableQuotaCaseCount(currentQuotaUsage),
     [currentQuotaUsage]
   );
   const pendingQuotaDecisions = useMemo(
@@ -653,7 +656,7 @@ export function Assignments() {
           view={view}
           onViewChange={setView}
           progress={queueProgress}
-          violations={quotaViolations.length}
+          actionableQuotaCases={actionableQuotaCases}
           saving={saving}
           onRefresh={handleRefresh}
           quotaRows={currentQuotaUsage}
@@ -826,7 +829,7 @@ function TopBar({
   view,
   onViewChange,
   progress,
-  violations,
+  actionableQuotaCases,
   saving,
   onRefresh,
   quotaRows,
@@ -835,7 +838,7 @@ function TopBar({
   view: AppView;
   onViewChange: (view: AppView) => void;
   progress: { done: number; total: number; percent: number };
-  violations: number;
+  actionableQuotaCases: number;
   saving: boolean;
   onRefresh: () => void;
   quotaRows: OfficialQuotaUsage[];
@@ -885,9 +888,9 @@ function TopBar({
           </span>
         </div>
 
-        {violations > 0 && (
+        {actionableQuotaCases > 0 && (
           <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
-            {violations} Quote
+            {actionableQuotaCases} Handlungsbedarf
           </div>
         )}
 
@@ -906,8 +909,9 @@ function TopBar({
 }
 
 function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage[]; onOpen: () => void; refreshing: boolean }) {
-  const row = rows[0];
-  if (!row) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
+  if (!rows.length) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
+  const row = uniqueQuotaContext(buildQuotaCards(rows));
+  if (!row) return null;
 
   return (
     <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, als EZ gewertete Personen ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
@@ -1080,7 +1084,7 @@ function QueueSidebar({
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
-          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, competitionDisplayName(value)]))} />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, disciplineDisplayName(value)]))} />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
@@ -1296,7 +1300,7 @@ function QueueOccupantActionRow({
       hideRole={!showRole}
       className={isDragging ? 'opacity-70' : ''}
       footer={<><div className="flex items-center gap-1.5">
-        {occupant.single_room_status !== 'NONE' && <SingleRoomStatusBadge status={occupant.single_room_status} />}
+        <SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={occupant.countsAsSingle} />
         <button
           draggable={canEditAssignments && !pending}
           disabled={pending || !canEditAssignments}
@@ -2148,7 +2152,7 @@ function QuotasPanel({
   refreshing: boolean;
 }) {
   const cards = buildQuotaCards(rows);
-  const issues = cards.filter((card) => getQuotaState(card).tone !== 'success').length;
+  const issues = cards.filter(quotaRequiresAction).length;
   return (
     <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
       <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
@@ -2166,7 +2170,7 @@ function QuotasPanel({
         <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Quotengruppen filtern</div>
         <div className="grid gap-2 sm:grid-cols-3">
           <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
-          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, competitionDisplayName(value)]))} />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, disciplineDisplayName(value)]))} />
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Herren', F: 'Damen' }} />
         </div>
       </div>
@@ -2331,7 +2335,7 @@ function SingleRoomDecisionGroup({ title, people, status }: { title: string; peo
   return <section className="overflow-hidden rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]">
     <header className="flex items-center justify-between gap-3 border-b border-[var(--ops-divider)] px-3 py-2.5">
       <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
-      <SingleRoomStatusBadge status={status} />
+      <SingleRoomAssignmentBadges status={status} />
     </header>
     {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]">{person.name}</li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
   </section>;
@@ -2400,7 +2404,7 @@ function DetailPanel({
                 hideNation
                 hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
-                  <div><SingleRoomStatusBadge status={occupant.single_room_status} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
+                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}
@@ -2798,8 +2802,8 @@ function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
 function matchesAssignmentFilters(unit: RoomBookingUnit, filters: AssignmentFilterCriteria) {
   if (filters.status === 'pending' && unit.isFullyAssigned) return false;
   if (filters.nation && unit.nationCode !== filters.nation) return false;
-  if (filters.discipline && !unit.occupants.some((occupant) => occupant.discipline === filters.discipline)) return false;
-  if (filters.gender && !unit.occupants.some((occupant) => normalizeGender(occupant.gender) === filters.gender)) return false;
+  if ((filters.discipline || filters.gender) && !unit.occupants.some((occupant) =>
+    matchesDisciplineAndGender(occupant, filters.discipline, filters.gender))) return false;
   if (filters.roomCategory && getUnitRoomCategory(unit) !== filters.roomCategory) return false;
   if (filters.importReview && !unit.occupants.some((occupant) => occupant.hasPendingReview)) return false;
 
