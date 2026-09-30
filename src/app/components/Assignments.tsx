@@ -25,7 +25,7 @@ import {
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { AssignmentStatusChip, PendingChanges } from './assignment/AssignmentInfo';
 import { OccupantCard } from './assignment/OccupantCard';
-import { SingleRoomStatusBadge } from './SingleRoomStatusBadge';
+import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
 import { FisRulesPanel } from './FisRulesPanel';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
@@ -1296,7 +1296,7 @@ function QueueOccupantActionRow({
       hideRole={!showRole}
       className={isDragging ? 'opacity-70' : ''}
       footer={<><div className="flex items-center gap-1.5">
-        {occupant.single_room_status !== 'NONE' && <SingleRoomStatusBadge status={occupant.single_room_status} />}
+        <SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={occupant.countsAsSingle} />
         <button
           draggable={canEditAssignments && !pending}
           disabled={pending || !canEditAssignments}
@@ -2331,7 +2331,7 @@ function SingleRoomDecisionGroup({ title, people, status }: { title: string; peo
   return <section className="overflow-hidden rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]">
     <header className="flex items-center justify-between gap-3 border-b border-[var(--ops-divider)] px-3 py-2.5">
       <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
-      <SingleRoomStatusBadge status={status} />
+      <SingleRoomAssignmentBadges status={status} />
     </header>
     {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]">{person.name}</li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
   </section>;
@@ -2400,7 +2400,7 @@ function DetailPanel({
                 hideNation
                 hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
-                  <div><SingleRoomStatusBadge status={occupant.single_room_status} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
+                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}
