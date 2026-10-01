@@ -1934,7 +1934,7 @@ function HotelDetailView({
                                 fallbackDeparture={entry.booking.checkOutDate}
                                 hideNation
                                 hideDiscipline
-                                footer={occupant.hasPendingReview ? <PendingChanges changes={occupant.importChangeDetails} compact /> : undefined}
+                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
                           </div>
@@ -2270,7 +2270,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
-    if (!booking || (!booking.countsAsSingle && occupant.single_room_status !== 'APPROVED_EXTRA')) return;
+    if (!booking?.countsAsSingle) return;
     people.set(occupant.athleteId, {
       athleteId: occupant.athleteId,
       name: occupant.name,

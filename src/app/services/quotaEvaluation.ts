@@ -46,14 +46,18 @@ export interface QuotaSummary {
 export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | null) =>
   Boolean(booking?.countsAsSingle);
 
-/** A surcharge is an approved import exception, never an operational room flag. */
-export const hasSingleRoomSurcharge = (person?: { single_room_status?: string | null } | null) =>
-  person?.single_room_status === 'APPROVED_EXTRA';
+/** An active surcharge requires both approval and current operational use. */
+export const hasSingleRoomSurcharge = (person?: {
+  single_room_status?: string | null;
+  assignment?: { countsAsSingle?: boolean } | null;
+} | null) => person?.single_room_status === 'APPROVED_EXTRA'
+  && Boolean(person.assignment?.countsAsSingle);
 
-/** Labels for independent operational-single and approved-surcharge badges. */
+/** Labels for operational use, durable approval, and active surcharge. */
 export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null) => [
   ...(countsAsSingle ? ['Einzelzimmer'] : []),
-  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
+  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['EZ genehmigt'] : []),
+  ...(countsAsSingle && singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
 ];
 
 export const quotaUsageKey = (nation?: string | null, discipline?: string | null, gender?: string | null) =>
@@ -109,14 +113,15 @@ export function calculateQuotaUsage(assignments: QuotaAssignment[]): number {
 }
 
 /**
- * Marks approved import exceptions as additional cost. Operational quota usage
- * and the physical room type deliberately do not determine surcharge status.
+ * Marks currently consumed approved exceptions as active additional cost.
+ * Physical room type deliberately does not determine surcharge status.
  */
 export function calculateAdditionalCosts(assignments: QuotaAssignment[], _allowedSingleRooms: number): PersonQuotaEvaluation[] {
   return assignments.map(assignment => ({
     ...assignment,
     groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender),
-    additionalCost: assignment.singleRoomStatus === 'APPROVED_EXTRA',
+    additionalCost: assignment.countsAsSingle
+      && assignment.singleRoomStatus === 'APPROVED_EXTRA',
   }));
 }
 
