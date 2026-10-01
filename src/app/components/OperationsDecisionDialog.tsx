@@ -49,6 +49,7 @@ export function buildOperationsTask(session: ImportSession, approval: ImportAppr
 }
 
 function taskTitle(task: OperationsTask) {
+  if (task.approval.type === 'PRESERVED_APPROVED_EXTRA') return task.approval.description;
   return task.quota ? quotaViolationLabel(task.quota.label, task.quota.current, task.quota.allowed) : task.approval.description;
 }
 
@@ -111,10 +112,14 @@ function DecisionFact({label,value}:{label:string;value:string}) { return <div><
 export function OperationsTaskRow({ task, onOpen, primary = false }: { task: OperationsTask; onOpen: () => void; primary?: boolean }) {
   const done = task.approval.decision !== 'PENDING';
   const singleRoom = /single|einzel|\bsr\b/i.test(`${task.approval.type} ${task.approval.description}`);
+  const preservedPeople = task.approval.type === 'PRESERVED_APPROVED_EXTRA'
+    ? task.singleRoomCandidates.filter(person => task.approval.approvedPersonKeys?.includes(person.personKey))
+    : [];
   return <button type="button" onClick={onOpen} className={`w-full rounded-lg border p-3 text-left transition hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)] ${done?'border-[var(--ops-border)] bg-[var(--ops-surface)] opacity-80':'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]'} ${primary?'ring-1 ring-[var(--ops-warning)]':''}`}>
     <span className="flex items-start justify-between gap-3"><span className="flex items-center gap-2">{singleRoom?<BedDouble className="h-5 w-5 text-orange-400"/>:<ClipboardCheck className="h-5 w-5 text-yellow-400"/>}<strong>{taskTitle(task)}</strong></span><StatusChip tone={done?'success':'warning'}>{done?'Erledigt':'Offen'}</StatusChip></span>
     <span className="mt-3 block text-sm font-semibold">{task.nation}</span>
     <span className="block text-sm text-[var(--ops-text-muted)]">{competitionDisplayName(task.discipline) || '—'} {task.gender !== '—' ? `· ${task.gender}` : ''}</span>
+    {preservedPeople.map(person => <span key={person.personKey} className="mt-1 block text-sm font-bold text-[var(--ops-success)]">{person.name} · Mehrpreis genehmigt</span>)}
     <span className="mt-2 flex items-center justify-between border-t border-[var(--ops-divider)] pt-2"><span><span className="block text-[10px] font-bold uppercase text-[var(--ops-text-subtle)]">Empfehlung</span><strong className="text-sm">{task.recommendation}</strong></span><span className="shrink-0 rounded-lg bg-[var(--ops-primary)] px-3 py-2 text-xs font-extrabold text-white">{done?'Ansehen':primary?'Jetzt bearbeiten':'Bearbeiten'}</span></span>
   </button>;
 }

@@ -1564,7 +1564,11 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         ImportApproval.decision,
         ImportSession.nation,
         ImportSession.discipline,
-    ).join(ImportSession, ImportSession.id == ImportApproval.session_id).all()
+    ).join(
+        ImportSession,
+        (ImportSession.id == ImportApproval.session_id)
+        & (ImportSession.current_version_id == ImportApproval.version_id),
+    ).all()
     for details_json, decision, session_nation, session_discipline in approval_rows:
         details = json.loads(details_json or '{}')
         key = (details.get('nationCode') or session_nation or '',
@@ -1711,7 +1715,18 @@ def preview_fis_import():
             if len(nations) != 1:
                 return jsonify({'error': 'Eine Import Session muss genau eine Nation enthalten.', 'nations': nations}), 400
             nation = nations[0]
-            quota_issues = [issue for issue in result['warnings'] if issue.get('code', '').startswith('QUOTA_')]
+            quota_issues = [
+                issue for issue in result['warnings']
+                if issue.get('code', '').startswith('QUOTA_')
+                and (issue.get('code') != 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+                     or (issue.get('details') or {}).get('openExcessCount',
+                                                        (issue.get('details') or {}).get('excessCount', 0)) > 0)
+            ]
+            preserved_issues = [
+                issue for issue in result['warnings']
+                if issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+                and (issue.get('details') or {}).get('preservedApprovedPeople')
+            ]
             status = 'DRAFT' if result['errors'] else ('WAITING_FOR_NATION' if quota_issues else 'PROFESSIONALLY_REVIEWED')
             user = current_user()
             session = ImportSession.query.get(int(session_id)) if session_id else None
@@ -1742,17 +1757,6 @@ def preview_fis_import():
             # can proceed directly to professional approval.
             session.status = status
             session.approved_at = session.approved_by = None
-            # Imported athletes and history entries may reference a decision from
-            # the preceding version. Detach those references before replacing the
-            # session's transient approval tasks (PostgreSQL enforces both FKs).
-            approval_ids = [approval.id for approval in session.approvals if approval.id]
-            if approval_ids:
-                Athlete.query.filter(Athlete.single_room_decision_id.in_(approval_ids)).update(
-                    {Athlete.single_room_decision_id: None}, synchronize_session=False)
-                ImportSessionEvent.query.filter(ImportSessionEvent.approval_id.in_(approval_ids)).update(
-                    {ImportSessionEvent.approval_id: None}, synchronize_session=False)
-                db.session.flush()
-            session.approvals.clear()
             version = ImportSessionVersion(session_id=session.id, version=next_version,
                 preview_token=result['previewToken'], preview_json=json.dumps(result, ensure_ascii=False),
                 entries_filename=detected_names['entries'], room_filename=detected_names['roomlist'],
@@ -1761,14 +1765,34 @@ def preview_fis_import():
             db.session.add(version)
             db.session.flush()
             session.current_version = version
+            for issue in preserved_issues:
+                details = issue.get('details') or {}
+                people = details.get('preservedApprovedPeople') or []
+                db.session.add(ImportApproval(
+                    session_id=session.id, version_id=version.id, nation=nation,
+                    approval_type='PRESERVED_APPROVED_EXTRA',
+                    description='Bestehende Genehmigung übernommen',
+                    quota_details_json=json.dumps(details, ensure_ascii=False),
+                    approved_person_keys_json=json.dumps([item['personKey'] for item in people]),
+                    decision='APPROVED', username=user.username))
             db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id,
                 event_type='VERSION_RECEIVED', title=f'Version {next_version} erhalten',
                 description='Neue Meldeliste gespeichert; technische Prüfung abgeschlossen.' if not result['errors'] else 'Neue Meldeliste gespeichert; technische Fehler gefunden.',
                 username=user.username))
             for issue in quota_issues:
-                details = issue.get('details') or {}
+                details = dict(issue.get('details') or {})
                 combination = ' • '.join(filter(None, [details.get('nationCode'), details.get('discipline'), details.get('gender')]))
                 is_single_room = issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+                if is_single_room and 'openExcessCount' in details:
+                    preserved_keys = {
+                        item.get('personKey')
+                        for item in details.get('preservedApprovedPeople', [])
+                    }
+                    details['excessCount'] = details['openExcessCount']
+                    details['singleRoomCandidates'] = [
+                        item for item in details.get('singleRoomCandidates', [])
+                        if item.get('personKey') not in preserved_keys
+                    ]
                 current = details.get('importedSingleRooms') if is_single_room else details.get('importedOfficials')
                 allowed = details.get('singleRoomsAllowed') if is_single_room else details.get('officialQuota')
                 quota_title = f"{'Single Rooms' if is_single_room else 'Officials'} überschritten ({current} / {allowed})"
@@ -1905,7 +1929,9 @@ def decide_import_approval(session_id, approval_id):
     approval.comment = data.get('comment')
     approval.username = current_user().username
     approval.created_at = datetime.utcnow()
-    session.status = 'EXCEPTION_APPROVED' if all(a.decision == 'APPROVED' for a in session.approvals) else 'WAITING_FOR_NATION'
+    session.status = ('EXCEPTION_APPROVED'
+                      if all(a.decision == 'APPROVED' for a in session.current_approvals)
+                      else 'WAITING_FOR_NATION')
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='NATION_CONTACT',
         title=f'Rückfrage an Nation per {"E-Mail" if method == "EMAIL" else "Telefon"}',
         description=f'{approval_by}' + (f' · {data.get("contactSubject")}' if data.get('contactSubject') else ''),
@@ -1930,7 +1956,7 @@ def approve_import_session(session_id):
     preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
     if preview.get('errors'):
         return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.'}), 409
-    if any(approval.decision != 'APPROVED' for approval in session.approvals):
+    if any(approval.decision != 'APPROVED' for approval in session.current_approvals):
         return jsonify({'error': 'Alle erforderlichen Entscheidungen müssen getroffen werden.'}), 409
     if session.status in {'IMPORTED', 'REPLACED', 'ARCHIVED'}:
         return jsonify({'error': 'Diese Session kann nicht mehr freigegeben werden.'}), 409
@@ -1952,8 +1978,9 @@ def import_approved_session(session_id):
         if not session.current_version:
             return jsonify({'error': 'Die Session besitzt keine aktuelle Version.'}), 409
         approved_extra_decisions = {
-            key: approval.id for approval in session.approvals
-            if approval.decision == 'APPROVED' and approval.approval_type in {'NATION_APPROVED', 'ORGANIZER_APPROVED'}
+            key: approval.id for approval in session.current_approvals
+            if approval.decision == 'APPROVED' and approval.approval_type in {
+                'NATION_APPROVED', 'ORGANIZER_APPROVED', 'PRESERVED_APPROVED_EXTRA'}
             for key in json.loads(approval.approved_person_keys_json or '[]')
         }
         result = confirm_fis_import(session.current_version.preview_token, approved_extra_decisions)

@@ -126,6 +126,14 @@ class ImportSession(db.Model):
         latest = (db.session.query(db.func.max(ImportSessionVersion.version))
                   .filter_by(session_id=self.id).scalar() or 0)
         return latest + 1
+
+    @property
+    def current_approvals(self):
+        """Decision records belonging to the immutable current import version."""
+        if not self.current_version_id:
+            return []
+        return [item for item in self.approvals if item.version_id == self.current_version_id]
+
     def to_dict(self, include_preview=False):
         current = self.current_version
         preview = json.loads(current.preview_json) if current and current.preview_json else None
@@ -143,7 +151,7 @@ class ImportSession(db.Model):
             'errorMessage': self.error_message,
             'errors': len((preview or {}).get('errors', [])),
             'warnings': len((preview or {}).get('warnings', [])),
-            'approvals': [approval.to_dict() for approval in self.approvals],
+            'approvals': [approval.to_dict() for approval in self.current_approvals],
             'versions': [version.to_dict() for version in self.versions],
             'history': [event.to_dict() for event in self.history],
         }
