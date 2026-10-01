@@ -564,7 +564,17 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         session_id = ids[0] if '/sessions/' in request.path and ids else response.get('id')
         ref('importSessionId', session_id)
         if '/approvals/' in request.path and ids:
-            ref('decisionId', ids[-1])
+            decision_id = ids[-1]
+            current_decision_ids = {
+                str(item.get('id')) for item in response.get('approvals', [])
+                if item.get('id') is not None
+            }
+            # A completed decision revision creates a new immutable decision;
+            # link the audit activity to that current record, not the
+            # superseded id from the PATCH URL.
+            if current_decision_ids and decision_id not in current_decision_ids:
+                decision_id = max(current_decision_ids, key=int)
+            ref('decisionId', decision_id)
         ref('nationId', response.get('nation') or payload.get('nation'))
         label = response.get('nation') or payload.get('nation') or 'Importsession'
         if request.path.endswith('/approve'):
@@ -1422,11 +1432,8 @@ def _validate_booking_payload(data, existing_booking=None):
         'check_in_date': check_in_date,
         'check_out_date': check_out_date,
         'athlete_ids': unique_athlete_ids,
-        'counts_as_single': (
-            any(athlete.single_room_status == 'APPROVED_EXTRA' for athlete in athletes)
-            or bool(data.get(
-                'countsAsSingle', existing_booking.counts_as_single if existing_booking else False))
-        ),
+        'counts_as_single': bool(data.get(
+            'countsAsSingle', existing_booking.counts_as_single if existing_booking else False)),
     }, room_type, None
 
 

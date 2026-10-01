@@ -42,6 +42,7 @@ export function DataImport() {
   const [events, setEvents] = useState<ChampionshipEvent[]>([]), [eventId, setEventId] = useState('');
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
+  useEffect(() => { setShownDecisionId(searchParams.get('decisionId')); }, [searchParams]);
   useEffect(() => { (async () => { try { const [loaded, activeEvents] = await Promise.all([api.getImportSessions(), api.getChampionshipEvents()]); setSessions(loaded); setEvents(activeEvents); setEventId(activeEvents[0]?.id ?? ''); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
   const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); if (full.preview?.eventId) setEventId(full.preview.eventId); setFiles([]); setSuccess(null); };
   const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); };
