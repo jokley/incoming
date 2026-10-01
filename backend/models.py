@@ -132,7 +132,12 @@ class ImportSession(db.Model):
         """Decision records belonging to the immutable current import version."""
         if not self.current_version_id:
             return []
-        return [item for item in self.approvals if item.version_id == self.current_version_id]
+        superseded_ids = {
+            event.approval_id for event in self.history
+            if event.event_type == 'QUOTA_DECISION_REVISED_FROM' and event.approval_id
+        }
+        return [item for item in self.approvals
+                if item.version_id == self.current_version_id and item.id not in superseded_ids]
 
     def to_dict(self, include_preview=False):
         current = self.current_version

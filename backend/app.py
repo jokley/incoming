@@ -20,7 +20,10 @@ from contextlib import contextmanager
 from functools import wraps
 from sqlalchemy import text, func, event, or_
 from sqlalchemy.engine import Engine
-from excel_import import ImportValidationError, InvalidExcelFileError, create_fis_import_preview, confirm_fis_import, detect_fis_file_type, normalize_event_id
+from excel_import import (ImportValidationError, InvalidExcelFileError,
+                          apply_active_single_room_decision, confirm_fis_import,
+                          create_fis_import_preview, detect_fis_file_type,
+                          normalize_event_id)
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
@@ -1568,7 +1571,12 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         ImportSession,
         (ImportSession.id == ImportApproval.session_id)
         & (ImportSession.current_version_id == ImportApproval.version_id),
-    ).all()
+    ).filter(~ImportApproval.id.in_(
+        db.session.query(ImportSessionEvent.approval_id).filter(
+            ImportSessionEvent.event_type == 'QUOTA_DECISION_REVISED_FROM',
+            ImportSessionEvent.approval_id.isnot(None),
+        )
+    )).all()
     for details_json, decision, session_nation, session_discipline in approval_rows:
         details = json.loads(details_json or '{}')
         key = (details.get('nationCode') or session_nation or '',
@@ -1889,7 +1897,12 @@ def get_import_approval(approval_id):
 @app.route('/api/import/sessions/<int:session_id>/approvals/<int:approval_id>', methods=['PATCH'])
 def decide_import_approval(session_id, approval_id):
     session = ImportSession.query.get_or_404(session_id)
-    approval = ImportApproval.query.filter_by(id=approval_id, session_id=session.id).first_or_404()
+    approval = ImportApproval.query.filter_by(
+        id=approval_id, session_id=session.id,
+        version_id=session.current_version_id,
+    ).first_or_404()
+    if approval.id not in {item.id for item in session.current_approvals}:
+        return jsonify({'error': 'This decision has been superseded'}), 404
     data = request.get_json(silent=True) or {}
     decision = data.get('decision')
     if decision not in {'APPROVED', 'NEW_LIST_ANNOUNCED'}:
@@ -1917,35 +1930,76 @@ def decide_import_approval(session_id, approval_id):
         valid_keys = {person.get('personKey') for person in details.get('singleRoomCandidates', [])}
         if len(set(approved_person_keys)) != details.get('excessCount') or not set(approved_person_keys) <= valid_keys:
             return jsonify({'error': 'Exactly the affected extra single-room persons must be selected'}), 400
-    approval.decision = decision
-    approval.approval_type = approval_type or approval.approval_type
-    approval.approval_method = method
-    approval.approval_by = approval_by
-    approval.approval_date = approval_date
-    approval.contact_subject = str(data.get('contactSubject') or '').strip() or None
-    approval.cost_coverage = str(data.get('costCoverage') or '').strip() or None
-    approval.deadline_at = deadline_at
-    approval.approved_person_keys_json = json.dumps(approved_person_keys)
-    approval.comment = data.get('comment')
-    approval.username = current_user().username
-    approval.created_at = datetime.utcnow()
-    session.status = ('EXCEPTION_APPROVED'
-                      if all(a.decision == 'APPROVED' for a in session.current_approvals)
-                      else 'WAITING_FOR_NATION')
+    username = current_user().username
+    was_completed = approval.decision == 'APPROVED'
+    if was_completed and decision != 'APPROVED':
+        return jsonify({'error': 'A completed approval can only revise its approved persons'}), 400
+    old_keys = json.loads(approval.approved_person_keys_json or '[]')
+    if was_completed:
+        # Completed decisions are immutable audit records.  Mark the old row
+        # superseded in history and create a revised current decision.
+        old_names = {person.get('personKey'): person.get('name') or person.get('personKey')
+                     for person in details.get('singleRoomCandidates', [])}
+        db.session.add(ImportSessionEvent(
+            session_id=session.id, version_id=session.current_version_id,
+            approval_id=approval.id, event_type='QUOTA_DECISION_REVISED_FROM',
+            title='Vorherige Quotenauswahl',
+            description=', '.join(old_names.get(key, key) for key in old_keys),
+            username=username))
+        approval = ImportApproval(
+            session_id=session.id, version_id=session.current_version_id,
+            nation=approval.nation, approval_type=approval_type or approval.approval_type,
+            description=approval.description, decision=decision,
+            quota_details_json=json.dumps(details, ensure_ascii=False),
+            approved_person_keys_json=json.dumps(approved_person_keys),
+            approval_method=method, approval_by=approval_by, approval_date=approval_date,
+            contact_subject=str(data.get('contactSubject') or '').strip() or None,
+            cost_coverage=str(data.get('costCoverage') or '').strip() or None,
+            deadline_at=deadline_at, comment=data.get('comment'), username=username)
+        db.session.add(approval)
+        db.session.flush()
+        if is_single_room_approval and decision == 'APPROVED':
+            current_preview = json.loads(session.current_version.preview_json or '{}')
+            apply_active_single_room_decision(
+                details, approved_person_keys, approval.id,
+                current_preview.get('people', []))
+    else:
+        approval.decision = decision
+        approval.approval_type = approval_type or approval.approval_type
+        approval.approval_method = method
+        approval.approval_by = approval_by
+        approval.approval_date = approval_date
+        approval.contact_subject = str(data.get('contactSubject') or '').strip() or None
+        approval.cost_coverage = str(data.get('costCoverage') or '').strip() or None
+        approval.deadline_at = deadline_at
+        approval.approved_person_keys_json = json.dumps(approved_person_keys)
+        approval.comment = data.get('comment')
+        approval.username = username
+        approval.created_at = datetime.utcnow()
+    if not was_completed:
+        session.status = ('EXCEPTION_APPROVED'
+                          if all(a.decision == 'APPROVED' for a in session.current_approvals)
+                          else 'WAITING_FOR_NATION')
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='NATION_CONTACT',
         title=f'Rückfrage an Nation per {"E-Mail" if method == "EMAIL" else "Telefon"}',
         description=f'{approval_by}' + (f' · {data.get("contactSubject")}' if data.get('contactSubject') else ''),
-        username=current_user().username))
+        username=username))
     result_title = ('Neue Meldeliste angekündigt' if decision == 'NEW_LIST_ANNOUNCED' else
                     ('Organisatorische Freigabe' if approval_type == 'ORGANIZER_APPROVED' else 'Ausnahme durch Nation genehmigt'))
     person_count = len(approved_person_keys)
+    selected_names = {person.get('personKey'): person.get('name') or person.get('personKey')
+                      for person in details.get('singleRoomCandidates', [])}
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id,
-        approval_id=approval.id, event_type='QUOTA_DECISION', title=result_title,
-        description=f'{person_count} betroffene {"Person" if person_count == 1 else "Personen"}',
-        username=current_user().username))
+        approval_id=approval.id,
+        event_type='QUOTA_DECISION_REVISED' if was_completed else 'QUOTA_DECISION',
+        title='Quotenauswahl geändert' if was_completed else result_title,
+        description=(', '.join(selected_names.get(key, key) for key in approved_person_keys)
+                     if was_completed else
+                     f'{person_count} betroffene {"Person" if person_count == 1 else "Personen"}'),
+        username=username))
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='STATUS_CHANGED',
         title='Status', description='Warten auf Nation' if decision == 'NEW_LIST_ANNOUNCED' else 'Ausnahme genehmigt',
-        username=current_user().username))
+        username=username))
     db.session.commit()
     return jsonify(session.to_dict(include_preview=True))
 

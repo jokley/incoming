@@ -967,6 +967,36 @@ def apply_preserved_single_room_approvals(quota_warnings, preserved):
             0, details.get('excessCount', 0) - details['approvedExtraCount'])
 
 
+def apply_active_single_room_decision(details, approved_person_keys, decision_id, people=()):
+    """Move the active surcharge marker without changing room disposition.
+
+    Candidate keys were produced for one quota group by ``build_quota_warnings``.
+    Only the three person-level decision fields are changed here; bookings,
+    physical room types and ``counts_as_single`` remain independent.
+    """
+    selected = set(approved_person_keys)
+    athlete_maps = _build_existing_athlete_maps()
+    changed = []
+    for candidate in details.get('singleRoomCandidates', []):
+        person_key = candidate.get('personKey')
+        incoming = next((person for person in people
+                         if person.get('matchKey') == person_key), None)
+        athlete = (_find_existing_athlete(incoming, athlete_maps) if incoming else
+                   athlete_maps['by_fis_code'].get(str(person_key).strip().upper()))
+        if not athlete:
+            continue
+        if person_key in selected:
+            athlete.single_room_status = 'APPROVED_EXTRA'
+            athlete.single_room_entitlement = 'APPROVED_EXTRA'
+            athlete.single_room_decision_id = decision_id
+        elif athlete.single_room_status == 'APPROVED_EXTRA':
+            athlete.single_room_status = 'IN_QUOTA'
+            athlete.single_room_entitlement = 'IN_QUOTA'
+            athlete.single_room_decision_id = None
+        changed.append(athlete)
+    return changed
+
+
 def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved=None):
     """Annotate requested single rooms with their provisional import status.
 
