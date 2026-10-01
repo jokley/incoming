@@ -53,9 +53,10 @@ export const hasSingleRoomSurcharge = (person?: {
 } | null) => person?.single_room_status === 'APPROVED_EXTRA'
   && Boolean(person.assignment?.countsAsSingle);
 
-/** Labels for independent operational-single and approved-surcharge badges. */
+/** Labels for operational use, durable approval, and active surcharge. */
 export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null) => [
   ...(countsAsSingle ? ['Einzelzimmer'] : []),
+  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['EZ genehmigt'] : []),
   ...(countsAsSingle && singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
 ];
 
