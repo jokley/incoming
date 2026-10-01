@@ -55,12 +55,14 @@ def disposition_by_quota_group(people, assigned_person_ids=()):
     }
 
 
-def single_room_usage_by_quota_group(people, single_room_person_ids=()):
+def single_room_usage_by_quota_group(people, single_room_person_ids=(), exempt_person_ids=()):
     """Count persisted quota-single overrides once per person and quota group."""
     single_room_person_ids = set(single_room_person_ids)
+    exempt_person_ids = set(exempt_person_ids)
     usage = {}
     for person in people:
-        if person.get('personId') not in single_room_person_ids:
+        if (person.get('personId') not in single_room_person_ids
+                or person.get('personId') in exempt_person_ids):
             continue
         for key in quota_keys(person):
             if key[2]:
@@ -79,6 +81,7 @@ def evaluate_quota_usage(people, assigned_people=()):
     athletes = {}
     assigned = {}
     singles = {}
+    exempt_singles = {}
     keys = set()
     for person in people:
         for key in quota_keys(person):
@@ -99,7 +102,9 @@ def evaluate_quota_usage(people, assigned_people=()):
             keys.add(key)
             if not is_athlete:
                 assigned[key] = assigned.get(key, 0) + 1
-            if person.get('countsAsSingle'):
+            if person.get('countsAsSingle') and person.get('singleRoomQuotaExemptReason'):
+                exempt_singles[key] = exempt_singles.get(key, 0) + 1
+            elif person.get('countsAsSingle'):
                 singles[key] = singles.get(key, 0) + 1
 
     rows = []
@@ -115,6 +120,7 @@ def evaluate_quota_usage(people, assigned_people=()):
             'singleRoomsAllowed': compute_single_room_entitlement(official_quota),
             'assignedOfficials': assigned.get(key, 0),
             'singleRoomsUsed': singles.get(key, 0),
+            'quotaExemptSingleRooms': exempt_singles.get(key, 0),
         })
     return rows
 
