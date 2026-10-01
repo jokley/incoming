@@ -9,6 +9,7 @@ export interface OfficialQuotaUsage {
   singleRoomsAllowed: number;
   assignedOfficials: number;
   singleRoomsUsed: number;
+  quotaExemptSingleRooms?: number;
   approvedExtraSingleRooms: number;
   requiredSingleRooms: number;
   implementedSingleRooms: number;

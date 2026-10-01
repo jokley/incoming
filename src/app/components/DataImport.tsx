@@ -9,7 +9,7 @@ import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange,
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
-import { buildOperationsTask, OperationsDecisionDialog, type OperationsTask } from './OperationsDecisionDialog';
+import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, type OperationsTask } from './OperationsDecisionDialog';
 import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivitySummaryCard } from './activity';
 import { SingleRoomStatusBadge, type SingleRoomStatus } from './SingleRoomStatusBadge';
@@ -42,6 +42,7 @@ export function DataImport() {
   const [events, setEvents] = useState<ChampionshipEvent[]>([]), [eventId, setEventId] = useState('');
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
+  useEffect(() => { setShownDecisionId(searchParams.get('decisionId')); }, [searchParams]);
   useEffect(() => { (async () => { try { const [loaded, activeEvents] = await Promise.all([api.getImportSessions(), api.getChampionshipEvents()]); setSessions(loaded); setEvents(activeEvents); setEventId(activeEvents[0]?.id ?? ''); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
   const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); if (full.preview?.eventId) setEventId(full.preview.eventId); setFiles([]); setSuccess(null); };
   const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); };
@@ -55,7 +56,7 @@ export function DataImport() {
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { await api.cancelImportSession(selected.id); setSelected(null); setPreview(null); setFiles([]); setSuccess('Importsession wurde abgebrochen und vollständig bereinigt.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
   const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = await api.approveImportSession(selected.id); setSelected(updated); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
   const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); try { const result = await api.importSession(selected.id); setSuccess(`Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`); setSelected(await api.getImportSession(selected.id)); await refreshSessions(); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
-  const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string}) => {
+  const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => {
     if (!selected || !activeTask) return;
     setSavingTask(true); setError(null);
     try {
@@ -71,6 +72,13 @@ export function DataImport() {
   };
 
   const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
+  const setPreviewExemption = async (personKey: string, reason: string) => {
+    if (!selected) return;
+    setSavingTask(true); setError(null);
+    try { const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as 'WORLD_CHAMPION'|'OTHER'|null); setSelected(updated); setPreview(updated.preview ?? null); await refreshSessions(); }
+    catch (error) { setError(error instanceof Error ? error.message : 'EZ-Sonderstatus konnte nicht gespeichert werden.'); }
+    finally { setSavingTask(false); }
+  };
   const changes = preview?.dispositionAnalysis.changes ?? [];
   const statusesFor = (previewArea:ImportChange['preview'],entityId:string,rowNumber?:number,operation?:'create'|'update'):VisibleImportStatus[] => {
     const statuses:VisibleImportStatus[]=[];
@@ -93,10 +101,12 @@ export function DataImport() {
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
     const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
     const name=`${p.firstname} ${p.lastname}`;
-    return [name, p.nationCode, competitionDisplayName(p.discipline) || '—', p.function || '—', entitlement, importStatuses(statusesFor('persons',String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
+    const personKey=String((p as FisImportPreviewPersonWithKey).matchKey??'');
+    const exemption=<select aria-label={`EZ-Sonderstatus ${name}`} value={p.singleRoomQuotaExemptReason??''} disabled={!selected||savingTask} onChange={event=>void setPreviewExemption(personKey,event.target.value)} className="rounded-md border border-[var(--ops-border)] bg-[var(--ops-surface)] px-2 py-1 text-xs"><option value="">Keiner</option><option value="WORLD_CHAMPION">👑 Weltmeister</option><option value="OTHER">Allgemeine EZ-Ausnahme</option></select>;
+    return [name, p.nationCode, competitionDisplayName(p.discipline) || '—', p.function || '—', exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
-    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—',importStatuses(['Entfernt'])]);
+    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—','—',importStatuses(['Entfernt'])]);
   });
   const roomRows = preview?.rooms.map(r => {
     const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
@@ -126,6 +136,7 @@ export function DataImport() {
               <Workflow session={selected} actionStep={primaryActionStep(selected, files)} upload={<SessionUploadWorkspace session={selected} files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/>} secondaryAction={!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)?<OpsButton onClick={abortSession} disabled={confirming} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Workflow abbrechen</OpsButton>:null} />
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
               <NextAction session={selected} success={success}/>
+              <CompletedDecisions session={selected} onOpen={setActiveTask}/>
               <PreviewCard preview={preview} peopleRows={peopleRows} roomRows={roomRows} onOpen={setDetail}/>
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
@@ -234,6 +245,11 @@ function NextAction({session,success}:{session:ImportSession;success:string|null
   if(clarification) return <InfoPanel tone="warning" title="Klärung erforderlich">Die fachliche Klärung oder eine neue Meldeliste ist erforderlich, bevor freigegeben werden kann.</InfoPanel>;
   return <InfoPanel tone="info" title="Prüfung abgeschlossen">Alle Prüfungen und erforderlichen Entscheidungen sind abgeschlossen.</InfoPanel>;
 }
+function CompletedDecisions({session,onOpen}:{session:ImportSession;onOpen:(task:OperationsTask)=>void}) {
+  const completed=session.approvals.filter(approval=>approval.decision==='APPROVED');
+  if(!completed.length) return null;
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Abgeschlossene Entscheidungen" subtitle="Bestehende Genehmigungen bleiben erledigt und können ausdrücklich geändert werden."/><div className="mt-3 space-y-2">{completed.map(approval=><OperationsTaskRow key={approval.id} task={buildOperationsTask(session,approval)} onOpen={()=>onOpen(buildOperationsTask(session,approval))}/>)}</div></ContentCard>;
+}
 function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><details className="group"><summary className="flex cursor-pointer list-none items-center justify-between gap-3"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · bei Bedarf aufklappen`}/><ChevronDown className="h-5 w-5 shrink-0 text-[var(--ops-text-subtle)] transition-transform group-open:rotate-180"/></summary><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></details></ContentCard>; }
 function UploadCard({files,onChange,versionLabel}:{files:File[];onChange:(f:FileList|null)=>void;versionLabel?:string}) { return <ContentCard surface="elevated" className="p-2"><div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Neue Importsession"/>{versionLabel&&<span className="text-xs font-bold text-[var(--ops-text-muted)]">{versionLabel}</span>}</div><label className="mt-2 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-3 text-center hover:bg-[var(--ops-tone-primary-surface)]"><input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={e=>onChange(e.target.files)}/><Upload className="mx-auto h-7 w-7 text-[var(--ops-primary)]"/><p className="mt-1 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
@@ -261,7 +277,7 @@ function PreviewCard({preview,peopleRows,roomRows,onOpen}:{preview:FisImportPrev
   const changes=preview?.dispositionAnalysis.changes??[];
   const peopleHints=aggregateChanges(changes.filter(change=>change.preview==='persons'));
   const roomHints=aggregateChanges(changes.filter(change=>change.preview==='rooms'));
-  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-2"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>;
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-2"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','EZ-Sonderstatus','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>;
 }
 function PreviewWorkspaceCard({icon,label,count,unit,hints,onClick}:{icon:ReactNode;label:string;count:number;unit:string;hints:PreviewHint[];onClick:()=>void}) {
   const hasErrors=hints.some(hint=>hint.severity==='error'), hasChanges=hints.length>0;

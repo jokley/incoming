@@ -118,6 +118,7 @@ export interface Athlete {
   email?: string;
   present?: boolean;
   single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
   single_room_decision_id?: number | null;
 
   arrivalDate?: string | null; // ISO date
@@ -241,6 +242,7 @@ export interface RoomBookingUnitOccupant {
   roomType?: string | null;
   statusBadges: string[];
   single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
   single_room_decision_id?: string | null;
   hasPendingReview: boolean;
   importChangeTypes: ImportChangeType[];
@@ -315,6 +317,7 @@ export interface AssignmentGridBooking {
     importChangeTypes: ImportChangeType[];
     importChangeDetails: ImportChangeDetail[];
     single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+    singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
     single_room_decision_id?: string | null;
   }>;
 }
@@ -426,7 +429,9 @@ export interface FisImportPreviewPerson {
   operation: 'create' | 'update';
   roomType?: string | null;
   sharedWithName?: string | null;
-  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | 'APPROVAL_REQUIRED' | null;
+  matchKey?: string;
+  singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | 'APPROVAL_REQUIRED' | 'QUOTA_EXEMPT' | null;
+  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
 }
 
 export interface FisImportPreviewRoom {
@@ -446,6 +451,7 @@ export interface FisImportPreview {
   eventId?: string | null;
   isValid: boolean;
   detectedDiscipline?: string | null;
+  singleRoomQuotaExemptOverrides?: Record<string, 'WORLD_CHAMPION' | 'OTHER' | null>;
   summary: {
     people: {
       total: number;
@@ -470,7 +476,7 @@ export interface FisImportPreview {
   rooms: FisImportPreviewRoom[];
   errors: FisImportIssue[];
   warnings: FisImportIssue[];
-  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
+  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
     changes: ImportChange[];

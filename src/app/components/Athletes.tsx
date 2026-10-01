@@ -9,6 +9,7 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
+  MenuItem,
   Stack,
   TextField,
   Typography,
@@ -124,7 +125,7 @@ function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 
 function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
-  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '' });
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -133,6 +134,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
       arrivalDate: athlete?.arrivalDate || '',
       departureDate: athlete?.departureDate || '',
       note: athlete?.internalNote || '',
+      exemptReason: athlete?.singleRoomQuotaExemptReason || '',
     });
     setSaveError(null);
   }, [athlete]);
@@ -141,7 +143,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
     if (!athlete) return;
     setSaving(true); setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null });
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, singleRoomQuotaExemptReason: (stay.exemptReason || null) as 'WORLD_CHAMPION'|'OTHER'|null });
       Object.assign(athlete, updated);
       onClose();
     } catch (error) {
@@ -198,6 +200,9 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
 
         <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Nur Information – Zuweisungen erfolgen ausschließlich im Assignment-Modul.">
           <FieldGrid>
+            <TextField select fullWidth label="EZ-Sonderstatus" value={stay.exemptReason} onChange={event => setStay(current => ({ ...current, exemptReason: event.target.value }))} disabled={!permissions.canEdit}>
+              <MenuItem value="">Keiner</MenuItem><MenuItem value="WORLD_CHAMPION">👑 Weltmeister</MenuItem><MenuItem value="OTHER">Allgemeine EZ-Ausnahme</MenuItem>
+            </TextField>
             <ReadonlyField label="Hotel" value={athlete?.assignments?.map(item => item.hotelName).filter(Boolean).join(', ') || athlete?.assignment?.hotelName} />
             <ReadonlyField label="Zimmertyp" value={athlete?.assignment?.roomTypeName || athlete?.roomType} />
             <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{hasSingleRoomSurcharge(athlete) ? <StatusChip tone="warning">Mehrpreis</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
@@ -227,7 +232,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
             <ReadonlyField label="Importdatum" value={date(athlete?.athletesLastSeenAt)} />
             <ReadonlyField label="Importstatus" value={athlete ? importLabel(athlete) : undefined} />
             <ReadonlyField label="Quelle" value="FIS-Import" />
-            <Box><Typography variant="caption" color="text.secondary">Einzelzimmerstatus</Typography><Box sx={{ mt: 0.75 }}><SingleRoomAssignmentBadges status={athlete?.single_room_status} countsAsSingle={athlete?.assignment?.countsAsSingle} /></Box></Box>
+            <Box><Typography variant="caption" color="text.secondary">Einzelzimmerstatus</Typography><Box sx={{ mt: 0.75 }}><SingleRoomAssignmentBadges status={athlete?.single_room_status} countsAsSingle={athlete?.assignment?.countsAsSingle} exemptReason={athlete?.singleRoomQuotaExemptReason} /></Box></Box>
             {athlete?.single_room_decision_id && <Box sx={{ display: 'flex', alignItems: 'end' }}><Button size="small" variant="text" onClick={() => { onClose(); onShowDecision(String(athlete.single_room_decision_id)); }}>Entscheidung anzeigen</Button></Box>}
           </FieldGrid>
         </DialogSection>
@@ -382,7 +387,7 @@ export function Athletes() {
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} /></div></div></Cell>
+                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
                 <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>

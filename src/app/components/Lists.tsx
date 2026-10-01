@@ -16,7 +16,7 @@ const initialContingentFilters: ContingentFilters = { search: '', hotel: '', roo
 const formatDate = (date: string) => date ? new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit', timeZone: 'UTC' }) : '—';
 const roomCode = (value: string) => value.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || value;
 const listColumns: Array<{ key: keyof ListRow & string; label: string }> = [
-  ['room','Zimmer'], ['roomType','Art'], ['name','Name'], ['nation','Nation'], ['discipline','Disziplin / Event'], ['role','Funktion'], ['arrival','Anreise'], ['departure','Abreise'], ['firstMeal','First Meal'], ['lastMeal','Last Meal'], ['specialMeal','Special Meal'], ['lateCheckout','Late Checkout'], ['surcharge','Mehrpreis'], ['roommate','Zimmerpartner'], ['athleteRemark','Bemerkung Athlet'], ['internalNote','Bemerkung Intern'],
+  ['room','Zimmer'], ['roomType','Art'], ['name','Name'], ['nation','Nation'], ['discipline','Disziplin / Event'], ['role','Funktion'], ['arrival','Anreise'], ['departure','Abreise'], ['firstMeal','First Meal'], ['lastMeal','Last Meal'], ['specialMeal','Special Meal'], ['lateCheckout','Late Checkout'], ['singleRoomSpecialStatus','EZ-Sonderstatus'], ['surcharge','Mehrpreis'], ['roommate','Zimmerpartner'], ['athleteRemark','Bemerkung Athlet'], ['internalNote','Bemerkung Intern'],
 ].map(([key, label]) => ({ key, label }));
 const tableClass = 'w-max min-w-full table-auto border-separate border-spacing-0 text-left text-xs [&_:is(th,td)]:max-w-96';
 const groupRowClass = 'h-9 border-y border-[var(--ops-border)] bg-[var(--ops-surface-raised)] text-[var(--ops-text)]';
@@ -40,7 +40,7 @@ function DataRows({ rows, showHotel, navigate }: { rows: ListRow[]; showHotel: b
     <td className="whitespace-nowrap px-2 py-1"><button className="text-xs font-bold hover:text-[var(--ops-primary)] hover:underline" onClick={() => navigate(`/athletes?athleteId=${row.id}`)}>{row.name}</button></td>
     <td className="px-2 py-1 font-bold">{row.nation}</td><td className="px-2 py-1">{row.discipline}</td><td className="px-2 py-1 font-semibold">{row.role}</td>
     <td className="px-2 py-1 tabular-nums text-[var(--ops-text-muted)]">{formatDate(row.arrival)}</td><td className="px-2 py-1 tabular-nums text-[var(--ops-text-muted)]">{formatDate(row.departure)}</td>
-    {[row.firstMeal, row.lastMeal, row.specialMeal, row.lateCheckout, row.surcharge, row.roommate].map((value, cell) => <td key={cell} className="px-2 py-1 text-[var(--ops-text-muted)]">{value}</td>)}
+    {[row.firstMeal, row.lastMeal, row.specialMeal, row.lateCheckout, row.singleRoomSpecialStatus, row.surcharge, row.roommate].map((value, cell) => <td key={cell} className="px-2 py-1 text-[var(--ops-text-muted)]">{value}</td>)}
     {[['Bemerkung Athlet', row.athleteRemark], ['Bemerkung Intern', row.internalNote]].map(([label, note]) => <td key={label} className="px-2 py-0.5 text-center">{note !== '—' && <Tooltip><TooltipTrigger asChild><button type="button" aria-label={`${label} zu ${row.name}`} className="inline-flex rounded p-0.5 text-[var(--ops-text-muted)] hover:text-[var(--ops-primary)]"><NotebookPen size={12}/></button></TooltipTrigger><TooltipContent className="max-w-80 whitespace-pre-wrap text-xs">{note}</TooltipContent></Tooltip>}</td>)}
     {showHotel && <td className="px-2 py-1"><button className="font-semibold hover:text-[var(--ops-primary)] hover:underline" onClick={() => navigate(`/hotels?hotelId=${row.hotelId}`)}>{row.hotel}</button></td>}
   </tr>)}</>;
