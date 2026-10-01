@@ -1,13 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { actionableQuotaCaseCount, quotaRequiresAction, singleRoomBadgeLabels, uniqueQuotaContext } from './quotaEvaluation.ts';
+import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, singleRoomBadgeLabels, uniqueQuotaContext } from './quotaEvaluation.ts';
 
 test('single-room and surcharge badges follow independent persisted state', () => {
   assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), ['Einzelzimmer', 'Mehrpreis']);
-  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['Mehrpreis']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), []);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'NONE'), []);
+  assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: true } }), true);
+  assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: false } }), false);
+  assert.deepEqual(calculateAdditionalCosts([
+    { personId: 'approved-active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA' },
+    { personId: 'approved-inactive', bookingId: '2', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: false, singleRoomStatus: 'APPROVED_EXTRA' },
+    { personId: 'ordinary-active', bookingId: '3', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'IN_QUOTA' },
+  ], 2).map(person => person.additionalCost), [true, false, false]);
 });
 
 test('Handlungsbedarf counts unresolved action rather than technical overage', () => {

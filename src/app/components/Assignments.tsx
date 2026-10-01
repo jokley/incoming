@@ -2270,7 +2270,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
-    if (!booking || (!booking.countsAsSingle && occupant.single_room_status !== 'APPROVED_EXTRA')) return;
+    if (!booking?.countsAsSingle) return;
     people.set(occupant.athleteId, {
       athleteId: occupant.athleteId,
       name: occupant.name,

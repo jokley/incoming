@@ -49,6 +49,7 @@ export function buildOperationsTask(session: ImportSession, approval: ImportAppr
 }
 
 function taskTitle(task: OperationsTask) {
+  if (task.approval.type === 'PRESERVED_APPROVED_EXTRA') return task.approval.description;
   return task.quota ? quotaViolationLabel(task.quota.label, task.quota.current, task.quota.allowed) : task.approval.description;
 }
 
@@ -58,6 +59,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   onClose: () => void;
   onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => void;
 }) {
+  const completed = task?.approval.decision === 'APPROVED';
   const now = () => new Date().toISOString().slice(0,16);
   const [decision, setDecision] = useState<'nation' | 'newList'>('nation');
   const [organizerApproval,setOrganizerApproval]=useState(false);
@@ -81,9 +83,9 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
 
         <InfoPanel tone="info" title="Empfehlung"><strong>{task.recommendation}</strong><span className="mt-1 block text-sm">Folgen Sie dieser Aktion oder dokumentieren Sie unten eine abweichende Entscheidung.</span></InfoPanel>
 
-        <section><SectionHeader title="Entscheidung" subtitle="Wie soll mit der Quotenverletzung weitergearbeitet werden?"/><div className="mt-3 grid gap-2">
+        {!completed && <section><SectionHeader title="Entscheidung" subtitle="Wie soll mit der Quotenverletzung weitergearbeitet werden?"/><div className="mt-3 grid gap-2">
           {([['nation','Ausnahme durch Nation genehmigt'],['newList','Neue Meldeliste angekündigt']] as const).map(([value,label])=><label key={value} className={`rounded-lg border px-3 py-2.5 ${decision===value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)]'}`}><input type="radio" className="mr-3" checked={decision===value} onChange={()=>setDecision(value)}/><strong>{label}</strong></label>)}
-        </div><div className="mt-3 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3"><label className="font-bold"><input type="checkbox" className="mr-3" checked={organizerApproval} onChange={e=>{setOrganizerApproval(e.target.checked);if(e.target.checked)setDecision('nation')}}/>Organisatorische Freigabe (keine Reaktion innerhalb der Frist)</label>{organizerApproval&&<div className="mt-3"><Field label="Frist gesetzt bis"><input type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)} className="field"/></Field><div className="mt-2"><InfoPanel tone="warning" title="Ausnahme">Diese Freigabe wird ausdrücklich als organisatorische Entscheidung protokolliert.</InfoPanel></div></div>}</div></section>
+        </div><div className="mt-3 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3"><label className="font-bold"><input type="checkbox" className="mr-3" checked={organizerApproval} onChange={e=>{setOrganizerApproval(e.target.checked);if(e.target.checked)setDecision('nation')}}/>Organisatorische Freigabe (keine Reaktion innerhalb der Frist)</label>{organizerApproval&&<div className="mt-3"><Field label="Frist gesetzt bis"><input type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)} className="field"/></Field><div className="mt-2"><InfoPanel tone="warning" title="Ausnahme">Diese Freigabe wird ausdrücklich als organisatorische Entscheidung protokolliert.</InfoPanel></div></div>}</div></section>}
 
         {task.singleRoomCandidates.length > 0 && decision === 'nation' && <section><SectionHeader title="Betroffene Personen" subtitle={`Genau ${task.excessCount} Person(en) außerhalb der Quote auswählen.`}/><div className="mt-2 grid gap-2">{task.singleRoomCandidates.map(person=><label key={person.personKey} className="flex items-center gap-3 rounded-lg border border-[var(--ops-border)] px-3 py-2"><input type="checkbox" checked={approvedPersonKeys.includes(person.personKey)} onChange={event=>setApprovedPersonKeys(current=>event.target.checked?[...current,person.personKey]:current.filter(key=>key!==person.personKey))}/><span><strong className="block">{person.name}</strong><span className="text-xs text-[var(--ops-text-muted)]">{person.function || 'Official'} · Einzelzimmer</span></span></label>)}</div><p className="mt-2 text-xs text-[var(--ops-text-muted)]">{approvedPersonKeys.length} von {task.excessCount} ausgewählt. Diese Auswahl bestimmt Anspruch und Mehrkosten unabhängig vom später zugewiesenen Zimmertyp.</p></section>}
 
@@ -111,10 +113,14 @@ function DecisionFact({label,value}:{label:string;value:string}) { return <div><
 export function OperationsTaskRow({ task, onOpen, primary = false }: { task: OperationsTask; onOpen: () => void; primary?: boolean }) {
   const done = task.approval.decision !== 'PENDING';
   const singleRoom = /single|einzel|\bsr\b/i.test(`${task.approval.type} ${task.approval.description}`);
+  const preservedPeople = task.approval.type === 'PRESERVED_APPROVED_EXTRA'
+    ? task.singleRoomCandidates.filter(person => task.approval.approvedPersonKeys?.includes(person.personKey))
+    : [];
   return <button type="button" onClick={onOpen} className={`w-full rounded-lg border p-3 text-left transition hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-surface-overlay)] ${done?'border-[var(--ops-border)] bg-[var(--ops-surface)] opacity-80':'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]'} ${primary?'ring-1 ring-[var(--ops-warning)]':''}`}>
     <span className="flex items-start justify-between gap-3"><span className="flex items-center gap-2">{singleRoom?<BedDouble className="h-5 w-5 text-orange-400"/>:<ClipboardCheck className="h-5 w-5 text-yellow-400"/>}<strong>{taskTitle(task)}</strong></span><StatusChip tone={done?'success':'warning'}>{done?'Erledigt':'Offen'}</StatusChip></span>
     <span className="mt-3 block text-sm font-semibold">{task.nation}</span>
     <span className="block text-sm text-[var(--ops-text-muted)]">{competitionDisplayName(task.discipline) || '—'} {task.gender !== '—' ? `· ${task.gender}` : ''}</span>
-    <span className="mt-2 flex items-center justify-between border-t border-[var(--ops-divider)] pt-2"><span><span className="block text-[10px] font-bold uppercase text-[var(--ops-text-subtle)]">Empfehlung</span><strong className="text-sm">{task.recommendation}</strong></span><span className="shrink-0 rounded-lg bg-[var(--ops-primary)] px-3 py-2 text-xs font-extrabold text-white">{done?'Ansehen':primary?'Jetzt bearbeiten':'Bearbeiten'}</span></span>
+    {preservedPeople.map(person => <span key={person.personKey} className="mt-1 block text-sm font-bold text-[var(--ops-success)]">{person.name} · Mehrpreis genehmigt</span>)}
+    <span className="mt-2 flex items-center justify-between border-t border-[var(--ops-divider)] pt-2"><span><span className="block text-[10px] font-bold uppercase text-[var(--ops-text-subtle)]">Empfehlung</span><strong className="text-sm">{task.recommendation}</strong></span><span className="shrink-0 rounded-lg bg-[var(--ops-primary)] px-3 py-2 text-xs font-extrabold text-white">{done?'Entscheidung anzeigen / ändern':primary?'Jetzt bearbeiten':'Bearbeiten'}</span></span>
   </button>;
 }
