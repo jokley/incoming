@@ -21,9 +21,9 @@ from functools import wraps
 from sqlalchemy import text, func, event, or_
 from sqlalchemy.engine import Engine
 from excel_import import (ImportValidationError, InvalidExcelFileError,
-                          apply_active_single_room_decision, confirm_fis_import,
+                          PREVIEW_STORE, apply_active_single_room_decision, confirm_fis_import,
                           create_fis_import_preview, detect_fis_file_type,
-                          normalize_event_id)
+                          normalize_event_id, recalculate_fis_import_preview)
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
@@ -547,6 +547,16 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         ref('personId', athlete_id)
         label = ' '.join(filter(None, [response.get('firstname') or payload.get('firstname'), response.get('lastname') or payload.get('lastname')])).strip() or 'Athlet'
         title = 'Athlet angelegt' if action == 'create' else 'Athlet bearbeitet'
+        if 'singleRoomQuotaExemptReason' in payload:
+            labels = {'WORLD_CHAMPION': 'Weltmeister', 'OTHER': 'EZ-Ausnahme'}
+            old_reason = (snapshot or {}).get('singleRoomQuotaExemptReason') if isinstance(snapshot, dict) else None
+            new_reason = response.get('singleRoomQuotaExemptReason')
+            if not new_reason:
+                title = 'EZ-Sonderstatus entfernt'
+            elif old_reason and old_reason != new_reason:
+                title = f"EZ-Sonderstatus geändert: {labels.get(old_reason, old_reason)} → {labels.get(new_reason, new_reason)}"
+            else:
+                title = f"EZ-Sonderstatus gesetzt: {labels.get(new_reason, new_reason)}"
 
     elif entity_type == 'events':
         ref('eventId', entity_id or response.get('id'))
@@ -1169,6 +1179,7 @@ def _build_room_booking_units():
                     'room_type': athlete.room_type,
                 })()),
                 'single_room_status': athlete.single_room_status or 'NONE',
+                'singleRoomQuotaExemptReason': athlete.single_room_quota_exempt_reason,
                 'single_room_decision_id': str(athlete.single_room_decision_id) if athlete.single_room_decision_id else None,
                 'hasPendingReview': assigned_change,
                 'changeTouchesAssignment': assigned_change,
@@ -1311,6 +1322,7 @@ def _build_assignment_planning_view(validation_keys=None):
                                     'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
                                     'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
+                                    'singleRoomQuotaExemptReason': occ.athlete.single_room_quota_exempt_reason,
                                     'single_room_decision_id': str(occ.athlete.single_room_decision_id) if occ.athlete.single_room_decision_id else None,
                                 }
                                 for occ in (booking.occupants or []) if occ.athlete
@@ -1516,7 +1528,8 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
                'quotaDisciplines': sorted({c.quota_discipline for c in a.competitions}),
                'gender': a.gender, 'forGender': a.for_gender,
-               'function': a.function} for a in athletes]
+               'function': a.function,
+               'singleRoomQuotaExemptReason': a.single_room_quota_exempt_reason} for a in athletes]
 
     # Load every assignment once. The former per-athlete ``first()`` lookups made
     # this endpoint issue up to two SQL statements per person. Keeping the first
@@ -1548,7 +1561,8 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             continue
         assigned.append({'nationCode': athlete.nation_code, 'discipline': athlete.discipline,
             'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
-            'countsAsSingle': booking_by_athlete[athlete.id]})
+            'countsAsSingle': booking_by_athlete[athlete.id],
+            'singleRoomQuotaExemptReason': athlete.single_room_quota_exempt_reason})
     rows = evaluate_quota_usage(roster, assigned)
     # Resolve accommodation through the person-to-booking membership. The same
     # persisted assignment applies to every distinct quota discipline of a
@@ -1558,6 +1572,13 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         roster,
         {athlete_id for athlete_id, counts_as_single in booking_by_athlete.items()
          if counts_as_single},
+        {athlete.id for athlete in athletes if athlete.single_room_quota_exempt_reason},
+    )
+    exempt_single_room_usage = single_room_usage_by_quota_group(
+        roster,
+        {athlete_id for athlete_id, counts_as_single in booking_by_athlete.items()
+         if counts_as_single},
+        {athlete.id for athlete in athletes if not athlete.single_room_quota_exempt_reason},
     )
     approved_by_key = {}
     implemented_by_key = {}
@@ -1595,6 +1616,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         key = (row['nationCode'], row['discipline'], row['gender'])
         row.update(disposition.get(key, {'peopleTotal': 0, 'peopleAssigned': 0}))
         row['singleRoomsUsed'] = single_room_usage.get(key, 0)
+        row['quotaExemptSingleRooms'] = exempt_single_room_usage.get(key, 0)
         row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
         row['requiredSingleRooms'] = row['singleRoomsUsed']
         row['implementedSingleRooms'] = implemented_by_key.get(key, 0)
@@ -1873,6 +1895,68 @@ def list_import_sessions():
 @app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
 def get_import_session(session_id):
     return jsonify(ImportSession.query.get_or_404(session_id).to_dict(include_preview=True))
+
+
+@app.route('/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>', methods=['PATCH'])
+def stage_single_room_quota_exemption(session_id, person_key):
+    """Stage one administrative command on the current immutable import version."""
+    session = ImportSession.query.get_or_404(session_id)
+    if session.status in {'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'}:
+        return jsonify({'error': 'The current import version is no longer editable'}), 409
+    if not session.current_version:
+        return jsonify({'error': 'Import session has no current version'}), 409
+    data = request.get_json(silent=True) or {}
+    reason = data.get('reason')
+    if reason not in {None, 'WORLD_CHAMPION', 'OTHER'}:
+        return jsonify({'error': 'reason must be WORLD_CHAMPION, OTHER, or null'}), 400
+    preview = json.loads(session.current_version.preview_json or '{}')
+    if person_key not in {person.get('matchKey') for person in preview.get('people', [])}:
+        return jsonify({'error': 'Person is not part of the current import version'}), 404
+    overrides = preview.setdefault('singleRoomQuotaExemptOverrides', {})
+    overrides[person_key] = reason
+    recalculate_fis_import_preview(preview)
+    session.current_version.preview_json = json.dumps(preview, ensure_ascii=False)
+    raw_preview = PREVIEW_STORE.get(session.current_version.preview_token)
+    if raw_preview is not None:
+        raw_preview.setdefault('singleRoomQuotaExemptOverrides', {})[person_key] = reason
+        recalculate_fis_import_preview(raw_preview)
+
+    # Pending tasks are derived review state and may be rebuilt. Completed
+    # decisions remain immutable; an exemption merely supersedes active use.
+    other_open_approval = False
+    for approval in list(session.current_approvals):
+        approval_details = json.loads(approval.quota_details_json or '{}')
+        is_single_approval = bool(approval_details.get('singleRoomCandidates')) or 'Single Rooms' in approval.description
+        if approval.decision == 'PENDING' and is_single_approval:
+            db.session.delete(approval)
+        elif approval.decision == 'PENDING':
+            other_open_approval = True
+    db.session.flush()
+    quota_issues = [issue for issue in preview.get('warnings', [])
+                    if issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+                    and (issue.get('details') or {}).get(
+                        'openExcessCount', (issue.get('details') or {}).get('excessCount', 0)) > 0]
+    for issue in quota_issues:
+        details = dict(issue.get('details') or {})
+        is_single = issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+        if is_single and 'openExcessCount' in details:
+            preserved_keys = {item.get('personKey') for item in details.get('preservedApprovedPeople', [])}
+            details['excessCount'] = details['openExcessCount']
+            details['singleRoomCandidates'] = [item for item in details.get('singleRoomCandidates', [])
+                                               if item.get('personKey') not in preserved_keys]
+        current = details.get('importedSingleRooms') if is_single else details.get('importedOfficials')
+        allowed = details.get('singleRoomsAllowed') if is_single else details.get('officialQuota')
+        db.session.add(ImportApproval(
+            session_id=session.id, version_id=session.current_version_id,
+            nation=session.nation, approval_type=issue.get('code', 'QUOTA'),
+            description=f"{'Single Rooms' if is_single else 'Officials'} überschritten ({current} / {allowed})",
+            quota_details_json=json.dumps(details, ensure_ascii=False),
+            decision='PENDING', username=current_user().username))
+    session.status = ('WAITING_FOR_NATION'
+                      if quota_issues or other_open_approval
+                      else 'PROFESSIONALLY_REVIEWED')
+    db.session.commit()
+    return jsonify(session.to_dict(include_preview=True))
 
 
 @app.route('/api/import/approvals/<int:approval_id>', methods=['GET'])
@@ -2936,6 +3020,7 @@ def get_athlete(athlete_id):
 
 def _update_athlete_operations(athlete, data):
     """Update only accommodation-team-owned fields; FIS fields stay read-only."""
+    previous_exempt_reason = athlete.single_room_quota_exempt_reason
     protected = {'additionalItems', 'additional_items'}
     if protected.intersection(data):
         return jsonify({'error': 'additionalItems is managed exclusively by the FIS import'}), 400
@@ -2952,6 +3037,39 @@ def _update_athlete_operations(athlete, data):
         if note is not None and not isinstance(note, str):
             return jsonify({'error': 'internalNote must be a string or null'}), 400
         athlete.internal_note = note.strip() or None if note is not None else None
+    if 'singleRoomQuotaExemptReason' in data:
+        reason = data['singleRoomQuotaExemptReason']
+        if reason not in {None, 'WORLD_CHAMPION', 'OTHER'}:
+            return jsonify({'error': 'singleRoomQuotaExemptReason must be WORLD_CHAMPION, OTHER, or null'}), 400
+        athlete.single_room_quota_exempt_reason = reason
+        if reason:
+            # The immutable approval remains in history; only active person state
+            # ceases to behave as an approved surcharge.
+            if athlete.single_room_decision:
+                decision = athlete.single_room_decision
+                db.session.add(ImportSessionEvent(
+                    session_id=decision.session_id, version_id=decision.version_id,
+                    approval_id=decision.id, event_type='QUOTA_DECISION_REVISED_FROM',
+                    title='Quotenentscheidung durch EZ-Sonderstatus abgelöst',
+                    description=f'{athlete.firstname} {athlete.lastname}'.strip(),
+                    username=current_user().username))
+            athlete.single_room_status = 'NONE'
+            athlete.single_room_entitlement = None
+            athlete.single_room_decision_id = None
+        elif previous_exempt_reason:
+            membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
+            if membership and membership.room_booking and membership.room_booking.counts_as_single:
+                rows = _build_official_quota_usage_rows(nation_code=athlete.nation_code)
+                groups = {(athlete.nation_code, competition.quota_discipline, _normalize_gender(athlete))
+                          for competition in athlete.competitions}
+                if not groups:
+                    groups = {(athlete.nation_code, athlete.discipline or '', _normalize_gender(athlete))}
+                relevant = [row for row in rows if (
+                    row['nationCode'], row['discipline'], row['gender']) in groups]
+                over_quota = any(row['singleRoomsUsed'] > row['singleRoomsAllowed'] for row in relevant)
+                athlete.single_room_status = 'PENDING_APPROVAL' if over_quota else 'IN_QUOTA'
+                athlete.single_room_entitlement = 'IN_QUOTA' if not over_quota else None
+                athlete.single_room_decision_id = None
     if athlete.arrival_date and athlete.departure_date and athlete.departure_date < athlete.arrival_date:
         return jsonify({'error': 'departureDate must not be before arrivalDate'}), 400
     db.session.commit()

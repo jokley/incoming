@@ -468,6 +468,11 @@ class Athlete(db.Model):
             "single_room_status IN ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')",
             name='single_room_status',
         ),
+        db.CheckConstraint(
+            "single_room_quota_exempt_reason IS NULL OR "
+            "single_room_quota_exempt_reason IN ('WORLD_CHAMPION', 'OTHER')",
+            name='single_room_quota_exempt_reason',
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -516,6 +521,8 @@ class Athlete(db.Model):
     single_room_entitlement = db.Column(db.String(30))  # IN_QUOTA | APPROVED_EXTRA
     # Fachliche Quelle für den Anspruch, unabhängig von einer Zimmerzuweisung.
     single_room_status = db.Column(db.String(30), nullable=False, default='NONE')
+    # Administrative, person-level exemption from normal single-room quota.
+    single_room_quota_exempt_reason = db.Column(db.String(30), nullable=True)
     single_room_decision_id = db.Column(db.Integer, db.ForeignKey('import_approval.id'), nullable=True)
     single_room_decision = db.relationship('ImportApproval', foreign_keys=[single_room_decision_id])
     shared_with_name = db.Column(db.String(200))
@@ -577,6 +584,7 @@ class Athlete(db.Model):
             'present': self.present,
             'singleRoomEntitlement': self.single_room_entitlement,
             'single_room_status': self.single_room_status or 'NONE',
+            'singleRoomQuotaExemptReason': self.single_room_quota_exempt_reason,
             'single_room_decision_id': self.single_room_decision_id,
             'arrivalDate': self.arrival_date.isoformat() if self.arrival_date else None,
             'arrivalTime': self.arrival_time,

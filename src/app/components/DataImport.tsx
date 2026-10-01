@@ -72,6 +72,13 @@ export function DataImport() {
   };
 
   const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
+  const setPreviewExemption = async (personKey: string, reason: string) => {
+    if (!selected) return;
+    setSavingTask(true); setError(null);
+    try { const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as 'WORLD_CHAMPION'|'OTHER'|null); setSelected(updated); setPreview(updated.preview ?? null); await refreshSessions(); }
+    catch (error) { setError(error instanceof Error ? error.message : 'EZ-Sonderstatus konnte nicht gespeichert werden.'); }
+    finally { setSavingTask(false); }
+  };
   const changes = preview?.dispositionAnalysis.changes ?? [];
   const statusesFor = (previewArea:ImportChange['preview'],entityId:string,rowNumber?:number,operation?:'create'|'update'):VisibleImportStatus[] => {
     const statuses:VisibleImportStatus[]=[];
@@ -94,10 +101,12 @@ export function DataImport() {
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
     const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
     const name=`${p.firstname} ${p.lastname}`;
-    return [name, p.nationCode, competitionDisplayName(p.discipline) || '—', p.function || '—', entitlement, importStatuses(statusesFor('persons',String((p as FisImportPreviewPersonWithKey).matchKey??''),p.rowNumber,p.operation))];
+    const personKey=String((p as FisImportPreviewPersonWithKey).matchKey??'');
+    const exemption=<select aria-label={`EZ-Sonderstatus ${name}`} value={p.singleRoomQuotaExemptReason??''} disabled={!selected||savingTask} onChange={event=>void setPreviewExemption(personKey,event.target.value)} className="rounded-md border border-[var(--ops-border)] bg-[var(--ops-surface)] px-2 py-1 text-xs"><option value="">Keiner</option><option value="WORLD_CHAMPION">👑 Weltmeister</option><option value="OTHER">Allgemeine EZ-Ausnahme</option></select>;
+    return [name, p.nationCode, competitionDisplayName(p.discipline) || '—', p.function || '—', exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
-    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—',importStatuses(['Entfernt'])]);
+    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—','—',importStatuses(['Entfernt'])]);
   });
   const roomRows = preview?.rooms.map(r => {
     const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
@@ -268,7 +277,7 @@ function PreviewCard({preview,peopleRows,roomRows,onOpen}:{preview:FisImportPrev
   const changes=preview?.dispositionAnalysis.changes??[];
   const peopleHints=aggregateChanges(changes.filter(change=>change.preview==='persons'));
   const roomHints=aggregateChanges(changes.filter(change=>change.preview==='rooms'));
-  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-2"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>;
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-2"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','EZ-Sonderstatus','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>;
 }
 function PreviewWorkspaceCard({icon,label,count,unit,hints,onClick}:{icon:ReactNode;label:string;count:number;unit:string;hints:PreviewHint[];onClick:()=>void}) {
   const hasErrors=hints.some(hint=>hint.severity==='error'), hasChanges=hints.length>0;

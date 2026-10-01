@@ -13,6 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app import app  # noqa: E402
 from excel_import import (PREVIEW_STORE, apply_preserved_single_room_approvals,
                           apply_single_room_entitlement_preview, confirm_fis_import,
+                          build_quota_warnings,
                           preserved_single_room_approvals)  # noqa: E402
 from models import (ImportApproval, ImportSession, ImportSessionEvent,
                     ImportSessionVersion, Athlete, Competition, Event, Hotel,
@@ -256,6 +257,94 @@ class SingleRoomStatusTest(unittest.TestCase):
                       'approvalDate': '2026-10-01T11:00:00Z',
                       'approvedPersonKeys': ['OTHER_DISCIPLINE']})
             self.assertEqual(rejected.status_code, 400)
+
+    def test_quota_exempt_request_is_not_a_surcharge_candidate(self):
+        with app.app_context():
+            people = [self.person(f'O{index}') for index in range(4)]
+            for person in people:
+                person.update({'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'})
+            people[0]['singleRoomQuotaExemptReason'] = 'WORLD_CHAMPION'
+            rooms = [{'person1Key': person['matchKey'], 'person2Key': None, 'roomType': 'Single'}
+                     for person in people]
+            # Two entered athletes produce an official quota of four and two
+            # normal singles; four requests minus one exemption remains 3 / 2.
+            people.extend([
+                {**self.person('A1', 'Athlete'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'},
+                {**self.person('A2', 'Athlete'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'},
+            ])
+            checks = []
+            warnings = build_quota_warnings(people, rooms, checks)
+            warning = next(item for item in warnings if item['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED')
+            self.assertEqual(warning['details']['importedSingleRooms'], 3)
+            self.assertEqual(warning['details']['quotaExemptSingleRooms'], 1)
+            self.assertNotIn('O0', {item['personKey'] for item in warning['details']['singleRoomCandidates']})
+
+    def test_confirm_consumes_staged_exemption_and_athlete_edit_can_remove_it(self):
+        with app.app_context():
+            event = Event(name='Exemption Test', active=True)
+            db.session.add(event); db.session.commit()
+            person = {**self.person('WC'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'}
+            PREVIEW_STORE['exemption-confirm'] = {
+                'errors': [], 'eventId': event.id, 'people': [person], 'rooms': [],
+                'quotaChecks': [],
+                'singleRoomQuotaExemptOverrides': {'WC': 'WORLD_CHAMPION'},
+            }
+            confirm_fis_import('exemption-confirm')
+            athlete = Athlete.query.filter_by(fis_code='WC').one()
+            self.assertEqual(athlete.single_room_quota_exempt_reason, 'WORLD_CHAMPION')
+            self.assertEqual(athlete.single_room_status, 'NONE')
+
+            PREVIEW_STORE['exemption-snapshot'] = {
+                'errors': [], 'eventId': event.id, 'people': [person], 'rooms': [],
+                'quotaChecks': [], 'singleRoomQuotaExemptOverrides': {},
+            }
+            confirm_fis_import('exemption-snapshot')
+            self.assertEqual(Athlete.query.filter_by(fis_code='WC').one().single_room_quota_exempt_reason,
+                             'WORLD_CHAMPION')
+
+            response = app.test_client().patch(
+                f'/api/athletes/{athlete.id}',
+                headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
+                json={'singleRoomQuotaExemptReason': None})
+            self.assertEqual(response.status_code, 200)
+            self.assertIsNone(response.get_json()['singleRoomQuotaExemptReason'])
+
+    def test_import_review_stages_exemption_and_recalculates_current_preview(self):
+        with app.app_context():
+            officials = [{**self.person(f'O{index}'), 'nationCode': 'BRA',
+                          'industryName': 'Halfpipe', 'gender': 'M'} for index in range(4)]
+            athletes = [{**self.person(f'A{index}', 'Athlete'), 'nationCode': 'BRA',
+                         'industryName': 'Halfpipe', 'gender': 'M'} for index in range(2)]
+            people = officials + athletes
+            rooms = [{'person1Key': person['matchKey'], 'person2Key': None, 'roomType': 'Single'}
+                     for person in officials]
+            preview = {'previewToken': 'stage-exemption', 'errors': [], 'warnings': [],
+                       'people': people, 'rooms': rooms, 'quotaChecks': [],
+                       'singleRoomQuotaExemptOverrides': {},
+                       'dispositionAnalysis': {'categories': {}, 'changes': []}}
+            PREVIEW_STORE['stage-exemption'] = {**preview, 'createdAt': __import__('datetime').datetime.utcnow()}
+            session = ImportSession(nation='BRA', status='PROFESSIONALLY_REVIEWED')
+            db.session.add(session); db.session.flush()
+            version = ImportSessionVersion(
+                session_id=session.id, version=1, preview_token='stage-exemption',
+                preview_json=__import__('json').dumps(preview), entries_filename='e.xlsx',
+                room_filename='r.xlsx', source_hash='stage-exemption', uploaded_by='test')
+            db.session.add(version); db.session.flush(); session.current_version = version
+            db.session.commit()
+
+            response = app.test_client().patch(
+                f'/api/import/sessions/{session.id}/single-room-exemptions/O0',
+                headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
+                json={'reason': 'WORLD_CHAMPION'})
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()['preview']
+            check = payload['quotaChecks'][0]
+            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (3, 2))
+            self.assertEqual(check['quotaExemptSingleRooms'], 1)
+            candidates = [warning for warning in payload['warnings']
+                          if warning['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED'][0]['details']['singleRoomCandidates']
+            self.assertNotIn('O0', {item['personKey'] for item in candidates})
+            self.assertIsNone(Athlete.query.filter_by(fis_code='O0').first())
 
 
 if __name__ == '__main__':

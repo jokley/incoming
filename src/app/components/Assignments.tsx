@@ -1300,7 +1300,7 @@ function QueueOccupantActionRow({
       hideRole={!showRole}
       className={isDragging ? 'opacity-70' : ''}
       footer={<><div className="flex items-center gap-1.5">
-        <SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={occupant.countsAsSingle} />
+        <SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={occupant.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} />
         <button
           draggable={canEditAssignments && !pending}
           disabled={pending || !canEditAssignments}
@@ -1915,10 +1915,9 @@ function HotelDetailView({
                               {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
-                              {entry.booking.countsAsSingle ? <span className="rounded-md border border-[var(--ops-tone-info-border)] bg-[var(--ops-tone-info-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-info-text)]">Einzelzimmer</span> : <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
+                              <><span className={`rounded-md px-1.5 py-0.5 font-bold ${entry.booking.occupants.length < (entry.booking.capacity || 0) ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
                                 {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt
-                              </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-[var(--ops-success)]">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>}
-                              {entry.booking.occupants.some(person => additionalCostPersonIds.has(person.athleteId)) && <span className="rounded-md border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-1.5 py-0.5 font-bold text-[var(--ops-tone-warning-text)]">Mehrpreis</span>}
+                              </span>{entry.booking.occupants.length < (entry.booking.capacity || 0) && <span className="font-bold text-[var(--ops-success)]">{(entry.booking.capacity || 0) - entry.booking.occupants.length} frei</span>}</>
                               {canAddPartner && (
                                 <span className={`${isBookingDropTarget ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)]'}`}>
                                   Partner hinzufügen
@@ -1934,7 +1933,7 @@ function HotelDetailView({
                                 fallbackDeparture={entry.booking.checkOutDate}
                                 hideNation
                                 hideDiscipline
-                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
+                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
                           </div>
@@ -2063,6 +2062,7 @@ type QuotaCard = {
   assignedOfficials: number;
   singleRoomsAllowed: number;
   singleRoomsUsed: number;
+  quotaExemptSingleRooms: number;
   approvedExtraSingleRooms: number;
   requiredSingleRooms: number;
   implementedSingleRooms: number;
@@ -2088,6 +2088,7 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
       assignedOfficials: 0,
       singleRoomsAllowed: 0,
       singleRoomsUsed: 0,
+      quotaExemptSingleRooms: 0,
       approvedExtraSingleRooms: 0,
       requiredSingleRooms: 0,
       implementedSingleRooms: 0,
@@ -2103,6 +2104,7 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
     current.assignedOfficials += row.assignedOfficials;
     current.singleRoomsAllowed += row.singleRoomsAllowed;
     current.singleRoomsUsed += row.singleRoomsUsed;
+    current.quotaExemptSingleRooms += row.quotaExemptSingleRooms || 0;
     current.approvedExtraSingleRooms += row.approvedExtraSingleRooms || 0;
     current.requiredSingleRooms += row.requiredSingleRooms || 0;
     current.implementedSingleRooms += row.implementedSingleRooms || 0;
@@ -2253,6 +2255,7 @@ type SingleRoomControlPerson = {
   name: string;
   decisionId?: string | null;
   additionalCost: boolean;
+  exemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
 };
 
 function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>): SingleRoomControlPerson[] {
@@ -2276,6 +2279,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       name: occupant.name,
       decisionId: occupant.single_room_decision_id,
       additionalCost: additionalCostPersonIds.has(occupant.athleteId),
+      exemptReason: occupant.singleRoomQuotaExemptReason,
     });
   }));
   return [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
@@ -2301,7 +2305,8 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
   const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds);
   const additionalCostPeople = controlPeople.filter(person => person.additionalCost);
-  const withinQuotaPeople = controlPeople.filter(person => !person.additionalCost);
+  const exemptPeople = controlPeople.filter(person => person.exemptReason);
+  const withinQuotaPeople = controlPeople.filter(person => !person.additionalCost && !person.exemptReason);
   const sharedDecisionId = additionalCostPeople.find(person => person.decisionId)?.decisionId
     ?? controlPeople.find(person => person.decisionId)?.decisionId;
 
@@ -2314,13 +2319,14 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     </header>
     <div className="flex-1 space-y-4 overflow-auto p-6">
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
             <SingleRoomDecisionGroup title="Mehrpreis" people={additionalCostPeople} status="APPROVED_EXTRA" />
             <SingleRoomDecisionGroup title="Innerhalb der Quote" people={withinQuotaPeople} status="IN_QUOTA" />
+            <SingleRoomDecisionGroup title="Ohne Quotenverbrauch" people={exemptPeople} status="IN_QUOTA" />
           </div>
           <div className="flex justify-end border-t border-[var(--ops-divider)] pt-3">
             <OpsButton disabled={!sharedDecisionId} title={!sharedDecisionId ? 'Für diese Quotengruppe ist keine Importentscheidung hinterlegt.' : undefined} onClick={() => sharedDecisionId && onShowDecision(sharedDecisionId)}>Entscheidung anzeigen</OpsButton>
@@ -2337,7 +2343,7 @@ function SingleRoomDecisionGroup({ title, people, status }: { title: string; peo
       <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
       <SingleRoomAssignmentBadges status={status} />
     </header>
-    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]">{person.name}</li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
+    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]"><span>{person.name}</span><SingleRoomAssignmentBadges status={status} countsAsSingle exemptReason={person.exemptReason}/></li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
   </section>;
 }
 
@@ -2404,7 +2410,7 @@ function DetailPanel({
                 hideNation
                 hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
-                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
+                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}

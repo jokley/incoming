@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, singleRoomBadgeLabels, uniqueQuotaContext } from './quotaEvaluation.ts';
+import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, singleRoomBadgeLabels, singleRoomSpecialStatusLabel, uniqueQuotaContext } from './quotaEvaluation.ts';
 
 test('single-room and surcharge badges follow independent persisted state', () => {
-  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), ['Einzelzimmer', 'EZ genehmigt', 'Mehrpreis']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), ['EZ genehmigt', 'Einzelzimmer', 'Mehrpreis']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'NONE'), []);
@@ -34,10 +34,20 @@ test('approval reassignment moves the durable approval badge', () => {
 test('assigned room cards use the shared single-room presentation', () => {
   assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), [
-    'Einzelzimmer', 'EZ genehmigt', 'Mehrpreis',
+    'EZ genehmigt', 'Einzelzimmer', 'Mehrpreis',
   ]);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
   assert.equal(singleRoomBadgeLabels(true, 'IN_QUOTA').includes('EZ genehmigt'), false);
+});
+
+test('quota-exempt accommodation badges stay separate from surcharge approval', () => {
+  assert.deepEqual(singleRoomBadgeLabels(true, 'NONE', 'WORLD_CHAMPION'), ['👑 WM', 'Einzelzimmer']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'NONE', 'OTHER'), ['EZ ✓', 'Einzelzimmer']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'NONE', 'WORLD_CHAMPION'), ['👑 WM']);
+  assert.equal(singleRoomBadgeLabels(true, 'NONE', 'OTHER').includes('Mehrpreis'), false);
+  assert.equal(singleRoomSpecialStatusLabel('NONE', 'WORLD_CHAMPION'), 'Weltmeister');
+  assert.equal(singleRoomSpecialStatusLabel('NONE', 'OTHER'), 'EZ-Ausnahme');
+  assert.equal(singleRoomSpecialStatusLabel('APPROVED_EXTRA', null), 'Mehrpreis genehmigt');
 });
 
 test('Handlungsbedarf counts unresolved action rather than technical overage', () => {

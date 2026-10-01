@@ -516,7 +516,7 @@ class ApiService {
 
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
-  async updateAthlete(id: string, data: { arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null }): Promise<Athlete> {
+  async updateAthlete(id: string, data: { arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: 'WORLD_CHAMPION'|'OTHER'|null }): Promise<Athlete> {
     return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
@@ -884,6 +884,9 @@ class ApiService {
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
+  async stageSingleRoomQuotaExemption(sessionId: string, personKey: string, reason: 'WORLD_CHAMPION'|'OTHER'|null): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/single-room-exemptions/${encodeURIComponent(personKey)}`, { method: 'PATCH', body: JSON.stringify({ reason }) });
+  }
   async getImportDecision(id: string): Promise<ImportDecision> { return this.request(`/import/approvals/${id}`); }
   async decideImportTask(sessionId: string, taskId: string, payload: { decision: Exclude<ImportApproval['decision'],'PENDING'>; comment: string; approvalType?: 'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod: 'EMAIL'|'PHONE'; approvalBy: string; approvalDate: string; contactSubject?: string; costCoverage?: string; deadlineAt?: string; approvedPersonKeys?: string[] }): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/approvals/${taskId}`, {
