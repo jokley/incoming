@@ -16,7 +16,8 @@ export type OperationsTask = {
   recommendation: string;
   gender: string;
   quota?: { current: number; allowed: number; label: string };
-  singleRoomCandidates: Array<{ personKey: string; name: string; function?: string }>;
+  singleRoomCandidates: Array<{ personKey: string; name: string; function?: string; singleRoomQuotaExemptReason?: 'WORLD_CHAMPION'|'OTHER'|null }>;
+  singleRoomReviewPeople: Array<{ personKey: string; name: string; function?: string; singleRoomQuotaExemptReason?: 'WORLD_CHAMPION'|'OTHER'|null }>;
   excessCount: number;
 };
 
@@ -44,6 +45,7 @@ export function buildOperationsTask(session: ImportSession, approval: ImportAppr
     gender: approval.quotaDetails?.gender || quotaCheck?.gender || '—',
     quota: quotaCheck ? { current: Number(isSingleRoom ? approval.quotaDetails?.importedSingleRooms ?? quotaCheck.singleRooms : approval.quotaDetails?.importedOfficials ?? quotaCheck.officials), allowed: Number(isSingleRoom ? approval.quotaDetails?.singleRoomsAllowed ?? quotaCheck.singleRoomsAllowed : approval.quotaDetails?.officialQuota ?? quotaCheck.officialQuota), label: isSingleRoom ? 'Single Rooms' : 'Officials' } : undefined,
     singleRoomCandidates,
+    singleRoomReviewPeople: approval.quotaDetails?.singleRoomReviewPeople ?? singleRoomCandidates,
     excessCount: Number(approval.quotaDetails?.excessCount ?? 0),
   };
 }
@@ -53,10 +55,11 @@ function taskTitle(task: OperationsTask) {
   return task.quota ? quotaViolationLabel(task.quota.label, task.quota.current, task.quota.allowed) : task.approval.description;
 }
 
-export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
+export function OperationsDecisionDialog({ task, saving, onClose, onSave, onSetExemption }: {
   task: OperationsTask | null;
   saving: boolean;
   onClose: () => void;
+  onSetExemption: (personKey: string, reason: 'WORLD_CHAMPION'|'OTHER'|null) => void;
   onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => void;
 }) {
   const completed = task?.approval.decision === 'APPROVED';
@@ -87,7 +90,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
           {([['nation','Ausnahme durch Nation genehmigt'],['newList','Neue Meldeliste angekündigt']] as const).map(([value,label])=><label key={value} className={`rounded-lg border px-3 py-2.5 ${decision===value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)]'}`}><input type="radio" className="mr-3" checked={decision===value} onChange={()=>setDecision(value)}/><strong>{label}</strong></label>)}
         </div><div className="mt-3 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3"><label className="font-bold"><input type="checkbox" className="mr-3" checked={organizerApproval} onChange={e=>{setOrganizerApproval(e.target.checked);if(e.target.checked)setDecision('nation')}}/>Organisatorische Freigabe (keine Reaktion innerhalb der Frist)</label>{organizerApproval&&<div className="mt-3"><Field label="Frist gesetzt bis"><input type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)} className="field"/></Field><div className="mt-2"><InfoPanel tone="warning" title="Ausnahme">Diese Freigabe wird ausdrücklich als organisatorische Entscheidung protokolliert.</InfoPanel></div></div>}</div></section>}
 
-        {task.singleRoomCandidates.length > 0 && decision === 'nation' && <section><SectionHeader title="Betroffene Personen" subtitle={`Genau ${task.excessCount} Person(en) außerhalb der Quote auswählen.`}/><div className="mt-2 grid gap-2">{task.singleRoomCandidates.map(person=><label key={person.personKey} className="flex items-center gap-3 rounded-lg border border-[var(--ops-border)] px-3 py-2"><input type="checkbox" checked={approvedPersonKeys.includes(person.personKey)} onChange={event=>setApprovedPersonKeys(current=>event.target.checked?[...current,person.personKey]:current.filter(key=>key!==person.personKey))}/><span><strong className="block">{person.name}</strong><span className="text-xs text-[var(--ops-text-muted)]">{person.function || 'Official'} · Einzelzimmer</span></span></label>)}</div><p className="mt-2 text-xs text-[var(--ops-text-muted)]">{approvedPersonKeys.length} von {task.excessCount} ausgewählt. Diese Auswahl bestimmt Anspruch und Mehrkosten unabhängig vom später zugewiesenen Zimmertyp.</p></section>}
+        {task.singleRoomReviewPeople.length > 0 && decision === 'nation' && <section><SectionHeader title="Betroffene Personen" subtitle={`Genau ${task.excessCount} Person(en) außerhalb der Quote auswählen.`}/><div className="mt-2 grid gap-2">{task.singleRoomReviewPeople.map(person=>{const eligible=task.singleRoomCandidates.some(candidate=>candidate.personKey===person.personKey);return <div key={person.personKey} className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ops-border)] px-3 py-2"><label className="flex min-w-0 flex-1 items-center gap-3">{eligible&&<input type="checkbox" checked={approvedPersonKeys.includes(person.personKey)} onChange={event=>setApprovedPersonKeys(current=>event.target.checked?[...current,person.personKey]:current.filter(key=>key!==person.personKey))}/>}<span><strong className="block">{person.name}</strong><span className="text-xs text-[var(--ops-text-muted)]">{person.function || 'Official'} · Einzelzimmer</span></span></label><label className="text-xs font-bold text-[var(--ops-text-muted)]">EZ-Sonderstatus<select aria-label={`EZ-Sonderstatus ${person.name}`} value={person.singleRoomQuotaExemptReason??''} disabled={saving} onChange={event=>onSetExemption(person.personKey,(event.target.value||null) as 'WORLD_CHAMPION'|'OTHER'|null)} className="ml-2 rounded-md border border-[var(--ops-border)] bg-[var(--ops-surface)] px-2 py-1 text-xs text-[var(--ops-text)]"><option value="">Keiner</option><option value="WORLD_CHAMPION">👑 Weltmeister</option><option value="OTHER">Allgemeine EZ-Ausnahme</option></select></label></div>})}</div><p className="mt-2 text-xs text-[var(--ops-text-muted)]">{approvedPersonKeys.length} von {task.excessCount} ausgewählt. Diese Auswahl bestimmt Anspruch und Mehrkosten unabhängig vom später zugewiesenen Zimmertyp.</p></section>}
 
         <section><SectionHeader title="Dokumentation" subtitle="Rücksprache und fachliche Notiz festhalten"/><div className="mt-2 grid gap-3 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3 sm:grid-cols-2">
           <Field label="Ansprechpartner / Verantwortlicher"><input value={contact} onChange={e=>setContact(e.target.value)} className="field"/></Field>

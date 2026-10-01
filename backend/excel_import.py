@@ -858,6 +858,11 @@ def build_quota_warnings(people, rooms, quota_checks=None):
             })
         if imported_single_rooms > single_room_entitlement:
             group = (nation_code, discipline, gender)
+            single_room_review_people = [person for person in requested
+                if person.get('countsAsSingle')
+                and (group in quota_keys(person)
+                     if (person.get('function') or '').strip().lower() == 'athlete'
+                     else quota_key(person) == group)]
             single_room_people = [person for person in requested
                 if person.get('countsAsSingle')
                 and not person.get('singleRoomQuotaExemptReason')
@@ -869,6 +874,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                 'personKey': person.get('matchKey'),
                 'name': f"{person.get('firstname', '')} {person.get('lastname', '')}".strip(),
                 'function': person.get('function'),
+                'singleRoomQuotaExemptReason': person.get('singleRoomQuotaExemptReason'),
             } for person in single_room_people]
             warnings.append({
                 'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
@@ -885,6 +891,12 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                     'violationSources': sorted(row['sources']),
                     'excessCount': excess_count,
                     'singleRoomCandidates': candidates,
+                    'singleRoomReviewPeople': [{
+                        'personKey': person.get('matchKey'),
+                        'name': f"{person.get('firstname', '')} {person.get('lastname', '')}".strip(),
+                        'function': person.get('function'),
+                        'singleRoomQuotaExemptReason': person.get('singleRoomQuotaExemptReason'),
+                    } for person in single_room_review_people],
                 },
             })
     return warnings

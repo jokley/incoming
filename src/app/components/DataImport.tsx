@@ -72,10 +72,22 @@ export function DataImport() {
   };
 
   const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
-  const setPreviewExemption = async (personKey: string, reason: string) => {
+  const setPreviewExemption = async (personKey: string, reason: string, refreshDialog = false) => {
     if (!selected) return;
     setSavingTask(true); setError(null);
-    try { const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as 'WORLD_CHAMPION'|'OTHER'|null); setSelected(updated); setPreview(updated.preview ?? null); await refreshSessions(); }
+    try {
+      const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as 'WORLD_CHAMPION'|'OTHER'|null);
+      setSelected(updated); setPreview(updated.preview ?? null);
+      if (refreshDialog) {
+        const pending = updated.approvals.find(approval => approval.decision === 'PENDING'
+          && approval.quotaDetails?.singleRoomCandidates
+          && approval.quotaDetails?.discipline === activeTask?.approval.quotaDetails?.discipline
+          && approval.quotaDetails?.gender === activeTask?.approval.quotaDetails?.gender);
+        setActiveTask(pending ? buildOperationsTask(updated, pending) : null);
+        if (!pending) setSuccess('Quote nach Sonderstatus erfüllt. Keine Genehmigung mehr erforderlich.');
+      }
+      await refreshSessions();
+    }
     catch (error) { setError(error instanceof Error ? error.message : 'EZ-Sonderstatus konnte nicht gespeichert werden.'); }
     finally { setSavingTask(false); }
   };
@@ -147,7 +159,7 @@ export function DataImport() {
       </div>
     </SplitPageLayout>
     <DetailDialog detail={detail} onClose={() => setDetail(null)} />
-    <OperationsDecisionDialog task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
+    <OperationsDecisionDialog task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask} onSetExemption={(personKey,reason)=>void setPreviewExemption(personKey,reason??'',true)}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />
     <Snackbar open={duplicateNotice} autoHideDuration={7000} onClose={()=>setDuplicateNotice(false)} anchorOrigin={{vertical:'top',horizontal:'center'}}><Alert severity="info" variant="filled" onClose={()=>setDuplicateNotice(false)}><strong>Diese Meldeliste wurde bereits importiert.</strong><br/>Es wurde keine neue Version erzeugt.</Alert></Snackbar>
   </div>;
