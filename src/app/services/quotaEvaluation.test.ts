@@ -31,6 +31,15 @@ test('approval reassignment moves the durable approval badge', () => {
   assert.deepEqual(after, { A: [], B: ['EZ genehmigt'] });
 });
 
+test('assigned room cards use the shared single-room presentation', () => {
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), [
+    'Einzelzimmer', 'EZ genehmigt', 'Mehrpreis',
+  ]);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
+  assert.equal(singleRoomBadgeLabels(true, 'IN_QUOTA').includes('EZ genehmigt'), false);
+});
+
 test('Handlungsbedarf counts unresolved action rather than technical overage', () => {
   const unresolvedExcess = { quotaStatus: 'DECISION_REQUIRED' as const, openApprovals: 1, singleRoomsUsed: 3, singleRoomsAllowed: 2 };
   const approvedExcess = { quotaStatus: 'EXCEPTION_APPROVED' as const, openApprovals: 0, singleRoomsUsed: 3, singleRoomsAllowed: 2 };
