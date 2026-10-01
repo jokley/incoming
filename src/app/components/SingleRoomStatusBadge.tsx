@@ -34,6 +34,10 @@ export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, cla
       <BedSingle className="h-3 w-3" aria-hidden="true" />
       Einzelzimmer
     </span>}
+    {labels.includes('EZ genehmigt') && <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.success} ${className}`}>
+      <BedSingle className="h-3 w-3" aria-hidden="true" />
+      EZ genehmigt
+    </span>}
     {labels.includes('Mehrpreis') && <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.warning} ${className}`}>
       <BedSingle className="h-3 w-3" aria-hidden="true" />
       Mehrpreis

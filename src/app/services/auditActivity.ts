@@ -129,7 +129,12 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
       activity,
       entity: approvedPeople || sessionLabel || text(changes.nation) || 'Importsession',
       details: [sessionLabel && approvedPeople && sessionLabel, version && `Version ${version}`, text(changes.costCoverage) && 'Mehrpreis genehmigt'].filter((value): value is string => Boolean(value)),
-      openLabel: isApproval ? 'Entscheidung anzeigen' : 'Importsession öffnen', href: sessionId ? `/import?sessionId=${sessionId}` : '/import',
+      openLabel: isApproval ? 'Entscheidung anzeigen' : 'Importsession öffnen',
+      href: auditActivityHref({ ...event, entityRefs: {
+        ...event.entityRefs,
+        importSessionId: sessionId,
+        decisionId: isApproval ? (event.entityRefs?.decisionId || ids.at(-1)) : undefined,
+      } }),
     };
   }
 
