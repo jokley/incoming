@@ -15,6 +15,12 @@ from models import Athlete, Competition, AccommodationEvent, Event, EventCompeti
 from competitions import COMPETITION_BY_IMPORT_CODE
 
 
+# Confirmation deliberately consumes the typed preview produced by parsing, not
+# the JSON projection stored for review.  This process-local cache therefore
+# forms a lifecycle boundary: tokens expire, do not survive a restart, and are
+# not shared between workers.  Import sessions are durable workflow/audit state;
+# they must not be mistaken for a durable replacement for this confirmation
+# payload without an explicit serialization and multi-worker design change.
 PREVIEW_STORE = {}
 PREVIEW_TTL_SECONDS = 60 * 60
 
@@ -781,6 +787,14 @@ def parse_room_list(df, imported_people):
 
 
 def build_quota_warnings(people, rooms, quota_checks=None):
+    """Derive review tasks without treating the spreadsheet as live disposition.
+
+    The incoming room request and the retained operational booking are separate
+    views of the same quota group.  A warning uses the more restrictive visible
+    usage so a new snapshot cannot hide an already consumed quota, while still
+    emitting only one task per nation/discipline/gender group.  Exempt requests
+    remain visible for review but do not consume the normal single-room quota.
+    """
     room_by_person = {}
     for room in rooms:
         room_by_person[room['person1Key']] = room
@@ -1641,7 +1655,15 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
 
 
 def recalculate_fis_import_preview(preview):
-    """Recalculate quota state after a staged administrative override."""
+    """Replace all quota-derived preview state after a staged override.
+
+    Overrides are review-time commands, not immediate writes to live Athlete
+    state.  Recalculation must update warnings, provisional entitlements,
+    disposition analysis, and change summaries together; updating only the
+    visible warning would let confirmation consume a preview whose derived
+    sections disagree.  The function accepts both typed parser output and the
+    JSON-compatible preview persisted on an ImportSessionVersion.
+    """
     people, rooms = preview.get('people', []), preview.get('rooms', [])
     apply_single_room_quota_exemptions(
         people, preview.get('singleRoomQuotaExemptOverrides', {}))
@@ -1773,6 +1795,20 @@ def _remove_duplicates():
 
 
 def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None):
+    """Apply one validated preview as an authoritative full nation snapshot.
+
+    This is the destructive persistence boundary of the import lifecycle, not
+    a second preview: imported people and competition memberships are replaced,
+    approval/exemption state is resolved, and people absent from each imported
+    nation are removed together with dependent operational references.  Existing
+    room bookings for retained people are intentionally preserved; physical room
+    type, person approval state, and ``counts_as_single`` remain independent.
+
+    The token addresses the typed, process-local ``PREVIEW_STORE`` entry.  A
+    durable ImportSessionVersion records review/audit state but does not by
+    itself make a token valid after expiry, restart, or transfer to another
+    worker.  Callers own error rollback around this transaction boundary.
+    """
     cleanup_preview_store()
     preview = PREVIEW_STORE.get(preview_token)
     if not preview:
