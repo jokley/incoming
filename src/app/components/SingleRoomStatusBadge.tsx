@@ -1,4 +1,4 @@
-import { BedSingle } from 'lucide-react';
+import { BedSingle, Stamp } from 'lucide-react';
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { singleRoomBadgeLabels } from '../services/quotaEvaluation';
 
@@ -7,7 +7,7 @@ export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING
 export const singleRoomStatusPresentation = {
   NONE: { label: '', Icon: BedSingle, className: '' },
   IN_QUOTA: { label: 'Einzelzimmer', Icon: BedSingle, className: semanticToneClasses.info },
-  APPROVED_EXTRA: { label: 'Einzelzimmer – Mehrpreis', Icon: BedSingle, className: semanticToneClasses.warning },
+  APPROVED_EXTRA: { label: 'EZ', Icon: Stamp, className: semanticToneClasses.warning },
   PENDING_APPROVAL: { label: 'Einzelzimmer – Prüfung', Icon: BedSingle, className: semanticToneClasses.warning },
 } satisfies Record<SingleRoomStatus, { label: string; Icon: typeof BedSingle; className: string }>;
 
@@ -18,22 +18,22 @@ export function SingleRoomStatusBadge({ status, className = '' }: { status?: Sin
 
   const presentation = singleRoomStatusPresentation[normalizedStatus];
   const Icon = presentation.Icon;
-  return <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${presentation.className} ${className}`}>
+  return <span title={normalizedStatus === 'APPROVED_EXTRA' ? 'Einzelzimmer mit genehmigtem Mehrpreis' : undefined} className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${presentation.className} ${className}`}>
     <Icon className="h-3 w-3" aria-hidden="true" />
     {presentation.label}
   </span>;
 }
 
 /** Assignment presentation keeps operational single use independent from surcharge. */
-export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, className = '' }: { status?: SingleRoomStatus | null; countsAsSingle?: boolean; className?: string }) {
-  const labels = singleRoomBadgeLabels(countsAsSingle, status);
+export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, exemptReason, className = '' }: { status?: SingleRoomStatus | null; countsAsSingle?: boolean; exemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null; className?: string }) {
+  const labels = singleRoomBadgeLabels(countsAsSingle, status, exemptReason);
   if (!labels.length) return null;
 
   return <span className="inline-flex flex-wrap gap-1">
-    {labels.includes('Einzelzimmer') && <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.info} ${className}`}>
-      <BedSingle className="h-3 w-3" aria-hidden="true" />
-      Einzelzimmer
-    </span>}
+    {labels.includes('👑 WM') && <span title="Weltmeister – Einzelzimmeranspruch ohne Quotenverbrauch" className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.success} ${className}`}>👑 WM</span>}
+    {labels.includes('EZ ✓') && <span title="Einzelzimmer ohne Quotenverbrauch" className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.success} ${className}`}>EZ ✓</span>}
+    {labels.includes('EZ genehmigt') && <span title="Einzelzimmer mit genehmigtem Mehrpreis" className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.success} ${className}`}><Stamp className="h-3 w-3" aria-hidden="true" />EZ</span>}
+    {labels.includes('Einzelzimmer') && <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.info} ${className}`}><BedSingle className="h-3 w-3" aria-hidden="true" />Einzelzimmer</span>}
     {labels.includes('Mehrpreis') && <span className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.warning} ${className}`}>
       <BedSingle className="h-3 w-3" aria-hidden="true" />
       Mehrpreis

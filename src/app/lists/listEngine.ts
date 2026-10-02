@@ -1,6 +1,6 @@
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { hasSingleRoomSurcharge, isEvaluatedAsSingle } from '../services/quotaEvaluation';
+import { hasSingleRoomSurcharge, isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation';
 import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus';
 import { competitionDisplayList } from '../services/competitionPresentation';
 
@@ -25,6 +25,7 @@ export interface ListRow {
   specialMeal: string;
   lateCheckout: string;
   surcharge: string;
+  singleRoomSpecialStatus: string;
   quotaEvaluation: 'EZ' | 'DZ' | '—';
   roommate: string;
   athleteRemark: string;
@@ -178,6 +179,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       specialMeal: value(athlete.specialMeal),
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
       surcharge: hasSingleRoomSurcharge(athlete) ? 'Ja' : 'Nein',
+      singleRoomSpecialStatus: singleRoomSpecialStatusLabel(
+        athlete.single_room_status, athlete.singleRoomQuotaExemptReason),
       quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
       roommate: value(assignment?.roommate || athlete.sharedWithName),
       athleteRemark: value(athlete.additionalItems),

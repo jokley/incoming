@@ -126,6 +126,19 @@ class ImportSession(db.Model):
         latest = (db.session.query(db.func.max(ImportSessionVersion.version))
                   .filter_by(session_id=self.id).scalar() or 0)
         return latest + 1
+
+    @property
+    def current_approvals(self):
+        """Decision records belonging to the immutable current import version."""
+        if not self.current_version_id:
+            return []
+        superseded_ids = {
+            event.approval_id for event in self.history
+            if event.event_type == 'QUOTA_DECISION_REVISED_FROM' and event.approval_id
+        }
+        return [item for item in self.approvals
+                if item.version_id == self.current_version_id and item.id not in superseded_ids]
+
     def to_dict(self, include_preview=False):
         current = self.current_version
         preview = json.loads(current.preview_json) if current and current.preview_json else None
@@ -143,7 +156,7 @@ class ImportSession(db.Model):
             'errorMessage': self.error_message,
             'errors': len((preview or {}).get('errors', [])),
             'warnings': len((preview or {}).get('warnings', [])),
-            'approvals': [approval.to_dict() for approval in self.approvals],
+            'approvals': [approval.to_dict() for approval in self.current_approvals],
             'versions': [version.to_dict() for version in self.versions],
             'history': [event.to_dict() for event in self.history],
         }
@@ -455,6 +468,11 @@ class Athlete(db.Model):
             "single_room_status IN ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')",
             name='single_room_status',
         ),
+        db.CheckConstraint(
+            "single_room_quota_exempt_reason IS NULL OR "
+            "single_room_quota_exempt_reason IN ('WORLD_CHAMPION', 'OTHER')",
+            name='single_room_quota_exempt_reason',
+        ),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -503,6 +521,8 @@ class Athlete(db.Model):
     single_room_entitlement = db.Column(db.String(30))  # IN_QUOTA | APPROVED_EXTRA
     # Fachliche Quelle für den Anspruch, unabhängig von einer Zimmerzuweisung.
     single_room_status = db.Column(db.String(30), nullable=False, default='NONE')
+    # Administrative, person-level exemption from normal single-room quota.
+    single_room_quota_exempt_reason = db.Column(db.String(30), nullable=True)
     single_room_decision_id = db.Column(db.Integer, db.ForeignKey('import_approval.id'), nullable=True)
     single_room_decision = db.relationship('ImportApproval', foreign_keys=[single_room_decision_id])
     shared_with_name = db.Column(db.String(200))
@@ -564,6 +584,7 @@ class Athlete(db.Model):
             'present': self.present,
             'singleRoomEntitlement': self.single_room_entitlement,
             'single_room_status': self.single_room_status or 'NONE',
+            'singleRoomQuotaExemptReason': self.single_room_quota_exempt_reason,
             'single_room_decision_id': self.single_room_decision_id,
             'arrivalDate': self.arrival_date.isoformat() if self.arrival_date else None,
             'arrivalTime': self.arrival_time,

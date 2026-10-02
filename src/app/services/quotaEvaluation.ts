@@ -19,6 +19,7 @@ export interface QuotaAssignment {
   function?: string | null;
   countsAsSingle: boolean;
   singleRoomStatus?: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
 }
 
 export interface PersonQuotaEvaluation extends QuotaAssignment {
@@ -46,15 +47,26 @@ export interface QuotaSummary {
 export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | null) =>
   Boolean(booking?.countsAsSingle);
 
-/** A surcharge is an approved import exception, never an operational room flag. */
-export const hasSingleRoomSurcharge = (person?: { single_room_status?: string | null } | null) =>
-  person?.single_room_status === 'APPROVED_EXTRA';
+/** An active surcharge requires both approval and current operational use. */
+export const hasSingleRoomSurcharge = (person?: {
+  single_room_status?: string | null;
+  assignment?: { countsAsSingle?: boolean } | null;
+} | null) => person?.single_room_status === 'APPROVED_EXTRA'
+  && Boolean(person.assignment?.countsAsSingle);
 
-/** Labels for independent operational-single and approved-surcharge badges. */
-export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null) => [
+/** Labels for operational use, durable approval, and active surcharge. */
+export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null, exemptReason?: string | null) => [
+  ...(exemptReason === 'WORLD_CHAMPION' ? ['👑 WM'] : []),
+  ...(exemptReason === 'OTHER' ? ['EZ ✓'] : []),
+  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['EZ genehmigt'] : []),
   ...(countsAsSingle ? ['Einzelzimmer'] : []),
-  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
+  ...(countsAsSingle && singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
 ];
+
+export const singleRoomSpecialStatusLabel = (singleRoomStatus?: string | null, exemptReason?: string | null) =>
+  exemptReason === 'WORLD_CHAMPION' ? 'Weltmeister'
+    : exemptReason === 'OTHER' ? 'EZ-Ausnahme'
+      : singleRoomStatus === 'APPROVED_EXTRA' ? 'Mehrpreis genehmigt' : '—';
 
 export const quotaUsageKey = (nation?: string | null, discipline?: string | null, gender?: string | null) =>
   `${nation || ''}|${discipline || ''}|${normalizeGender(gender)}`;
@@ -79,7 +91,8 @@ export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssi
       ? quotaDisciplines : [athlete.discipline || athlete.disciplines?.[0]])];
     return disciplines.filter(Boolean).map(discipline => ({ personId: athlete.id, bookingId: booking.id,
       nationCode: athlete.nationCode, discipline, gender: athlete.gender, function: athlete.function,
-      countsAsSingle: isEvaluatedAsSingle(booking), singleRoomStatus: athlete.single_room_status }));
+      countsAsSingle: isEvaluatedAsSingle(booking), singleRoomStatus: athlete.single_room_status,
+      singleRoomQuotaExemptReason: athlete.singleRoomQuotaExemptReason }));
   }));
 }
 
@@ -91,6 +104,7 @@ export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): Quo
         nationCode: person.nationCode, discipline, gender: person.gender,
         function: person.function, countsAsSingle: Boolean(booking.countsAsSingle),
         singleRoomStatus: person.single_room_status,
+        singleRoomQuotaExemptReason: person.singleRoomQuotaExemptReason,
       }))))));
 }
 
@@ -105,18 +119,20 @@ export function evaluateCurrentQuotaUsage(rows: OfficialQuotaUsage[], assignment
 }
 
 export function calculateQuotaUsage(assignments: QuotaAssignment[]): number {
-  return assignments.filter(assignment => assignment.countsAsSingle).length;
+  return assignments.filter(assignment => assignment.countsAsSingle
+    && !assignment.singleRoomQuotaExemptReason).length;
 }
 
 /**
- * Marks approved import exceptions as additional cost. Operational quota usage
- * and the physical room type deliberately do not determine surcharge status.
+ * Marks currently consumed approved exceptions as active additional cost.
+ * Physical room type deliberately does not determine surcharge status.
  */
 export function calculateAdditionalCosts(assignments: QuotaAssignment[], _allowedSingleRooms: number): PersonQuotaEvaluation[] {
   return assignments.map(assignment => ({
     ...assignment,
     groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender),
-    additionalCost: assignment.singleRoomStatus === 'APPROVED_EXTRA',
+    additionalCost: assignment.countsAsSingle
+      && assignment.singleRoomStatus === 'APPROVED_EXTRA',
   }));
 }
 

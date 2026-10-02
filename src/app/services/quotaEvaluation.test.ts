@@ -1,13 +1,53 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { actionableQuotaCaseCount, quotaRequiresAction, singleRoomBadgeLabels, uniqueQuotaContext } from './quotaEvaluation.ts';
+import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, singleRoomBadgeLabels, singleRoomSpecialStatusLabel, uniqueQuotaContext } from './quotaEvaluation.ts';
 
 test('single-room and surcharge badges follow independent persisted state', () => {
-  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), ['Einzelzimmer', 'Mehrpreis']);
-  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['Mehrpreis']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), ['EZ genehmigt', 'Einzelzimmer', 'Mehrpreis']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'NONE'), []);
+  assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: true } }), true);
+  assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: false } }), false);
+  assert.deepEqual(calculateAdditionalCosts([
+    { personId: 'approved-active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA' },
+    { personId: 'approved-inactive', bookingId: '2', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: false, singleRoomStatus: 'APPROVED_EXTRA' },
+    { personId: 'ordinary-active', bookingId: '3', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'IN_QUOTA' },
+  ], 2).map(person => person.additionalCost), [true, false, false]);
+});
+
+test('approval reassignment moves the durable approval badge', () => {
+  const before = {
+    A: singleRoomBadgeLabels(false, 'APPROVED_EXTRA'),
+    B: singleRoomBadgeLabels(false, 'IN_QUOTA'),
+  };
+  const after = {
+    A: singleRoomBadgeLabels(false, 'IN_QUOTA'),
+    B: singleRoomBadgeLabels(false, 'APPROVED_EXTRA'),
+  };
+
+  assert.deepEqual(before, { A: ['EZ genehmigt'], B: [] });
+  assert.deepEqual(after, { A: [], B: ['EZ genehmigt'] });
+});
+
+test('assigned room cards use the shared single-room presentation', () => {
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), [
+    'EZ genehmigt', 'Einzelzimmer', 'Mehrpreis',
+  ]);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
+  assert.equal(singleRoomBadgeLabels(true, 'IN_QUOTA').includes('EZ genehmigt'), false);
+});
+
+test('quota-exempt accommodation badges stay separate from surcharge approval', () => {
+  assert.deepEqual(singleRoomBadgeLabels(true, 'NONE', 'WORLD_CHAMPION'), ['👑 WM', 'Einzelzimmer']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'NONE', 'OTHER'), ['EZ ✓', 'Einzelzimmer']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'NONE', 'WORLD_CHAMPION'), ['👑 WM']);
+  assert.equal(singleRoomBadgeLabels(true, 'NONE', 'OTHER').includes('Mehrpreis'), false);
+  assert.equal(singleRoomSpecialStatusLabel('NONE', 'WORLD_CHAMPION'), 'Weltmeister');
+  assert.equal(singleRoomSpecialStatusLabel('NONE', 'OTHER'), 'EZ-Ausnahme');
+  assert.equal(singleRoomSpecialStatusLabel('APPROVED_EXTRA', null), 'Mehrpreis genehmigt');
 });
 
 test('Handlungsbedarf counts unresolved action rather than technical overage', () => {
