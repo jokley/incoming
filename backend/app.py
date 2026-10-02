@@ -1899,7 +1899,14 @@ def get_import_session(session_id):
 
 @app.route('/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>', methods=['PATCH'])
 def stage_single_room_quota_exemption(session_id, person_key):
-    """Stage one administrative command on the current immutable import version."""
+    """Stage an exemption in review state without changing the live person.
+
+    The stored JSON projection and the typed confirmation cache are updated
+    together because reviewers must see the same derived quota state that a
+    later confirmation will consume.  Pending approval tasks are disposable
+    derivations and may be rebuilt; completed decisions remain audit records and
+    are only superseded when the confirmed person state is eventually applied.
+    """
     session = ImportSession.query.get_or_404(session_id)
     if session.status in {'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'}:
         return jsonify({'error': 'The current import version is no longer editable'}), 409
@@ -2027,8 +2034,10 @@ def decide_import_approval(session_id, approval_id):
         return jsonify({'error': 'A completed approval can only revise its approved persons'}), 400
     old_keys = json.loads(approval.approved_person_keys_json or '[]')
     if was_completed:
-        # Completed decisions are immutable audit records.  Mark the old row
-        # superseded in history and create a revised current decision.
+        # Never rewrite the evidence behind a completed business decision.  A
+        # changed person selection becomes a new current approval while history
+        # links the superseded selection; otherwise an audit performed later
+        # could not reconstruct who was approved at the original decision time.
         old_names = {person.get('personKey'): person.get('name') or person.get('personKey')
                      for person in details.get('singleRoomCandidates', [])}
         db.session.add(ImportSessionEvent(
