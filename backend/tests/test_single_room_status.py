@@ -1,6 +1,8 @@
+import json
 import os
 import sys
 import unittest
+from datetime import date
 
 
 database_url = os.environ.get('TEST_DATABASE_URL')
@@ -13,7 +15,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 from app import app  # noqa: E402
 from excel_import import (PREVIEW_STORE, apply_preserved_single_room_approvals,
                           apply_single_room_entitlement_preview, confirm_fis_import,
-                          build_quota_warnings,
+                          build_quota_warnings, recalculate_fis_import_preview,
+                          _serialize_person_preview,
                           preserved_single_room_approvals)  # noqa: E402
 from models import (ImportApproval, ImportSession, ImportSessionEvent,
                     ImportSessionVersion, Athlete, Competition, Event, Hotel,
@@ -368,6 +371,37 @@ class SingleRoomStatusTest(unittest.TestCase):
             self.assertEqual(check['quotaExemptSingleRooms'], 1)
             self.assertFalse(any(approval['decision'] == 'PENDING'
                                  for approval in response.get_json()['approvals']))
+
+    def test_recalculation_accepts_serialized_preview_dates(self):
+        with app.app_context():
+            db.session.add(Athlete(
+                fis_code='O0', firstname='O0', lastname='Person', nation_code='BRA',
+                discipline='Halfpipe', gender='M', function='Official',
+                arrival_date=date(2027, 3, 10), departure_date=None))
+            db.session.commit()
+            officials = [{**self.person(f'O{index}'), 'nationCode': 'BRA',
+                          'industryName': 'Halfpipe', 'gender': 'M',
+                          'arrivalDate': date(2027, 3, 11) if index == 0 else None,
+                          'departureDate': date(2027, 3, 15) if index == 0 else None}
+                         for index in range(3)]
+            athletes = [{**self.person(f'A{index}', 'Athlete'), 'nationCode': 'BRA',
+                         'industryName': 'Halfpipe', 'gender': 'M',
+                         'arrivalDate': None, 'departureDate': None} for index in range(2)]
+            rooms = [{'person1Key': person['matchKey'], 'person2Key': None, 'roomType': 'Single'}
+                     for person in officials]
+            stored = json.loads(json.dumps({
+                'people': [_serialize_person_preview(person) for person in officials + athletes],
+                'rooms': rooms, 'warnings': [], 'errors': [],
+                'singleRoomQuotaExemptOverrides': {'O1': 'WORLD_CHAMPION'},
+            }))
+
+            recalculated = recalculate_fis_import_preview(stored)
+
+            stay = recalculated['dispositionAnalysis']['categories']['stayChanged']['records'][0]
+            self.assertEqual(stay['new'], {'arrival': '2027-03-11', 'departure': '2027-03-15'})
+            check = recalculated['quotaChecks'][0]
+            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 2))
+            self.assertEqual(check['quotaExemptSingleRooms'], 1)
 
 
 if __name__ == '__main__':

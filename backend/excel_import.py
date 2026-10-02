@@ -1075,12 +1075,31 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved
             person['singleRoomEntitlement'] = 'APPROVAL_REQUIRED'
 
 
+def _iso_date(value):
+    """Return a validated ISO date for parsed and persisted preview values."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.date().isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, str):
+        try:
+            return date.fromisoformat(value).isoformat()
+        except ValueError:
+            try:
+                return datetime.fromisoformat(value).date().isoformat()
+            except ValueError as exc:
+                raise ValueError(f'Invalid ISO date: {value!r}') from exc
+    raise TypeError(f'Unsupported date value: {type(value).__name__}')
+
+
 def _serialize_person_preview(person):
     result = deepcopy(person)
     result['discipline'] = result.get('industryName')
     for key in ('arrivalDate', 'departureDate', 'tvPictureDate'):
         if result.get(key):
-            result[key] = result[key].isoformat()
+            result[key] = _iso_date(result[key])
     for key in ('entryDate', 'lastUpdate', 'entriesSentDate'):
         if result.get(key):
             result[key] = result[key].isoformat()
@@ -1098,8 +1117,8 @@ def _serialize_room_preview(room):
         'person2Name': room['person2Name'],
         'sharedWithRawName': room['sharedWithRawName'],
         'sharedWithNationCode': room['sharedWithNationCode'],
-        'checkInDate': room['checkInDate'].isoformat() if room['checkInDate'] else None,
-        'checkOutDate': room['checkOutDate'].isoformat() if room['checkOutDate'] else None,
+        'checkInDate': _iso_date(room['checkInDate']),
+        'checkOutDate': _iso_date(room['checkOutDate']),
         'daySnapshot': room['daySnapshot'],
         'lateCheckout': room['lateCheckout'],
         'firstMeal': room['firstMeal'],
@@ -1200,11 +1219,11 @@ def build_disposition_analysis(people, rooms, quota_warnings):
             new_value = person.get(imported_field)
             if (getattr(existing, field, None) or '') != (new_value or ''):
                 changes.append({'field': label, 'old': getattr(existing, field, None), 'new': new_value})
-        old_arrival, old_departure = existing.arrival_date, existing.departure_date
-        new_arrival, new_departure = person.get('arrivalDate'), person.get('departureDate')
+        old_arrival, old_departure = _iso_date(existing.arrival_date), _iso_date(existing.departure_date)
+        new_arrival, new_departure = _iso_date(person.get('arrivalDate')), _iso_date(person.get('departureDate'))
         if old_arrival != new_arrival or old_departure != new_departure:
-            stay = {**base, 'old': {'arrival': old_arrival.isoformat() if old_arrival else None, 'departure': old_departure.isoformat() if old_departure else None},
-                    'new': {'arrival': new_arrival.isoformat() if new_arrival else None, 'departure': new_departure.isoformat() if new_departure else None},
+            stay = {**base, 'old': {'arrival': old_arrival, 'departure': old_departure},
+                    'new': {'arrival': new_arrival, 'departure': new_departure},
                     'impact': 'Bestehende Disposition betroffen'}
             categories['stayChanged']['records'].append(stay)
             changes.append({'field': 'Aufenthalt', 'old': stay['old'], 'new': stay['new']})
