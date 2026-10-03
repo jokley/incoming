@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "build": "vite build",
-    "dev": "vite"
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "node --test 'src/**/*.test.ts'"
   },
   "dependencies": {
     "@emotion/react": "11.14.0",
@@ -65,9 +68,19 @@
     "vaul": "1.1.2"
   },
   "devDependencies": {
+    "@eslint/js": "9.39.1",
     "@tailwindcss/vite": "4.1.12",
+    "@types/node": "24.10.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "@vitejs/plugin-react": "4.7.0",
+    "eslint": "9.39.1",
+    "eslint-plugin-react": "7.37.5",
+    "eslint-plugin-react-hooks": "7.0.1",
+    "globals": "16.5.0",
     "tailwindcss": "4.1.12",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.46.4",
     "vite": "6.3.5"
   },
   "peerDependencies": {
@@ -86,5 +99,8 @@
     "overrides": {
       "vite": "6.3.5"
     }
+  },
+  "engines": {
+    "node": ">=22.6"
   }
 }
