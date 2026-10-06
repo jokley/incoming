@@ -1,3 +1,4 @@
+import type { SingleRoomQuotaExemptReason } from '../types';
 import { Profiler, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { Dialog, DialogContent, IconButton, Switch, Tooltip } from '@mui/material';
@@ -23,7 +24,7 @@ import {
 } from 'lucide-react';
 
 import { ImportConflictNotice } from './ImportConflictNotice';
-import { AssignmentStatusChip, PendingChanges } from './assignment/AssignmentInfo';
+import { AssignmentStatusChip, PendingChanges, type AssignmentChangeSubject } from './assignment/AssignmentInfo';
 import { OccupantCard } from './assignment/OccupantCard';
 import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
 import { FisRulesPanel } from './FisRulesPanel';
@@ -618,7 +619,7 @@ export function Assignments() {
     ]);
   };
 
-  const handleAcknowledgeImportChanges = async (unit: { occupants: ChangeOccupant[] }) => {
+  const handleAcknowledgeImportChanges = async (unit: { occupants: AssignmentChangeSubject[] }) => {
     try {
       setSaving(true);
       await Promise.all(unit.occupants.filter((occ) => occ.hasPendingReview).map((occ) => api.acknowledgeAthleteRoomlistChange(occ.athleteId)));
@@ -1789,15 +1790,7 @@ function HotelDetailView({
 
   const [openRoomTypes, setOpenRoomTypes] = useState<Record<string, boolean>>({});
 
-  useEffect(() => {
-    setOpenRoomTypes((current) => {
-      const next = { ...current };
-      for (const group of grouped) {
-        if (!(group.roomTypeId in next)) next[group.roomTypeId] = true;
-      }
-      return next;
-    });
-  }, [grouped]);
+  // Missing entries already render expanded; only user toggles need stored state.
 
   const totals = summarizeHotel(hotel);
   const contingentRange = getHotelContingentRange(hotel);
@@ -2255,7 +2248,7 @@ type SingleRoomControlPerson = {
   name: string;
   decisionId?: string | null;
   additionalCost: boolean;
-  exemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
+  exemptReason?: SingleRoomQuotaExemptReason;
 };
 
 function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>): SingleRoomControlPerson[] {
@@ -2371,7 +2364,7 @@ function DetailPanel({
   onUnassignOccupant: (bookingId: string, athleteId: string) => void;
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
   pendingAction: PendingAssignmentAction | null;
-  onAcknowledgeImportChanges: (unit: { occupants: ChangeOccupant[] }) => void;
+  onAcknowledgeImportChanges: (unit: { occupants: AssignmentChangeSubject[] }) => void;
   onShowDecision: (decisionId: string) => void;
 }) {
   if (!selectedUnit && !selectedBookingContext) {

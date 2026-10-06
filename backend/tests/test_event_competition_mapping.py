@@ -45,8 +45,9 @@ def test_selected_event_mapping_blocks_unknown_and_inactive_codes():
     frame = pd.DataFrame([{'Function':'Athlete','Lastname':'Test','Firstname':'Person',
         'Nationcode':'SUI','WSC_BA_M_6182':'YES'}])
     comp = type('MappedCompetition', (), {'quota_discipline':'Snowboard Big Air'})()
-    accepted = parse_entries_list(frame, {}, {'WSC_BA_M_6182': comp}, 'WSC Montafon 2027')
-    blocked = parse_entries_list(frame, {}, {}, 'Test Event')
+    athletes = {'by_fis_code': {}, 'by_competitor_id': {}, 'by_name_key': {}}
+    accepted = parse_entries_list(frame, athletes, {'WSC_BA_M_6182': comp}, 'WSC Montafon 2027')
+    blocked = parse_entries_list(frame, athletes, {}, 'Test Event')
     assert not accepted['errors']
     assert accepted['people'][0]['quotaDisciplines'] == ['Snowboard Big Air']
     assert blocked['errors'][0]['code'] == 'ENTRY_UNKNOWN_COMPETITION_COLUMNS'

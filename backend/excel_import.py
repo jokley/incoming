@@ -838,6 +838,10 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                 current['assignedOfficials'] = row['assignedOfficials']
             if row['singleRoomsUsed'] > current['singleRoomsUsed']:
                 current['singleRoomsUsed'] = row['singleRoomsUsed']
+            # Both sources describe the same people; preserve visible exemptions
+            # using the same maximum rule, without counting them twice.
+            if row['quotaExemptSingleRooms'] > current['quotaExemptSingleRooms']:
+                current['quotaExemptSingleRooms'] = row['quotaExemptSingleRooms']
 
     warnings = []
     for (nation_code, discipline, gender), row in sorted(rows_by_key.items()):

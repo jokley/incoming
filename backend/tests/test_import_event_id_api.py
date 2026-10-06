@@ -3,12 +3,11 @@ import sys
 import unittest
 
 
-database_url = os.environ.get('TEST_DATABASE_URL')
-if not database_url:
-    raise unittest.SkipTest('TEST_DATABASE_URL is required for database integration tests')
-os.environ['DATABASE_URL'] = database_url
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from test_support import configure_test_app, postgres_test_url
+
+database_url = postgres_test_url()
+os.environ['DATABASE_URL'] = database_url
 
 from app import app  # noqa: E402
 from models import Event, db  # noqa: E402
@@ -16,7 +15,7 @@ from models import Event, db  # noqa: E402
 
 class ImportEventIdApiTest(unittest.TestCase):
     def setUp(self):
-        app.config['TESTING'] = True
+        configure_test_app(app)
         with app.app_context():
             db.drop_all()
             db.create_all()

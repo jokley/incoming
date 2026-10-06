@@ -241,7 +241,7 @@ export function Dashboard() {
       invalidMasterData,
       surchargeRisks,
     };
-  }, [assignments.length, athletes, events, hotels, roomTypes.length]);
+  }, [assignments, athletes, events, hotels, roomTypes.length]);
 
   const capacityTimeline = useMemo(() => buildCapacityTimeline({ athletes, hotels, events, bookings: assignments }), [assignments, athletes, events, hotels]);
   const capacity = useMemo(() => {

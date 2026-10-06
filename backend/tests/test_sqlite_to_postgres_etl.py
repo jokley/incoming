@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -31,7 +32,7 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
         self.assertEqual(cyclic, {("left_table", "right_id"), ("right_table", "left_id")})
 
     def test_source_engine_enforces_read_only(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as engines:
             path = Path(directory) / "source.db"
             connection = sqlite3.connect(path)
             connection.execute("CREATE TABLE sample (id INTEGER PRIMARY KEY, value TEXT)")
@@ -39,13 +40,14 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             connection.commit()
             connection.close()
             engine = readonly_sqlite_engine(path)
+            engines.callback(engine.dispose)
             with engine.connect() as source:
                 self.assertEqual(source.exec_driver_sql("SELECT count(*) FROM sample").scalar_one(), 1)
                 with self.assertRaises(Exception):
                     source.exec_driver_sql("DELETE FROM sample")
 
     def test_legacy_single_room_status_is_backfilled_in_memory(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as engines:
             source_path = Path(directory) / "release-1.db"
             connection = sqlite3.connect(source_path)
             connection.execute(
@@ -60,6 +62,9 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             checksum = hashlib.sha256(source_path.read_bytes()).hexdigest()
 
             target = create_engine("sqlite://")
+            engines.callback(target.dispose)
+            source = readonly_sqlite_engine(source_path)
+            engines.callback(source.dispose)
             metadata = MetaData()
             Table(
                 "athlete", metadata,
@@ -70,7 +75,7 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             )
             metadata.create_all(target)
             report = MigrationReport("now", True, str(source_path), "target")
-            migrator = Migrator(readonly_sqlite_engine(source_path), target, report)
+            migrator = Migrator(source, target, report)
 
             _, first_rows, _ = migrator.analyze()
             _, second_rows, _ = migrator.analyze()
@@ -83,7 +88,7 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             self.assertEqual(len(report.warnings), 1)
 
     def test_aligned_single_room_status_is_not_overwritten(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as engines:
             source_path = Path(directory) / "aligned.db"
             connection = sqlite3.connect(source_path)
             connection.execute(
@@ -95,6 +100,9 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             connection.close()
 
             target = create_engine("sqlite://")
+            engines.callback(target.dispose)
+            source = readonly_sqlite_engine(source_path)
+            engines.callback(source.dispose)
             metadata = MetaData()
             Table("athlete", metadata, Column("id", Integer, primary_key=True),
                   Column("single_room_entitlement", String(30)),
@@ -102,13 +110,13 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             metadata.create_all(target)
             report = MigrationReport("now", True, str(source_path), "target")
 
-            _, rows, _ = Migrator(readonly_sqlite_engine(source_path), target, report).analyze()
+            _, rows, _ = Migrator(source, target, report).analyze()
 
             self.assertEqual(rows["athlete"][0]["single_room_status"], "PENDING_APPROVAL")
             self.assertEqual(report.warnings, [])
 
     def test_legacy_event_planning_values_are_backfilled_in_memory(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as engines:
             source_path = Path(directory) / "release-1.db"
             connection = sqlite3.connect(source_path)
             connection.executescript("""
@@ -129,6 +137,9 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             checksum = hashlib.sha256(source_path.read_bytes()).hexdigest()
 
             target = create_engine("sqlite://")
+            engines.callback(target.dispose)
+            source = readonly_sqlite_engine(source_path)
+            engines.callback(source.dispose)
             metadata = MetaData()
             event = Table("event", metadata, Column("id", Integer, primary_key=True),
                           Column("name", String(30)), Column("person_demand", Integer, nullable=False),
@@ -141,7 +152,7 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
                   Column("room_count", Integer, nullable=False))
             metadata.create_all(target)
             report = MigrationReport("now", True, str(source_path), "target")
-            migrator = Migrator(readonly_sqlite_engine(source_path), target, report)
+            migrator = Migrator(source, target, report)
 
             _, first_rows, _ = migrator.analyze()
             _, second_rows, _ = migrator.analyze()
@@ -160,7 +171,7 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             )
 
     def test_aligned_event_planning_values_are_not_overwritten(self):
-        with tempfile.TemporaryDirectory() as directory:
+        with tempfile.TemporaryDirectory() as directory, ExitStack() as engines:
             source_path = Path(directory) / "aligned.db"
             connection = sqlite3.connect(source_path)
             connection.execute(
@@ -172,6 +183,9 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             connection.close()
 
             target = create_engine("sqlite://")
+            engines.callback(target.dispose)
+            source = readonly_sqlite_engine(source_path)
+            engines.callback(source.dispose)
             metadata = MetaData()
             Table("event", metadata, Column("id", Integer, primary_key=True),
                   Column("person_demand", Integer, nullable=False),
@@ -179,7 +193,7 @@ class SqliteToPostgresEtlTest(unittest.TestCase):
             metadata.create_all(target)
             report = MigrationReport("now", True, str(source_path), "target")
 
-            _, rows, _ = Migrator(readonly_sqlite_engine(source_path), target, report).analyze()
+            _, rows, _ = Migrator(source, target, report).analyze()
 
             self.assertEqual(rows["event"][0]["person_demand"], 123)
             self.assertEqual(rows["event"][0]["single_room_percentage"], 17)

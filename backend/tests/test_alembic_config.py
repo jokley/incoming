@@ -7,6 +7,9 @@ import unittest
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND_DIR))
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
 from models import Athlete, db  # noqa: E402
 
 
@@ -42,7 +45,7 @@ class AlembicConfigurationTest(unittest.TestCase):
 
     def test_offline_sql_uses_postgresql_configuration(self):
         environment = os.environ.copy()
-        environment['DATABASE_URL'] = 'postgresql://incoming:secret@postgres/incoming'
+        environment['DATABASE_URL'] = 'postgresql://incoming_test:incoming_test@127.0.0.1:55432/incoming_test'
         result = subprocess.run(
             [sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'upgrade', 'head', '--sql'],
             cwd=BACKEND_DIR,
@@ -59,9 +62,9 @@ class AlembicConfigurationTest(unittest.TestCase):
         self.assertIn('ALTER TABLE hotel_room_inventory ADD COLUMN comment', result.stdout)
         self.assertIn('ALTER TABLE athlete ADD COLUMN import_change_details_json', result.stdout)
 
-    def test_import_change_details_migration_is_the_head_revision(self):
+    def test_single_head_retains_import_change_details_revision(self):
         environment = os.environ.copy()
-        environment['DATABASE_URL'] = 'postgresql://incoming:secret@postgres/incoming'
+        environment['DATABASE_URL'] = 'postgresql://incoming_test:incoming_test@127.0.0.1:55432/incoming_test'
         result = subprocess.run(
             [sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'heads'],
             cwd=BACKEND_DIR,
@@ -71,7 +74,10 @@ class AlembicConfigurationTest(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), '20260818_02 (head)')
+        scripts = ScriptDirectory.from_config(Config(str(BACKEND_DIR / 'alembic.ini')))
+        self.assertEqual(len(scripts.get_heads()), 1)
+        self.assertEqual(result.stdout.strip(), f'{scripts.get_current_head()} (head)')
+        self.assertIn('20260818_02', {revision.revision for revision in scripts.walk_revisions()})
 
 
 if __name__ == '__main__':

@@ -3,7 +3,7 @@
 Revision ID: 20260924_02
 Revises: 20260924_01
 """
-from alembic import op
+from alembic import context, op
 import sqlalchemy as sa
 
 revision = '20260924_02'
@@ -34,6 +34,19 @@ def upgrade():
         sa.UniqueConstraint('event_id', 'import_code', name='uq_event_competition_import_code'))
     op.create_index('ix_event_competition_event_id', 'event_competition', ['event_id'])
     op.create_index('ix_event_competition_competition_id', 'event_competition', ['competition_id'])
+    if context.is_offline_mode():
+        # Resolve the generated event ID when the SQL is applied, not rendered.
+        op.execute("""
+            WITH new_event AS (
+                INSERT INTO championship_event (name, year, active)
+                VALUES ('WSC Montafon 2027', 2027, true) RETURNING id
+            )
+            INSERT INTO event_competition
+                (event_id, competition_id, fis_codex, import_code, official_name, active)
+            SELECT new_event.id, competition.id, code, import_code, name, competition.active
+            FROM new_event CROSS JOIN competition
+        """)
+        return
     event_id = op.get_bind().execute(sa.text("""
         INSERT INTO championship_event (name, year, active)
         VALUES ('WSC Montafon 2027', 2027, true) RETURNING id

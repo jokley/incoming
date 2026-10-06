@@ -82,13 +82,21 @@ class DatabaseAdminTest(unittest.TestCase):
         restored = MagicMock(status=200)
         restored.read.return_value = json.dumps({'status': 'success'}).encode()
         urlopen.return_value.__enter__.side_effect = [imported, restored]
+        uploaded = []
+
+        def capture_upload(request, **kwargs):
+            if request.full_url.endswith('/import'):
+                uploaded.append(request.data.read())
+            return urlopen.return_value
+
+        urlopen.side_effect = capture_upload
         response = self.client.post('/api/admin/database/import',
                                     data={'file': (io.BytesIO(b'PGDMP'), 'lokal.dump')})
         self.assertEqual(response.status_code, 201)
         request = urlopen.call_args_list[0].args[0]
         self.assertEqual(request.full_url, 'http://backup:8080/import')
         self.assertEqual(request.headers['Content-length'], '5')
-        self.assertEqual(request.data.read(), b'PGDMP')
+        self.assertEqual(uploaded, [b'PGDMP'])
         response = self.client.post('/api/admin/database/restore', json={'token': 'abc'})
         self.assertEqual(response.status_code, 200)
         restore_request = urlopen.call_args_list[1].args[0]

@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { AuditEvent } from '../types.ts';
-import { describeAuditEvent } from './auditActivity.ts';
+import { assignmentWorkspaceHref, describeAuditEvent } from './auditActivity.ts';
+
+test('athlete review deep-links use the booking projection without an unsupported room type id', () => {
+  const href = assignmentWorkspaceHref({ bookingId: '17', hotelId: '4', personId: '23' });
+  assert.equal(href, '/assignments?assignmentId=17&hotelId=4&athleteId=23');
+  assert.equal(assignmentWorkspaceHref({ bookingId: null, hotelId: null, personId: '23' }), '/assignments?athleteId=23');
+});
 
 const event = (path: string, entityRefs?: AuditEvent['entityRefs']): AuditEvent => ({
   id: path,

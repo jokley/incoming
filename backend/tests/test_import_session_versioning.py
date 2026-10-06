@@ -7,21 +7,22 @@ from sqlalchemy.exc import IntegrityError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
+from test_support import configure_test_app, postgres_test_url
+
 from models import db, ImportSession, ImportSessionEvent, ImportSessionVersion
 
 
 class ImportSessionVersioningTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        database_url = os.environ.get('TEST_DATABASE_URL')
-        if not database_url:
-            raise unittest.SkipTest('TEST_DATABASE_URL is required for database integration tests')
+        database_url = postgres_test_url()
         cls.app = Flask(__name__)
         cls.app.config.update(SQLALCHEMY_DATABASE_URI=database_url,
-                              SQLALCHEMY_TRACK_MODIFICATIONS=False)
+                              SQLALCHEMY_TRACK_MODIFICATIONS=False, RUNTIME_ENV='test')
         db.init_app(cls.app)
 
     def setUp(self):
+        configure_test_app(self.app)
         self.context = self.app.app_context()
         self.context.push()
         db.create_all()

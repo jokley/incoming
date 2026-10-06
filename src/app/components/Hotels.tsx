@@ -3,20 +3,19 @@ import { useState, useEffect } from 'react';
 import { usePermissions } from '../auth/AuthProvider';
 import { Plus, Building2, Loader2 } from 'lucide-react';
 import { api } from '../services/api';
-import { Hotel } from '../types';
+import type { Hotel, HotelCapacityOverview } from '../types';
 
 export function Hotels() {
   const permissions = usePermissions();
   const [hotels, setHotels] = useState<Hotel[]>([]);
+  const [capacityOverview, setCapacityOverview] = useState<HotelCapacityOverview[]>([]);
   const [isAdding, setIsAdding] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [newHotel, setNewHotel] = useState<Partial<Hotel>>({
+  const [newHotel, setNewHotel] = useState<Pick<Hotel, 'name' | 'location' | 'region'>>({
     name: '',
     location: '',
     region: '',
-    singleRooms: 0,
-    doubleRooms: 0,
   });
 
   useEffect(() => {
@@ -26,7 +25,8 @@ export function Hotels() {
   const loadData = async () => {
     try {
       setLoading(true);
-      const data = await api.getHotels();
+      const [data, overview] = await Promise.all([api.getHotels(), api.getHotelCapacityOverview()]);
+      setCapacityOverview(overview);
       setHotels(data);
       setError(null);
     } catch (err) {
@@ -39,17 +39,15 @@ export function Hotels() {
 
   const handleAddHotel = async () => {
     if (!permissions.canCreate) return;
-    if (newHotel.name && (newHotel.singleRooms || newHotel.doubleRooms)) {
+    if (newHotel.name.trim()) {
       try {
         await api.createHotel({
           name: newHotel.name,
           location: newHotel.location,
           region: newHotel.region,
-          singleRooms: newHotel.singleRooms || 0,
-          doubleRooms: newHotel.doubleRooms || 0,
         });
         await loadData();
-        setNewHotel({ name: '', location: '', region: '', singleRooms: 0, doubleRooms: 0 });
+        setNewHotel({ name: '', location: '', region: '' });
         setIsAdding(false);
       } catch (err) {
         setError('Fehler beim Hinzufügen des Hotels');
@@ -109,20 +107,6 @@ export function Hotels() {
               onChange={(e) => setNewHotel({ ...newHotel, region: e.target.value })}
               className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
             />
-            <input
-              type="number"
-              placeholder="Einzelzimmer (EZ)"
-              value={newHotel.singleRooms || ''}
-              onChange={(e) => setNewHotel({ ...newHotel, singleRooms: parseInt(e.target.value) || 0 })}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
-            <input
-              type="number"
-              placeholder="Doppelzimmer (DZ)"
-              value={newHotel.doubleRooms || ''}
-              onChange={(e) => setNewHotel({ ...newHotel, doubleRooms: parseInt(e.target.value) || 0 })}
-              className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            />
           </div>
           <div className="flex gap-2">
             <button
@@ -134,7 +118,7 @@ export function Hotels() {
             <button
               onClick={() => {
                 setIsAdding(false);
-                setNewHotel({ name: '', capacity: 0, assignedCount: 0 });
+                setNewHotel({ name: '', location: '', region: '' });
               }}
               className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition-colors"
             >
@@ -146,7 +130,12 @@ export function Hotels() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {hotels.map((hotel) => {
-          const occupancyPercent = (hotel.assignedCount / hotel.capacity) * 100;
+          const overview = capacityOverview.find(item => item.hotel.id === hotel.id);
+          const capacity = overview?.totals.inventoryBeds ?? 0;
+          const occupied = overview?.totals.occupiedBeds ?? 0;
+          const singleRooms = overview?.roomTypes.filter(item => item.roomType.maxPersons === 1) ?? [];
+          const doubleRooms = overview?.roomTypes.filter(item => item.roomType.maxPersons === 2) ?? [];
+          const occupancyPercent = capacity > 0 ? (occupied / capacity) * 100 : 0;
           return (
             <div key={hotel.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
               <div className="bg-gradient-to-r from-blue-500 to-blue-600 p-6 text-white">
@@ -163,13 +152,13 @@ export function Hotels() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <p className="text-xs text-gray-600 mb-1">Einzelzimmer</p>
-                      <p className="text-lg font-bold text-gray-900">{hotel.singleRooms}</p>
-                      <p className="text-xs text-blue-600">{hotel.assignedSingle} belegt</p>
+                      <p className="text-lg font-bold text-gray-900">{singleRooms.reduce((sum, item) => sum + item.inventoryRooms, 0)}</p>
+                      <p className="text-xs text-blue-600">{singleRooms.reduce((sum, item) => sum + item.occupiedRooms, 0)} belegt</p>
                     </div>
                     <div>
                       <p className="text-xs text-gray-600 mb-1">Doppelzimmer</p>
-                      <p className="text-lg font-bold text-gray-900">{hotel.doubleRooms}</p>
-                      <p className="text-xs text-purple-600">{hotel.assignedDouble} / {hotel.doubleRooms * 2} Plätze</p>
+                      <p className="text-lg font-bold text-gray-900">{doubleRooms.reduce((sum, item) => sum + item.inventoryRooms, 0)}</p>
+                      <p className="text-xs text-purple-600">{doubleRooms.reduce((sum, item) => sum + item.occupiedBeds, 0)} / {doubleRooms.reduce((sum, item) => sum + item.inventoryBeds, 0)} Plätze</p>
                     </div>
                   </div>
                   <div className="flex justify-between items-center pt-2 border-t">
@@ -183,7 +172,7 @@ export function Hotels() {
                   <div className="flex justify-between items-center">
                     <span className="text-gray-600">Verfügbar</span>
                     <span className="text-2xl font-bold text-green-600">
-                      {capacity - occupied}
+                      {overview?.totals.remainingBeds ?? 0}
                     </span>
                   </div>
                   <div className="pt-4">
@@ -205,14 +194,14 @@ export function Hotels() {
                     </div>
                   </div>
 
-                  {hotel.roomCategories && hotel.roomCategories.length > 0 && (
+                  {overview && overview.roomTypes.length > 0 && (
                     <div className="pt-4 border-t">
                       <p className="text-xs font-semibold text-gray-700 mb-2">Zimmerkategorien:</p>
                       <div className="space-y-1">
-                        {hotel.roomCategories.map((cat) => (
-                          <div key={cat.id} className="flex justify-between text-xs">
-                            <span className="text-gray-600">{cat.name}</span>
-                            <span className="font-medium text-gray-900">{cat.count}x</span>
+                        {overview.roomTypes.map((cat) => (
+                          <div key={cat.roomType.id} className="flex justify-between text-xs">
+                            <span className="text-gray-600">{cat.roomType.name}</span>
+                            <span className="font-medium text-gray-900">{cat.inventoryRooms}x</span>
                           </div>
                         ))}
                       </div>

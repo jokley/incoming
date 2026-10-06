@@ -1,8 +1,9 @@
+import type { SingleRoomStatus, SingleRoomQuotaExemptReason } from '../types';
 import { BedSingle, Stamp } from 'lucide-react';
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { singleRoomBadgeLabels } from '../services/quotaEvaluation';
 
-export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+export type { SingleRoomStatus } from '../types';
 
 export const singleRoomStatusPresentation = {
   NONE: { label: '', Icon: BedSingle, className: '' },
@@ -25,7 +26,7 @@ export function SingleRoomStatusBadge({ status, className = '' }: { status?: Sin
 }
 
 /** Assignment presentation keeps operational single use independent from surcharge. */
-export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, exemptReason, className = '' }: { status?: SingleRoomStatus | null; countsAsSingle?: boolean; exemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null; className?: string }) {
+export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, exemptReason, className = '' }: { status?: SingleRoomStatus | null; countsAsSingle?: boolean; exemptReason?: SingleRoomQuotaExemptReason; className?: string }) {
   const labels = singleRoomBadgeLabels(countsAsSingle, status, exemptReason);
   if (!labels.length) return null;
 

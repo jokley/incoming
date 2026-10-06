@@ -1,3 +1,4 @@
+import type { SingleRoomQuotaExemptReason } from '../types';
 import type {
   RoomType,
   Hotel,
@@ -276,13 +277,13 @@ class ApiService {
   async createHotel(data: { name: string; location?: string; region?: string; contactPerson?: string; email?: string; phone?: string; comment?: string }): Promise<Hotel> {
     if (USE_MOCK_DATA) {
       const maxId = mockHotels.reduce((max, h) => Math.max(max, parseInt(h.id) || 0), 0);
-      const newHotel: Hotel = {
+      const newHotel = {
         id: String(maxId + 1),
         name: data.name,
         location: data.location,
         region: data.region,
         roomInventories: [],
-      };
+      } satisfies Hotel;
       mockHotels.push(newHotel);
       return Promise.resolve(newHotel);
     }
@@ -407,7 +408,7 @@ class ApiService {
   async createEvent(data: { discipline: string; startDate: string; endDate: string; personDemand: number; singleRoomPercentage: number }): Promise<Event> {
     if (USE_MOCK_DATA) {
       const maxId = mockEvents.reduce((max, e) => Math.max(max, parseInt(e.id) || 0), 0);
-      const newEvent: Event = {
+      const newEvent = {
         id: String(maxId + 1),
         discipline: data.discipline,
         startDate: data.startDate,
@@ -415,7 +416,7 @@ class ApiService {
         personDemand: data.personDemand,
         singleRoomPercentage: data.singleRoomPercentage,
         roomDemands: [],
-      };
+      } satisfies Event;
       mockEvents.push(newEvent);
       return Promise.resolve(newEvent);
     }
@@ -516,7 +517,7 @@ class ApiService {
 
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
-  async updateAthlete(id: string, data: { arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: 'WORLD_CHAMPION'|'OTHER'|null }): Promise<Athlete> {
+  async updateAthlete(id: string, data: { arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
     return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
@@ -534,6 +535,7 @@ class ApiService {
         firstname: data.firstname,
         nationCode: data.nationCode,
         function: data.function || 'Athlete',
+        single_room_status: 'NONE',
       };
       mockAthletes.push(newAthlete);
       return Promise.resolve(newAthlete);
@@ -884,7 +886,7 @@ class ApiService {
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
-  async stageSingleRoomQuotaExemption(sessionId: string, personKey: string, reason: 'WORLD_CHAMPION'|'OTHER'|null): Promise<ImportSession> {
+  async stageSingleRoomQuotaExemption(sessionId: string, personKey: string, reason: SingleRoomQuotaExemptReason): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/single-room-exemptions/${encodeURIComponent(personKey)}`, { method: 'PATCH', body: JSON.stringify({ reason }) });
   }
   async getImportDecision(id: string): Promise<ImportDecision> { return this.request(`/import/approvals/${id}`); }

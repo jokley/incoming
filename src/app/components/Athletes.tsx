@@ -1,6 +1,8 @@
+import type { SingleRoomQuotaExemptReason } from '../types';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
+  Alert,
   Box,
   Button,
   CircularProgress,
@@ -23,7 +25,7 @@ import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
-import { hasSingleRoomSurcharge, showStandaloneSingleRoomSurcharge } from '../services/quotaEvaluation';
+import { hasSingleRoomSurcharge } from '../services/quotaEvaluation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
@@ -143,7 +145,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
     if (!athlete) return;
     setSaving(true); setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, singleRoomQuotaExemptReason: (stay.exemptReason || null) as 'WORLD_CHAMPION'|'OTHER'|null });
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, singleRoomQuotaExemptReason: (stay.exemptReason || null) as SingleRoomQuotaExemptReason });
       Object.assign(athlete, updated);
       onClose();
     } catch (error) {
@@ -395,7 +397,7 @@ export function Athletes() {
                 <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
                 <Cell><div className="flex flex-col items-start gap-1"><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={setSelectedAthlete}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={setSelectedAthlete}/></div></Cell>
                 <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
-                <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, roomTypeId: athlete.assignment?.roomTypeId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>
+                <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>
               </tr>)}
             </tbody>
           </table>

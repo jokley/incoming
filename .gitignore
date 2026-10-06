@@ -3,6 +3,11 @@ dist
 
 .env
 .env.*
+!.env.test.example
+!.env.local.example
+/.local-dev/
+/.local-test/
+/scripts/__pycache__/
 
 backend/venv
 backend/__pycache__

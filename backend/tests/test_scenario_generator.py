@@ -12,6 +12,8 @@ from scenario_generator import (
     SCENARIOS, TEST_NATION, _apply, _base_people, _scenario_people, generate_complete_suite, generate_scenario,
 )
 from excel_import import create_fis_import_preview
+from flask import Flask
+from models import db
 
 
 class ScenarioGeneratorTest(unittest.TestCase):
@@ -39,7 +41,12 @@ class ScenarioGeneratorTest(unittest.TestCase):
         self.assertEqual({field for _, field in differences(states[7], states[8])}, {'Arrival_date'})
 
     def test_all_generated_pairs_are_valid_and_expected_quota_isolated(self):
-        with tempfile.TemporaryDirectory() as directory:
+        app = Flask(__name__)
+        app.config.update(SQLALCHEMY_DATABASE_URI='sqlite://', SQLALCHEMY_TRACK_MODIFICATIONS=False)
+        db.init_app(app)
+        with app.app_context(), tempfile.TemporaryDirectory() as directory:
+            db.create_all()
+            self.addCleanup(db.engine.dispose)
             for scenario in SCENARIOS:
                 generated = generate_scenario(scenario.number, Path(directory))['root']
                 prefix = f'{scenario.number}_' + generated.name.split('_', 1)[1]

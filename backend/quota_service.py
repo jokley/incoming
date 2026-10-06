@@ -6,9 +6,9 @@ from fis_rules import compute_official_quota, compute_single_room_entitlement
 def normalize_gender(value):
     value = (value or '').strip()
     lowered = value.lower()
-    if lowered.startswith('m'):
+    if lowered.startswith('m') or lowered in {'herr', 'herren'}:
         return 'M'
-    if lowered.startswith('f') or lowered.startswith('w'):
+    if lowered.startswith('f') or lowered.startswith('w') or lowered in {'dame', 'damen'}:
         return 'F'
     return value.upper()
 

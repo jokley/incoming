@@ -3,7 +3,7 @@ from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
 from quota_service import (disposition_by_quota_group, evaluate_quota_usage,
-                           single_room_usage_by_quota_group)
+                           normalize_gender, single_room_usage_by_quota_group)
 from datetime import datetime
 import hashlib
 import os
@@ -1584,10 +1584,12 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     implemented_by_key = {}
     for athlete in athletes:
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
-            key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
+            key = (athlete.nation_code or '', athlete.discipline or '',
+                   normalize_gender(athlete.gender or athlete.for_gender))
             approved_by_key[key] = approved_by_key.get(key, 0) + 1
         if athlete.single_room_entitlement and booking_by_athlete.get(athlete.id, False):
-            key = (athlete.nation_code or '', athlete.discipline or '', _normalize_gender(athlete))
+            key = (athlete.nation_code or '', athlete.discipline or '',
+                   normalize_gender(athlete.gender or athlete.for_gender))
             implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
     approval_state = {}
     approval_rows = db.session.query(
@@ -1609,7 +1611,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         details = json.loads(details_json or '{}')
         key = (details.get('nationCode') or session_nation or '',
                details.get('discipline') or session_discipline or '',
-               details.get('gender') or '')
+               normalize_gender(details.get('gender')))
         state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
         state['approved' if decision == 'APPROVED' else 'pending'] += 1
     for row in rows:
@@ -1626,7 +1628,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         row['approvedExceptions'] = decisions['approved']
         row['quotaStatus'] = ('DECISION_REQUIRED' if decisions['pending'] else
             'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
-    return [row for row in rows if not gender or row['gender'].lower() == gender.lower()]
+    return [row for row in rows if not gender or row['gender'] == normalize_gender(gender)]
 
 
 def _get_grouped_room_bookings_response():

@@ -1,3 +1,4 @@
+import type { SingleRoomQuotaExemptReason } from '../types';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Alert, Dialog, DialogContent, DialogTitle, MenuItem, Snackbar, TextField } from '@mui/material';
@@ -5,7 +6,7 @@ import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock
 
 import { api } from '../services/api';
 import { competitionDisplayName } from '../services/competitionPresentation';
-import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange, ImportChangeType } from '../types';
+import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange, PreviewImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
@@ -76,7 +77,7 @@ export function DataImport() {
     if (!selected) return;
     setSavingTask(true); setError(null);
     try {
-      const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as 'WORLD_CHAMPION'|'OTHER'|null);
+      const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as SingleRoomQuotaExemptReason);
       setSelected(updated); setPreview(updated.preview ?? null);
       if (refreshDialog) {
         const pending = updated.approvals.find(approval => approval.decision === 'PENDING'
@@ -265,12 +266,12 @@ function CompletedDecisions({session,onOpen}:{session:ImportSession;onOpen:(task
 function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><details className="group"><summary className="flex cursor-pointer list-none items-center justify-between gap-3"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · bei Bedarf aufklappen`}/><ChevronDown className="h-5 w-5 shrink-0 text-[var(--ops-text-subtle)] transition-transform group-open:rotate-180"/></summary><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></details></ContentCard>; }
 function UploadCard({files,onChange,versionLabel}:{files:File[];onChange:(f:FileList|null)=>void;versionLabel?:string}) { return <ContentCard surface="elevated" className="p-2"><div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Neue Importsession"/>{versionLabel&&<span className="text-xs font-bold text-[var(--ops-text-muted)]">{versionLabel}</span>}</div><label className="mt-2 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-3 text-center hover:bg-[var(--ops-tone-primary-surface)]"><input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple className="hidden" onChange={e=>onChange(e.target.files)}/><Upload className="mx-auto h-7 w-7 text-[var(--ops-primary)]"/><p className="mt-1 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
-type PreviewHint = { count: number; label: string; severity: ImportChange['severity']; type: ImportChangeType };
-const dispositionRelevantChangeTypes = new Set<ImportChangeType>([
+type PreviewHint = { count: number; label: string; severity: ImportChange['severity']; type: PreviewImportChangeType };
+const dispositionRelevantChangeTypes = new Set<PreviewImportChangeType>([
   'STAY_CHANGED', 'ROOMMATE_CHANGED', 'ROOM_CHANGED', 'ROOM_REMOVED',
   'SINGLE_ROOM_CHANGED', 'ROOMTYPE_CHANGED',
 ]);
-const changeLabels:Record<ImportChangeType,string>={
+const changeLabels:Record<PreviewImportChangeType,string>={
   NEW_PERSON:'neue Personen',PERSON_REMOVED:'entfernte Personen',STAY_CHANGED:'Aufenthalt geändert',
   ROOMMATE_CHANGED:'Zimmerpartner geändert',ROOM_CREATED:'Zimmer erstellt',ROOM_REMOVED:'Zimmer entfernt',
   ROOM_CHANGED:'Zimmeränderungen',SINGLE_ROOM_CHANGED:'Einzelzimmer geändert',
@@ -278,7 +279,7 @@ const changeLabels:Record<ImportChangeType,string>={
   VALIDATION_ERROR:'Validierungsfehler',
 };
 function aggregateChanges(changes:ImportChange[]):PreviewHint[] {
-  const grouped=new Map<ImportChangeType,ImportChange[]>();
+  const grouped=new Map<PreviewImportChangeType,ImportChange[]>();
   changes.forEach(change=>grouped.set(change.type,[...(grouped.get(change.type)??[]),change]));
   return [...grouped].map(([type,items])=>({count:items.length,label:changeLabels[type],type,severity:items.some(item=>item.severity==='error')?'error':items.some(item=>item.severity==='warning')?'warning':'info'}));
 }
