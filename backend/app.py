@@ -23,13 +23,15 @@ from sqlalchemy.engine import Engine
 from excel_import import (ImportValidationError, InvalidExcelFileError,
                           PREVIEW_STORE, apply_active_single_room_decision, confirm_fis_import,
                           create_fis_import_preview, detect_fis_file_type,
-                          normalize_event_id, recalculate_fis_import_preview)
+                          normalize_event_id, recalculate_fis_import_preview,
+                          validate_fis_import_token)
 from generate_test_files import generate_mock_files
 from scenario_generator import SCENARIOS, generate_complete_suite, generate_scenario
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
 from config import RuntimeSettings
 from logging_config import configure_logging
 from database_admin import database_admin
+from routes.hotels import hotels
 
 settings = RuntimeSettings.from_environment()
 configure_logging(settings.log_level)
@@ -41,6 +43,7 @@ if settings.cors_origins:
 mock_files_dir = str(settings.mock_files_dir)
 db.init_app(app)
 app.register_blueprint(database_admin)
+app.register_blueprint(hotels)
 
 
 @app.route('/health', methods=['GET'])
@@ -138,18 +141,35 @@ def report_assignment_performance(response):
     return response
 
 
+def _canonical_api_path():
+    """Resolve registered compatibility aliases for the shared security hooks.
+
+    Do not infer API access from a resource prefix alone: the same endpoint and
+    method must be registered under /api. Keep request.path for audit provenance.
+    """
+    if request.path.startswith('/api/'):
+        return request.path
+    if request.url_rule is not None:
+        canonical_rule = '/api' + request.url_rule.rule
+        if any(rule.rule == canonical_rule and request.method in rule.methods
+               for rule in app.url_map.iter_rules(request.endpoint)):
+            return '/api' + request.path
+    return None
+
+
 def _required_permission():
-    if request.path == '/api/auth/me':
+    path = g.api_path
+    if path == '/api/auth/me':
         return None
-    if request.path.startswith('/api/audit-events'):
+    if path.startswith('/api/audit-events'):
         return 'audit.read'
-    if request.path.startswith('/api/admin/'):
+    if path.startswith('/api/admin/'):
         return 'admin.reset'
     if request.method in {'GET', 'HEAD', 'OPTIONS'}:
         return 'data.read'
-    if request.path.startswith('/api/import/'):
+    if path.startswith('/api/import/'):
         return 'imports.write'
-    if request.path.startswith('/api/assignments/') or request.path.startswith('/api/room-assignments'):
+    if path.startswith('/api/assignments/') or path.startswith('/api/room-assignments'):
         return 'assignments.write'
     return 'data.write'
 
@@ -432,7 +452,8 @@ def delete_simulation():
 
 @app.before_request
 def authenticate_api_request():
-    if not request.path.startswith('/api/') or request.method == 'OPTIONS':
+    g.api_path = _canonical_api_path()
+    if g.api_path is None or request.method == 'OPTIONS':
         return None
     g.current_user = load_user_from_request()
     g.request_id = request.headers.get('X-Request-ID', str(uuid.uuid4()))[:100]
@@ -445,22 +466,22 @@ def authenticate_api_request():
     # endpoint. This snapshot is request-local and contains no transport data.
     g.audit_snapshot = None
     if request.method in {'PUT', 'PATCH', 'DELETE', 'POST'}:
-        parts = [part for part in request.path.split('/') if part]
+        parts = [part for part in g.api_path.split('/') if part]
         numeric = [int(part) for part in parts if part.isdigit()]
         try:
-            if request.path.startswith('/api/assignments/bookings/') and numeric:
+            if g.api_path.startswith('/api/assignments/bookings/') and numeric:
                 booking = db.session.get(RoomBooking, numeric[0])
                 g.audit_snapshot = booking.to_dict() if booking else None
-            elif request.path.startswith('/api/room-assignments/') and numeric:
+            elif g.api_path.startswith('/api/room-assignments/') and numeric:
                 booking = db.session.get(RoomBooking, numeric[0])
                 g.audit_snapshot = booking.to_dict() if booking else None
-            elif request.path.startswith('/api/hotels/') and numeric:
+            elif g.api_path.startswith('/api/hotels/') and numeric:
                 hotel = db.session.get(Hotel, numeric[0])
                 g.audit_snapshot = hotel.to_dict() if hotel else None
-            elif request.path.startswith('/api/athletes/') and numeric:
+            elif g.api_path.startswith('/api/athletes/') and numeric:
                 athlete = db.session.get(Athlete, numeric[0])
                 g.audit_snapshot = athlete.to_dict() if athlete else None
-            elif request.path.startswith('/api/room-types/') and numeric:
+            elif g.api_path.startswith('/api/room-types/') and numeric:
                 room_type = db.session.get(RoomType, numeric[0])
                 g.audit_snapshot = room_type.to_dict() if room_type else None
         except (ValueError, TypeError):
@@ -469,7 +490,7 @@ def authenticate_api_request():
 
 
 def _audit_entity():
-    parts = [part for part in request.path.removeprefix('/api/').split('/') if part]
+    parts = [part for part in g.api_path.removeprefix('/api/').split('/') if part]
     entity_type = parts[0] if parts else 'api'
     entity_id = next((part for part in parts[1:] if part.isdigit()), None)
     return entity_type, entity_id
@@ -615,7 +636,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 def audit_successful_mutation(response):
     user = current_user()
     if (user is None or request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}
-            or not request.path.startswith('/api/') or response.status_code >= 400):
+            or not getattr(g, 'api_path', None) or response.status_code >= 400):
         return response
     try:
         entity_type, entity_id = _audit_entity()
@@ -624,11 +645,11 @@ def audit_successful_mutation(response):
             payload = {key: value for key, value in payload.items()
                        if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
         action = {'POST': 'create', 'PUT': 'update', 'PATCH': 'update', 'DELETE': 'delete'}[request.method]
-        if 'unassign' in request.path:
+        if 'unassign' in g.api_path:
             action = 'unassign'
-        elif '/assign' in request.path:
+        elif '/assign' in g.api_path:
             action = 'assign'
-        elif request.path.startswith('/api/import/'):
+        elif g.api_path.startswith('/api/import/'):
             action = 'import'
         response_payload = response.get_json(silent=True)
         business = _business_activity(entity_type, entity_id, action, payload, response_payload)
@@ -1874,8 +1895,22 @@ def confirm_previewed_fis_import():
         return jsonify({'error': 'previewToken is required'}), 400
 
     try:
-        result = confirm_fis_import(preview_token)
-        return jsonify(result), 200
+        # Preserve token errors before resolving workflow eligibility. A cached
+        # token alone is not authority to import a nation snapshot.
+        validate_fis_import_token(preview_token)
+        session = ImportSession.query.join(
+            ImportSessionVersion, ImportSession.current_version_id == ImportSessionVersion.id,
+        ).filter(ImportSessionVersion.preview_token == preview_token).first()
+        if session is None:
+            return jsonify({'error': 'Preview token is not linked to a current import session version'}), 409
+        response = app.make_response(import_approved_session(session.id))
+        if response.status_code == 200:
+            # Keep the direct endpoint's established response shape while the
+            # shared workflow records completion and applies approved decisions.
+            result = response.get_json()
+            result.pop('session', None)
+            return jsonify(result), 200
+        return response
     except ImportValidationError as exc:
         db.session.rollback()
         return jsonify(exc.to_dict()), 422
@@ -2594,145 +2629,6 @@ def delete_room_type(room_type_id):
     return '', 204
 
 
-# Hotels - CRUD
-@app.route('/api/hotels', methods=['GET'])
-@app.route('/api/hotels/', methods=['GET'])
-@app.route('/hotels', methods=['GET'])
-@app.route('/hotels/', methods=['GET'])
-def get_hotels():
-    # This collection is a shared read model used by Dashboard, Hotels, Lists
-    # and Analytics.  Load the complete projection in a fixed number of queries
-    # instead of lazily issuing one inventory query per hotel (and potentially
-    # one room-type query per inventory).
-    hotels = Hotel.query.options(
-        db.selectinload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)
-    ).all()
-    return jsonify([h.to_dict() for h in hotels])
-
-
-@app.route('/api/hotels/<int:hotel_id>', methods=['GET'])
-@app.route('/api/hotels/<int:hotel_id>/', methods=['GET'])
-@app.route('/hotels/<int:hotel_id>', methods=['GET'])
-@app.route('/hotels/<int:hotel_id>/', methods=['GET'])
-def get_hotel(hotel_id):
-    hotel = Hotel.query.get_or_404(hotel_id)
-    return jsonify(hotel.to_dict())
-
-
-@app.route('/api/hotels', methods=['POST'])
-@app.route('/api/hotels/', methods=['POST'])
-@app.route('/hotels', methods=['POST'])
-@app.route('/hotels/', methods=['POST'])
-def create_hotel():
-    data = request.json
-    hotel = Hotel(
-        name=data['name'],
-        location=data.get('location'),
-        region=data.get('region'),
-        contact_person=data.get('contactPerson'),
-        email=data.get('email'),
-        phone=data.get('phone'),
-        comment=data.get('comment')
-    )
-    db.session.add(hotel)
-    db.session.commit()
-    return jsonify(hotel.to_dict()), 201
-
-
-@app.route('/api/hotels/<int:hotel_id>', methods=['PUT'])
-@app.route('/api/hotels/<int:hotel_id>/', methods=['PUT'])
-@app.route('/hotels/<int:hotel_id>', methods=['PUT'])
-@app.route('/hotels/<int:hotel_id>/', methods=['PUT'])
-def update_hotel(hotel_id):
-    hotel = Hotel.query.get_or_404(hotel_id)
-    data = request.json
-
-    if 'name' in data:
-        hotel.name = data['name']
-    if 'location' in data:
-        hotel.location = data['location']
-    if 'region' in data:
-        hotel.region = data['region']
-    if 'contactPerson' in data:
-        hotel.contact_person = data['contactPerson']
-    if 'email' in data:
-        hotel.email = data['email']
-    if 'phone' in data:
-        hotel.phone = data['phone']
-    if 'comment' in data:
-        hotel.comment = data['comment']
-
-    db.session.commit()
-    return jsonify(hotel.to_dict())
-
-
-@app.route('/api/hotels/<int:hotel_id>', methods=['DELETE'])
-@app.route('/api/hotels/<int:hotel_id>/', methods=['DELETE'])
-@app.route('/hotels/<int:hotel_id>', methods=['DELETE'])
-@app.route('/hotels/<int:hotel_id>/', methods=['DELETE'])
-def delete_hotel(hotel_id):
-    hotel = Hotel.query.get_or_404(hotel_id)
-    db.session.delete(hotel)
-    db.session.commit()
-    return '', 204
-
-
-# Hotel Room Inventory
-@app.route('/api/hotels/<int:hotel_id>/inventory', methods=['POST'])
-@app.route('/api/hotels/<int:hotel_id>/inventory/', methods=['POST'])
-@app.route('/hotels/<int:hotel_id>/inventory', methods=['POST'])
-@app.route('/hotels/<int:hotel_id>/inventory/', methods=['POST'])
-def add_hotel_inventory(hotel_id):
-    hotel = Hotel.query.get_or_404(hotel_id)
-    data = request.json
-
-    inventory = HotelRoomInventory(
-        hotel_id=hotel_id,
-        room_type_id=int(data['roomTypeId']),
-        available_from=datetime.fromisoformat(data['availableFrom']).date(),
-        available_until=datetime.fromisoformat(data['availableUntil']).date(),
-        room_count=int(data['roomCount']),
-        has_half_board=data.get('hasHalfBoard', False),
-        has_sr=data.get('hasSR', False),
-        comment=data.get('comment')
-    )
-    db.session.add(inventory)
-    db.session.commit()
-    return jsonify(inventory.to_dict()), 201
-
-
-@app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['PUT'])
-@app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['PUT'])
-@app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['PUT'])
-@app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['PUT'])
-def update_hotel_inventory(hotel_id, inventory_id):
-    inventory = HotelRoomInventory.query.filter_by(id=inventory_id, hotel_id=hotel_id).first_or_404()
-    data = request.json
-    inventory.room_type_id = int(data['roomTypeId'])
-    inventory.available_from = datetime.fromisoformat(data['availableFrom']).date()
-    inventory.available_until = datetime.fromisoformat(data['availableUntil']).date()
-    inventory.room_count = int(data['roomCount'])
-    inventory.has_half_board = data.get('hasHalfBoard', False)
-    inventory.has_sr = data.get('hasSR', False)
-    inventory.comment = data.get('comment')
-    db.session.commit()
-    return jsonify(inventory.to_dict())
-
-
-@app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['DELETE'])
-@app.route('/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['DELETE'])
-@app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['DELETE'])
-@app.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['DELETE'])
-def delete_hotel_inventory(hotel_id, inventory_id):
-    inventory = HotelRoomInventory.query.filter_by(
-        id=inventory_id,
-        hotel_id=hotel_id
-    ).first_or_404()
-    db.session.delete(inventory)
-    db.session.commit()
-    return '', 204
-
-
 # Events - CRUD
 @app.route('/api/events', methods=['GET'])
 def get_events():
@@ -3339,154 +3235,6 @@ def delete_room_assignment(assignment_id):
 
 
 
-
-@app.route('/api/hotels/capacity-overview', methods=['GET'])
-def get_hotels_capacity_overview():
-    hotel_id = request.args.get('hotel_id', type=int)
-    room_type_id = request.args.get('room_type_id', type=int)
-    nation = request.args.get('nation')
-    discipline = request.args.get('discipline')
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-
-    start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-    end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
-
-    inventory_query = HotelRoomInventory.query.join(RoomType)
-    if hotel_id:
-        inventory_query = inventory_query.filter(HotelRoomInventory.hotel_id == hotel_id)
-    if room_type_id:
-        inventory_query = inventory_query.filter(HotelRoomInventory.room_type_id == room_type_id)
-    if start_date and end_date:
-        inventory_query = inventory_query.filter(
-            HotelRoomInventory.available_from <= end_date,
-            HotelRoomInventory.available_until >= start_date
-        )
-
-    booking_query = RoomBookingOccupant.query.join(RoomBooking).join(Athlete).join(RoomType, RoomBooking.room_type_id == RoomType.id)
-    if hotel_id:
-        booking_query = booking_query.filter(RoomBooking.hotel_id == hotel_id)
-    if room_type_id:
-        booking_query = booking_query.filter(RoomBooking.room_type_id == room_type_id)
-    if nation:
-        booking_query = booking_query.filter(Athlete.nation_code == nation)
-    if discipline:
-        booking_query = booking_query.filter(
-            or_(Athlete.competitions.any(Competition.name == discipline), Athlete.discipline == discipline)
-        )
-    if start_date and end_date:
-        booking_query = booking_query.filter(
-            RoomBooking.check_in_date.isnot(None),
-            RoomBooking.check_out_date.isnot(None),
-            RoomBooking.check_in_date <= end_date,
-            RoomBooking.check_out_date >= start_date
-        )
-
-    hotel_map = {}
-
-    for inv in inventory_query.all():
-        hid = inv.hotel_id
-        if hid not in hotel_map:
-            hotel_map[hid] = {
-                'hotel': {'id': str(inv.hotel.id), 'name': inv.hotel.name, 'location': inv.hotel.location, 'region': inv.hotel.region},
-                'roomTypes': {},
-                'totals': {'inventoryRooms': 0, 'inventoryBeds': 0, 'occupiedRooms': 0, 'occupiedBeds': 0}
-            }
-
-        rt_id = str(inv.room_type.id)
-        rt_entry = hotel_map[hid]['roomTypes'].setdefault(rt_id, {
-            'roomType': inv.room_type.to_dict(),
-            'inventoryRooms': 0,
-            'inventoryBeds': 0,
-            'occupiedBeds': 0
-        })
-        rt_entry['inventoryRooms'] += inv.room_count
-        rt_entry['inventoryBeds'] += inv.room_count * inv.room_type.max_persons
-
-    for occ in booking_query.all():
-        booking = occ.room_booking
-        if not booking:
-            continue
-        hid = booking.hotel_id
-        if hid not in hotel_map:
-            hotel_map[hid] = {
-                'hotel': {'id': str(booking.hotel.id), 'name': booking.hotel.name, 'location': booking.hotel.location, 'region': booking.hotel.region},
-                'roomTypes': {},
-                'totals': {'inventoryRooms': 0, 'inventoryBeds': 0, 'occupiedRooms': 0, 'occupiedBeds': 0}
-            }
-
-        rt_id = str(booking.room_type.id)
-        rt_entry = hotel_map[hid]['roomTypes'].setdefault(rt_id, {
-            'roomType': booking.room_type.to_dict(),
-            'inventoryRooms': 0,
-            'inventoryBeds': 0,
-            'occupiedBeds': 0
-        })
-        rt_entry['occupiedBeds'] += 1
-
-    result = []
-    for hdata in hotel_map.values():
-        room_types = []
-        for rt in hdata['roomTypes'].values():
-            occ_rooms = (rt['occupiedBeds'] + rt['roomType']['maxPersons'] - 1) // rt['roomType']['maxPersons'] if rt['roomType']['maxPersons'] > 0 else 0
-            rt['occupiedRooms'] = occ_rooms
-            rt['remainingRooms'] = max(0, rt['inventoryRooms'] - occ_rooms)
-            rt['remainingBeds'] = max(0, rt['inventoryBeds'] - rt['occupiedBeds'])
-            room_types.append(rt)
-
-            hdata['totals']['inventoryRooms'] += rt['inventoryRooms']
-            hdata['totals']['inventoryBeds'] += rt['inventoryBeds']
-            hdata['totals']['occupiedRooms'] += occ_rooms
-            hdata['totals']['occupiedBeds'] += rt['occupiedBeds']
-
-        hdata['totals']['remainingRooms'] = max(0, hdata['totals']['inventoryRooms'] - hdata['totals']['occupiedRooms'])
-        hdata['totals']['remainingBeds'] = max(0, hdata['totals']['inventoryBeds'] - hdata['totals']['occupiedBeds'])
-        hdata['roomTypes'] = room_types
-        result.append(hdata)
-
-    return jsonify(result)
-
-
-@app.route('/api/hotels/<int:hotel_id>/reservations', methods=['GET'])
-def get_hotel_reservations(hotel_id):
-    room_type_id = request.args.get('room_type_id', type=int)
-    nation = request.args.get('nation')
-    discipline = request.args.get('discipline')
-    start_date = request.args.get('start_date')
-    end_date = request.args.get('end_date')
-
-    start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
-    end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
-
-    q = RoomAssignment.query.join(Athlete).join(RoomType).filter(RoomAssignment.hotel_id == hotel_id)
-    if room_type_id:
-        q = q.filter(RoomAssignment.room_type_id == room_type_id)
-    if nation:
-        q = q.filter(Athlete.nation_code == nation)
-    if discipline:
-        q = q.filter(
-            or_(Athlete.competitions.any(Competition.name == discipline), Athlete.discipline == discipline)
-        )
-    if start_date and end_date:
-        q = q.filter(RoomAssignment.check_in_date <= end_date, RoomAssignment.check_out_date >= start_date)
-
-    assignments = q.order_by(RoomAssignment.check_in_date.asc().nullslast()).all()
-    rows = []
-    for a in assignments:
-        rows.append({
-            'assignmentId': str(a.id),
-            'roomNumber': a.room_number,
-            'roomType': a.room_type.to_dict(),
-            'occupancy': 2 if a.shared_with else 1,
-            'guestName': f"{a.athlete.firstname} {a.athlete.lastname}",
-            'sharedWithName': f"{a.shared_with.firstname} {a.shared_with.lastname}" if a.shared_with else None,
-            'nationCode': a.athlete.nation_code,
-            'discipline': a.athlete.discipline,
-            'checkInDate': a.check_in_date.isoformat() if a.check_in_date else None,
-            'checkOutDate': a.check_out_date.isoformat() if a.check_out_date else None,
-            'specialNotes': a.athlete.special_meal
-        })
-    return jsonify(rows)
 
 # Statistics & Analytics
 @app.route('/api/analytics/room-availability', methods=['GET'])

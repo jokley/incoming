@@ -135,7 +135,14 @@ when the person later reappears.
 ## 5. Explicit approval and import
 
 The session can be marked `APPROVED` only after blocking errors are absent and
-all current required decisions are approved. Import then:
+all current required decisions are approved.
+
+The direct `/api/import/fis/confirm` endpoint also requires a valid token linked
+to the current version of an explicitly approved session. It delegates to the
+same session import operation; standalone and superseded preview tokens cannot
+bypass approval. See [direct confirmation approval](DIRECT_CONFIRMATION_APPROVAL.md).
+
+For an eligible session, import:
 
 1. resolves the typed preview token;
 2. rejects an expired/missing token or blocking preview errors;

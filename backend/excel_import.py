@@ -1798,6 +1798,17 @@ def _remove_duplicates():
     return _remove_athletes(duplicates)
 
 
+def validate_fis_import_token(preview_token):
+    """Return the existing typed preview without applying any import writes."""
+    cleanup_preview_store()
+    preview = PREVIEW_STORE.get(preview_token)
+    if not preview:
+        raise ValueError('Preview token not found or expired')
+    if preview['errors']:
+        raise ValueError('Preview contains blocking validation errors')
+    return preview
+
+
 def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None):
     """Apply one validated preview as an authoritative full nation snapshot.
 
@@ -1813,12 +1824,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     itself make a token valid after expiry, restart, or transfer to another
     worker.  Callers own error rollback around this transaction boundary.
     """
-    cleanup_preview_store()
-    preview = PREVIEW_STORE.get(preview_token)
-    if not preview:
-        raise ValueError('Preview token not found or expired')
-    if preview['errors']:
-        raise ValueError('Preview contains blocking validation errors')
+    preview = validate_fis_import_token(preview_token)
 
     now = datetime.utcnow()
     run = ImportRun(import_type='fis_confirm', started_at=now)

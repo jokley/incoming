@@ -84,6 +84,9 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         full = full_response.get_json()
         slim = slim_response.get_json()
+        slash_response = client.get('/api/assignments/planning-view/')
+        self.assertEqual(slash_response.status_code, 200)
+        self.assertEqual(slash_response.get_json(), full)
         self.assertEqual(slim['timeline'], full['timeline'])
         self.assertEqual(slim['units'], full['units'])
         self.assertEqual(slim['hotels'], full['hotels'])
@@ -188,6 +191,16 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(grid_bookings[0]['roomNumber'], 'Zimmer 01')
         self.assertEqual(grid_bookings[0]['occupants'][0]['arrivalDate'], '2027-03-10')
         self.assertEqual(grid_bookings[0]['occupants'][0]['departureDate'], '2027-03-14')
+        client = app.test_client()
+        grouped = client.get('/api/room-bookings/grouped')
+        self.assertEqual(grouped.status_code, 200)
+        for path in ['/api/room-bookings/grouped/', '/room-bookings/grouped',
+                     '/room-bookings/grouped/', '/api/room-assignments/grouped',
+                     '/api/room-assignments/grouped/']:
+            with self.subTest(path=path):
+                alias = client.get(path)
+                self.assertEqual(alias.status_code, 200)
+                self.assertEqual(alias.get_json(), grouped.get_json())
 
     def test_quota_api_projects_one_person_assignment_to_all_memberships(self):
         with app.app_context():

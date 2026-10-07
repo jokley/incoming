@@ -22,10 +22,11 @@ route for removal.
     `assignments.write`;
   - audit reads: `audit.read`;
   - `/api/admin/*`: administrator permission.
-- Non-`/api` aliases do not match the global `/api/` authentication guard. This
-  is a documented current-state security boundary, **not** a declaration that
-  the aliases are intentionally public. Verify their deployment reachability
-  and consumers before any route or authentication change.
+- Registered non-`/api` aliases use their matching canonical path in the shared
+  authentication, permission, and mutation-audit hooks. Audit records retain
+  the original URL. See [legacy alias security](LEGACY_ALIAS_SECURITY.md) for
+  the inventory, usage evidence, and regression coverage. Aliases remain
+  registered; automatic OPTIONS requests retain canonical unauthenticated behavior.
 
 ## Health and identity
 
@@ -58,7 +59,7 @@ route for removal.
 | Method | Canonical path | Purpose | Current frontend / audience | Compatibility aliases |
 | --- | --- | --- | --- | --- |
 | POST | `/api/import/fis/preview[/]` | Parse files, create preview, session/version, and review tasks | Import page | Trailing slash only |
-| POST | `/api/import/fis/confirm[/]` | Directly confirm a preview token | Wrapper exists; current session workflow should be preferred | Trailing slash only; removal not approved |
+| POST | `/api/import/fis/confirm[/]` | Confirm the current token of an approved session via the session import operation | Wrapper exists; current session workflow should be preferred | Trailing slash only; removal not approved |
 | GET | `/api/import/sessions` | List nation-scoped import sessions | Import page/queue | None |
 | GET | `/api/import/sessions/<session_id>` | Read session, versions, approvals, history, and preview | Import page | None |
 | PATCH | `/api/import/sessions/<session_id>/single-room-exemptions/<person_key>` | Stage exemption and recalculate preview | Import review | None |
