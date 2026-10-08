@@ -112,12 +112,18 @@ services:
       - frontend
       - backend
     networks:
-      - freestyle-network
+      freestyle-network: {}
+      edge-net:
+        aliases:
+          - incoming-nginx
     restart: unless-stopped
 
 networks:
   freestyle-network:
     driver: bridge
+  edge-net:
+    external: true
+    name: edge-net
 
 volumes:
   postgres-data:

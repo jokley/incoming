@@ -1,5 +1,21 @@
 # Deployment Guide - Freestyle WM
 
+## Zentraler Edge-Einstiegspunkt
+
+Die aktuelle `docker-compose.yml` ist für den Netzwerkaufbau maßgeblich.
+Incoming-Nginx (`incoming-nginx`, Container `freestyle-wm-nginx`) ist der einzige
+Edge-Einstiegspunkt des Incoming-Stacks. Er bleibt im internen
+`freestyle-network` und hängt zusätzlich am externen Docker-Netz `edge-net`
+mit dem Alias `incoming-nginx`. Dieses Netz muss bereits bestehen und wird
+nicht vom Incoming-Stack erzeugt.
+
+Der zukünftige zentrale Edge erreicht Incoming über
+`http://incoming-nginx:8080`; ein Host-Port wird dafür nicht veröffentlicht.
+Frontend, Backend, PostgreSQL und Backup bleiben ausschließlich im internen
+Netz und sind vom Edge isoliert. Die internen Upstreams und
+Authelia-Header bleiben unverändert. Ältere Beispiele mit direkten Host-Ports
+weiter unten beschreiben diesen Edge-Aufbau nicht.
+
 ## 🌐 Environment-Konfiguration
 
 Das System unterstützt verschiedene Umgebungen über `.env` Dateien.
