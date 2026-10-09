@@ -3,7 +3,7 @@ import sys
 import unittest
 from unittest.mock import patch
 
-os.environ['DATABASE_URL'] = 'postgresql://incoming:secret@postgres/incoming'
+os.environ.setdefault('DATABASE_URL', 'postgresql://incoming_test:incoming_test@127.0.0.1:55432/incoming_test')
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from app import app, db  # noqa: E402

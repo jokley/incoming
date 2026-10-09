@@ -1,3 +1,4 @@
+import type { SingleRoomStatus, SingleRoomQuotaExemptReason } from '../types';
 import type { OfficialQuotaUsage } from './fisRules';
 import type { AssignmentGridHotel, RoomBooking } from '../types';
 
@@ -18,8 +19,8 @@ export interface QuotaAssignment {
   gender?: string | null;
   function?: string | null;
   countsAsSingle: boolean;
-  singleRoomStatus?: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
-  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
+  singleRoomStatus?: SingleRoomStatus;
+  singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason;
 }
 
 export interface PersonQuotaEvaluation extends QuotaAssignment {

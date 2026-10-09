@@ -42,4 +42,11 @@ Authelia groups map to application permissions as follows:
 For local development only, set `AUTH_DEV_USER` and `AUTH_DEV_GROUPS`. These
 variables must never be set in production.
 
+Registered non-`/api` compatibility aliases use the same authentication and
+permissions as their canonical `/api/*` routes. Successful mutations use the
+same audit hook and retain the original URL in the audit record. Any proxy that
+intentionally serves these legacy API paths must supply the same trusted
+identity headers as for `/api/`. This does not require routing SPA page URLs to
+the backend. See [the alias inventory and remediation](LEGACY_ALIAS_SECURITY.md).
+
 Copy `incoming.env.example` to `incoming.env` on the server and replace `AUTH_PROXY_SECRET=change-me` with the real shared secret.

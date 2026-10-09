@@ -54,6 +54,8 @@ function NationTooltip({ active, payload }: { active?: boolean; payload?: Array<
   const values = [['Personen', row.count], ['Zimmer', row.ez + row.dz], ['EZ', row.ez], ['DZ', row.dz], ['Anteil', `${row.share.toLocaleString('de-DE', { maximumFractionDigits: 1 })} %`], ['Bettennächte', row.bedNights], ['Aufenthalt Ø', `${row.averageStay.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Nächte`]];
   return <div className="rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl"><b className="mb-2 block border-b border-[var(--ops-divider)] pb-2 text-sm">Nation {row.nation}</b>{values.map(([label, value]) => <div key={label} className="flex min-w-52 justify-between gap-6 py-0.5"><span className="text-[var(--ops-text-muted)]">{label}</span><strong className="font-mono">{value}</strong></div>)}</div>;
 }
+const CapacityTooltipRow = ({ label, value, color }: { label: string; value: number | string; color?: string }) => <div className="flex min-w-48 items-center justify-between gap-6 py-0.5"><span className="flex items-center gap-2 text-[var(--ops-text-muted)]">{color && <i className="h-2 w-2 rounded-sm" style={{ background: color }}/>} {label}</span><strong className="font-mono">{value}</strong></div>;
+
 function CapacityTooltip({ active, payload, metric, source }: { active?: boolean; payload?: Array<{ payload: CapacityDay }>; metric: 'beds' | 'rooms'; source: DemandSource }) {
   const day = payload?.[0]?.payload;
   if (!active || !day) return null;
@@ -62,20 +64,19 @@ function CapacityTooltip({ active, payload, metric, source }: { active?: boolean
     beds: ['bedSupply', 'assignedBeds', 'freeBeds', source === 'event' ? 'plannedBeds' : 'demandBeds', source === 'event' ? 'eventBedReserve' : 'liveBedReserve'],
   }[metric] as Array<keyof CapacityDay>;
   const [supply, assigned, free, demand, reserve] = config.map(key => Number(day[key]));
-  const Row = ({ label, value, color }: { label: string; value: number | string; color?: string }) => <div className="flex min-w-48 items-center justify-between gap-6 py-0.5"><span className="flex items-center gap-2 text-[var(--ops-text-muted)]">{color && <i className="h-2 w-2 rounded-sm" style={{ background: color }}/>} {label}</span><strong className="font-mono">{value}</strong></div>;
   if (metric === 'rooms') return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
     <div className="mb-1.5 border-b border-[var(--ops-divider)] pb-1.5 text-sm font-extrabold">{day.label}</div>
-    <Row label="Kontingent" value={day.roomSupply} />
-    <Row label="EZ disponiert" value={day.assignedEz} color="var(--ops-primary-emphasis)"/><Row label="DZ disponiert" value={day.assignedDz} color="var(--ops-primary)"/>
-    <Row label="EZ frei" value={day.freeEz} color="var(--ops-success)"/><Row label="DZ frei" value={day.freeDz} color="var(--ops-tone-success-text)"/>
-    <Row label={`EZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedEz : day.demandEz} color="var(--ops-warning)"/>
-    <Row label={`DZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedDz : day.demandDz}/>
-    <Row label={`Gesamtbedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="var(--ops-error)"/>
-    <Row label="Reserve gesamt" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
+    <CapacityTooltipRow label="Kontingent" value={day.roomSupply} />
+    <CapacityTooltipRow label="EZ disponiert" value={day.assignedEz} color="var(--ops-primary-emphasis)"/><CapacityTooltipRow label="DZ disponiert" value={day.assignedDz} color="var(--ops-primary)"/>
+    <CapacityTooltipRow label="EZ frei" value={day.freeEz} color="var(--ops-success)"/><CapacityTooltipRow label="DZ frei" value={day.freeDz} color="var(--ops-tone-success-text)"/>
+    <CapacityTooltipRow label={`EZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedEz : day.demandEz} color="var(--ops-warning)"/>
+    <CapacityTooltipRow label={`DZ-Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedDz : day.demandDz}/>
+    <CapacityTooltipRow label={`Gesamtbedarf (${source === 'event' ? 'Event' : 'Live'})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="var(--ops-error)"/>
+    <CapacityTooltipRow label="Reserve gesamt" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
   return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
     <div className="mb-1.5 border-b border-[var(--ops-divider)] pb-1.5 text-sm font-extrabold">{day.label}</div>
-    <Row label="Kontingent" value={supply} /><Row label="Disponiert" value={assigned} color="var(--ops-primary)"/><Row label="Frei" value={free} color="var(--ops-success)"/><Row label={`Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={demand} color="var(--ops-warning)"/><Row label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
+    <CapacityTooltipRow label="Kontingent" value={supply} /><CapacityTooltipRow label="Disponiert" value={assigned} color="var(--ops-primary)"/><CapacityTooltipRow label="Frei" value={free} color="var(--ops-success)"/><CapacityTooltipRow label={`Bedarf (${source === 'event' ? 'Event' : 'Live'})`} value={demand} color="var(--ops-warning)"/><CapacityTooltipRow label="Reserve" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
 }
 const tableClass = 'w-full min-w-[42rem] text-sm';
@@ -184,10 +185,10 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   const [source, setSource] = useState<DemandSource>(() => requestedSource === 'event' || requestedSource === 'live' ? requestedSource : hasNations ? 'live' : 'event');
   useEffect(() => { if (requestedSource === 'event' || requestedSource === 'live') setSource(requestedSource); }, [requestedSource]);
   const timeline = buildCapacityTimeline(data);
-  const metricConfig = {
+  const metricConfig = ({
     beds: { label: 'Betten', supply: 'bedSupply', demand: 'demandBeds', assigned: 'assignedBeds', free: 'freeBeds', plan: 'plannedBeds', reserve: source === 'event' ? 'eventBedReserve' : 'liveBedReserve', group: 'beds' as const },
     rooms: { label: 'Zimmer', supply: 'roomSupply', demand: 'demandRooms', assigned: 'assignedRooms', free: 'freeRooms', plan: 'plannedRooms', reserve: source === 'event' ? 'eventRoomReserve' : 'liveRoomReserve', group: 'rooms' as const },
-  }[metric];
+  } satisfies Record<'beds' | 'rooms', CapacityMetricConfig & { label: string; group: 'beds' | 'rooms' }>)[metric];
   const demandKey = source === 'event' ? metricConfig.plan : metricConfig.demand;
   const peak = timeline.reduce((best, day) => Number(day[demandKey]) > Number(best?.[demandKey] || -1) ? day : best, timeline[0]);
   const value = (key: keyof CapacityDay) => Number(peak?.[key] || 0);

@@ -126,6 +126,10 @@ class BackupServiceTest(unittest.TestCase):
             self.assertEqual(restore[-1], str(dump))
             self.assertIn('--single-transaction', restore)
             self.assertNotIn('--clean', restore)
+            migration = next(command for command in commands if 'alembic' in command)
+            self.assertEqual(migration[0], sys.executable)
+            self.assertEqual(Path(migration[4]),
+                             Path(backup_service.__file__).resolve().parents[1] / 'backend/alembic.ini')
 
     def test_failed_staged_restore_never_disconnects_or_modifies_production(self):
         failed = Result()

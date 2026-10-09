@@ -87,7 +87,12 @@ export function isMeasuredAssignmentRequest(endpoint: string) {
 }
 
 export function startAssignmentMeasurement(endpoint: string, method: string) {
-  if (!assignmentPerformanceEnabled) return null;
+  if (
+    !assignmentPerformanceEnabled ||
+    typeof globalThis.crypto?.randomUUID !== 'function'
+  ) {
+    return null;
+  }
   ensureLongTaskObserver();
   const operationId = crypto.randomUUID();
   const startedAt = performance.now();

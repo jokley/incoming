@@ -30,8 +30,8 @@ function mapSeries(node: ReactNode, visible: Set<string>, highlighted: string | 
 
 export function EnterpriseChart({ id, data, series, children, height = 320, onPointClick }: Props) {
   const storageKey = `enterprise-chart:${id}:visible`;
-  const seriesKey = series.map(item => item.key).join('|');
-  const allKeys = useMemo(() => series.map(item => item.key), [seriesKey]);
+  const seriesKey = JSON.stringify(series.map(item => item.key));
+  const allKeys = useMemo<string[]>(() => JSON.parse(seriesKey), [seriesKey]);
   const [visibleKeys, setVisibleKeys] = useState<string[]>(() => {
     try { return JSON.parse(localStorage.getItem(storageKey) || 'null') || allKeys; } catch { return allKeys; }
   });

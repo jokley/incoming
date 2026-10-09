@@ -1,8 +1,8 @@
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { hasSingleRoomSurcharge, isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation';
-import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus';
-import { competitionDisplayList } from '../services/competitionPresentation';
+import { hasSingleRoomSurcharge, isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation.ts';
+import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus.ts';
+import { competitionDisplayList } from '../services/competitionPresentation.ts';
 
 export type ListKind = 'none' | 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
@@ -104,6 +104,13 @@ export interface HotelContactRow {
   freeBeds: number;
   occupiedRooms: number;
   occupiedBeds: number;
+}
+
+export function summarizeHotelContactRows(rows: ReadonlyArray<Pick<HotelContactRow, 'occupiedBeds' | 'freeBeds'>>) {
+  return rows.reduce((sum, row) => ({
+    occupied: sum.occupied + row.occupiedBeds,
+    free: sum.free + row.freeBeds,
+  }), { occupied: 0, free: 0 });
 }
 
 const value = (entry?: string | null) => entry?.trim() || '—';

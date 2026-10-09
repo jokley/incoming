@@ -1,0 +1,398 @@
+{
+  "/api/admin/database/backup": [
+    "POST"
+  ],
+  "/api/admin/database/backups": [
+    "GET"
+  ],
+  "/api/admin/database/backups/<category>/<filename>": [
+    "GET"
+  ],
+  "/api/admin/database/import": [
+    "POST"
+  ],
+  "/api/admin/database/restore": [
+    "POST"
+  ],
+  "/api/admin/database/status": [
+    "GET"
+  ],
+  "/api/admin/events": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>": [
+    "GET",
+    "PUT"
+  ],
+  "/api/admin/events/<int:event_id>/competitions": [
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/competitions/<int:mapping_id>": [
+    "PUT"
+  ],
+  "/api/admin/events/<int:event_id>/copy-mappings": [
+    "POST"
+  ],
+  "/api/admin/scenarios": [
+    "GET"
+  ],
+  "/api/admin/scenarios/<number>/generate": [
+    "POST"
+  ],
+  "/api/admin/scenarios/complete/generate": [
+    "POST"
+  ],
+  "/api/admin/simulation": [
+    "DELETE",
+    "POST"
+  ],
+  "/api/admin/test-data/reset": [
+    "POST"
+  ],
+  "/api/analytics/occupancy-timeline": [
+    "GET"
+  ],
+  "/api/analytics/room-availability": [
+    "GET"
+  ],
+  "/api/assignments/bookings": [
+    "POST"
+  ],
+  "/api/assignments/bookings/": [
+    "POST"
+  ],
+  "/api/assignments/bookings/<int:booking_id>": [
+    "PUT"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/": [
+    "PUT"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign": [
+    "POST"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign/": [
+    "POST"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/unassign": [
+    "POST"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/unassign/": [
+    "POST"
+  ],
+  "/api/assignments/planning-view": [
+    "GET"
+  ],
+  "/api/assignments/planning-view/": [
+    "GET"
+  ],
+  "/api/assignments/planning-view/validations/<path:validation_key>": [
+    "GET"
+  ],
+  "/api/athletes": [
+    "GET",
+    "POST"
+  ],
+  "/api/athletes/": [
+    "GET",
+    "POST"
+  ],
+  "/api/athletes/<int:athlete_id>": [
+    "GET",
+    "PATCH",
+    "PUT"
+  ],
+  "/api/athletes/<int:athlete_id>/": [
+    "GET",
+    "PATCH",
+    "PUT"
+  ],
+  "/api/athletes/<int:athlete_id>/acknowledge-roomlist-change": [
+    "POST"
+  ],
+  "/api/athletes/<int:athlete_id>/acknowledge-roomlist-change/": [
+    "POST"
+  ],
+  "/api/audit-events": [
+    "GET"
+  ],
+  "/api/auth/me": [
+    "GET"
+  ],
+  "/api/championship-events": [
+    "GET"
+  ],
+  "/api/competitions": [
+    "GET"
+  ],
+  "/api/debug/routes": [
+    "GET"
+  ],
+  "/api/events": [
+    "GET",
+    "POST"
+  ],
+  "/api/events/<int:event_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/events/<int:event_id>/demand": [
+    "POST"
+  ],
+  "/api/events/<int:event_id>/demand/<int:demand_id>": [
+    "DELETE"
+  ],
+  "/api/fis/official-quotas": [
+    "GET"
+  ],
+  "/api/fis/official-quotas/": [
+    "GET"
+  ],
+  "/api/hotels": [
+    "GET",
+    "POST"
+  ],
+  "/api/hotels/": [
+    "GET",
+    "POST"
+  ],
+  "/api/hotels/<int:hotel_id>": [
+    "DELETE",
+    "GET",
+    "PUT"
+  ],
+  "/api/hotels/<int:hotel_id>/": [
+    "DELETE",
+    "GET",
+    "PUT"
+  ],
+  "/api/hotels/<int:hotel_id>/inventory": [
+    "POST"
+  ],
+  "/api/hotels/<int:hotel_id>/inventory/": [
+    "POST"
+  ],
+  "/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/hotels/<int:hotel_id>/inventory/<int:inventory_id>/": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/hotels/<int:hotel_id>/reservations": [
+    "GET"
+  ],
+  "/api/hotels/capacity-overview": [
+    "GET"
+  ],
+  "/api/import/approvals/<int:approval_id>": [
+    "GET"
+  ],
+  "/api/import/excel": [
+    "POST"
+  ],
+  "/api/import/excel/": [
+    "POST"
+  ],
+  "/api/import/fis/confirm": [
+    "POST"
+  ],
+  "/api/import/fis/confirm/": [
+    "POST"
+  ],
+  "/api/import/fis/mock-files": [
+    "GET"
+  ],
+  "/api/import/fis/mock-files/": [
+    "GET"
+  ],
+  "/api/import/fis/mock-files/<path:filename>": [
+    "GET"
+  ],
+  "/api/import/fis/mock-files/<path:filename>/": [
+    "GET"
+  ],
+  "/api/import/fis/mock-files/download-all": [
+    "GET"
+  ],
+  "/api/import/fis/mock-files/download-all/": [
+    "GET"
+  ],
+  "/api/import/fis/preview": [
+    "POST"
+  ],
+  "/api/import/fis/preview/": [
+    "POST"
+  ],
+  "/api/import/sessions": [
+    "GET"
+  ],
+  "/api/import/sessions/<int:session_id>": [
+    "GET"
+  ],
+  "/api/import/sessions/<int:session_id>/approvals/<int:approval_id>": [
+    "PATCH"
+  ],
+  "/api/import/sessions/<int:session_id>/approve": [
+    "POST"
+  ],
+  "/api/import/sessions/<int:session_id>/archive": [
+    "POST"
+  ],
+  "/api/import/sessions/<int:session_id>/cancel": [
+    "POST"
+  ],
+  "/api/import/sessions/<int:session_id>/history": [
+    "POST"
+  ],
+  "/api/import/sessions/<int:session_id>/import": [
+    "POST"
+  ],
+  "/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>": [
+    "PATCH"
+  ],
+  "/api/official-quotas": [
+    "GET"
+  ],
+  "/api/official-quotas/": [
+    "GET"
+  ],
+  "/api/room-assignments": [
+    "GET",
+    "POST"
+  ],
+  "/api/room-assignments/": [
+    "GET",
+    "POST"
+  ],
+  "/api/room-assignments/<int:assignment_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/room-assignments/<int:assignment_id>/": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/room-assignments/grouped": [
+    "GET"
+  ],
+  "/api/room-assignments/grouped/": [
+    "GET"
+  ],
+  "/api/room-bookings/grouped": [
+    "GET"
+  ],
+  "/api/room-bookings/grouped/": [
+    "GET"
+  ],
+  "/api/room-types": [
+    "GET",
+    "POST"
+  ],
+  "/api/room-types/": [
+    "GET",
+    "POST"
+  ],
+  "/api/room-types/<int:room_type_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/api/room-types/<int:room_type_id>/": [
+    "DELETE",
+    "PUT"
+  ],
+  "/athletes": [
+    "GET",
+    "POST"
+  ],
+  "/athletes/": [
+    "GET",
+    "POST"
+  ],
+  "/fis/official-quotas": [
+    "GET"
+  ],
+  "/fis/official-quotas/": [
+    "GET"
+  ],
+  "/health": [
+    "GET"
+  ],
+  "/hotels": [
+    "GET",
+    "POST"
+  ],
+  "/hotels/": [
+    "GET",
+    "POST"
+  ],
+  "/hotels/<int:hotel_id>": [
+    "DELETE",
+    "GET",
+    "PUT"
+  ],
+  "/hotels/<int:hotel_id>/": [
+    "DELETE",
+    "GET",
+    "PUT"
+  ],
+  "/hotels/<int:hotel_id>/inventory": [
+    "POST"
+  ],
+  "/hotels/<int:hotel_id>/inventory/": [
+    "POST"
+  ],
+  "/hotels/<int:hotel_id>/inventory/<int:inventory_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/hotels/<int:hotel_id>/inventory/<int:inventory_id>/": [
+    "DELETE",
+    "PUT"
+  ],
+  "/import/excel": [
+    "POST"
+  ],
+  "/import/excel/": [
+    "POST"
+  ],
+  "/room-assignments": [
+    "GET",
+    "POST"
+  ],
+  "/room-assignments/": [
+    "GET",
+    "POST"
+  ],
+  "/room-assignments/<int:assignment_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/room-assignments/<int:assignment_id>/": [
+    "DELETE",
+    "PUT"
+  ],
+  "/room-bookings/grouped": [
+    "GET"
+  ],
+  "/room-bookings/grouped/": [
+    "GET"
+  ],
+  "/room-types": [
+    "GET",
+    "POST"
+  ],
+  "/room-types/": [
+    "GET",
+    "POST"
+  ],
+  "/room-types/<int:room_type_id>": [
+    "DELETE",
+    "PUT"
+  ],
+  "/room-types/<int:room_type_id>/": [
+    "DELETE",
+    "PUT"
+  ]
+}

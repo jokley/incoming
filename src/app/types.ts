@@ -98,6 +98,9 @@ export interface ChampionshipEvent {
   competitionMappings?: EventCompetitionMapping[];
 }
 
+export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
+export type SingleRoomQuotaExemptReason = 'WORLD_CHAMPION' | 'OTHER' | null;
+
 export interface Athlete {
   id: string;
   function?: string;
@@ -117,8 +120,8 @@ export interface Athlete {
   phone?: string;
   email?: string;
   present?: boolean;
-  single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
-  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
+  single_room_status: SingleRoomStatus;
+  singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason;
   single_room_decision_id?: number | null;
 
   arrivalDate?: string | null; // ISO date
@@ -137,8 +140,6 @@ export interface Athlete {
   departureNeedTransportation?: boolean;
 
   roomType?: string | null;
-  arrivalDate?: string | null;
-  departureDate?: string | null;
   sharedWithName?: string | null;
   lateCheckout?: boolean;
   firstMeal?: string | null;
@@ -181,6 +182,7 @@ export interface Athlete {
   assignments?: NonNullable<Athlete['assignment']>[];
 }
 
+/** Persisted athlete changes emitted by confirmation, used by assignment review. */
 export type ImportChangeType =
   | 'NEW_ATHLETE'
   | 'DATE_CHANGED'
@@ -241,8 +243,8 @@ export interface RoomBookingUnitOccupant {
   specialMeal?: string | null;
   roomType?: string | null;
   statusBadges: string[];
-  single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
-  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
+  single_room_status: SingleRoomStatus;
+  singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason;
   single_room_decision_id?: string | null;
   hasPendingReview: boolean;
   importChangeTypes: ImportChangeType[];
@@ -316,8 +318,8 @@ export interface AssignmentGridBooking {
     hasPendingReview: boolean;
     importChangeTypes: ImportChangeType[];
     importChangeDetails: ImportChangeDetail[];
-    single_room_status: 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
-    singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
+    single_room_status: SingleRoomStatus;
+    singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason;
     single_room_decision_id?: string | null;
   }>;
 }
@@ -431,7 +433,7 @@ export interface FisImportPreviewPerson {
   sharedWithName?: string | null;
   matchKey?: string;
   singleRoomEntitlement?: 'IN_QUOTA' | 'APPROVED_EXTRA' | 'APPROVAL_REQUIRED' | 'QUOTA_EXEMPT' | null;
-  singleRoomQuotaExemptReason?: 'WORLD_CHAMPION' | 'OTHER' | null;
+  singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason;
 }
 
 export interface FisImportPreviewRoom {
@@ -451,7 +453,7 @@ export interface FisImportPreview {
   eventId?: string | null;
   isValid: boolean;
   detectedDiscipline?: string | null;
-  singleRoomQuotaExemptOverrides?: Record<string, 'WORLD_CHAMPION' | 'OTHER' | null>;
+  singleRoomQuotaExemptOverrides?: Record<string, SingleRoomQuotaExemptReason>;
   summary: {
     people: {
       total: number;
@@ -483,13 +485,14 @@ export interface FisImportPreview {
   };
 }
 
-export type ImportChangeType =
+/** Preview disposition changes; distinct from persisted athlete change details. */
+export type PreviewImportChangeType =
   | 'NEW_PERSON' | 'PERSON_REMOVED' | 'STAY_CHANGED' | 'ROOMMATE_CHANGED'
   | 'ROOM_CREATED' | 'ROOM_REMOVED' | 'ROOM_CHANGED' | 'SINGLE_ROOM_CHANGED' | 'ROOMTYPE_CHANGED'
   | 'FUNCTION_CHANGED' | 'COUNTRY_CHANGED' | 'VALIDATION_ERROR';
 
 export interface ImportChange {
-  type: ImportChangeType;
+  type: PreviewImportChangeType;
   preview: 'persons' | 'rooms';
   severity: 'info' | 'warning' | 'error';
   entityId: string;

@@ -2,7 +2,7 @@ from flask import Flask
 import pytest
 
 from excel_import import build_quota_warnings
-from models import db
+from models import Athlete, Hotel, RoomBooking, RoomBookingOccupant, RoomType, db
 from quota_service import evaluate_quota_usage
 
 
@@ -114,3 +114,43 @@ def test_existing_official_single_discipline_behavior_is_unchanged():
     assert rows['Snowboard Big Air']['singleRoomsUsed'] == 1
     assert rows['Snowboard Slopestyle']['assignedOfficials'] == 0
     assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 0
+
+
+@pytest.mark.parametrize('reason', ['WORLD_CHAMPION', 'OTHER'])
+@pytest.mark.parametrize('source', ['requested', 'existing', 'both'])
+def test_preview_exemption_merge_uses_maximum_not_sum(database, reason, source):
+    people = [person('ATHLETE', ['Moguls', 'Moguls'], single=False),
+              person('EXEMPT', ['Moguls'], function='Official'),
+              person('NORMAL', ['Moguls'], function='Official')]
+    people[1]['singleRoomQuotaExemptReason'] = reason
+    if source in {'existing', 'both'}:
+        hotel = Hotel(name='Test')
+        double = RoomType(name='Double', max_persons=2)
+        db.session.add_all([hotel, double]); db.session.flush()
+        for incoming in people[1:]:
+            official = Athlete(fis_code=incoming['fisCode'], firstname=incoming['firstname'],
+                lastname='Person', nation_code='BRA', discipline='Moguls', gender='M',
+                function='Official', single_room_quota_exempt_reason=incoming.get('singleRoomQuotaExemptReason'))
+            booking = RoomBooking(hotel_id=hotel.id, room_type_id=double.id, counts_as_single=True)
+            db.session.add_all([official, booking]); db.session.flush()
+            db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=official.id))
+        db.session.commit()
+    requested = [room('EXEMPT'), room('NORMAL')] if source in {'requested', 'both'} else []
+    checks = []
+    warnings = build_quota_warnings(people, requested, checks)
+    assert len(checks) == 1
+    assert checks[0]['quotaExemptSingleRooms'] == 1
+    assert (checks[0]['singleRooms'], checks[0]['singleRoomsAllowed']) == (1, 1)
+    assert not checks[0]['singleRoomsExceeded']
+    assert not warnings
+
+
+@pytest.mark.parametrize('reason', ['WORLD_CHAMPION', 'OTHER'])
+def test_preview_exempt_athlete_with_shared_quota_discipline_counts_once(database, reason):
+    athlete = {**person('MOGUL', ['Moguls', 'Moguls']), 'singleRoomQuotaExemptReason': reason}
+    checks = []
+    warnings = build_quota_warnings([athlete], [room('MOGUL')], checks)
+    assert len(checks) == 1
+    assert checks[0]['quotaExemptSingleRooms'] == 1
+    assert (checks[0]['singleRooms'], checks[0]['singleRoomsAllowed']) == (0, 1)
+    assert not warnings

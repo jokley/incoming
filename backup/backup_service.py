@@ -347,9 +347,10 @@ def restore_backup(payload):
         # A dump can legitimately predate the running application. Bring its
         # schema forward before the application reconnects (for example, an
         # older athlete dump has no internal_note column yet).
+        backend_directory = Path(__file__).resolve().parents[1] / "backend"
         migration = subprocess.run(
-            ["python", "-m", "alembic", "-c", "/opt/backend/alembic.ini", "upgrade", "head"],
-            cwd="/opt/backend", env={**os.environ, "PGPASSWORD": settings["password"],
+            [sys.executable, "-m", "alembic", "-c", str(backend_directory / "alembic.ini"), "upgrade", "head"],
+            cwd=str(backend_directory), env={**os.environ, "PGPASSWORD": settings["password"],
                                       "DATABASE_URL": _database_url(settings, staging)},
             capture_output=True, text=True,
         )
@@ -438,13 +439,13 @@ def scheduler():
         _background_backup("automatic")
 
 
-def serve():
+def serve(host="0.0.0.0", port=8080):
     config()  # validate secrets before reporting healthy
     if os.environ.get("BACKUP_ENABLED", "true").lower() in {"1", "true", "yes", "on"}:
         threading.Thread(target=scheduler, daemon=True).start()
     else:
         log("scheduler_disabled")
-    ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()
+    ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
 if __name__ == "__main__":

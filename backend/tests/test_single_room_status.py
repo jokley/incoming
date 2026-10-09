@@ -2,15 +2,14 @@ import json
 import os
 import sys
 import unittest
-from datetime import date
+from datetime import date, datetime
 
-
-database_url = os.environ.get('TEST_DATABASE_URL')
-if not database_url:
-    raise unittest.SkipTest('TEST_DATABASE_URL is required for database integration tests')
-os.environ['DATABASE_URL'] = database_url
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from test_support import configure_test_app, postgres_test_url
+
+database_url = postgres_test_url()
+os.environ['DATABASE_URL'] = database_url
 
 from app import app  # noqa: E402
 from excel_import import (PREVIEW_STORE, apply_preserved_single_room_approvals,
@@ -25,7 +24,9 @@ from models import (ImportApproval, ImportSession, ImportSessionEvent,
 
 class SingleRoomStatusTest(unittest.TestCase):
     def setUp(self):
-        app.config['TESTING'] = True
+        configure_test_app(app)
+        PREVIEW_STORE.clear()
+        self.addCleanup(PREVIEW_STORE.clear)
         with app.app_context():
             db.drop_all()
             db.create_all()
@@ -55,6 +56,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             people = [self.person('NONE', 'Athlete'), self.person('QUOTA'),
                       self.person('APPROVED'), self.person('PENDING')]
             PREVIEW_STORE['status-test'] = {
+                'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': people,
                 'rooms': [
                     {'person1Key': key, 'person2Key': None, 'roomType': 'Single'}
@@ -116,6 +118,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             db.session.add(event)
             db.session.commit()
             PREVIEW_STORE['preservation-test'] = {
+                'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': people, 'rooms': rooms,
                 'quotaChecks': [{'nationCode': 'BRA', 'discipline': 'Snowboard Halfpipe',
                                  'gender': 'M', 'singleRoomsAllowed': 2}],
@@ -288,6 +291,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             db.session.add(event); db.session.commit()
             person = {**self.person('WC'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'}
             PREVIEW_STORE['exemption-confirm'] = {
+                'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': [person], 'rooms': [],
                 'quotaChecks': [],
                 'singleRoomQuotaExemptOverrides': {'WC': 'WORLD_CHAMPION'},
@@ -298,6 +302,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             self.assertEqual(athlete.single_room_status, 'NONE')
 
             PREVIEW_STORE['exemption-snapshot'] = {
+                'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': [person], 'rooms': [],
                 'quotaChecks': [], 'singleRoomQuotaExemptOverrides': {},
             }

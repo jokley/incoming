@@ -5,12 +5,11 @@ from datetime import date, datetime
 import json
 
 
-database_url = os.environ.get('TEST_DATABASE_URL')
-if not database_url:
-    raise unittest.SkipTest('TEST_DATABASE_URL is required for database integration tests')
-os.environ['DATABASE_URL'] = database_url
-
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+from test_support import configure_test_app, postgres_test_url
+
+database_url = postgres_test_url()
+os.environ['DATABASE_URL'] = database_url
 
 from app import app  # noqa: E402
 from models import (  # noqa: E402
@@ -30,7 +29,7 @@ from models import (  # noqa: E402
 
 class AssignmentPlanningProjectionTest(unittest.TestCase):
     def setUp(self):
-        app.config['TESTING'] = True
+        configure_test_app(app)
         with app.app_context():
             db.drop_all()
             db.create_all()
@@ -85,6 +84,9 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         full = full_response.get_json()
         slim = slim_response.get_json()
+        slash_response = client.get('/api/assignments/planning-view/')
+        self.assertEqual(slash_response.status_code, 200)
+        self.assertEqual(slash_response.get_json(), full)
         self.assertEqual(slim['timeline'], full['timeline'])
         self.assertEqual(slim['units'], full['units'])
         self.assertEqual(slim['hotels'], full['hotels'])
@@ -189,6 +191,16 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(grid_bookings[0]['roomNumber'], 'Zimmer 01')
         self.assertEqual(grid_bookings[0]['occupants'][0]['arrivalDate'], '2027-03-10')
         self.assertEqual(grid_bookings[0]['occupants'][0]['departureDate'], '2027-03-14')
+        client = app.test_client()
+        grouped = client.get('/api/room-bookings/grouped')
+        self.assertEqual(grouped.status_code, 200)
+        for path in ['/api/room-bookings/grouped/', '/room-bookings/grouped',
+                     '/room-bookings/grouped/', '/api/room-assignments/grouped',
+                     '/api/room-assignments/grouped/']:
+            with self.subTest(path=path):
+                alias = client.get(path)
+                self.assertEqual(alias.status_code, 200)
+                self.assertEqual(alias.get_json(), grouped.get_json())
 
     def test_quota_api_projects_one_person_assignment_to_all_memberships(self):
         with app.app_context():
@@ -206,7 +218,8 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             db.session.add_all([big_air, slopestyle, luca, event, mapping])
             db.session.flush()
             booking = RoomBooking(hotel_id=Hotel.query.one().id,
-                room_type_id=RoomType.query.one().id, room_number='Slot 01')
+                room_type_id=RoomType.query.one().id, room_number='Slot 01',
+                check_in_date=date(2027, 3, 10), check_out_date=date(2027, 3, 14))
             db.session.add(booking)
             db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=luca.id))

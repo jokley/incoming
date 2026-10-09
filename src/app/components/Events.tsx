@@ -7,6 +7,7 @@ import { competitionDisplayName } from '../services/competitionPresentation';
 import { Event, EventRoomDemand, RoomType } from '../types';
 
 export function EventsManagement() {
+  const permissions = usePermissions();
   const [events, setEvents] = useState<Event[]>([]);
   const [roomTypes, setRoomTypes] = useState<RoomType[]>([]);
   const [loading, setLoading] = useState(true);
@@ -14,7 +15,7 @@ export function EventsManagement() {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedEvent, setSelectedEvent] = useState<Event | null>(null);
-  const [formData, setFormData] = useState({ discipline: '', startDate: '', endDate: '' });
+  const [formData, setFormData] = useState({ discipline: '', startDate: '', endDate: '', personDemand: 0, singleRoomPercentage: 50 });
 
   // Demand form
   const [showDemandForm, setShowDemandForm] = useState(false);
@@ -46,8 +47,8 @@ export function EventsManagement() {
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
-    if (!permissions.canEdit) return;
     e.preventDefault();
+    if (editingId ? !permissions.canEdit : !permissions.canCreate) return;
 
     try {
       if (editingId) {
@@ -57,7 +58,7 @@ export function EventsManagement() {
       }
 
       await loadData();
-      setFormData({ discipline: '', startDate: '', endDate: '' });
+      setFormData({ discipline: '', startDate: '', endDate: '', personDemand: 0, singleRoomPercentage: 50 });
       setIsAdding(false);
       setEditingId(null);
     } catch (err) {
@@ -69,7 +70,9 @@ export function EventsManagement() {
     setFormData({
       discipline: event.discipline,
       startDate: event.startDate,
-      endDate: event.endDate
+      endDate: event.endDate,
+      personDemand: event.personDemand,
+      singleRoomPercentage: event.singleRoomPercentage,
     });
     setEditingId(event.id);
     setIsAdding(true);
@@ -132,7 +135,7 @@ export function EventsManagement() {
   };
 
   const handleCancel = () => {
-    setFormData({ discipline: '', startDate: '', endDate: '' });
+    setFormData({ discipline: '', startDate: '', endDate: '', personDemand: 0, singleRoomPercentage: 50 });
     setIsAdding(false);
     setEditingId(null);
   };
@@ -215,6 +218,20 @@ export function EventsManagement() {
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
+              <label className="block text-sm font-medium text-gray-700">
+                Personenbedarf *
+                <input type="number" required min={0} step={1} value={formData.personDemand}
+                  onChange={e => setFormData({ ...formData, personDemand: Number(e.target.value) })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              </label>
+              <label className="block text-sm font-medium text-gray-700">
+                EZ-Anteil (%) *
+                <input type="number" required min={0} max={100} step={1} value={formData.singleRoomPercentage}
+                  onChange={e => setFormData({ ...formData, singleRoomPercentage: Number(e.target.value) })}
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent" />
+              </label>
             </div>
             <div className="flex gap-2">
               <button

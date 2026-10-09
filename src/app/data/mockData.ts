@@ -634,6 +634,7 @@ export const mockAthletes: Athlete[] = [
   // Athletes
   {
     id: '1',
+    single_room_status: 'NONE',
     lastname: 'DUSEK',
     firstname: 'Jakob',
     nationCode: 'AUT',
@@ -646,6 +647,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '2',
+    single_room_status: 'NONE',
     lastname: 'HAEMMERLE',
     firstname: 'Alessandro',
     nationCode: 'AUT',
@@ -658,6 +660,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '3',
+    single_room_status: 'NONE',
     lastname: 'LEITNER',
     firstname: 'Elias',
     nationCode: 'AUT',
@@ -670,6 +673,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '4',
+    single_room_status: 'NONE',
     lastname: 'PACHNER',
     firstname: 'Lukas',
     nationCode: 'AUT',
@@ -682,6 +686,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '5',
+    single_room_status: 'NONE',
     lastname: 'PICKL',
     firstname: 'David',
     nationCode: 'AUT',
@@ -693,6 +698,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '6',
+    single_room_status: 'NONE',
     lastname: 'GALLER',
     firstname: 'Anna-Maria',
     nationCode: 'AUT',
@@ -705,6 +711,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '7',
+    single_room_status: 'NONE',
     lastname: 'KOBALD',
     firstname: 'Tanja',
     nationCode: 'AUT',
@@ -717,6 +724,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '8',
+    single_room_status: 'NONE',
     lastname: 'ZERKHOLD',
     firstname: 'Pia',
     nationCode: 'AUT',
@@ -731,6 +739,7 @@ export const mockAthletes: Athlete[] = [
   // NSA Staff
   {
     id: '9',
+    single_room_status: 'NONE',
     lastname: 'BURGSTALLER',
     firstname: 'Christian',
     nationCode: 'AUT',
@@ -741,6 +750,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '10',
+    single_room_status: 'NONE',
     lastname: 'FORSTENPOINTNER',
     firstname: 'Walter',
     nationCode: 'AUT',
@@ -751,6 +761,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '11',
+    single_room_status: 'NONE',
     lastname: 'GALLER',
     firstname: 'Christian',
     nationCode: 'AUT',
@@ -761,6 +772,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '12',
+    single_room_status: 'NONE',
     lastname: 'GONZALES',
     firstname: 'Sandra',
     nationCode: 'AUT',
@@ -771,6 +783,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '13',
+    single_room_status: 'NONE',
     lastname: 'GREIL',
     firstname: 'Thomas',
     nationCode: 'AUT',
@@ -781,6 +794,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '14',
+    single_room_status: 'NONE',
     lastname: 'GRUNER',
     firstname: 'Lukas',
     nationCode: 'AUT',
@@ -791,6 +805,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '15',
+    single_room_status: 'NONE',
     lastname: 'IONUT',
     firstname: 'Vilceanu',
     nationCode: 'AUT',
@@ -801,6 +816,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '16',
+    single_room_status: 'NONE',
     lastname: 'MAIR',
     firstname: 'Christopher',
     nationCode: 'AUT',
@@ -811,6 +827,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '17',
+    single_room_status: 'NONE',
     lastname: 'POPPERL',
     firstname: 'Paul',
     nationCode: 'AUT',
@@ -821,6 +838,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '18',
+    single_room_status: 'NONE',
     lastname: 'RAITMAIR',
     firstname: 'Gernot',
     nationCode: 'AUT',
@@ -831,6 +849,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '19',
+    single_room_status: 'NONE',
     lastname: 'RITCHIE',
     firstname: 'Samuel Magnus',
     nationCode: 'AUT',
@@ -841,6 +860,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '20',
+    single_room_status: 'NONE',
     lastname: 'VONBANK',
     firstname: 'Christoph',
     nationCode: 'AUT',
@@ -851,6 +871,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '21',
+    single_room_status: 'NONE',
     lastname: 'WIESER',
     firstname: 'Kalrheinz',
     nationCode: 'AUT',
@@ -861,6 +882,7 @@ export const mockAthletes: Athlete[] = [
   },
   {
     id: '22',
+    single_room_status: 'NONE',
     lastname: 'WOODFORD',
     firstname: 'James',
     nationCode: 'AUT',
