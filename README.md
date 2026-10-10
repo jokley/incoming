@@ -12,10 +12,10 @@ ein separater Backup-Service.
 
 ### Frontend
 
-Das TypeScript-Frontend unter `src/` wird mit React und Vite gebaut. Es greift
+Das TypeScript-Frontend unter `frontend/src/` wird mit React und Vite gebaut. Es greift
 über `/api` auf das Backend zu. Wiederverwendbare UI-Bausteine liegen in
-`src/app/components/ui`, fachliche Ansichten in `src/app/components` und
-API-Zugriffe in `src/app/services`.
+`frontend/src/app/components/ui`, fachliche Ansichten in `frontend/src/app/components` und
+API-Zugriffe in `frontend/src/app/services`.
 
 ### Backend
 
@@ -56,7 +56,7 @@ backup/                  Backup-, Import- und Restore-Service
 docs/                    aktuelle Architektur- und Betriebsdokumentation
   archive/               historische, nicht operative Dokumente
   migration/             Runbooks für einmalige Datenübernahmen
-src/                     React-/TypeScript-Frontend
+frontend/                React-/TypeScript-Frontend und Node/pnpm-Konfiguration
 ```
 
 ## Entwicklung
@@ -91,6 +91,7 @@ flask --app app run --debug
 ### Frontend
 
 ```bash
+cd frontend
 pnpm install
 pnpm dev
 ```
@@ -113,7 +114,7 @@ bewusst nicht mit einem veralteten oder nur teilweise aktualisierten Schema.
 ```bash
 cd backend && python -m unittest discover -s tests
 cd backup && python -m unittest discover -s tests
-pnpm build
+pnpm --dir frontend build
 ```
 
 Datenbank-Integrationstests benötigen eine isolierte PostgreSQL-Testdatenbank.

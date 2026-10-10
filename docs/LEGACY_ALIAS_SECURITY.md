@@ -29,11 +29,11 @@ absence of consumers was not established either. None is removed.
 
 Repository evidence inspected before editing:
 
-- `src/app/services/api.ts` appends resource paths to `API_BASE_URL`, which
+- `frontend/src/app/services/api.ts` appends resource paths to `API_BASE_URL`, which
   defaults to `/api`. Environment examples and Compose include `/api`; the local
   development launcher requires it. Strings such as `'/hotels'` in this client
   therefore request `/api/hotels`, not the legacy backend alias.
-- `src/app/routes.tsx` and navigation components use `/hotels`, `/athletes`, and
+- `frontend/src/app/routes.tsx` and navigation components use `/hotels`, `/athletes`, and
   `/room-types` as SPA pages. These are not backend API calls.
 - `test_api_route_safety.py` and `fixtures/api_routes.json` cover every alias.
   `test_api_characterization.py` calls hotel, person, quota, and retired-import

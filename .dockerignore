@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+**/.env
+**/.env.*
+incoming.env
+.git
+backend/venv
+backend/.venv
+**/__pycache__
+.local-dev
+.local-test
