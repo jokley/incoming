@@ -86,12 +86,12 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.frontend
+      dockerfile: frontend/Dockerfile
     container_name: freestyle-wm-frontend
     expose:
       - "5173"
     volumes:
-      - ./src:/app/src
+      - ./frontend/src:/app/frontend/src
       - ./public:/app/public
     environment:
       - VITE_API_URL=https://incoming.jokley.at/api

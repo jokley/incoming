@@ -18,7 +18,7 @@
       "args": ["run", "dev"],
       "isBackground": true,
       "options": {
-        "cwd": "${workspaceFolder}"
+        "cwd": "${workspaceFolder}/frontend"
       },
       "problemMatcher": {
         "owner": "vite",
