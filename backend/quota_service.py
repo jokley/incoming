@@ -3,6 +3,56 @@
 from fis_rules import compute_official_quota, compute_single_room_entitlement
 
 
+def evaluate_athlete_quota_usage(people):
+    """Report base 36/20 limits, independently of accommodation/workflow rules.
+
+    Input memberships are canonical ``topLevelDisciplines`` resolved through
+    the selected catalogue mapping. Identity is the persisted personId or the
+    parser's matchKey, never an entry count. Article 8.2 eligibility is not
+    supported; administrative single-room exemptions have no effect here.
+    Unknown/conflicting individual genders remain visible as incomplete data.
+    """
+    groups = {}
+    for person in people:
+        if (person.get('function') or '').strip().lower() != 'athlete':
+            continue
+        for discipline in set(person.get('topLevelDisciplines') or []):
+            if discipline not in {'Snowboard', 'Freestyle'}:
+                raise ValueError('Athlete quota requires a canonical top-level discipline')
+            identity = person.get('personId')
+            if identity is None:
+                identity = person.get('matchKey')
+            if identity is None or identity == '':
+                raise ValueError('Athlete quota requires a stable person identity')
+            key = (person.get('nationCode') or '', discipline)
+            members = groups.setdefault(key, {})
+            members.setdefault(str(identity), set()).add(normalize_gender(person.get('gender')))
+
+    rows = []
+    for (nation, discipline), members in sorted(groups.items()):
+        genders = {'M': 0, 'F': 0}
+        unknown = 0
+        for values in members.values():
+            if len(values) == 1 and next(iter(values)) in genders:
+                genders[next(iter(values))] += 1
+            else:
+                unknown += 1
+        total_exceeded = len(members) > 36
+        gender_exceeded = {gender: used > 20 for gender, used in genders.items()}
+        rows.append({
+            'nationCode': nation, 'topLevelDiscipline': discipline,
+            'athleteQuotaUsed': len(members), 'athleteQuotaLimit': 36,
+            'athleteGenderUsed': genders, 'athleteGenderLimit': 20,
+            'athleteQuotaExceeded': total_exceeded,
+            'athleteGenderExceeded': gender_exceeded,
+            'athleteGenderUnknown': unknown,
+            'athleteQuotaStatus': ('EXCEEDED' if total_exceeded or any(gender_exceeded.values())
+                                  else 'INCOMPLETE' if unknown else 'WITHIN_BASE_LIMITS'),
+            'worldChampionExceptionSupported': False,
+        })
+    return rows
+
+
 def normalize_gender(value):
     value = (value or '').strip()
     lowered = value.lower()

@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import MetaData
 from datetime import datetime
 import json
+from competitions import top_level_discipline
 
 NAMING_CONVENTION = {
     'ix': 'ix_%(table_name)s_%(column_0_name)s',
@@ -400,6 +401,11 @@ class Competition(db.Model):
     active = db.Column(db.Boolean, nullable=False, default=True)
     athletes = db.relationship('Athlete', secondary='athlete_competition', back_populates='competitions')
     event_mappings = db.relationship('EventCompetition', back_populates='competition', cascade='all, delete-orphan')
+
+    @property
+    def top_level_discipline(self):
+        """Derived athlete-quota discipline; never changes detailed grouping."""
+        return top_level_discipline(self.code)
 
     def to_dict(self):
         return {

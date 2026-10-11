@@ -7,6 +7,17 @@ catalogue below; import code fragments must never be parsed or inferred.
 from typing import NamedTuple
 
 
+def top_level_discipline(code: str | None) -> str | None:
+    """Resolve the 2027 discipline from an exact catalogue competition code.
+
+    This does not resolve competition identity or interpret import column names.
+    Detailed sports and accommodation quota disciplines remain unchanged.
+    """
+    if not isinstance(code, str) or len(code) != 4 or not code.isascii() or not code.isdigit():
+        return None
+    return {'6': 'Snowboard', '8': 'Freestyle'}.get(code[0])
+
+
 class CompetitionDefinition(NamedTuple):
     import_code: str
     code: str
@@ -16,6 +27,10 @@ class CompetitionDefinition(NamedTuple):
     team_competition: bool
     display_name: str
     quota_discipline: str
+
+    @property
+    def top_level_discipline(self):
+        return top_level_discipline(self.code)
 
 
 COMPETITIONS = (

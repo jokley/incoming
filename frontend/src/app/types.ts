@@ -419,6 +419,7 @@ export interface FisImportIssue {
 }
 
 export interface FisImportPreviewPerson {
+  topLevelDisciplines?: Array<'Snowboard' | 'Freestyle'>;
   rowNumber: number;
   function?: string | null;
   competitorId?: string | null;
@@ -478,6 +479,20 @@ export interface FisImportPreview {
   rooms: FisImportPreviewRoom[];
   errors: FisImportIssue[];
   warnings: FisImportIssue[];
+  /** Informational base limits; article 8.2 eligibility is not inferred. */
+  athleteQuotaChecks?: Array<{
+    nationCode: string;
+    topLevelDiscipline: 'Snowboard' | 'Freestyle';
+    athleteQuotaUsed: number;
+    athleteQuotaLimit: 36;
+    athleteGenderUsed: { M: number; F: number };
+    athleteGenderLimit: 20;
+    athleteQuotaExceeded: boolean;
+    athleteGenderExceeded: { M: boolean; F: boolean };
+    athleteGenderUnknown: number;
+    athleteQuotaStatus: 'EXCEEDED' | 'INCOMPLETE' | 'WITHIN_BASE_LIMITS';
+    worldChampionExceptionSupported: false;
+  }>;
   quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
