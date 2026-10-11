@@ -26,6 +26,7 @@ POSTGRES_TESTS = [
     'test_assignment_planning_projection.py', 'test_import_event_id_api.py',
     'test_import_operational_impacts.py', 'test_import_session_versioning.py',
     'test_person_identity.py', 'test_single_room_status.py', 'test_postgres_migrations.py',
+    'test_import_safety_baseline.py',
 ]
 
 
