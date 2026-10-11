@@ -9,9 +9,9 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
-from quota_service import evaluate_quota_usage, normalize_gender, quota_key, quota_keys
+from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_key, quota_keys
 from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSessionEvent, RoomAssignment, RoomBooking, RoomBookingOccupant, db
-from competitions import COMPETITION_BY_IMPORT_CODE
+from competitions import COMPETITION_BY_IMPORT_CODE, top_level_discipline
 
 # Compatibility exports retained for existing callers and tests.
 from imports.normalization import (DAY_COLUMN_PATTERN, DATETIME_FORMATS,
@@ -342,6 +342,11 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
                 competition_mapping[column].quota_discipline
                 for column in competition_columns
                 if column in competition_mapping and parse_boolean(row.get(column))
+            }),
+            'topLevelDisciplines': sorted({
+                resolved for column in competition_columns
+                if column in competition_mapping and parse_boolean(row.get(column))
+                if (resolved := top_level_discipline(getattr(competition_mapping[column], 'code', None)))
             }),
             'forGender': normalize_whitespace(row.get('For_gender')) or None,
             'gender': normalize_whitespace(row.get('Gender')) or None,
@@ -1367,6 +1372,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
         'quotaChecks': quota_checks,
+        'athleteQuotaChecks': evaluate_athlete_quota_usage(people_result['people']),
         'preservedSingleRoomApprovals': {
             key: {'decisionId': value['decisionId'], 'groups': [list(group) for group in value['groups']]}
             for key, value in preserved.items()
@@ -1407,6 +1413,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         'rooms': [_serialize_room_preview(room) for room in room_result['rooms']],
         'errors': blocking_errors,
         'warnings': preview['warnings'],
+        'athleteQuotaChecks': preview['athleteQuotaChecks'],
         'singleRoomQuotaExemptOverrides': preview['singleRoomQuotaExemptOverrides'],
         'dispositionAnalysis': disposition_analysis,
     }
@@ -1431,6 +1438,7 @@ def recalculate_fis_import_preview(preview):
     apply_preserved_single_room_approvals(quota_warnings, preserved)
     apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved)
     preview['quotaChecks'] = quota_checks
+    preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people)
     preview['warnings'] = [warning for warning in preview.get('warnings', [])
                            if not warning.get('code', '').startswith('QUOTA_')] + quota_warnings
     preview['dispositionAnalysis'] = build_disposition_analysis(people, rooms, quota_warnings)
