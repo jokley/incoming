@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 
 
 export default defineConfig({
+  // Shared local environment files remain owned by the repository root.
+  envDir: path.resolve(__dirname, '..'),
+  // Preserve optional external assets at the existing root public path.
+  publicDir: path.resolve(__dirname, '../public'),
   plugins: [
     react(),
     tailwindcss(),

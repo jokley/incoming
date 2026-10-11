@@ -55,7 +55,7 @@ VITE_API_URL=https://incoming.jokley.at/api
 
 ### Vite Konfiguration
 
-Die `vite.config.ts` ist bereits konfiguriert:
+Die `frontend/vite.config.ts` ist bereits konfiguriert:
 
 ```typescript
 server: {
@@ -102,7 +102,7 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.frontend
+      dockerfile: frontend/Dockerfile
     container_name: freestyle-wm-frontend
     ports:
       - "5173:5173"
@@ -212,7 +212,7 @@ Wenn Sie einen statischen Build bevorzugen:
 ### 1. Frontend bauen
 ```bash
 cd /workspaces/default/code
-VITE_API_URL=https://incoming.jokley.at/api pnpm run build
+VITE_API_URL=https://incoming.jokley.at/api pnpm --dir frontend run build
 ```
 
 ### 2. Dist-Ordner serven
@@ -276,7 +276,7 @@ CORS(app, origins=['https://incoming.jokley.at'])
 ### Problem: Vite dev server ist nicht erreichbar
 
 Überprüfen Sie:
-1. `host: '0.0.0.0'` in vite.config.ts
+1. `host: '0.0.0.0'` in frontend/vite.config.ts
 2. `allowedHosts` enthält Ihren Hostnamen
 3. Port 5173 ist geöffnet
 
@@ -285,7 +285,7 @@ CORS(app, origins=['https://incoming.jokley.at'])
 ## 🎯 Deployment Checkliste
 
 - [ ] `.env` Datei mit Production API URL erstellt
-- [ ] `vite.config.ts` hat `allowedHosts` konfiguriert
+- [ ] `frontend/vite.config.ts` hat `allowedHosts` konfiguriert
 - [ ] Docker Container laufen (`docker-compose ps`)
 - [ ] Backend ist unter `/api` erreichbar
 - [ ] Frontend ist unter `/` erreichbar
@@ -347,3 +347,16 @@ Bei Problemen:
 2. Environment Variables überprüfen
 3. Netzwerk-Konnektivität testen
 4. CORS-Konfiguration validieren
+
+## Frontend directory ownership
+
+Frontend builds use repository-root context and `frontend/Dockerfile`, with
+working directory `/app/frontend`. Only frontend files are copied; root `.env*`
+and production secrets are never included in the image. Supply frontend settings
+through explicit `VITE_*` container variables (Compose currently supplies
+`VITE_API_URL`). Local Vite retains root environment discovery through envDir.
+Build artifacts now live in `frontend/dist/`.
+
+Compose mounts `frontend/src` into `/app/frontend/src`. The optional existing
+root `public/` mount is retained at `/app/public` for external deployment
+assets; this checkout has no such content. No empty frontend/public is added.
