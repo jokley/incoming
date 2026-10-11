@@ -1,7 +1,6 @@
 import json
 import re
 import uuid
-import unicodedata
 import zipfile
 from copy import deepcopy
 from datetime import datetime, date, timedelta
@@ -11,8 +10,18 @@ from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
 from quota_service import evaluate_quota_usage, normalize_gender, quota_key, quota_keys
-from models import Athlete, Competition, AccommodationEvent, Event, EventCompetition, FisRoomAssignment, ImportRun, ImportSessionEvent, RoomAssignment, RoomBooking, RoomBookingOccupant, db
+from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSessionEvent, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 from competitions import COMPETITION_BY_IMPORT_CODE
+
+# Compatibility exports retained for existing callers and tests.
+from imports.normalization import (DAY_COLUMN_PATTERN, DATETIME_FORMATS,
+    normalize_string, normalize_whitespace, has_value, parse_boolean, parse_date,
+    parse_datetime, _col_key, normalize_columns, detect_day_columns,
+    validate_required_columns)
+from imports.identity import (build_name_key, _build_existing_athlete_maps,
+    _find_existing_athlete, _index_people)
+from imports.event_context import (ImportValidationError, normalize_event_id,
+    active_competition_mapping, revalidate_confirmation_event)
 
 
 # Confirmation deliberately consumes the typed preview produced by parsing, not
@@ -28,30 +37,6 @@ PREVIEW_TTL_SECONDS = 60 * 60
 class InvalidExcelFileError(ValueError):
     pass
 
-
-class ImportValidationError(ValueError):
-    """Expected event/mapping validation failure suitable for a 4xx response."""
-    def __init__(self, code, message, *, event_id=None, import_code=None):
-        super().__init__(message)
-        self.code = code
-        self.event_id = event_id
-        self.import_code = import_code
-
-    def to_dict(self):
-        return {key: value for key, value in {
-            'error': self.code, 'event_id': str(self.event_id) if self.event_id is not None else None,
-            'import_code': self.import_code, 'message': str(self),
-        }.items() if value is not None}
-
-
-def normalize_event_id(value):
-    """Return the integer PK representation used by PostgreSQL event queries."""
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        raise ImportValidationError(
-            'INVALID_EVENT_ID', 'Die Event-ID muss eine ganze Zahl sein.'
-        ) from None
 
 DISCIPLINE_FILENAME_ALIASES = {
     'bigair': 'Big Air',
@@ -91,173 +76,6 @@ ROOM_REQUIRED_COLUMNS = {
 }
 
 ROOM_TYPE_FLAGS = ('Single', 'Double_shared', 'Double_single', 'Appartment')
-DAY_COLUMN_PATTERN = re.compile(r'^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\d{2}\.\d{2}\.\d{4}')
-DATETIME_FORMATS = (
-    '%Y-%m-%d %H:%M:%S',
-    '%Y-%m-%d %H:%M',
-    '%d.%m.%Y %H:%M:%S',
-    '%d.%m.%Y %H:%M',
-)
-
-
-def normalize_string(value):
-    if value is None or pd.isna(value):
-        return ''
-    return ''.join(
-        char for char in unicodedata.normalize('NFKD', str(value).strip().lower())
-        if not unicodedata.combining(char)
-    )
-
-
-def normalize_whitespace(value):
-    if value is None or pd.isna(value):
-        return ''
-    return ' '.join(str(value).replace('\u00a0', ' ').replace('\n', ' ').replace('\r', ' ').split())
-
-
-def has_value(value):
-    if value is None or pd.isna(value):
-        return False
-    if isinstance(value, str):
-        return normalize_whitespace(value) != ''
-    return True
-
-
-def parse_boolean(value):
-    if pd.isna(value) or value is None:
-        return False
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return bool(int(value))
-    return normalize_string(value) in {'yes', 'ja', 'true', '1', 'x'}
-
-
-def parse_date(value):
-    if value is None or pd.isna(value) or value == '':
-        return None
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, date):
-        return value
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        try:
-            return pd.to_datetime(value, unit='D', origin='1899-12-30').date()
-        except (ValueError, OverflowError, TypeError):
-            pass
-    raw = str(value).strip()
-    if raw.isdigit():
-        try:
-            return pd.to_datetime(int(raw), unit='D', origin='1899-12-30').date()
-        except (ValueError, OverflowError, TypeError):
-            pass
-    for fmt in ('%d.%m.%Y', '%Y-%m-%d', '%d/%m/%Y', '%m/%d/%Y'):
-        try:
-            return datetime.strptime(raw, fmt).date()
-        except ValueError:
-            continue
-    return None
-
-
-def parse_datetime(value):
-    if value is None or pd.isna(value) or value == '':
-        return None
-    if isinstance(value, datetime):
-        return value
-    for fmt in DATETIME_FORMATS:
-        try:
-            return datetime.strptime(str(value).strip(), fmt)
-        except ValueError:
-            continue
-    return None
-
-
-def build_name_key(lastname, firstname, nationcode=''):
-    return '|'.join([
-        normalize_string(lastname),
-        normalize_string(firstname),
-        normalize_string(nationcode),
-    ])
-
-
-def _col_key(name):
-    normalized = normalize_string(normalize_whitespace(name))
-    return ''.join(char for char in normalized if char.isalnum())
-
-
-def normalize_columns(df):
-    aliases = {
-        'competitoridstaffid': 'Competitorid/Staff ID',
-        'accredid': 'Accredid',
-        'fiscode': 'Fiscode',
-        'lastname': 'Lastname',
-        'firstname': 'Firstname',
-        'nationcode': 'Nationcode',
-        'industryname': 'Industryname',
-        'industry': 'Industryname',
-        'discipline': 'Industryname',
-        'disciplinename': 'Industryname',
-        'eventdiscipline': 'Industryname',
-        'sportdiscipline': 'Industryname',
-        'function': 'Function',
-        'forgender': 'For_gender',
-        'gender': 'Gender',
-        'phone': 'Phone',
-        'email': 'Email',
-        'present': 'Present',
-        'wcsbxw6061': 'WC_SBX_W_6061',
-        'wcsbxm6060': 'WC_SBX_M_6060',
-        'arrivaldate': 'Arrival_date',
-        'arrivaltime': 'Arrival_time',
-        'arrivalby': 'Arrival_by',
-        'arrivalairport': 'Arrival_airport',
-        'arrivalairportname': 'Arrival_airport_name',
-        'arrivalflightno': 'Arrival_flightno',
-        'arrivalneedtransportation': 'Arrival_need_transportation',
-        'departuredate': 'Departure_date',
-        'departuretime': 'Departure_time',
-        'departureby': 'Departure_by',
-        'departureairport': 'Departure_airport',
-        'departureairportname': 'Departure_airport_name',
-        'departureflightno': 'Departure_flightno',
-        'departureneedtransportation': 'Departure_need_transportation',
-        'roomtype': 'Room_type',
-        'sharedwithname': 'Shared with Name',
-        'sharedwithnationcode': 'Shared with Nationcode',
-        'sharedwithindustryname': 'Shared with Industryname',
-        'sharedwithfunction': 'Shared with Function',
-        'sharedwithforgender': 'Shared with For_gender',
-        'sharedwitharrivaldate': 'Shared with Arrival_date',
-        'sharedwithdeparturedate': 'Shared with Departure_date',
-        'sharedwithlatecheckout': 'Shared with Late_checkout',
-        'sharedwithfirstmeal': 'Shared_with_First_meal',
-        'sharedwithlastmeal': 'Shared_with_Last_meal',
-        'sharedwithspecialmeal': 'Shared_with_Special_meal',
-        'latecheckout': 'Late_checkout',
-        'firstmeal': 'First_meal',
-        'lastmeal': 'Last_meal',
-        'specialmeal': 'Special_meal',
-        'additionalitems': 'Additional_items',
-        'entrydate': 'Entry_date',
-        'lastupdate': 'Lastupdate',
-        'entriessentdate': 'Entries_Sent_date',
-        'tvpicturestatus': 'tv_picture_status',
-        'tvpicturedate': 'tv_picture_date',
-        'stance': 'Stance',
-        'single': 'Single',
-        'doubleshared': 'Double_shared',
-        'doublesingle': 'Double_single',
-        'appartment': 'Appartment',
-    }
-
-    normalized_columns = []
-    for column in df.columns:
-        clean = normalize_whitespace(column)
-        normalized_columns.append(aliases.get(_col_key(clean), clean))
-    df = df.copy()
-    df.columns = normalized_columns
-    return df
-
 
 DISCIPLINE_COLUMN_KEYS = {
     'industryname',
@@ -395,57 +213,6 @@ def detect_fis_file_type(path, display_name=None):
     if {'Shared with Name', 'Room_type', 'Arrival_date', 'Departure_date'}.intersection(columns):
         return 'roomlist'
     return 'unknown'
-
-
-def detect_day_columns(df):
-    result = []
-    for column in df.columns:
-        collapsed = normalize_whitespace(column)
-        match = DAY_COLUMN_PATTERN.match(collapsed)
-        if not match:
-            continue
-        day_value = parse_date(match.group(0).split(' ')[1])
-        if day_value:
-            result.append({'column': column, 'date': day_value})
-    return result
-
-
-def validate_required_columns(df, required_columns):
-    present = set(df.columns)
-    return sorted(required_columns - present)
-
-
-def _build_existing_athlete_maps():
-    athletes = Athlete.query.all()
-    maps = {
-        'by_fis_code': {},
-        'by_competitor_id': {},
-        'by_name_key': {},
-    }
-    for athlete in athletes:
-        if athlete.fis_code:
-            # FIS code is the domain identity.  Keep the oldest productive row as
-            # the canonical target when legacy imports left duplicates behind.
-            maps['by_fis_code'].setdefault(str(athlete.fis_code).strip().upper(), athlete)
-        if athlete.competitor_id:
-            maps['by_competitor_id'][str(athlete.competitor_id)] = athlete
-        maps['by_name_key'][build_name_key(athlete.lastname, athlete.firstname, athlete.nation_code)] = athlete
-    return maps
-
-
-def _find_existing_athlete(person_record, athlete_maps):
-    fis_code = person_record.get('fisCode')
-    if fis_code:
-        return athlete_maps['by_fis_code'].get(str(fis_code).strip().upper())
-    competitor_id = person_record.get('competitorId')
-    if competitor_id:
-        existing = athlete_maps['by_competitor_id'].get(str(competitor_id))
-        return existing
-    return athlete_maps['by_name_key'].get(build_name_key(
-        person_record.get('lastname'),
-        person_record.get('firstname'),
-        person_record.get('nationCode'),
-    ))
 
 
 def _coalesce_room_type(row):
@@ -618,19 +385,6 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
         people.append(person)
 
     return {'people': people, 'errors': errors, 'warnings': warnings}
-
-
-def _index_people(people):
-    by_name = {}
-    by_name_no_nation = {}
-    by_competitor_id = {}
-    for person in people:
-        key = build_name_key(person['lastname'], person['firstname'], person['nationCode'])
-        by_name[key] = person
-        by_name_no_nation[build_name_key(person['lastname'], person['firstname'], '')] = person
-        if person.get('competitorId'):
-            by_competitor_id[str(person['competitorId'])] = person
-    return {'by_name': by_name, 'by_name_no_nation': by_name_no_nation, 'by_competitor_id': by_competitor_id}
 
 
 def parse_room_list(df, imported_people):
@@ -1574,7 +1328,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
 
     mapping = None
     if event is not None:
-        mapping = {row.import_code: row.competition for row in event.competition_mappings if row.active}
+        mapping = active_competition_mapping(event)
     people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None)
     room_result = parse_room_list(room_df, people_result['people'])
     apply_single_room_quota_exemptions(people_result['people'])
@@ -1832,24 +1586,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
     db.session.flush()
 
     athlete_maps = _build_existing_athlete_maps()
-    event_id = normalize_event_id(preview.get('eventId'))
-    event = Event.query.get(event_id)
-    if not event:
-        raise ImportValidationError('EVENT_NOT_FOUND', 'Das ausgewählte Import-Event existiert nicht mehr.', event_id=event_id)
-    if not event.active:
-        raise ImportValidationError('EVENT_INACTIVE', f'Event {event.name} ist inaktiv.', event_id=event.id)
-    competitions_by_import_code = {
-        mapping.import_code: mapping.competition
-        for mapping in event.competition_mappings if mapping.active
-    }
-    for person in preview.get('people', []):
-        for import_code in person.get('competitionImportCodes', []):
-            if import_code not in competitions_by_import_code:
-                raise ImportValidationError(
-                    'UNKNOWN_COMPETITION_CODE',
-                    f'Unbekannter Competition-Code {import_code} für Event {event.name}',
-                    event_id=event.id, import_code=import_code,
-                )
+    event, competitions_by_import_code = revalidate_confirmation_event(
+        preview.get('eventId'), preview.get('people', []))
 
     persisted_people = {}
     created = 0
