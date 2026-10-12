@@ -144,12 +144,19 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             expected = (booking.id, booking.check_in_date, booking.check_out_date,
                         booking.room_type_id, booking.hotel_id, booking.room_number,
                         [(o.id, o.athlete_id) for o in booking.occupants])
+            session = ImportSession(nation='AUT'); db.session.add(session); db.session.flush()
+            competition = Competition.query.filter_by(import_code='MO').one()
+            decision = ImportApproval(session_id=session.id, nation='AUT', approval_type='NATION_APPROVED',
+                description='Reviewed booking snapshot', decision='APPROVED', username='fixture', approved_person_keys_json='["KEEP"]',
+                quota_details_json=json.dumps(dict(quotaMembershipVersion=1, nationCode='AUT', discipline='Moguls', gender='F',
+                    singleRoomCandidates=[dict(personKey='KEEP', competitionIds=[str(competition.id)])])))
+            db.session.add(decision); db.session.commit()
             for version in (1, 2):
                 people = [self.person('KEEP', codes=['MO']), self.person('PARTNER', codes=['AE'])]
                 people[0].update(arrivalDate=date(2027, 3, 11), departureDate=date(2027, 3, 14), roomType='Single')
                 self.preview(f'booking-{version}', event, people, [self.single('KEEP')],
                              [dict(nationCode='AUT', discipline='Moguls', gender='F', singleRoomsAllowed=0)])
-                confirm_fis_import(f'booking-{version}', {'KEEP': None})
+                confirm_fis_import(f'booking-{version}', {'KEEP': decision.id})
                 db.session.expire_all()
                 retained = db.session.get(RoomBooking, expected[0])
                 self.assertEqual((retained.id, retained.check_in_date, retained.check_out_date,
@@ -196,11 +203,16 @@ class ImportSafetyBaselineTest(unittest.TestCase):
                 username='fixture', quota_details_json=json.dumps(dict(nationCode='AUT', discipline='Moguls', gender='F')))
             db.session.add(decision)
             db.session.commit()
+            decision.approved_person_keys_json = '["KEEP"]'
+            decision.quota_details_json = json.dumps(dict(quotaMembershipVersion=1, nationCode='AUT', discipline='Moguls', gender='F',
+                singleRoomCandidates=[dict(personKey='KEEP', competitionIds=[str(c.id) for c in Competition.query.filter(Competition.import_code.in_(['MO','DM'])).all()])]))
+            db.session.commit()
             decision_id = decision.id
             checks = [dict(nationCode='AUT', discipline=g, gender='F', singleRoomsAllowed=0)
                       for g in ('Moguls', 'Aerials')]
             def incoming(codes, groups):
-                return {**self.person('KEEP', codes=codes), 'quotaDisciplines': groups}
+                return {**self.person('KEEP', codes=codes), 'function': 'Official', 'quotaDisciplines': groups,
+                        'competitionIds': [str(c.id) for c in Competition.query.filter(Competition.import_code.in_(codes)).all()]}
             people = [incoming(['MO', 'DM', 'AE'], ['Moguls', 'Moguls', 'Aerials'])]
             self.preview('approved-first', event, people, [self.single('KEEP')], checks)
             confirm_fis_import('approved-first', {'KEEP': decision_id})
@@ -241,13 +253,13 @@ class ImportSafetyBaselineTest(unittest.TestCase):
                 db.session.add(existing)
                 db.session.commit()
                 self.booking([existing], counts=True)
-                people = [self.person(f'P{i}') for i in range(roster_size)]
+                people = [self.person(f'P{i}', codes=['MO']) for i in range(roster_size)]
                 for p in people:
                     p.update(arrivalDate=date(2027, 3, 11), departureDate=date(2027, 3, 15))
                 raw = self.preview('parity', event, people, [self.single(p['matchKey']) for p in people])
                 recalculate_fis_import_preview(raw)
                 self.assertTrue(any(w['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED' for w in raw['warnings']))
-                stored = dict(people=[_serialize_person_preview(p) for p in raw['people']],
+                stored = dict(eventId=event.id, people=[_serialize_person_preview(p) for p in raw['people']],
                     rooms=[_serialize_room_preview(r) for r in raw['rooms']], errors=[],
                     warnings=deepcopy(raw['warnings']), singleRoomQuotaExemptOverrides={})
                 session = ImportSession(nation='AUT', status='WAITING_FOR_NATION')

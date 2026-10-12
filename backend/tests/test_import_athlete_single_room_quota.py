@@ -105,15 +105,15 @@ def test_three_halfpipe_athletes_create_one_person_single_room_excess(database):
     }
 
 
-def test_existing_official_single_discipline_behavior_is_unchanged():
+def test_official_uses_every_distinct_configured_membership():
     official = person(
         'COACH', ['Snowboard Big Air', 'Snowboard Slopestyle'], function='NSA Coach')
     rows = rows_by_discipline([official])
 
     assert rows['Snowboard Big Air']['assignedOfficials'] == 1
     assert rows['Snowboard Big Air']['singleRoomsUsed'] == 1
-    assert rows['Snowboard Slopestyle']['assignedOfficials'] == 0
-    assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 0
+    assert rows['Snowboard Slopestyle']['assignedOfficials'] == 1
+    assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 1
 
 
 @pytest.mark.parametrize('reason', ['WORLD_CHAMPION', 'OTHER'])

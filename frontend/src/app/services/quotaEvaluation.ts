@@ -20,6 +20,7 @@ export interface QuotaAssignment {
   function?: string | null;
   countsAsSingle: boolean;
   singleRoomStatus?: SingleRoomStatus;
+  approvedQuotaDisciplines?: string[];
   singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason;
 }
 
@@ -88,23 +89,21 @@ export function uniqueQuotaContext<T extends Pick<OfficialQuotaUsage, 'nationCod
 export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssignment[] {
   return bookings.flatMap(booking => booking.occupants.flatMap(({ athlete }) => {
     const quotaDisciplines = athlete.competitions?.map(item => item.quotaDiscipline) || [];
-    const disciplines = [...new Set(quotaDisciplines.length
-      ? quotaDisciplines : [athlete.discipline || athlete.disciplines?.[0]])];
+    const disciplines = [...new Set(quotaDisciplines)];
     return disciplines.filter(Boolean).map(discipline => ({ personId: athlete.id, bookingId: booking.id,
       nationCode: athlete.nationCode, discipline, gender: athlete.gender, function: athlete.function,
-      countsAsSingle: isEvaluatedAsSingle(booking), singleRoomStatus: athlete.single_room_status,
+      countsAsSingle: isEvaluatedAsSingle(booking), singleRoomStatus: athlete.single_room_status, approvedQuotaDisciplines: athlete.approvedQuotaDisciplines,
       singleRoomQuotaExemptReason: athlete.singleRoomQuotaExemptReason }));
   }));
 }
 
 export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): QuotaAssignment[] {
   return hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings.flatMap(booking =>
-    booking.occupants.flatMap(person => [...new Set(person.quotaDisciplines?.length
-      ? person.quotaDisciplines : [person.discipline])].filter(Boolean).map(discipline => ({
+    booking.occupants.flatMap(person => [...new Set(person.quotaDisciplines || [])].filter(Boolean).map(discipline => ({
         personId: person.athleteId, bookingId: booking.bookingId,
         nationCode: person.nationCode, discipline, gender: person.gender,
         function: person.function, countsAsSingle: Boolean(booking.countsAsSingle),
-        singleRoomStatus: person.single_room_status,
+        singleRoomStatus: person.single_room_status, approvedQuotaDisciplines: person.approvedQuotaDisciplines,
         singleRoomQuotaExemptReason: person.singleRoomQuotaExemptReason,
       }))))));
 }
@@ -133,13 +132,17 @@ export function calculateAdditionalCosts(assignments: QuotaAssignment[], _allowe
     ...assignment,
     groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender),
     additionalCost: assignment.countsAsSingle
-      && assignment.singleRoomStatus === 'APPROVED_EXTRA',
+      && assignment.singleRoomStatus === 'APPROVED_EXTRA'
+      && Boolean(assignment.discipline && assignment.approvedQuotaDisciplines?.includes(assignment.discipline)),
   }));
 }
 
 export function evaluateQuotaGroup(definition: QuotaDefinition, assignments: QuotaAssignment[]): QuotaGroupEvaluation {
   const key = quotaUsageKey(definition.nationCode, definition.discipline, definition.gender);
-  const matching = assignments.filter(assignment => quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender) === key);
+  const matchingByPerson = new Map<string, QuotaAssignment>();
+  assignments.filter(assignment => quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender) === key)
+    .forEach(assignment => { if (!matchingByPerson.has(assignment.personId)) matchingByPerson.set(assignment.personId, assignment); });
+  const matching = [...matchingByPerson.values()];
   const people = calculateAdditionalCosts(matching, definition.singleRoomsAllowed);
   const usedSingleRooms = calculateQuotaUsage(matching);
   const overflow = Math.max(0, usedSingleRooms - Math.max(0, definition.singleRoomsAllowed));

@@ -14,10 +14,10 @@ class SingleRoomQuotaExemptionTest(unittest.TestCase):
             {'nationCode': 'BRA', 'quotaDisciplines': ['Halfpipe'], 'gender': 'M', 'function': 'Athlete'},
         ]
         assigned = [
-            {'nationCode': 'BRA', 'discipline': 'Halfpipe', 'gender': 'M',
+            {'nationCode': 'BRA', 'quotaDisciplines': ['Halfpipe'], 'gender': 'M',
              'function': 'Official', 'countsAsSingle': True,
              'singleRoomQuotaExemptReason': 'WORLD_CHAMPION'},
-            *[{'nationCode': 'BRA', 'discipline': 'Halfpipe', 'gender': 'M',
+            *[{'nationCode': 'BRA', 'quotaDisciplines': ['Halfpipe'], 'gender': 'M',
                'function': 'Official', 'countsAsSingle': True} for _ in range(3)],
         ]
 

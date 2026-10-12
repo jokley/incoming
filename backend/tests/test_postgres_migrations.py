@@ -107,7 +107,14 @@ class PostgresMigrationTest(unittest.TestCase):
                         self.assertEqual(conn.execute(text(
                             'SELECT count(*) FROM event_competition WHERE event_id = 1 AND active'
                         )).scalar_one(), 31)
+                        self.assertEqual(conn.execute(text(
+                            "SELECT count(*) FROM competition WHERE (code LIKE '6%' AND quota_discipline = 'Snowboard') "
+                            "OR (code LIKE '8%' AND quota_discipline = 'Freestyle')"
+                        )).scalar_one(), 31)
                         if seeded:
+                            self.assertEqual(conn.execute(text(
+                                "SELECT quota_discipline FROM competition WHERE id = 5"
+                            )).scalar_one(), 'Old')
                             self.assertEqual(list(conn.execute(text(
                                 'SELECT athlete_id, competition_id FROM athlete_competition ORDER BY athlete_id'
                             ))), [(1, 1), (2, 1)])

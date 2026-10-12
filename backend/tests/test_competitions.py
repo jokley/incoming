@@ -23,7 +23,7 @@ def test_catalogue_carries_official_and_presentation_metadata():
     parallel = COMPETITION_BY_IMPORT_CODE['WSC_PGS_M_6170']
     assert parallel.name == "Men's Parallel Giant Slalom"
     assert parallel.display_name == 'Parallel Giant Slalom'
-    assert parallel.quota_discipline == 'Parallel'
+    assert parallel.quota_discipline == 'Snowboard'
     assert parallel.sport == 'Snowboard'
     assert parallel.gender == 'M'
     assert parallel.team_competition is False
@@ -31,7 +31,7 @@ def test_catalogue_carries_official_and_presentation_metadata():
     team = COMPETITION_BY_IMPORT_CODE['WSC_DMT_A_8188']
     assert team.name == 'Dual Moguls Team'
     assert team.display_name == 'Dual Moguls Team'
-    assert team.quota_discipline == 'Moguls'
+    assert team.quota_discipline == 'Freestyle'
     assert team.sport == 'Freestyle Ski'
     assert team.gender == 'A'
     assert team.team_competition is True
@@ -47,7 +47,7 @@ def test_every_yes_column_creates_a_membership_without_duplicate_person():
     result = parse_entries_list(frame, {'by_fis_code': {}, 'by_competitor_id': {}, 'by_name_key': {}})
     assert len(result['people']) == 1
     assert result['people'][0]['competitionImportCodes'] == ['WSC_BA_M_6182', 'WSC_SS_M_6188']
-    assert result['people'][0]['quotaDisciplines'] == ['Snowboard Big Air', 'Snowboard Slopestyle']
+    assert result['people'][0]['quotaDisciplines'] == ['Snowboard']
 
 
 def test_quota_counts_each_athlete_once_per_group_and_in_distinct_groups():

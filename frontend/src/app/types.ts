@@ -108,6 +108,7 @@ export interface Athlete {
   accredId?: string;
   fisCode?: string;
   sourceRecordIds?: string[];
+  approvedQuotaDisciplines?: string[];
   disciplines?: string[];
   competitions?: Competition[];
   stays?: Array<{ arrivalDate?: string | null; departureDate?: string | null; discipline?: string | null }>;
@@ -236,6 +237,7 @@ export interface RoomBookingUnitOccupant {
   nationCode: string;
   discipline?: string | null;
   quotaDisciplines?: string[];
+  approvedQuotaDisciplines?: string[];
   gender?: string | null;
   function?: string | null;
   arrivalDate?: string | null;
@@ -311,6 +313,7 @@ export interface AssignmentGridBooking {
     lastname: string;
     discipline?: string | null;
     quotaDisciplines?: string[];
+    approvedQuotaDisciplines?: string[];
     gender?: string | null;
     function?: string | null;
     arrivalDate?: string | null;
@@ -419,7 +422,7 @@ export interface FisImportIssue {
 }
 
 export interface FisImportPreviewPerson {
-  topLevelDisciplines?: Array<'Snowboard' | 'Freestyle'>;
+  topLevelDisciplines?: string[];
   rowNumber: number;
   function?: string | null;
   competitorId?: string | null;
@@ -482,7 +485,7 @@ export interface FisImportPreview {
   /** Informational base limits; article 8.2 eligibility is not inferred. */
   athleteQuotaChecks?: Array<{
     nationCode: string;
-    topLevelDiscipline: 'Snowboard' | 'Freestyle';
+    topLevelDiscipline: string;
     athleteQuotaUsed: number;
     athleteQuotaLimit: 36;
     athleteGenderUsed: { M: number; F: number };

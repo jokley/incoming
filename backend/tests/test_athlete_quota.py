@@ -120,7 +120,7 @@ def test_new_evaluation_does_not_modify_existing_detailed_quota_results():
     existing = evaluate_quota_usage(people, people)
     evaluate_athlete_quota_usage(people)
     assert evaluate_quota_usage(people, people) == existing
-    assert {r['discipline'] for r in existing} == {'Moguls', 'Aerials'}
+    assert {r['discipline'] for r in existing} == {'Freestyle'}
 
 
 def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
@@ -136,6 +136,8 @@ def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
     rooms = pd.DataFrame(columns=sorted(excel_import.ROOM_REQUIRED_COLUMNS))
     with app.app_context():
         db.create_all()
+        db.session.add(Competition(**COMPETITION_BY_IMPORT_CODE['WSC_PGS_M_6170']._asdict()))
+        db.session.commit()
         with patch.object(excel_import, 'load_first_sheet', side_effect=[entries, rooms]):
             result = excel_import.create_fis_import_preview('entries', 'rooms')
         try:
@@ -144,6 +146,8 @@ def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
             assert result['athleteQuotaChecks'][0]['athleteQuotaExceeded'] is True
             raw = excel_import.PREVIEW_STORE[result['previewToken']]
             assert raw['athleteQuotaChecks'] == result['athleteQuotaChecks']
+            for person_record in raw['people']:
+                person_record['competitionIds'] = [str(Competition.query.one().id)]
             detailed = deepcopy(raw['quotaChecks'])
             raw['singleRoomQuotaExemptOverrides'] = {'M0': 'WORLD_CHAMPION'}
             excel_import.recalculate_fis_import_preview(raw)

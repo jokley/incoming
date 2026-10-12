@@ -30,3 +30,8 @@ test('discipline and gender filters select the matching quota member together', 
   assert.deepEqual(matches('BRA', 'F').map((person) => person.discipline), ["Women's Halfpipe"]);
   assert.deepEqual(matches('AUT', 'M'), []);
 });
+
+test('quota filters never infer membership from legacy display discipline', () => {
+  assert.equal(matchesDisciplineMembership('TestGroup', undefined, 'TestGroup'), false);
+  assert.equal(matchesDisciplineMembership('Legacy', ['TestGroup'], 'TestGroup'), true);
+});

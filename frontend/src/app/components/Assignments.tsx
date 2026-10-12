@@ -313,9 +313,7 @@ export function Assignments() {
     const values = new Set<string>();
     for (const unit of allUnitsCombined) {
       for (const occupant of unit.occupants) {
-        const disciplines = occupant.quotaDisciplines?.length
-          ? occupant.quotaDisciplines
-          : occupant.discipline ? [occupant.discipline] : [];
+        const disciplines = occupant.quotaDisciplines || [];
         disciplines.forEach((discipline) => values.add(discipline));
       }
     }
@@ -2260,9 +2258,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
   const people = new Map<string, SingleRoomControlPerson>();
   allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
     if (occupant.nationCode !== card.nationCode
-      || !(occupant.quotaDisciplines?.length
-        ? occupant.quotaDisciplines.includes(card.discipline)
-        : (occupant.discipline || '—') === card.discipline)
+      || !(occupant.quotaDisciplines || []).includes(card.discipline)
       || normalizeGender(occupant.gender) !== card.gender) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
@@ -2295,6 +2291,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   const singlesOver = quotaEvaluation.hasViolation;
   const evaluatedGroup = evaluateAllQuotaGroups(rows, quotaAssignmentsFromPlanning(hotels))
     .find(group => group.key === quotaUsageKey(card.nationCode, card.discipline, card.gender));
+  // Per-group applicability comes from the backend; status alone is not evidence.
   const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
   const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds);
   const additionalCostPeople = controlPeople.filter(person => person.additionalCost);

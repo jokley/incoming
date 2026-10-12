@@ -82,6 +82,8 @@ def _person(record: tuple[str, ...]) -> dict:
     return {
         'Function': function, 'Competitorid/Staff ID': person_id, 'Accredid': accred_id, 'Fiscode': fis_code,
         'Lastname': last, 'Firstname': first, 'Nationcode': TEST_NATION, 'Industryname': DISCIPLINE,
+        'WSC_SS_M_6188': 'YES' if gender == 'M' else 'NO',
+        'WSC_SS_W_6190': 'YES' if gender == 'F' else 'NO',
         'Gender': gender, 'Arrival_date': ARRIVAL, 'Departure_date': DEPARTURE,
         'Arrival_time': '12:30', 'Departure_time': '09:00', 'Arrival_by': 'Flight', 'Departure_by': 'Flight',
         'Arrival_flightno': 'LX WM27', 'Departure_flightno': 'LX WM28',

@@ -15,7 +15,7 @@ os.environ['DATABASE_URL'] = database_url
 from app import app  # noqa: E402
 from excel_import import (_remove_athletes, build_disposition_analysis, build_import_changes,
                           build_quota_warnings)  # noqa: E402
-from models import (Athlete, Hotel, ImportApproval, ImportSession, ImportSessionVersion,
+from models import (Competition, Athlete, Hotel, ImportApproval, ImportSession, ImportSessionVersion,
                     RoomBooking, RoomBookingOccupant, RoomType, db)  # noqa: E402
 
 
@@ -33,6 +33,8 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             'matchKey': athlete.fis_code, 'fisCode': athlete.fis_code,
             'firstname': athlete.firstname, 'lastname': athlete.lastname,
             'nationCode': athlete.nation_code, 'industryName': athlete.discipline,
+            'quotaDisciplines': sorted({c.quota_discipline for c in athlete.competitions}),
+            'competitionImportCodes': [c.import_code for c in athlete.competitions],
             'gender': athlete.gender, 'forGender': athlete.for_gender,
             'function': function or athlete.function, 'roomType': athlete.room_type,
             'arrivalDate': arrival if arrival is not None else athlete.arrival_date,
@@ -54,6 +56,11 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                                discipline='Big Air', function='Official', gender='M',
                                single_room_status='APPROVED_EXTRA',
                                single_room_entitlement='APPROVED_EXTRA')
+            competition = Competition(import_code='EXACT', code='EXACT', name='Display',
+                display_name='Display', sport='Sport', gender='M', quota_discipline='Big Air')
+            athlete.competitions = [competition]
+            official.competitions = [competition]
+            official.fis_code = 'O'
             session = ImportSession(nation='AUT', discipline='Big Air')
             db.session.add_all([athlete, official, session]); db.session.flush()
             version = ImportSessionVersion(session_id=session.id, version=1, uploaded_by='test')
@@ -75,7 +82,10 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                     athlete.gender = canonical
                     official.gender = raw
                     approval.quota_details_json = json.dumps({
-                        'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': raw})
+                        'quotaMembershipVersion': 1, 'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': raw,
+                        'singleRoomCandidates': [{'personKey': 'O', 'competitionIds': [str(competition.id)]}]})
+                    approval.approved_person_keys_json = '["O"]'
+                    official.single_room_decision = approval
                     db.session.commit()
                     response = app.test_client().get('/api/fis/official-quotas',
                         query_string={'nationCode': 'AUT', 'gender': raw})
@@ -96,6 +106,10 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 discipline='Big Air', gender='F', function='Athlete')]
             roster += [Athlete(fis_code=f'O{i}', firstname='O', lastname=str(i), nation_code='AUT',
                 discipline='Big Air', gender='F', function='Official') for i in range(4)]
+            competition = Competition(import_code='EXACT', code='EXACT', name='Display',
+                display_name='Display', sport='Sport', gender='F', quota_discipline='Big Air')
+            for person in roster:
+                person.competitions = [competition]
             roster[1].single_room_entitlement = 'IN_QUOTA'
             roster[2].single_room_entitlement = 'APPROVED_EXTRA'
             db.session.add_all(roster)
@@ -117,23 +131,25 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             live = response.get_json()[0]
             self.assertEqual((live['assignedOfficials'], live['officialQuota']), (4, 3))
             self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (2, 1))
-            self.assertEqual(live['approvedExtraSingleRooms'], 1)
+            self.assertEqual(live['approvedExtraSingleRooms'], 0)
             self.assertEqual(live, {
                 'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'F',
                 'athletesEntered': 1, 'officialQuota': 3,
                 'singleRoomsAllowed': 1, 'assignedOfficials': 4,
                 'singleRoomsUsed': 2, 'quotaExemptSingleRooms': 0,
-                'approvedExtraSingleRooms': 1,
+                'approvedExtraSingleRooms': 0,
                 'requiredSingleRooms': 2, 'implementedSingleRooms': 2,
                 'remainingSingleRooms': 0, 'openApprovals': 0,
                 'approvedExceptions': 0, 'quotaStatus': 'FULFILLED',
                 'peopleTotal': 5, 'peopleAssigned': 4,
+                'unresolvedHistoricalApprovalIds': [],
             })
             # People, select-in competition memberships, bookings, approval state.
             query_count = int(response.headers['X-Assignment-Query-Count'])
             self.assertLessEqual(query_count, 4)
             db.session.add_all([Athlete(firstname='Additional', lastname=str(index),
-                nation_code='AUT', discipline='Big Air', gender='F', function='Athlete')
+                nation_code='AUT', discipline='Big Air', gender='F', function='Athlete',
+                competitions=[competition])
                 for index in range(5)])
             db.session.commit()
             with patch.dict(os.environ, {'ASSIGNMENT_PERFORMANCE_ENABLED': 'true'}):
