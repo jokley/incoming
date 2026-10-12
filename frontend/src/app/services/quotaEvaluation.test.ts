@@ -11,8 +11,8 @@ test('single-room and surcharge badges follow independent persisted state', () =
   assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: true } }), true);
   assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: false } }), false);
   assert.deepEqual(calculateAdditionalCosts([
-    { personId: 'approved-active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA' },
-    { personId: 'approved-inactive', bookingId: '2', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: false, singleRoomStatus: 'APPROVED_EXTRA' },
+    { personId: 'approved-active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaDisciplines: ['HP'] },
+    { personId: 'approved-inactive', bookingId: '2', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: false, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaDisciplines: ['HP'] },
     { personId: 'ordinary-active', bookingId: '3', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'IN_QUOTA' },
   ], 2).map(person => person.additionalCost), [true, false, false]);
 });
@@ -80,4 +80,39 @@ test('header quota values require exactly one quota context', () => {
     officials: `${selected.assignedOfficials}/${selected.officialQuota}`,
     singles: `${selected.singleRoomsUsed}/${selected.singleRoomsAllowed}`,
   }, { officials: '0/5', singles: '3/2' });
+});
+
+test('booking and planning quota consumers use arbitrary mapped groups without legacy fallbacks', async () => {
+  const { quotaAssignmentsFromBookings, quotaAssignmentsFromPlanning, evaluateQuotaGroup } = await import('./quotaEvaluation.ts');
+  const bookings = [{ id: 'booking', countsAsSingle: false, occupants: [{ athlete: {
+    id: 'person', nationCode: 'AUT', gender: 'M', discipline: 'Legacy',
+    competitions: [{ quotaDiscipline: 'TestGroup' }, { quotaDiscipline: 'TestGroup' }],
+  } }] }];
+  const mapped = quotaAssignmentsFromBookings(bookings as never);
+  assert.equal(mapped.length, 1);
+  assert.equal(mapped[0].discipline, 'TestGroup');
+  assert.equal(mapped[0].countsAsSingle, false);
+  const active = { ...mapped[0], countsAsSingle: true };
+  assert.equal(evaluateQuotaGroup({ nationCode: 'AUT', discipline: 'TestGroup', gender: 'M',
+    singleRoomsAllowed: 1 }, [active, active]).usedSingleRooms, 1);
+  bookings[0].occupants[0].athlete.competitions = [];
+  assert.deepEqual(quotaAssignmentsFromBookings(bookings as never), []);
+  const hotels = [{ slots: [{ bookings: [{ bookingId: 'booking', countsAsSingle: false,
+    occupants: [{ athleteId: 'person', nationCode: 'AUT', gender: 'M', discipline: 'Legacy',
+      quotaDisciplines: ['TestGroup', 'TestGroup'] }] }] }] }];
+  assert.equal(quotaAssignmentsFromPlanning(hotels as never)[0].discipline, 'TestGroup');
+  hotels[0].slots[0].bookings[0].occupants[0].quotaDisciplines = [];
+  assert.deepEqual(quotaAssignmentsFromPlanning(hotels as never), []);
+});
+
+
+test('approved room usage is restricted to the backend-resolved approval group', async () => {
+  const { calculateAdditionalCosts } = await import('./quotaEvaluation.ts');
+  const person = { personId: 'A', bookingId: '1', nationCode: 'AUT', gender: 'M',
+    countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA' as const,
+    approvedQuotaDisciplines: ['Snowboard'] };
+  assert.deepEqual(calculateAdditionalCosts([
+    { ...person, discipline: 'Snowboard' }, { ...person, discipline: 'Freestyle' },
+    { ...person, discipline: 'Snowboard', approvedQuotaDisciplines: undefined },
+  ], 1).map(p => p.additionalCost), [true, false, false]);
 });

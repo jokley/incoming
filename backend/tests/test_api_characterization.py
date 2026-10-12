@@ -228,7 +228,8 @@ class ApiCharacterizationTest(unittest.TestCase):
         self.assertNotIn('workflowStatus', detail)  # Detail is not the collection projection.
         self.assert_json(self.client.get(f'/api/athletes/{person_id}/'), 200, detail)
         quota = self.client.get('/api/fis/official-quotas?nationCode=AUT&gender=F').get_json()
-        self.assertTrue(quota)
+        # A descriptive legacy discipline supplies no quota membership.
+        self.assertEqual(quota, [])
         for path in ['/api/fis/official-quotas/', '/api/official-quotas',
                      '/api/official-quotas/', '/fis/official-quotas', '/fis/official-quotas/']:
             self.assert_json(self.client.get(path + '?nationCode=AUT&gender=F'), 200, quota)
@@ -288,6 +289,10 @@ class ApiCharacterizationTest(unittest.TestCase):
             decision = ImportApproval(session_id=session.id, version_id=session.current_version_id,
                 nation=session.nation, approval_type='NATION_APPROVED', description='Single Rooms',
                 decision='APPROVED', approved_person_keys_json=json.dumps([person_key]), username='fixture')
+            person = PREVIEW_STORE[token]['people'][0]
+            decision.quota_details_json = json.dumps(dict(quotaMembershipVersion=1, nationCode=person['nationCode'],
+                gender=person['gender'], discipline=person['quotaDisciplines'][0], singleRoomCandidates=[
+                    dict(personKey=person_key, competitionIds=person['competitionIds'])]))
             db.session.add(decision)
             db.session.commit()
             decision_id = decision.id

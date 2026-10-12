@@ -2,7 +2,9 @@ from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
-from quota_service import (disposition_by_quota_group, evaluate_quota_usage,
+from quota_history import historical_approval_groups, applicable_approval_groups, approved_quota_disciplines, person_keys
+from competitions import quota_disciplines
+from quota_service import (has_quota_membership, quota_keys, disposition_by_quota_group, evaluate_quota_usage,
                            normalize_gender, single_room_usage_by_quota_group)
 from datetime import datetime
 import hashlib
@@ -1122,7 +1124,8 @@ def _build_room_booking_units():
                 'lastname': athlete.lastname,
                 'nationCode': athlete.nation_code,
                 'discipline': athlete.discipline,
-                'quotaDisciplines': sorted({c.quota_discipline for c in athlete.competitions}),
+                'quotaDisciplines': quota_disciplines(athlete.competitions),
+                'approvedQuotaDisciplines': approved_quota_disciplines(athlete),
                 'gender': _normalize_gender(athlete),
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
@@ -1272,7 +1275,8 @@ def _build_assignment_planning_view(validation_keys=None):
                                     'firstname': occ.athlete.firstname,
                                     'lastname': occ.athlete.lastname,
                                     'discipline': occ.athlete.discipline,
-                                    'quotaDisciplines': sorted({c.quota_discipline for c in occ.athlete.competitions}),
+                                    'quotaDisciplines': quota_disciplines(occ.athlete.competitions),
+                                    'approvedQuotaDisciplines': approved_quota_disciplines(occ.athlete),
                                     'gender': _normalize_gender(occ.athlete),
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
@@ -1478,14 +1482,12 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     if discipline:
         athletes = athletes.filter(
-            or_(Athlete.competitions.any(Competition.quota_discipline == discipline),
-                Athlete.competitions.any(Competition.name == discipline),
-                Athlete.discipline == discipline)
+            Athlete.competitions.any(Competition.quota_discipline == discipline)
         )
 
     athletes = athletes.all()
     roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
-               'quotaDisciplines': sorted({c.quota_discipline for c in a.competitions}),
+               'quotaDisciplines': quota_disciplines(a.competitions),
                'gender': a.gender, 'forGender': a.for_gender,
                'function': a.function,
                'singleRoomQuotaExemptReason': a.single_room_quota_exempt_reason} for a in athletes]
@@ -1518,7 +1520,8 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             continue
         if athlete.id not in booking_by_athlete:
             continue
-        assigned.append({'nationCode': athlete.nation_code, 'discipline': athlete.discipline,
+        assigned.append({'personId': athlete.id, 'nationCode': athlete.nation_code,
+            'quotaDisciplines': quota_disciplines(athlete.competitions),
             'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
             'countsAsSingle': booking_by_athlete[athlete.id],
             'singleRoomQuotaExemptReason': athlete.single_room_quota_exempt_reason})
@@ -1541,21 +1544,27 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     )
     approved_by_key = {}
     implemented_by_key = {}
-    for athlete in athletes:
+    unresolved_approvals = []
+    for athlete, person in zip(athletes, roster):
+        groups = quota_keys(person)
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
-            key = (athlete.nation_code or '', athlete.discipline or '',
-                   normalize_gender(athlete.gender or athlete.for_gender))
-            approved_by_key[key] = approved_by_key.get(key, 0) + 1
+            approved_groups = applicable_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
+            if not approved_groups and athlete.single_room_decision_id:
+                unresolved_approvals.append(athlete.single_room_decision_id)
+            for key in approved_groups:
+                approved_by_key.setdefault(key, set()).add(athlete.id)
         if athlete.single_room_entitlement and booking_by_athlete.get(athlete.id, False):
-            key = (athlete.nation_code or '', athlete.discipline or '',
-                   normalize_gender(athlete.gender or athlete.for_gender))
-            implemented_by_key[key] = implemented_by_key.get(key, 0) + 1
+            for key in groups:
+                implemented_by_key.setdefault(key, set()).add(athlete.id)
     approval_state = {}
     approval_rows = db.session.query(
         ImportApproval.quota_details_json,
         ImportApproval.decision,
         ImportSession.nation,
         ImportSession.discipline,
+        ImportApproval.id,
+        ImportApproval.approved_person_keys_json,
+        ImportApproval,
     ).join(
         ImportSession,
         (ImportSession.id == ImportApproval.session_id)
@@ -1566,28 +1575,58 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             ImportSessionEvent.approval_id.isnot(None),
         )
     )).all()
-    for details_json, decision, session_nation, session_discipline in approval_rows:
+    people_by_key = {}
+    for athlete in athletes:
+        for identity in person_keys(athlete):
+            if identity:
+                people_by_key.setdefault(str(identity), {})[athlete.id] = athlete
+    for details_json, decision, session_nation, session_discipline, approval_id, selected_json, approval in approval_rows:
         details = json.loads(details_json or '{}')
-        key = (details.get('nationCode') or session_nation or '',
-               details.get('discipline') or session_discipline or '',
-               normalize_gender(details.get('gender')))
-        state = approval_state.setdefault(key, {'pending': 0, 'approved': 0})
-        state['approved' if decision == 'APPROVED' else 'pending'] += 1
+        if nation_code and (details.get('nationCode') or session_nation) != nation_code:
+            continue
+        groups = set()
+        selected = json.loads(selected_json or '[]') if decision == 'APPROVED' else [
+            c.get('personKey') for c in details.get('singleRoomCandidates', [])]
+        unresolved = not selected
+        for identity in selected:
+            matches = list(people_by_key.get(str(identity), {}).values())
+            applicable = set()
+            if len(matches) == 1:
+                applicable = (applicable_approval_groups(approval, matches[0], identity, athletes)
+                    if decision == 'APPROVED' else historical_approval_groups(details, matches[0], identity))
+            if not applicable:
+                unresolved = True
+            groups |= applicable
+        if unresolved:
+            unresolved_approvals.append(approval_id)
+            continue
+        for key in groups:
+            state = approval_state.setdefault(key, {'pending': set(), 'approved': set()})
+            state['approved' if decision == 'APPROVED' else 'pending'].add(approval_id)
+    invalid_decisions = set(unresolved_approvals)
+    decision_by_person = {a.id: a.single_room_decision_id for a in athletes}
+    for key, person_ids in approved_by_key.items():
+        approved_by_key[key] = {person_id for person_id in person_ids
+            if decision_by_person[person_id] not in invalid_decisions}
+    if unresolved_approvals:
+        app.logger.warning('Quota approvals require membership review: %s', sorted(set(unresolved_approvals)))
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
         row.update(disposition.get(key, {'peopleTotal': 0, 'peopleAssigned': 0}))
         row['singleRoomsUsed'] = single_room_usage.get(key, 0)
         row['quotaExemptSingleRooms'] = exempt_single_room_usage.get(key, 0)
-        row['approvedExtraSingleRooms'] = approved_by_key.get(key, 0)
+        row['approvedExtraSingleRooms'] = len(approved_by_key.get(key, set()))
         row['requiredSingleRooms'] = row['singleRoomsUsed']
-        row['implementedSingleRooms'] = implemented_by_key.get(key, 0)
+        row['implementedSingleRooms'] = len(implemented_by_key.get(key, set()))
         row['remainingSingleRooms'] = max(0, row['requiredSingleRooms'] - row['implementedSingleRooms'])
-        decisions = approval_state.get(key, {'pending': 0, 'approved': 0})
-        row['openApprovals'] = decisions['pending']
-        row['approvedExceptions'] = decisions['approved']
+        decisions = approval_state.get(key, {'pending': set(), 'approved': set()})
+        row['openApprovals'] = len(decisions['pending'])
+        row['approvedExceptions'] = len(decisions['approved'])
+        row['unresolvedHistoricalApprovalIds'] = sorted(set(unresolved_approvals))
         row['quotaStatus'] = ('DECISION_REQUIRED' if decisions['pending'] else
             'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
-    return [row for row in rows if not gender or row['gender'] == normalize_gender(gender)]
+    return [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
+            and (not discipline or row['discipline'] == discipline)]
 
 
 CRITICAL_ROUTE_ALIASES = [
@@ -1891,7 +1930,10 @@ def stage_single_room_quota_exemption(session_id, person_key):
         return jsonify({'error': 'Person is not part of the current import version'}), 404
     overrides = preview.setdefault('singleRoomQuotaExemptOverrides', {})
     overrides[person_key] = reason
-    recalculate_fis_import_preview(preview)
+    try:
+        recalculate_fis_import_preview(preview)
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()), 400
     session.current_version.preview_json = json.dumps(preview, ensure_ascii=False)
     raw_preview = PREVIEW_STORE.get(session.current_version.preview_token)
     if raw_preview is not None:
@@ -2030,9 +2072,12 @@ def decide_import_approval(session_id, approval_id):
         db.session.flush()
         if is_single_room_approval and decision == 'APPROVED':
             current_preview = json.loads(session.current_version.preview_json or '{}')
-            apply_active_single_room_decision(
-                details, approved_person_keys, approval.id,
-                current_preview.get('people', []))
+            try:
+                apply_active_single_room_decision(
+                    details, approved_person_keys, approval.id, current_preview.get('people', []))
+            except ImportValidationError as exc:
+                db.session.rollback()
+                return jsonify(exc.to_dict()), 400
     else:
         approval.decision = decision
         approval.approval_type = approval_type or approval.approval_type
@@ -2486,11 +2531,11 @@ def _update_athlete_operations(athlete, data):
                 rows = _build_official_quota_usage_rows(nation_code=athlete.nation_code)
                 groups = {(athlete.nation_code, competition.quota_discipline, _normalize_gender(athlete))
                           for competition in athlete.competitions}
-                if not groups:
-                    groups = {(athlete.nation_code, athlete.discipline or '', _normalize_gender(athlete))}
                 relevant = [row for row in rows if (
                     row['nationCode'], row['discipline'], row['gender']) in groups]
-                over_quota = any(row['singleRoomsUsed'] > row['singleRoomsAllowed'] for row in relevant)
+                over_quota = (not has_quota_membership({'nationCode': athlete.nation_code,
+                    'gender': _normalize_gender(athlete), 'quotaDisciplines': quota_disciplines(athlete.competitions)})
+                    or any(row['singleRoomsUsed'] > row['singleRoomsAllowed'] for row in relevant))
                 athlete.single_room_status = 'PENDING_APPROVAL' if over_quota else 'IN_QUOTA'
                 athlete.single_room_entitlement = 'IN_QUOTA' if not over_quota else None
                 athlete.single_room_decision_id = None

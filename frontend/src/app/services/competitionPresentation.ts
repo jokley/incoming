@@ -16,7 +16,7 @@ export function matchesDisciplineMembership(
   filter: string,
 ): boolean {
   if (!filter) return true;
-  return quotaDisciplines?.length ? quotaDisciplines.includes(filter) : discipline === filter;
+  return (quotaDisciplines || []).includes(filter);
 }
 
 export function matchesDisciplineAndGender(

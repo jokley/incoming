@@ -2,7 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import MetaData
 from datetime import datetime
 import json
-from competitions import top_level_discipline
+from competitions import quota_disciplines
 
 NAMING_CONVENTION = {
     'ix': 'ix_%(table_name)s_%(column_0_name)s',
@@ -404,8 +404,8 @@ class Competition(db.Model):
 
     @property
     def top_level_discipline(self):
-        """Derived athlete-quota discipline; never changes detailed grouping."""
-        return top_level_discipline(self.code)
+        """Compatibility alias for the configured quota group."""
+        return self.quota_discipline
 
     def to_dict(self):
         return {
@@ -571,6 +571,7 @@ class Athlete(db.Model):
     )
 
     def to_dict(self):
+        from quota_history import approved_quota_disciplines
         return {
             'id': str(self.id),
             'function': self.function,
@@ -582,6 +583,8 @@ class Athlete(db.Model):
             'nationCode': self.nation_code,
             'discipline': self.discipline,  # legacy compatibility only
             'competitions': [competition.to_dict() for competition in self.competitions],
+            'quotaDisciplines': quota_disciplines(self.competitions),
+            'approvedQuotaDisciplines': approved_quota_disciplines(self),
             'disciplines': [competition.name for competition in self.competitions],
             'gender': self.gender,
             'forGender': self.for_gender,

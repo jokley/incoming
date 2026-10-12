@@ -6,7 +6,7 @@ from fis_rules import compute_official_quota, compute_single_room_entitlement
 def evaluate_athlete_quota_usage(people):
     """Report base 36/20 limits, independently of accommodation/workflow rules.
 
-    Input memberships are canonical ``topLevelDisciplines`` resolved through
+    Input memberships are canonical ``quotaDisciplines`` resolved through
     the selected catalogue mapping. Identity is the persisted personId or the
     parser's matchKey, never an entry count. Article 8.2 eligibility is not
     supported; administrative single-room exemptions have no effect here.
@@ -16,9 +16,7 @@ def evaluate_athlete_quota_usage(people):
     for person in people:
         if (person.get('function') or '').strip().lower() != 'athlete':
             continue
-        for discipline in set(person.get('topLevelDisciplines') or []):
-            if discipline not in {'Snowboard', 'Freestyle'}:
-                raise ValueError('Athlete quota requires a canonical top-level discipline')
+        for discipline in set(person.get('quotaDisciplines') or []):
             identity = person.get('personId')
             if identity is None:
                 identity = person.get('matchKey')
@@ -64,21 +62,39 @@ def normalize_gender(value):
 
 
 def quota_key(person):
-    return (
-        person.get('nationCode') or '',
-        person.get('discipline') or '',
-        normalize_gender(person.get('gender') or person.get('forGender')),
-    )
+    """Compatibility for callers requiring exactly one canonical membership."""
+    keys = quota_keys(person)
+    if len(keys) != 1:
+        raise ValueError('Expected exactly one mapped quota membership')
+    return next(iter(keys))
 
 
 def quota_keys(person):
     """Return distinct quota groups; multiple competitions may share a group."""
-    disciplines = person.get('quotaDisciplines') or [person.get('discipline') or '']
+    disciplines = person.get('quotaDisciplines') or []
     return {
         (person.get('nationCode') or '', discipline, normalize_gender(
             person.get('gender') or person.get('forGender')))
         for discipline in disciplines
     }
+
+
+def has_quota_membership(person):
+    return bool(quota_keys(person))
+
+
+def _distinct_memberships(people):
+    seen = set()
+    for index, person in enumerate(people):
+        identity = person.get('personId')
+        if identity is None:
+            identity = person.get('matchKey')
+        # Unpersisted synthetic input rows without an identity remain separate.
+        identity = ('row', index) if identity is None else ('person', str(identity))
+        for key in quota_keys(person):
+            if key[2] and (identity, key) not in seen:
+                seen.add((identity, key))
+                yield person, key
 
 
 def disposition_by_quota_group(people, assigned_person_ids=()):
@@ -91,14 +107,10 @@ def disposition_by_quota_group(people, assigned_person_ids=()):
     assigned_person_ids = set(assigned_person_ids)
     totals = {}
     assigned = {}
-    for person in people:
-        person_id = person.get('personId')
-        for key in quota_keys(person):
-            if not key[2]:
-                continue
-            totals[key] = totals.get(key, 0) + 1
-            if person_id in assigned_person_ids:
-                assigned[key] = assigned.get(key, 0) + 1
+    for person, key in _distinct_memberships(people):
+        totals[key] = totals.get(key, 0) + 1
+        if person.get('personId') in assigned_person_ids:
+            assigned[key] = assigned.get(key, 0) + 1
     return {
         key: {'peopleTotal': total, 'peopleAssigned': assigned.get(key, 0)}
         for key, total in totals.items()
@@ -110,13 +122,10 @@ def single_room_usage_by_quota_group(people, single_room_person_ids=(), exempt_p
     single_room_person_ids = set(single_room_person_ids)
     exempt_person_ids = set(exempt_person_ids)
     usage = {}
-    for person in people:
-        if (person.get('personId') not in single_room_person_ids
-                or person.get('personId') in exempt_person_ids):
-            continue
-        for key in quota_keys(person):
-            if key[2]:
-                usage[key] = usage.get(key, 0) + 1
+    for person, key in _distinct_memberships(people):
+        if (person.get('personId') in single_room_person_ids
+                and person.get('personId') not in exempt_person_ids):
+            usage[key] = usage.get(key, 0) + 1
     return usage
 
 
@@ -133,29 +142,18 @@ def evaluate_quota_usage(people, assigned_people=()):
     singles = {}
     exempt_singles = {}
     keys = set()
-    for person in people:
-        for key in quota_keys(person):
-            if not key[2]:
-                continue
-            keys.add(key)
-            if (person.get('function') or '').strip().lower() == 'athlete':
-                athletes[key] = athletes.get(key, 0) + 1
-    for person in assigned_people:
-        is_athlete = (person.get('function') or '').strip().lower() == 'athlete'
-        # Athlete room requests follow every distinct quota discipline from the
-        # person's competition memberships. Officials intentionally retain the
-        # existing single-discipline assignment semantics.
-        person_keys = quota_keys(person) if is_athlete else {quota_key(person)}
-        for key in person_keys:
-            if not key[2]:
-                continue
-            keys.add(key)
-            if not is_athlete:
-                assigned[key] = assigned.get(key, 0) + 1
-            if person.get('countsAsSingle') and person.get('singleRoomQuotaExemptReason'):
-                exempt_singles[key] = exempt_singles.get(key, 0) + 1
-            elif person.get('countsAsSingle'):
-                singles[key] = singles.get(key, 0) + 1
+    for person, key in _distinct_memberships(people):
+        keys.add(key)
+        if (person.get('function') or '').strip().lower() == 'athlete':
+            athletes[key] = athletes.get(key, 0) + 1
+    for person, key in _distinct_memberships(assigned_people):
+        keys.add(key)
+        if (person.get('function') or '').strip().lower() != 'athlete':
+            assigned[key] = assigned.get(key, 0) + 1
+        if person.get('countsAsSingle') and person.get('singleRoomQuotaExemptReason'):
+            exempt_singles[key] = exempt_singles.get(key, 0) + 1
+        elif person.get('countsAsSingle'):
+            singles[key] = singles.get(key, 0) + 1
 
     rows = []
     for nation, discipline, gender in sorted(keys):
