@@ -255,7 +255,55 @@ def _daterange_nights(check_in_date, check_out_date):
     return nights
 
 
-def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=None):
+WSC_MEMBERSHIP_ERROR_MESSAGE = (
+    'Competition-Zuordnungen konnten nicht aufgelöst werden. '
+    'Die Entries-Liste enthält aktive WSC-Wettbewerbe, aber keine davon konnte '
+    'dem ausgewählten Event/Katalog zugeordnet werden.'
+)
+
+
+def wsc_membership_errors(people, event_id=None):
+    """Retain source evidence independently of successful exact mapping resolution."""
+    diagnostics = []
+    for person in people:
+        source = [code for code in person.get(
+            'affirmativeWscColumns', person.get('competitionImportCodes', []))
+            if str(code).upper().startswith('WSC_')]
+        if not source:
+            continue
+        diagnostics.append({
+            'personKey': person.get('matchKey'),
+            'personName': ' '.join(filter(None, [person.get('lastname'), person.get('firstname')])),
+            'row': person.get('sourceRowNumber'),
+            'affirmativeSourceWscColumns': list(source),
+            'extractedImportCodes': list(source),
+            'resolvedCompetitionIds': list(person.get('competitionIds', [])),
+            'resolvedEventGroups': list(person.get('quotaDisciplines', [])),
+            'mappedMembershipCount': len(person.get('competitionMemberships', [])),
+            'selectedEventId': event_id,
+        })
+    errors = [
+        {'code': 'ENTRY_WSC_MEMBERSHIP_UNRESOLVED', 'message': WSC_MEMBERSHIP_ERROR_MESSAGE,
+         'details': detail}
+        for detail in diagnostics
+        if not detail['mappedMembershipCount'] or not detail['resolvedEventGroups']
+    ]
+    if diagnostics and (not any(d['mappedMembershipCount'] for d in diagnostics)
+                        or not any(d['resolvedEventGroups'] for d in diagnostics)):
+        errors.insert(0, {
+            'code': 'ENTRY_WSC_MEMBERSHIPS_UNRESOLVED',
+            'message': WSC_MEMBERSHIP_ERROR_MESSAGE,
+            'details': {
+                'columns': sorted({code for d in diagnostics for code in d['affirmativeSourceWscColumns']}),
+                'affirmativeMembershipCount': sum(len(d['affirmativeSourceWscColumns']) for d in diagnostics),
+                'mappedMembershipCount': sum(d['mappedMembershipCount'] for d in diagnostics),
+                'selectedEventId': event_id, 'people': diagnostics,
+            },
+        })
+    return errors
+
+
+def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=None, event_id=None):
     competition_mapping = COMPETITION_BY_IMPORT_CODE if competition_mapping is None else competition_mapping
     errors = []
     warnings = []
@@ -335,6 +383,8 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             'firstname': firstname,
             'nationCode': nation_code,
             'industryName': discipline,
+            'sourceRowNumber': row_number,
+            'affirmativeWscColumns': [column for column in competition_columns if parse_boolean(row.get(column))],
             'competitionImportCodes': [
                 column for column in competition_columns
                 if column in competition_mapping and parse_boolean(row.get(column))
@@ -385,6 +435,7 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
                 'details': {'personKey': unique_key, 'row': row_number}})
         people.append(person)
 
+    errors.extend(wsc_membership_errors(people, event_id))
     return {'people': people, 'errors': errors, 'warnings': warnings}
 
 
@@ -1350,7 +1401,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
     mapping = None
     if event is not None:
         mapping = active_competition_mapping(event)
-    people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None)
+    people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None, event.id if event else None)
     room_result = parse_room_list(room_df, people_result['people'])
     apply_single_room_quota_exemptions(people_result['people'])
     quota_checks = []
@@ -1372,6 +1423,8 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         raise ImportValidationError(
             'UNKNOWN_COMPETITION_CODE', unknown['message'],
             event_id=event.id, import_code=import_code,
+            details={'membershipErrors': wsc_membership_errors(people_result['people'], event.id)}
+                if any(p.get('affirmativeWscColumns') for p in people_result['people']) else None,
         )
     disposition_analysis['changes'] = build_import_changes(
         disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors
@@ -1453,6 +1506,8 @@ def resolve_saved_quota_memberships(person, event_mapping=None):
             person['quotaDisciplines'] = quota_disciplines(rows)
             person['topLevelDisciplines'] = list(person['quotaDisciplines'])
             return person
+    person['competitionIds'] = []
+    person['competitionMemberships'] = []
     person['quotaDisciplines'] = []
     person['topLevelDisciplines'] = []
     return person
@@ -1486,8 +1541,9 @@ def recalculate_fis_import_preview(preview):
         for key, value in preserved.items()}
     preview['quotaChecks'] = quota_checks
     preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people)
-    preview['errors'] = [e for e in preview.get('errors', [])
-        if not e.get('code', '').startswith('ENTRY_QUOTA_GENDER_')] + quota_gender_errors(people)
+    preview['errors'] = ([e for e in preview.get('errors', [])
+        if not e.get('code', '').startswith(('ENTRY_QUOTA_GENDER_', 'ENTRY_WSC_MEMBERSHIP'))]
+        + quota_gender_errors(people) + wsc_membership_errors(people, preview.get('eventId')))
     membership_warnings = [
         {'code': 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED',
          'message': 'Keine exakte Competition-Membership für die Quotenprüfung vorhanden',
