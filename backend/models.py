@@ -404,8 +404,9 @@ class Competition(db.Model):
 
     @property
     def top_level_discipline(self):
-        """Compatibility alias for the configured quota group."""
-        return self.quota_discipline
+        """Higher-level athlete admission discipline, derived from the mapping."""
+        from competitions import athlete_top_level_discipline
+        return athlete_top_level_discipline(self.quota_discipline)
 
     def to_dict(self):
         return {
@@ -571,7 +572,7 @@ class Athlete(db.Model):
     )
 
     def to_dict(self):
-        from quota_history import approved_quota_disciplines
+        from quota_history import approved_quota_disciplines, approved_quota_contexts
         return {
             'id': str(self.id),
             'function': self.function,
@@ -585,6 +586,7 @@ class Athlete(db.Model):
             'competitions': [competition.to_dict() for competition in self.competitions],
             'quotaDisciplines': quota_disciplines(self.competitions),
             'approvedQuotaDisciplines': approved_quota_disciplines(self),
+            'approvedQuotaContexts': approved_quota_contexts(self),
             'disciplines': [competition.name for competition in self.competitions],
             'gender': self.gender,
             'forGender': self.for_gender,

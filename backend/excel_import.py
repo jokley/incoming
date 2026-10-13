@@ -9,8 +9,8 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
-from quota_history import applicable_approval_groups, preview_approval_person
-from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership
+from quota_history import applicable_approval_groups, preview_approval_person, quota_person
+from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
 from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSessionEvent, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids
 
@@ -556,7 +556,8 @@ def build_quota_warnings(people, rooms, quota_checks=None):
         if room.get('person2Key'):
             room_by_person[room['person2Key']] = room
 
-    roster = [{**person, 'discipline': person.get('industryName')} for person in people]
+    roster = [{**person, 'discipline': person.get('industryName')} for person in people
+              if not quota_gender_errors([person])]
     requested = []
     projected = []
     imported_by_existing_id = {}
@@ -579,6 +580,23 @@ def build_quota_warnings(people, rooms, quota_checks=None):
         booking = membership.room_booking
         projected.append({**person, 'countsAsSingle': bool(booking and booking.counts_as_single)})
 
+    preserved = preserved_single_room_approvals(people, rooms)
+    for records in (requested, projected):
+        for person in records:
+            evidence = preserved.get(person.get('matchKey'))
+            person['singleRoomStatus'] = 'APPROVED_EXTRA' if evidence else None
+            person['approvedQuotaContexts'] = [
+                {'nationCode': nation, 'discipline': group, 'gender': gender}
+                for nation, group, gender in sorted(evidence['groups'])] if evidence else []
+    # Requests and retained bookings may overlap; form one distinct physical
+    # demand set rather than taking maxima of differently routed context rows.
+    combined = {}
+    for index, person in enumerate([*requested, *projected]):
+        identity = person_identity(person, index)
+        previous = combined.get(identity)
+        combined[identity] = {**person, 'countsAsSingle': bool(person.get('countsAsSingle')
+            or (previous and previous.get('countsAsSingle')))}
+    physical_rows = evaluate_quota_usage(roster, list(combined.values()))
     requested_rows = evaluate_quota_usage(roster, requested)
     projected_rows = evaluate_quota_usage(roster, projected)
     rows_by_key = {}
@@ -598,6 +616,11 @@ def build_quota_warnings(people, rooms, quota_checks=None):
             if row['quotaExemptSingleRooms'] > current['quotaExemptSingleRooms']:
                 current['quotaExemptSingleRooms'] = row['quotaExemptSingleRooms']
 
+    for row in physical_rows:
+        key = (row['nationCode'], row['discipline'], row['gender'])
+        for field in ('singleRoomsUsed', 'quotaExemptSingleRooms', 'singleRoomAllocations',
+                      'singleRoomsCovered', 'singleRoomsPending'):
+            rows_by_key[key][field] = row[field]
     warnings = []
     for (nation_code, discipline, gender), row in sorted(rows_by_key.items()):
         athletes_entered = row['athletesEntered']
@@ -613,13 +636,14 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                 'quotaExemptSingleRooms': row.get('quotaExemptSingleRooms', 0),
                 'officialsExceeded': imported_officials > official_quota,
                 'singleRoomsExceeded': imported_single_rooms > single_room_entitlement,
+                'singleRoomAllocations': row['singleRoomAllocations'],
             })
         if imported_officials > official_quota:
             warnings.append({
                 'code': 'QUOTA_OFFICIALS_EXCEEDED',
                 'message': f'Officials überschritten ({imported_officials} / {official_quota})',
                 'details': {
-                    'quotaMembershipVersion': 1,
+                    'quotaMembershipVersion': 2,
                     'nationCode': nation_code,
                     'discipline': discipline,
                     'gender': gender,
@@ -632,13 +656,11 @@ def build_quota_warnings(people, rooms, quota_checks=None):
             })
         if imported_single_rooms > single_room_entitlement:
             group = (nation_code, discipline, gender)
-            single_room_review_people = [person for person in requested
-                if person.get('countsAsSingle')
-                and group in quota_keys(person)]
-            single_room_people = [person for person in requested
-                if person.get('countsAsSingle')
-                and not person.get('singleRoomQuotaExemptReason')
-                and group in quota_keys(person)]
+            routed = {p['identity'] for p in row['singleRoomAllocations']}
+            single_room_review_people = [person for person in combined.values()
+                if person.get('countsAsSingle') and person_identity(person) in routed]
+            single_room_people = [person for person in single_room_review_people
+                if not person.get('singleRoomQuotaExemptReason')]
             excess_count = imported_single_rooms - single_room_entitlement
             candidates = [{
                 'personKey': person.get('matchKey'),
@@ -654,7 +676,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                 'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED',
                 'message': f'Single Rooms überschritten ({imported_single_rooms} / {single_room_entitlement})',
                 'details': {
-                    'quotaMembershipVersion': 1,
+                    'quotaMembershipVersion': 2,
                     'nationCode': nation_code,
                     'discipline': discipline,
                     'gender': gender,
@@ -674,6 +696,11 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                     } for person in single_room_review_people],
                 },
             })
+    warnings.extend({'code': 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED',
+        'message': 'No athlete-derived M/W allowance context for this Official',
+        'details': {'personKey': person.get('matchKey'), 'quotaDisciplines': person.get('quotaDisciplines')}}
+        for person in people if normalize_string(person.get('function')) != 'athlete'
+        and person.get('quotaDisciplines') and not quota_keys(person, roster))
     return warnings
 
 
@@ -720,7 +747,7 @@ def preserved_single_room_approvals(people, rooms):
             continue
         if existing.nation_code != person.get('nationCode'):
             continue
-        incoming_groups = quota_keys(person)
+        incoming_groups = quota_keys(person, people)
         matching_groups = incoming_groups & applicable_approval_groups(
             existing.single_room_decision, preview_approval_person(person), person.get('matchKey'), current_roster)
         if not matching_groups and existing.single_room_decision_id:
@@ -783,8 +810,8 @@ def apply_active_single_room_decision(details, approved_person_keys, decision_id
             athlete.single_room_entitlement = 'APPROVED_EXTRA'
             athlete.single_room_decision_id = decision_id
         elif athlete.single_room_status == 'APPROVED_EXTRA':
-            resolved = has_quota_membership({'nationCode': athlete.nation_code,
-                'gender': athlete.gender or athlete.for_gender, 'quotaDisciplines': quota_disciplines(athlete.competitions)})
+            resolved = has_quota_membership(quota_person(athlete),
+                [quota_person(p) for p in Athlete.query.filter_by(nation_code=athlete.nation_code).all()])
             athlete.single_room_status = 'IN_QUOTA' if resolved else 'PENDING_APPROVAL'
             athlete.single_room_entitlement = 'IN_QUOTA' if resolved else None
             athlete.single_room_decision_id = None
@@ -809,32 +836,36 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved
             int(check.get('singleRoomsAllowed') or 0)
         for check in quota_checks
     }
-    allocated = {}
     preserved = preserved or {}
+    requested = []
     for person in people:
         person['singleRoomEntitlement'] = None
+        person['singleRoomAllocation'] = None
+        room = room_by_person.get(person.get('matchKey'))
+        evidence = preserved.get(person.get('matchKey'))
+        requested.append({**person, 'countsAsSingle': bool(room and normalize_string(room.get('roomType')) == 'single'),
+            'singleRoomStatus': 'APPROVED_EXTRA' if evidence else None,
+            'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
+                for n, d, g in sorted(evidence['groups'])] if evidence else []})
+    if all('singleRoomAllocations' in check for check in quota_checks):
+        allocation = [item for check in quota_checks for item in check['singleRoomAllocations']]
+    else:
+        valid = [p for p in people if not quota_gender_errors([p])]
+        allocation = allocate_single_rooms(requested, allowances, valid)
+    by_identity = {p['identity']: p for p in allocation}
+    for index, person in enumerate(people):
         room = room_by_person.get(person.get('matchKey'))
         if not room or normalize_string(room.get('roomType')) != 'single':
             continue
-        if person.get('singleRoomQuotaExemptReason'):
-            person['singleRoomEntitlement'] = 'QUOTA_EXEMPT'
-            continue
-        if person.get('matchKey') in preserved:
-            person['singleRoomEntitlement'] = 'APPROVED_EXTRA'
-            continue
-        quota_person = {**person, 'discipline': person.get('industryName')}
-        groups = quota_keys(quota_person)
-        within_quota = has_quota_membership(person)
-        for key in groups:
-            used = allocated.get(key, 0)
-            if used < allowances.get(key, 0):
-                allocated[key] = used + 1
-            else:
-                within_quota = False
-        if within_quota:
-            person['singleRoomEntitlement'] = 'IN_QUOTA'
-        else:
-            person['singleRoomEntitlement'] = 'APPROVAL_REQUIRED'
+        record = by_identity.get(person_identity(person, index))
+        # An unresolved person without any eligible context is still explicit
+        # pending work; no fabricated quota bucket is required.
+        status = record['status'] if record else 'EXEMPT' if person.get('singleRoomQuotaExemptReason') else 'PENDING'
+        person['singleRoomAllocation'] = record or {'identity': person_identity(person, index),
+            'personId': person.get('personId'), 'personKey': person.get('matchKey'), 'status': status,
+            'context': None, 'eligibleContexts': []}
+        person['singleRoomEntitlement'] = {'EXEMPT': 'QUOTA_EXEMPT', 'APPROVED_EXTRA': 'APPROVED_EXTRA',
+            'COVERED': 'IN_QUOTA', 'PENDING': 'APPROVAL_REQUIRED'}[status]
 
 
 def _iso_date(value):
@@ -1332,7 +1363,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         people_result['people'], room_result['rooms'], quota_warnings
     )
 
-    blocking_errors = people_result['errors'] + room_result['errors']
+    blocking_errors = people_result['errors'] + room_result['errors'] + quota_gender_errors(people_result['people'])
     unknown = next((issue for issue in blocking_errors
                     if issue.get('code') == 'ENTRY_UNKNOWN_COMPETITION_COLUMNS'), None)
     if event is not None and unknown:
@@ -1455,6 +1486,8 @@ def recalculate_fis_import_preview(preview):
         for key, value in preserved.items()}
     preview['quotaChecks'] = quota_checks
     preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people)
+    preview['errors'] = [e for e in preview.get('errors', [])
+        if not e.get('code', '').startswith('ENTRY_QUOTA_GENDER_')] + quota_gender_errors(people)
     membership_warnings = [
         {'code': 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED',
          'message': 'Keine exakte Competition-Membership für die Quotenprüfung vorhanden',
@@ -1462,7 +1495,7 @@ def recalculate_fis_import_preview(preview):
         for person in people if not person.get('quotaDisciplines')]
     preview['warnings'] = [warning for warning in preview.get('warnings', [])
         if not warning.get('code', '').startswith('QUOTA_')
-        and warning.get('code') != 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED'] + membership_warnings + quota_warnings
+        and warning.get('code') not in {'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED', 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED'}] + membership_warnings + quota_warnings
     preview['dispositionAnalysis'] = build_disposition_analysis(people, rooms, quota_warnings)
     preview['dispositionAnalysis']['changes'] = build_import_changes(
         preview['dispositionAnalysis'], people, rooms, preview.get('errors', []))
@@ -1620,6 +1653,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
         preview.get('eventId'), preview.get('people', []))
 
     recalculate_fis_import_preview(preview)
+    validate_fis_import_token(preview_token)
 
     persisted_people = {}
     created = 0
@@ -1648,7 +1682,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
             continue
         decision_id = approved_extra_single_room_decisions[key]
         decision = db.session.get(ImportApproval, decision_id) if decision_id is not None else None
-        applicable = quota_keys(person) & applicable_approval_groups(decision, preview_approval_person(person), key, current_roster)
+        applicable = quota_keys(person, preview.get('people', [])) & applicable_approval_groups(decision, preview_approval_person(person), key, current_roster)
         if applicable:
             resolved_decisions[key] = decision_id
         else:
@@ -1663,11 +1697,38 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
         room_by_person[room.get('person1Key')] = room
         if room.get('person2Key'):
             room_by_person[room.get('person2Key')] = room
-    single_room_allowances = {}
-    for check in preview.get('quotaChecks', []):
-        key = (check.get('nationCode'), check.get('discipline'), check.get('gender'))
-        single_room_allowances[key] = check.get('singleRoomsAllowed', 0)
-    allocated_in_quota = {}
+    confirmed_preserved = {}
+    for person in preview['people']:
+        key = person.get('matchKey')
+        if key in approved_extra_single_room_decisions:
+            decision = db.session.get(ImportApproval, approved_extra_single_room_decisions[key])
+            groups = applicable_approval_groups(decision, preview_approval_person(person), key, current_roster)
+            confirmed_preserved[key] = {'groups': groups}
+    # New approvals can free normal slots for other people. Re-run the same
+    # matcher over the distinct request/retained demand, with validated evidence.
+    request_records = []
+    for person in preview['people']:
+        room = room_by_person.get(person.get('matchKey'))
+        evidence = confirmed_preserved.get(person.get('matchKey'))
+        request_records.append({**person, 'countsAsSingle': bool(room and normalize_string(room.get('roomType')) == 'single'),
+            'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
+                for n, d, g in sorted(evidence['groups'])] if evidence else [],
+            'singleRoomStatus': 'APPROVED_EXTRA' if evidence else None})
+    # Retained booked singles are represented in the freshly recalculated checks.
+    booked_keys = {item['personKey'] for check in preview.get('quotaChecks', [])
+        for item in check.get('singleRoomAllocations', [])}
+    for person in request_records:
+        person['countsAsSingle'] = person['countsAsSingle'] or person.get('matchKey') in booked_keys
+    capacities = {(c['nationCode'], c['discipline'], c['gender']): c['singleRoomsAllowed']
+                  for c in preview.get('quotaChecks', [])}
+    allocation = allocate_single_rooms(request_records, capacities, preview['people'])
+    by_identity = {item['identity']: item for item in allocation}
+    for person in preview['people']:
+        item = by_identity.get(person_identity(person))
+        person['singleRoomAllocation'] = item
+        if item:
+            person['singleRoomEntitlement'] = {'EXEMPT': 'QUOTA_EXEMPT', 'APPROVED_EXTRA': 'APPROVED_EXTRA',
+                'COVERED': 'IN_QUOTA', 'PENDING': 'APPROVAL_REQUIRED'}[item['status']]
 
     for person in preview['people']:
         athlete = _find_existing_athlete(person, athlete_maps)
@@ -1707,8 +1768,6 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
         athlete.discipline = ' • '.join(c.name for c in athlete.competitions) or athlete.discipline
         room = room_by_person.get(person.get('matchKey'))
         requests_single = bool(room and normalize_string(room.get('roomType')) == 'single')
-        quota_person = {**person, 'discipline': person.get('industryName')}
-        groups = quota_keys(quota_person)
         if requests_single and athlete.single_room_quota_exempt_reason:
             athlete.single_room_entitlement = None
             athlete.single_room_status = 'NONE'
@@ -1719,13 +1778,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
                 athlete.single_room_status = 'APPROVED_EXTRA'
                 athlete.single_room_decision_id = approved_extra_single_room_decisions.get(person.get('matchKey'))
             else:
-                within_quota = has_quota_membership(person)
-                for group in groups:
-                    used = allocated_in_quota.get(group, 0)
-                    if used < single_room_allowances.get(group, 0):
-                        allocated_in_quota[group] = used + 1
-                    else:
-                        within_quota = False
+                within_quota = person.get('singleRoomEntitlement') == 'IN_QUOTA'
                 athlete.single_room_entitlement = 'IN_QUOTA' if within_quota else None
                 athlete.single_room_status = 'IN_QUOTA' if within_quota else 'PENDING_APPROVAL'
                 athlete.single_room_decision_id = None

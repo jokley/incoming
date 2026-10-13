@@ -7,7 +7,7 @@ import { api } from '../services/api';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
 import { ContentCard, DataPanel, EmptyState, ErrorState, MetricCard, PageHeader, SplitPageLayout, SplitPaneLayout, SectionHeader, StatusChip } from '../design-system';
 import { buildCapacityTimeline, buildHotelRiskRows, calculateRoomPlan, eventRoomPlan, type CapacityDay, type DemandSource } from '../services/planningCalculations';
-import { calculateQuotaUsage, quotaAssignmentsFromBookings } from '../services/quotaEvaluation';
+import { physicalSingleRoomPersonIdsFromBookings } from '../services/quotaEvaluation';
 
 type ViewKey = 'capacity' | 'hotels' | 'nations';
 type AnalyticsData = { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] };
@@ -239,7 +239,7 @@ function HotelsView({ data }: { data: AnalyticsData }) {
 
 function NationsView({ data }: { data: AnalyticsData }) {
   const navigate = useNavigate();
-  const quotaEvaluation = new Map(quotaAssignmentsFromBookings(data.bookings).map(assignment => [assignment.personId, assignment.countsAsSingle] as const));
+  const quotaEvaluation = physicalSingleRoomPersonIdsFromBookings(data.bookings);
   const dates = data.athletes.flatMap(person => person.stays?.length ? person.stays.flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)]) : [dayKey(person.arrivalDate), dayKey(person.departureDate)]).filter(Boolean).sort();
   const days = dates.length ? range(dates[0], dates.at(-1)!) : [];
   const rows = Object.values(data.athletes.reduce<Record<string, { nation: string; people: Athlete[]; athletes: number; officials: number; ez: number; dzPeople: number }>>((result, person) => {
@@ -247,7 +247,7 @@ function NationsView({ data }: { data: AnalyticsData }) {
     const row = result[nation] ||= { nation, people: [], athletes: 0, officials: 0, ez: 0, dzPeople: 0 };
     row.people.push(person);
     if (/official|coach|staff|trainer/i.test(person.function || '')) row.officials += 1; else row.athletes += 1;
-    if (quotaEvaluation.get(person.id)) row.ez += 1; else row.dzPeople += 1;
+    if (quotaEvaluation.has(person.id)) row.ez += 1; else row.dzPeople += 1;
     return result;
   }, {})).map(row => {
     const presence = days.map(date => row.people.filter(person => athleteOnDay(person, date)).length);

@@ -74,9 +74,9 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             db.session.add_all([approval, booking]); db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=official.id))
             variants = [('M', 'M'), ('male', 'M'), ('man', 'M'), ('men', 'M'),
-                        ('Herr', 'M'), ('Herren', 'M'), ('F', 'F'), ('W', 'F'),
-                        ('female', 'F'), ('woman', 'F'), ('women', 'F'),
-                        ('Dame', 'F'), ('Damen', 'F'), (' w ', 'F')]
+                        ('Herr', 'M'), ('Herren', 'M'), ('F', 'W'), ('W', 'W'),
+                        ('female', 'W'), ('woman', 'W'), ('women', 'W'),
+                        ('Dame', 'W'), ('Damen', 'W'), (' w ', 'W')]
             for raw, canonical in variants:
                 with self.subTest(gender=raw):
                     athlete.gender = canonical
@@ -99,6 +99,25 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                     self.assertEqual((row['singleRoomsUsed'], row['singleRoomsAllowed']), (1, 1))
                     self.assertEqual((row['remainingSingleRooms'], row['approvedExceptions']), (0, 1))
 
+
+    def test_missing_athlete_gender_blocks_exemption_removal_without_partial_writes(self):
+        with app.app_context():
+            competition = Competition(import_code='MIXED', code='8185', name='Mixed Team',
+                display_name='Ski Cross Team', sport='Freestyle', gender='A',
+                team_competition=True, quota_discipline='Ski Cross')
+            athlete = Athlete(firstname='Malformed', lastname='Athlete', nation_code='AUT',
+                function='Athlete', gender=None, for_gender='A', competitions=[competition],
+                single_room_quota_exempt_reason='OTHER')
+            booking = RoomBooking(hotel=Hotel.query.one(), room_type=RoomType.query.one(), counts_as_single=True)
+            db.session.add(RoomBookingOccupant(room_booking=booking, athlete=athlete))
+            db.session.commit()
+            athlete_id = athlete.id
+        response = app.test_client().patch(f'/api/athletes/{athlete_id}',
+            json={'singleRoomQuotaExemptReason': None})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()['code'], 'QUOTA_GENDER_REVIEW_REQUIRED')
+        with app.app_context():
+            self.assertEqual(db.session.get(Athlete, athlete_id).single_room_quota_exempt_reason, 'OTHER')
 
     def test_live_quota_uses_import_entitlements_not_assigned_room_types(self):
         with app.app_context():
@@ -132,8 +151,13 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             self.assertEqual((live['assignedOfficials'], live['officialQuota']), (4, 3))
             self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (2, 1))
             self.assertEqual(live['approvedExtraSingleRooms'], 0)
-            self.assertEqual(live, {
-                'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'F',
+            allocation = live['singleRoomAllocations']
+            self.assertEqual(len(allocation), 2)
+            self.assertEqual(live['singleRoomsCovered'], 1)
+            self.assertEqual(live['singleRoomsPending'], 1)
+            self.assertEqual({key: value for key, value in live.items()
+                if key not in {'singleRoomAllocations', 'singleRoomsCovered', 'singleRoomsPending'}}, {
+                'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'W',
                 'athletesEntered': 1, 'officialQuota': 3,
                 'singleRoomsAllowed': 1, 'assignedOfficials': 4,
                 'singleRoomsUsed': 2, 'quotaExemptSingleRooms': 0,

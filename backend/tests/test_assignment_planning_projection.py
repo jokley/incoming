@@ -125,7 +125,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             self.assertEqual(FisRoomAssignment.query.count(), 0)
         sui = next(unit for unit in units if unit['nationCode'] == 'SUI')
         self.assertEqual(sui['occupants'][0]['discipline'], 'Moguls')
-        self.assertEqual(sui['occupants'][0]['gender'], 'male')
+        self.assertEqual(sui['occupants'][0]['gender'], 'M')
 
     def test_partner_projection_is_deterministic_and_ignores_legacy_fis_units(self):
         with app.app_context():
@@ -252,7 +252,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual({row['discipline']: row['singleRoomsUsed']
                           for row in quota_with_override}, {
             'Snowboard Big Air': 1,
-            'Snowboard Slopestyle': 1,
+            'Snowboard Slopestyle': 0,
         })
         athlete_payload = app.test_client().get('/api/athletes').get_json()[0]
         self.assertTrue(athlete_payload['assignment']['countsAsSingle'])
@@ -268,7 +268,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
                           for row in changed}, disposition)
         self.assertEqual({row['discipline']: row['singleRoomsUsed'] for row in changed}, {
             'Snowboard Big Air': 1,
-            'Snowboard Slopestyle': 1,
+            'Snowboard Slopestyle': 0,
         })
 
         untoggled = app.test_client().put(
@@ -320,7 +320,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual({row['discipline']: row['singleRoomsUsed']
                           for row in quota_in_overridden_physical_single}, {
             'Snowboard Big Air': 1,
-            'Snowboard Slopestyle': 1,
+            'Snowboard Slopestyle': 0,
         })
         self.assertTrue(app.test_client().get('/api/athletes').get_json()[0]
                         ['assignment']['countsAsSingle'])

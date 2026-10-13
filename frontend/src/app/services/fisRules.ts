@@ -9,6 +9,9 @@ export interface OfficialQuotaUsage {
   singleRoomsAllowed: number;
   assignedOfficials: number;
   singleRoomsUsed: number;
+  singleRoomAllocations?: Array<{ personId?: string | number | null; status: string; context: string[] | null }>;
+  singleRoomsCovered?: number;
+  singleRoomsPending?: number;
   quotaExemptSingleRooms?: number;
   approvedExtraSingleRooms: number;
   requiredSingleRooms: number;

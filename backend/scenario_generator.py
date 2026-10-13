@@ -121,7 +121,9 @@ def _apply(rows: list[dict], step: str) -> list[dict]:
     elif step == 'official-quota':
         rows.extend(_person(record) for record in ADDED_OFFICIALS)
     elif step == 'single-quota':
-        for person_id in ('110001', '110002'):
+        # Two restricted male athletes consume the M slots; three shared Officials
+        # then exceed the two W slots. Three shared singles alone now fit.
+        for person_id in ('110001', '110002', '100007', '100008'):
             official = next(row for row in rows if row['Competitorid/Staff ID'] == person_id)
             official.update({'Room_type': 'Single', 'Shared with Name': ''})
     elif step == 'single-quota-extra':

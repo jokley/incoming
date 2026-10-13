@@ -63,14 +63,14 @@ class SingleRoomStatusTest(unittest.TestCase):
             db.session.add(event)
             db.session.commit()
 
-            people = [self.person('NONE', 'Athlete'), self.person('QUOTA'),
-                      self.person('APPROVED'), self.person('PENDING')]
+            people = [self.person('NONE', 'Athlete'), self.person('A_QUOTA'),
+                      self.person('APPROVED'), self.person('Z_PENDING')]
             PREVIEW_STORE['status-test'] = {
                 'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': people,
                 'rooms': [
                     {'person1Key': key, 'person2Key': None, 'roomType': 'Single'}
-                    for key in ('QUOTA', 'APPROVED', 'PENDING')
+                    for key in ('A_QUOTA', 'APPROVED', 'Z_PENDING')
                 ],
                 'quotaChecks': [{
                     'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'F',
@@ -85,11 +85,11 @@ class SingleRoomStatusTest(unittest.TestCase):
 
             rows = {row.fis_code: row for row in Athlete.query.all()}
             self.assertEqual(rows['NONE'].single_room_status, 'NONE')
-            self.assertEqual(rows['QUOTA'].single_room_status, 'IN_QUOTA')
+            self.assertEqual(rows['A_QUOTA'].single_room_status, 'IN_QUOTA')
             self.assertEqual(rows['APPROVED'].single_room_status, 'APPROVED_EXTRA')
             self.assertEqual(rows['APPROVED'].single_room_decision_id, decision.id)
-            self.assertEqual(rows['PENDING'].single_room_status, 'PENDING_APPROVAL')
-            self.assertIsNone(rows['PENDING'].single_room_decision_id)
+            self.assertEqual(rows['Z_PENDING'].single_room_status, 'PENDING_APPROVAL')
+            self.assertIsNone(rows['Z_PENDING'].single_room_decision_id)
 
     def test_person_api_exposes_snake_case_fields(self):
         with app.app_context():
@@ -112,6 +112,10 @@ class SingleRoomStatusTest(unittest.TestCase):
             db.session.commit()
             people = [{**self.person('P1'), 'firstname': 'Patrick', 'lastname': 'Burgener',
                        'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'quotaDisciplines': ['Snowboard Halfpipe'], 'gender': 'M'}]
+            support = {**self.person('SUPPORT', 'Athlete'), 'nationCode': 'BRA', 'gender': 'M',
+                'competitionIds': [str(competition.id)], 'competitionImportCodes': [competition.import_code],
+                'quotaDisciplines': ['Snowboard Halfpipe']}
+            people.append(support)
             rooms = [{'person1Key': 'P1', 'person2Key': None, 'roomType': 'Single'}]
             session = ImportSession(nation='BRA'); db.session.add(session); db.session.flush()
             decision = ImportApproval(session_id=session.id, nation='BRA', approval_type='NATION_APPROVED',
@@ -256,6 +260,9 @@ class SingleRoomStatusTest(unittest.TestCase):
             competition.quota_discipline = 'Snowboard Halfpipe'
             patrick.competitions = [competition]
             augustinho.competitions = [competition]
+            support = Athlete(fis_code='SUPPORT', firstname='Support', lastname='Athlete',
+                nation_code='BRA', gender='M', function='Athlete', competitions=[competition])
+            db.session.add(support)
             db.session.add_all([patrick, augustinho, hotel, room_type]); db.session.flush()
             booking = RoomBooking(hotel_id=hotel.id, room_type_id=room_type.id, counts_as_single=True)
             db.session.add(booking); db.session.flush()
@@ -295,6 +302,8 @@ class SingleRoomStatusTest(unittest.TestCase):
                 approval_id=current[0].id, event_type='QUOTA_DECISION_REVISED').one()
             self.assertEqual(revised_event.description, 'Augustinho Teixeira')
 
+            people.append({**self.person('SUPPORT', 'Athlete'), 'nationCode': 'BRA', 'gender': 'M',
+                'quotaDisciplines': ['Snowboard Halfpipe'], 'competitionIds': [str(competition.id)]})
             rooms = [{'person1Key': key, 'person2Key': None, 'roomType': 'Single'} for key in ('A', 'B')]
             self.assertEqual(set(preserved_single_room_approvals(people, rooms)), {'B'})
 

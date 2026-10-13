@@ -5,7 +5,7 @@ membership. Intersect their exact codes with the person's current memberships;
 ambiguous/unresolvable records remain review work rather than guessed groups.
 """
 from competitions import COMPETITIONS, normalize_competition_ids
-from quota_service import normalize_gender
+from quota_service import normalize_gender, quota_keys
 
 CATALOGUE_IDENTITIES = {(c.import_code, c.code) for c in COMPETITIONS}
 
@@ -24,15 +24,30 @@ LEGACY_CODES = {
 }
 
 
-# Frozen compatibility for the approved 1B transition, not a quota algorithm.
-# A later configuration change outside these targets requires a new decision.
+# Frozen compatibility for the approved 1C transition, not a quota algorithm.
 LEGACY_CANONICAL_TARGETS = {
-    'Parallel': 'Snowboard', 'Snowboard Halfpipe': 'Snowboard',
-    'Snowboard Big Air': 'Snowboard', 'Snowboard Slopestyle': 'Snowboard',
-    'Snowboard Cross': 'Snowboard', 'Freeski Halfpipe': 'Freestyle',
-    'Freeski Big Air': 'Freestyle', 'Moguls': 'Freestyle',
-    'Ski Cross': 'Freestyle', 'Aerials': 'Freestyle', 'Freeski Slopestyle': 'Freestyle',
+    'Parallel': 'Snowboard Alpine', 'Snowboard Halfpipe': 'Snowboard Park & Pipe',
+    'Snowboard Big Air': 'Snowboard Park & Pipe', 'Snowboard Slopestyle': 'Snowboard Park & Pipe',
+    'Snowboard Cross': 'Snowboard Cross', 'Freeski Halfpipe': 'Freeski Park & Pipe',
+    'Freeski Big Air': 'Freeski Park & Pipe', 'Moguls': 'Freestyle',
+    'Ski Cross': 'Ski Cross', 'Aerials': 'Freestyle', 'Freeski Slopestyle': 'Freeski Park & Pipe',
 }
+
+# Exact frozen identities previously covered by the two 1B broad labels.
+BROAD_CODES = {
+    'Snowboard': set().union(*(LEGACY_CODES[g] for g in (
+        'Parallel', 'Snowboard Halfpipe', 'Snowboard Big Air', 'Snowboard Slopestyle', 'Snowboard Cross'))),
+    'Freestyle': set().union(*(LEGACY_CODES[g] for g in (
+        'Freeski Halfpipe', 'Freeski Big Air', 'Moguls', 'Ski Cross', 'Aerials', 'Freeski Slopestyle'))),
+}
+CURRENT_CATALOGUE_GROUPS = {(c.import_code, c.code): c.quota_discipline for c in COMPETITIONS}
+
+
+def quota_person(person):
+    """Projection shared by approval resolution and athlete-derived contexts."""
+    return {'personId': getattr(person, 'id', None), 'nationCode': person.nation_code,
+            'gender': person.gender, 'function': getattr(person, 'function', None),
+            'quotaDisciplines': sorted({c.quota_discipline for c in person.competitions if c.quota_discipline})}
 
 
 def person_keys(person):
@@ -42,10 +57,10 @@ def person_keys(person):
         build_name_key(person.lastname, person.firstname, person.nation_code)) if value}
 
 
-def historical_approval_groups(details, person, person_key=None):
+def historical_approval_groups(details, person, person_key=None, roster=None):
     """Read immutable evidence; unknown provenance never means a current label."""
-    if (details.get('nationCode') != person.nation_code
-            or normalize_gender(details.get('gender')) != normalize_gender(person.gender or person.for_gender)):
+    gender = normalize_gender(details.get('gender'))
+    if details.get('nationCode') != person.nation_code or gender not in {'M', 'W'}:
         return set()
     keys = {str(person_key)} if person_key is not None else person_keys(person)
     candidates = [c for c in details.get('singleRoomCandidates', []) if str(c.get('personKey')) in keys]
@@ -55,7 +70,8 @@ def historical_approval_groups(details, person, person_key=None):
     ids = {str(value) for value in candidate.get('competitionIds', [])}
     codes = set(candidate.get('competitionImportCodes') or [])
     label = details.get('discipline')
-    canonical = details.get('quotaMembershipVersion') == 1
+    version = details.get('quotaMembershipVersion')
+    canonical = version in {1, 2}
     # Before versioned canonical evidence, only frozen legacy provenance is
     # supported. String equality with a present-day group is never proof.
     if not canonical and label not in LEGACY_CODES:
@@ -67,7 +83,10 @@ def historical_approval_groups(details, person, person_key=None):
         supported = [c for c in supported if c.import_code in codes]
     else:
         return set()
-    if canonical:
+    if version == 1 and label in BROAD_CODES:
+        supported = [c for c in supported if c.code in BROAD_CODES[label]
+            and CURRENT_CATALOGUE_GROUPS.get((c.import_code, c.code)) == c.quota_discipline]
+    elif canonical:
         # Exact identity AND the reviewed group must still match. A mapping
         # change requires new review, even when the Competition ID survives.
         supported = [c for c in supported if c.quota_discipline == label]
@@ -75,9 +94,15 @@ def historical_approval_groups(details, person, person_key=None):
         supported = [c for c in supported if c.code in LEGACY_CODES[label]
                      and (c.import_code, c.code) in CATALOGUE_IDENTITIES
                      and c.quota_discipline == LEGACY_CANONICAL_TARGETS[label]]
-    return {(person.nation_code or '', c.quota_discipline,
-             normalize_gender(person.gender or person.for_gender))
-            for c in supported if c.quota_discipline}
+    if roster is None:
+        if (quota_person(person)['function'] or '').strip().lower() == 'athlete':
+            roster = [person]
+        else:
+            from models import Athlete
+            roster = Athlete.query.filter_by(nation_code=person.nation_code).all()
+    current_keys = quota_keys(quota_person(person), [quota_person(p) for p in roster])
+    return {(person.nation_code or '', c.quota_discipline, gender)
+            for c in supported if c.quota_discipline} & current_keys
 
 
 def historical_approval_evidence(approval):
@@ -86,7 +111,7 @@ def historical_approval_evidence(approval):
     from copy import deepcopy
     from models import ImportSession, ImportSessionVersion, db
     details = json.loads(approval.quota_details_json or '{}')
-    if details.get('quotaMembershipVersion') == 1 or details.get('discipline') not in LEGACY_CODES:
+    if details.get('quotaMembershipVersion') in {1, 2} or details.get('discipline') not in LEGACY_CODES:
         return details
     if not approval.version_id:
         return details
@@ -137,10 +162,10 @@ def applicable_approval_groups(approval, person, person_key=None, roster=None):
         details = historical_approval_evidence(approval)
         for key in selected:
             people = [p for p in roster if key in person_keys(p)]
-            if len(people) != 1 or not historical_approval_groups(details, people[0], key):
+            if len(people) != 1 or not historical_approval_groups(details, people[0], key, roster):
                 return set()
     return historical_approval_groups(historical_approval_evidence(approval),
-                                      person, next(iter(matched)))
+                                      person, next(iter(matched)), roster)
 
 
 def approved_quota_disciplines(person):
@@ -150,6 +175,14 @@ def approved_quota_disciplines(person):
     return sorted({group[1] for group in applicable_approval_groups(person.single_room_decision, person)})
 
 
+def approved_quota_contexts(person):
+    """Derived API evidence; approval coverage must not spread across genders."""
+    if person.single_room_status != 'APPROVED_EXTRA' or person.single_room_quota_exempt_reason:
+        return []
+    return [{'nationCode': nation, 'discipline': group, 'gender': gender}
+            for nation, group, gender in sorted(applicable_approval_groups(person.single_room_decision, person))]
+
+
 def preview_approval_person(person):
     """Current DB-resolved preview evidence, never a static catalogue lookup."""
     from types import SimpleNamespace
@@ -157,6 +190,7 @@ def preview_approval_person(person):
     ids = normalize_competition_ids(person.get('competitionIds') or [])
     competitions = Competition.query.filter(Competition.id.in_(ids)).all() if ids else []
     return SimpleNamespace(nation_code=person.get('nationCode'), gender=person.get('gender'),
+        function=person.get('function'),
         for_gender=person.get('forGender'), fis_code=person.get('fisCode'),
         competitor_id=person.get('competitorId'), lastname=person.get('lastname'),
         firstname=person.get('firstname'), competitions=competitions)

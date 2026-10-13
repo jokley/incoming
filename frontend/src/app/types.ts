@@ -109,6 +109,7 @@ export interface Athlete {
   fisCode?: string;
   sourceRecordIds?: string[];
   approvedQuotaDisciplines?: string[];
+  approvedQuotaContexts?: Array<{ nationCode: string; discipline: string; gender: string }>;
   disciplines?: string[];
   competitions?: Competition[];
   stays?: Array<{ arrivalDate?: string | null; departureDate?: string | null; discipline?: string | null }>;
@@ -238,6 +239,7 @@ export interface RoomBookingUnitOccupant {
   discipline?: string | null;
   quotaDisciplines?: string[];
   approvedQuotaDisciplines?: string[];
+  approvedQuotaContexts?: Array<{ nationCode: string; discipline: string; gender: string }>;
   gender?: string | null;
   function?: string | null;
   arrivalDate?: string | null;
@@ -314,6 +316,7 @@ export interface AssignmentGridBooking {
     discipline?: string | null;
     quotaDisciplines?: string[];
     approvedQuotaDisciplines?: string[];
+    approvedQuotaContexts?: Array<{ nationCode: string; discipline: string; gender: string }>;
     gender?: string | null;
     function?: string | null;
     arrivalDate?: string | null;

@@ -51,13 +51,13 @@ def test_single_competition_athlete_single_request_counts_once():
     assert rows['Snowboard Cross']['singleRoomsUsed'] == 1
 
 
-def test_multi_competition_athlete_single_request_counts_in_each_distinct_group():
+def test_multi_competition_athlete_single_request_consumes_one_eligible_group():
     rows = rows_by_discipline([
         person('LUCA', ['Snowboard Big Air', 'Snowboard Slopestyle']),
     ])
 
     assert rows['Snowboard Big Air']['singleRoomsUsed'] == 1
-    assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 1
+    assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 0
 
 
 def test_competitions_with_same_quota_discipline_count_athlete_single_once():
@@ -80,7 +80,7 @@ def test_real_brazil_groups_are_within_single_room_quota():
         for discipline, row in rows.items()
     } == {
         'Snowboard Big Air': (1, 1),
-        'Snowboard Slopestyle': (1, 1),
+        'Snowboard Slopestyle': (0, 1),
         'Snowboard Cross': (1, 1),
         'Snowboard Halfpipe': (2, 2),
     }
@@ -108,12 +108,13 @@ def test_three_halfpipe_athletes_create_one_person_single_room_excess(database):
 def test_official_uses_every_distinct_configured_membership():
     official = person(
         'COACH', ['Snowboard Big Air', 'Snowboard Slopestyle'], function='NSA Coach')
-    rows = rows_by_discipline([official])
+    athlete = person('ATHLETE', ['Snowboard Big Air', 'Snowboard Slopestyle'], single=False)
+    rows = rows_by_discipline([athlete, official])
 
     assert rows['Snowboard Big Air']['assignedOfficials'] == 1
     assert rows['Snowboard Big Air']['singleRoomsUsed'] == 1
     assert rows['Snowboard Slopestyle']['assignedOfficials'] == 1
-    assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 1
+    assert rows['Snowboard Slopestyle']['singleRoomsUsed'] == 0
 
 
 @pytest.mark.parametrize('reason', ['WORLD_CHAMPION', 'OTHER'])
