@@ -4,16 +4,17 @@ from models import Event
 
 class ImportValidationError(ValueError):
     """Expected event/mapping validation failure suitable for a 4xx response."""
-    def __init__(self, code, message, *, event_id=None, import_code=None):
+    def __init__(self, code, message, *, event_id=None, import_code=None, details=None):
         super().__init__(message)
         self.code = code
         self.event_id = event_id
         self.import_code = import_code
+        self.details = details
 
     def to_dict(self):
         return {key: value for key, value in {
             'error': self.code, 'event_id': str(self.event_id) if self.event_id is not None else None,
-            'import_code': self.import_code, 'message': str(self),
+            'import_code': self.import_code, 'message': str(self), 'details': self.details,
         }.items() if value is not None}
 
 
