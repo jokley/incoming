@@ -38,7 +38,7 @@ import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, uniqueQuotaContext } from '../services/quotaEvaluation';
+import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, matchesQuotaAllowanceContext, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, uniqueQuotaContext } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
   AssignmentGridHotel,
@@ -2113,7 +2113,7 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
 }
 
 function quotaGenderLabel(gender: string) {
-  if (gender === 'F') return 'Damen';
+  if (gender === 'W' || gender === 'F') return 'Damen';
   if (gender === 'M') return 'Herren';
   return gender || '—';
 }
@@ -2246,20 +2246,19 @@ type SingleRoomControlPerson = {
   name: string;
   decisionId?: string | null;
   additionalCost: boolean;
+  allocationStatus?: string;
   exemptReason?: SingleRoomQuotaExemptReason;
 };
 
-function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>): SingleRoomControlPerson[] {
+function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>, allocationByPerson: Map<string, string | undefined>): SingleRoomControlPerson[] {
   const bookingsByAthlete = new Map<string, AssignmentGridBooking>();
   hotels.forEach((hotel) => hotel.slots.forEach((slot) => slot.bookings.forEach((booking) => {
-    booking.occupants.forEach((occupant) => bookingsByAthlete.set(occupant.athleteId, booking));
+    if (booking.countsAsSingle) booking.occupants.forEach((occupant) => bookingsByAthlete.set(occupant.athleteId, booking));
   })));
 
   const people = new Map<string, SingleRoomControlPerson>();
   allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
-    if (occupant.nationCode !== card.nationCode
-      || !(occupant.quotaDisciplines || []).includes(card.discipline)
-      || normalizeGender(occupant.gender) !== card.gender) return;
+    if (!allocationByPerson.has(occupant.athleteId) || !matchesQuotaAllowanceContext(occupant, card)) return;
 
     const booking = bookingsByAthlete.get(occupant.athleteId);
     if (!booking?.countsAsSingle) return;
@@ -2268,6 +2267,7 @@ function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit
       name: occupant.name,
       decisionId: occupant.single_room_decision_id,
       additionalCost: additionalCostPersonIds.has(occupant.athleteId),
+      allocationStatus: allocationByPerson.get(occupant.athleteId),
       exemptReason: occupant.singleRoomQuotaExemptReason,
     });
   }));
@@ -2293,10 +2293,11 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     .find(group => group.key === quotaUsageKey(card.nationCode, card.discipline, card.gender));
   // Per-group applicability comes from the backend; status alone is not evidence.
   const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
-  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds);
+  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds, new Map(evaluatedGroup?.people.map(person => [person.personId, person.allocationStatus] as const) || []));
   const additionalCostPeople = controlPeople.filter(person => person.additionalCost);
   const exemptPeople = controlPeople.filter(person => person.exemptReason);
-  const withinQuotaPeople = controlPeople.filter(person => !person.additionalCost && !person.exemptReason);
+  const withinQuotaPeople = controlPeople.filter(person => person.allocationStatus === 'COVERED');
+  const pendingPeople = controlPeople.filter(person => person.allocationStatus === 'PENDING');
   const sharedDecisionId = additionalCostPeople.find(person => person.decisionId)?.decisionId
     ?? controlPeople.find(person => person.decisionId)?.decisionId;
 
@@ -2316,6 +2317,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
           <div className="grid gap-3 md:grid-cols-2">
             <SingleRoomDecisionGroup title="Mehrpreis" people={additionalCostPeople} status="APPROVED_EXTRA" />
             <SingleRoomDecisionGroup title="Innerhalb der Quote" people={withinQuotaPeople} status="IN_QUOTA" />
+            <SingleRoomDecisionGroup title="Genehmigung erforderlich" people={pendingPeople} status="PENDING_APPROVAL" />
             <SingleRoomDecisionGroup title="Ohne Quotenverbrauch" people={exemptPeople} status="IN_QUOTA" />
           </div>
           <div className="flex justify-end border-t border-[var(--ops-divider)] pt-3">
@@ -2327,7 +2329,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   </div>;
 }
 
-function SingleRoomDecisionGroup({ title, people, status }: { title: string; people: SingleRoomControlPerson[]; status: 'APPROVED_EXTRA' | 'IN_QUOTA' }) {
+function SingleRoomDecisionGroup({ title, people, status }: { title: string; people: SingleRoomControlPerson[]; status: 'APPROVED_EXTRA' | 'IN_QUOTA' | 'PENDING_APPROVAL' }) {
   return <section className="overflow-hidden rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]">
     <header className="flex items-center justify-between gap-3 border-b border-[var(--ops-divider)] px-3 py-2.5">
       <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>

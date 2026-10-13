@@ -2,10 +2,10 @@ from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
 from auth import load_user_from_request, current_user
-from quota_history import historical_approval_groups, applicable_approval_groups, approved_quota_disciplines, person_keys
+from quota_history import historical_approval_groups, applicable_approval_groups, approved_quota_disciplines, approved_quota_contexts, person_keys, quota_person
 from competitions import quota_disciplines
-from quota_service import (has_quota_membership, quota_keys, disposition_by_quota_group, evaluate_quota_usage,
-                           normalize_gender, single_room_usage_by_quota_group)
+from quota_service import (quota_keys, disposition_by_quota_group, evaluate_quota_usage,
+                           normalize_gender, QuotaGenderValidationError)
 from datetime import datetime
 import hashlib
 import os
@@ -62,6 +62,15 @@ app.register_blueprint(import_mock_files)
 app.register_blueprint(booking_reads)
 app.register_blueprint(identity)
 app.register_blueprint(audit_events)
+
+
+@app.errorhandler(QuotaGenderValidationError)
+def quota_gender_review_response(error):
+    # A malformed legacy athlete may also be encountered while changing an
+    # exemption. Roll back that operation rather than saving partial state.
+    db.session.rollback()
+    return jsonify({'error': str(error), 'code': 'QUOTA_GENDER_REVIEW_REQUIRED',
+                    'validationErrors': error.errors}), 409
 
 
 @app.route('/health', methods=['GET'])
@@ -1126,7 +1135,8 @@ def _build_room_booking_units():
                 'discipline': athlete.discipline,
                 'quotaDisciplines': quota_disciplines(athlete.competitions),
                 'approvedQuotaDisciplines': approved_quota_disciplines(athlete),
-                'gender': _normalize_gender(athlete),
+                'approvedQuotaContexts': approved_quota_contexts(athlete),
+                'gender': normalize_gender(athlete.gender),
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
                 'roomType': athlete.room_type,
@@ -1277,7 +1287,8 @@ def _build_assignment_planning_view(validation_keys=None):
                                     'discipline': occ.athlete.discipline,
                                     'quotaDisciplines': quota_disciplines(occ.athlete.competitions),
                                     'approvedQuotaDisciplines': approved_quota_disciplines(occ.athlete),
-                                    'gender': _normalize_gender(occ.athlete),
+                                    'approvedQuotaContexts': approved_quota_contexts(occ.athlete),
+                                    'gender': normalize_gender(occ.athlete.gender),
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
@@ -1480,22 +1491,17 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     athletes = Athlete.query
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
-    if discipline:
-        athletes = athletes.filter(
-            Athlete.competitions.any(Competition.quota_discipline == discipline)
-        )
-
+    # Allocate across all eligible groups before applying display filters.
     athletes = athletes.all()
     roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
                'quotaDisciplines': quota_disciplines(a.competitions),
                'gender': a.gender, 'forGender': a.for_gender,
-               'function': a.function,
+               'function': a.function, 'matchKey': a.fis_code or a.competitor_id or next(iter(sorted(person_keys(a))), str(a.id)),
                'singleRoomQuotaExemptReason': a.single_room_quota_exempt_reason} for a in athletes]
 
-    # Load every assignment once. The former per-athlete ``first()`` lookups made
-    # this endpoint issue up to two SQL statements per person. Keeping the first
-    # membership by its stable primary key preserves the existing single-booking
-    # semantics even if inconsistent legacy data contains multiple memberships.
+    # Aggregate every booking membership once. A person with any persisted
+    # counts_as_single booking consumes one physical single at most; additional
+    # bookings never multiply the person or alter the flags themselves.
     booking_by_athlete = {}
     athlete_ids = [athlete.id for athlete in athletes]
     membership_rows = []
@@ -1510,48 +1516,34 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             RoomBookingOccupant.athlete_id.in_(athlete_ids),
         ).order_by(RoomBookingOccupant.id).all()
     for athlete_id, counts_as_single in membership_rows:
-        booking_by_athlete.setdefault(athlete_id, bool(counts_as_single))
+        booking_by_athlete[athlete_id] = booking_by_athlete.get(athlete_id, False) or bool(counts_as_single)
 
     # The persisted assignment flag is the sole source of truth for operational
     # quota usage. The physical room type and import entitlement stay unchanged.
     assigned = []
-    for athlete in athletes:
-        if (athlete.function or '').strip().lower() == 'athlete':
-            continue
+    for athlete, person in zip(athletes, roster):
         if athlete.id not in booking_by_athlete:
             continue
-        assigned.append({'personId': athlete.id, 'nationCode': athlete.nation_code,
-            'quotaDisciplines': quota_disciplines(athlete.competitions),
-            'gender': athlete.gender, 'forGender': athlete.for_gender, 'function': athlete.function,
-            'countsAsSingle': booking_by_athlete[athlete.id],
-            'singleRoomQuotaExemptReason': athlete.single_room_quota_exempt_reason})
+        evidence = applicable_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
+        assigned.append({**person, 'countsAsSingle': booking_by_athlete[athlete.id],
+            'singleRoomStatus': athlete.single_room_status,
+            'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
+                for n, d, g in sorted(evidence)] if athlete.single_room_status == 'APPROVED_EXTRA' else []})
     rows = evaluate_quota_usage(roster, assigned)
-    # Resolve accommodation through the person-to-booking membership. The same
-    # persisted assignment applies to every distinct quota discipline of a
-    # multi-competition athlete; EventCompetition carries no accommodation.
     disposition = disposition_by_quota_group(roster, booking_by_athlete)
-    single_room_usage = single_room_usage_by_quota_group(
-        roster,
-        {athlete_id for athlete_id, counts_as_single in booking_by_athlete.items()
-         if counts_as_single},
-        {athlete.id for athlete in athletes if athlete.single_room_quota_exempt_reason},
-    )
-    exempt_single_room_usage = single_room_usage_by_quota_group(
-        roster,
-        {athlete_id for athlete_id, counts_as_single in booking_by_athlete.items()
-         if counts_as_single},
-        {athlete.id for athlete in athletes if not athlete.single_room_quota_exempt_reason},
-    )
+    allocation_by_person = {item['personId']: item for row in rows for item in row['singleRoomAllocations']}
     approved_by_key = {}
     implemented_by_key = {}
     unresolved_approvals = []
     for athlete, person in zip(athletes, roster):
-        groups = quota_keys(person)
+        allocation = allocation_by_person.get(athlete.id)
+        groups = {tuple(allocation['context'])} if allocation else set()
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
             approved_groups = applicable_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
             if not approved_groups and athlete.single_room_decision_id:
                 unresolved_approvals.append(athlete.single_room_decision_id)
-            for key in approved_groups:
+            reviewed = approved_groups & groups if groups else set(sorted(approved_groups)[:1])
+            for key in reviewed:
                 approved_by_key.setdefault(key, set()).add(athlete.id)
         if athlete.single_room_entitlement and booking_by_athlete.get(athlete.id, False):
             for key in groups:
@@ -1593,7 +1585,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             applicable = set()
             if len(matches) == 1:
                 applicable = (applicable_approval_groups(approval, matches[0], identity, athletes)
-                    if decision == 'APPROVED' else historical_approval_groups(details, matches[0], identity))
+                    if decision == 'APPROVED' else historical_approval_groups(details, matches[0], identity, athletes))
             if not applicable:
                 unresolved = True
             groups |= applicable
@@ -1613,8 +1605,6 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     for row in rows:
         key = (row['nationCode'], row['discipline'], row['gender'])
         row.update(disposition.get(key, {'peopleTotal': 0, 'peopleAssigned': 0}))
-        row['singleRoomsUsed'] = single_room_usage.get(key, 0)
-        row['quotaExemptSingleRooms'] = exempt_single_room_usage.get(key, 0)
         row['approvedExtraSingleRooms'] = len(approved_by_key.get(key, set()))
         row['requiredSingleRooms'] = row['singleRoomsUsed']
         row['implementedSingleRooms'] = len(implemented_by_key.get(key, set()))
@@ -2529,13 +2519,9 @@ def _update_athlete_operations(athlete, data):
             membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
             if membership and membership.room_booking and membership.room_booking.counts_as_single:
                 rows = _build_official_quota_usage_rows(nation_code=athlete.nation_code)
-                groups = {(athlete.nation_code, competition.quota_discipline, _normalize_gender(athlete))
-                          for competition in athlete.competitions}
-                relevant = [row for row in rows if (
-                    row['nationCode'], row['discipline'], row['gender']) in groups]
-                over_quota = (not has_quota_membership({'nationCode': athlete.nation_code,
-                    'gender': _normalize_gender(athlete), 'quotaDisciplines': quota_disciplines(athlete.competitions)})
-                    or any(row['singleRoomsUsed'] > row['singleRoomsAllowed'] for row in relevant))
+                allocation = next((item for row in rows for item in row['singleRoomAllocations']
+                    if item['personId'] == athlete.id), None)
+                over_quota = allocation is None or allocation['status'] == 'PENDING'
                 athlete.single_room_status = 'PENDING_APPROVAL' if over_quota else 'IN_QUOTA'
                 athlete.single_room_entitlement = 'IN_QUOTA' if not over_quota else None
                 athlete.single_room_decision_id = None
@@ -2564,12 +2550,15 @@ def get_official_quotas():
     nation_code = request.args.get('nationCode')
     discipline = request.args.get('discipline')
     gender = request.args.get('gender')
-    with _assignment_phase('quota'):
-        rows = _build_official_quota_usage_rows(
-            nation_code=nation_code,
-            discipline=discipline,
-            gender=gender
-        )
+    try:
+        with _assignment_phase('quota'):
+            rows = _build_official_quota_usage_rows(
+                nation_code=nation_code,
+                discipline=discipline,
+                gender=gender
+            )
+    except QuotaGenderValidationError as error:
+        return quota_gender_review_response(error)
     return _assignment_jsonify(rows)
 
 

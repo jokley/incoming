@@ -23,7 +23,7 @@ def test_catalogue_carries_official_and_presentation_metadata():
     parallel = COMPETITION_BY_IMPORT_CODE['WSC_PGS_M_6170']
     assert parallel.name == "Men's Parallel Giant Slalom"
     assert parallel.display_name == 'Parallel Giant Slalom'
-    assert parallel.quota_discipline == 'Snowboard'
+    assert parallel.quota_discipline == 'Snowboard Alpine'
     assert parallel.sport == 'Snowboard'
     assert parallel.gender == 'M'
     assert parallel.team_competition is False
@@ -47,7 +47,7 @@ def test_every_yes_column_creates_a_membership_without_duplicate_person():
     result = parse_entries_list(frame, {'by_fis_code': {}, 'by_competitor_id': {}, 'by_name_key': {}})
     assert len(result['people']) == 1
     assert result['people'][0]['competitionImportCodes'] == ['WSC_BA_M_6182', 'WSC_SS_M_6188']
-    assert result['people'][0]['quotaDisciplines'] == ['Snowboard']
+    assert result['people'][0]['quotaDisciplines'] == ['Snowboard Park & Pipe']
 
 
 def test_quota_counts_each_athlete_once_per_group_and_in_distinct_groups():
@@ -104,6 +104,6 @@ def test_disposition_deduplicates_competitions_with_the_same_quota_discipline():
     person = {'personId': 7, 'function': 'Athlete', 'nationCode': 'SUI', 'gender': 'F',
               'quotaDisciplines': ['Moguls', 'Moguls']}
     assert disposition_by_quota_group([person], {7}) == {
-        ('SUI', 'Moguls', 'F'): {'peopleTotal': 1, 'peopleAssigned': 1}}
+        ('SUI', 'Moguls', 'W'): {'peopleTotal': 1, 'peopleAssigned': 1}}
     assert single_room_usage_by_quota_group([person], {7}) == {
-        ('SUI', 'Moguls', 'F'): 1}
+        ('SUI', 'Moguls', 'W'): 1}

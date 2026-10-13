@@ -10,6 +10,8 @@ ein separater Backup-Service.
 
 ## Architektur
 
+Quota architecture: [docs/quota-architecture.md](docs/quota-architecture.md)
+
 ### Frontend
 
 Das TypeScript-Frontend unter `frontend/src/` wird mit React und Vite gebaut. Es greift

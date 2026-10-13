@@ -58,7 +58,7 @@ def test_catalogue_reconciliation_preserves_everything_except_group(database):
     assert len(rows) == 31
     for row in rows:
         expected = deepcopy(before[row.id])
-        expected['quotaDiscipline'] = 'Snowboard' if row.code.startswith('6') else 'Freestyle'
+        expected['quotaDiscipline'] = next(c.quota_discipline for c in COMPETITIONS if c.code == row.code)
         assert row.to_dict() == expected
     assert unknown.to_dict() == before[unknown.id]
     reconcile_quota_catalogue(db.session.connection(), [('WSC_BA_M_6182', '6182', 'TestGroup')])
@@ -72,7 +72,8 @@ def test_shared_role_resolver_and_no_descriptive_fallbacks():
         p = resolve_quota_memberships(person('A', ('EXACT', 'SECOND', 'OTHER'), role), mapping)
         assert p['quotaDisciplines'] == ['OtherGroup', 'TestGroup']
         assert p['topLevelDisciplines'] == p['quotaDisciplines']
-        assert quota_keys(p) == {('AUT', 'TestGroup', 'M'), ('AUT', 'OtherGroup', 'M')}
+        athlete = resolve_quota_memberships(person('ATHLETE', ('EXACT', 'SECOND', 'OTHER')), mapping)
+        assert quota_keys(p, [athlete]) == {('AUT', 'TestGroup', 'M'), ('AUT', 'OtherGroup', 'M')}
         p = resolve_quota_memberships(person('B', (), role), mapping)
         assert not quota_keys(p)
         assert evaluate_quota_usage([p], [p]) == []
@@ -94,7 +95,7 @@ def test_arbitrary_configuration_propagates_preview_confirmation_live_and_exempt
         errors=[], warnings=[], singleRoomQuotaExemptOverrides={'E': 'OTHER'})
     recalculate_fis_import_preview(preview)
     assert {p['quotaDisciplines'][0] for p in people} == {'TestGroup'}
-    assert preview['athleteQuotaChecks'][0]['topLevelDiscipline'] == 'TestGroup'
+    assert preview['athleteQuotaChecks'] == []  # No invented 36/20 policy for arbitrary groups.
     check = preview['quotaChecks'][0]
     assert check['discipline'] == 'TestGroup' and check['singleRooms'] == 3
     warning = next(w for w in preview['warnings'] if w['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED')
@@ -124,7 +125,7 @@ def test_arbitrary_configuration_propagates_preview_confirmation_live_and_exempt
 
 
 def test_historical_detail_preservation_is_read_only_and_continuity_breaks(database):
-    competition = comp(import_code='WSC_BA_M_6182', group='Snowboard')
+    competition = comp(import_code='WSC_BA_M_6182', group='Snowboard Park & Pipe')
     session = ImportSession(nation='AUT')
     db.session.add(session); db.session.flush()
     db.session.add(competition); db.session.flush()
@@ -141,7 +142,9 @@ def test_historical_detail_preservation_is_read_only_and_continuity_breaks(datab
     incoming = resolve_quota_memberships(person('A', ('WSC_BA_M_6182',), 'Official'),
         {'WSC_BA_M_6182': competition})
     rooms = [{'person1Key': 'A', 'roomType': 'Single'}]
-    assert preserved_single_room_approvals([incoming], rooms)['A']['groups'] == {('AUT', 'Snowboard', 'M')}
+    athlete_incoming = resolve_quota_memberships(person('ATHLETE', ('WSC_BA_M_6182',)),
+        {'WSC_BA_M_6182': competition})
+    assert preserved_single_room_approvals([incoming, athlete_incoming], rooms)['A']['groups'] == {('AUT', 'Snowboard Park & Pipe', 'M')}
     assert decision.quota_details_json == original_json and decision.approved_person_keys_json == '["A"]'
     assert historical_approval_groups({**details, 'discipline': 'Unresolved'}, athlete) == set()
     athlete.single_room_status = 'NONE'; db.session.commit()
@@ -160,8 +163,8 @@ def test_collapsed_historical_decisions_count_people_once_and_decisions_separate
         quota_details_json=json.dumps({'nationCode': 'AUT', 'discipline': group, 'gender': 'M'}))
         for group in ('Snowboard Big Air', 'Snowboard Slopestyle', 'Unresolved')]
     athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M',
-        function='Athlete', competitions=[comp('6182', 'Snowboard', 'WSC_BA_M_6182'),
-                                        comp('6188', 'Snowboard', 'WSC_SS_M_6188')],
+        function='Athlete', competitions=[comp('6182', 'Snowboard Park & Pipe', 'WSC_BA_M_6182'),
+                                        comp('6188', 'Snowboard Park & Pipe', 'WSC_SS_M_6188')],
         single_room_entitlement='APPROVED_EXTRA', single_room_status='APPROVED_EXTRA',
         single_room_decision=decisions[0])
     db.session.add_all([athlete, *decisions]); db.session.commit()
@@ -182,7 +185,7 @@ def test_distinct_people_are_not_duplicated_by_repeated_projection_rows():
     p = resolve_quota_memberships(person('A'), {'EXACT': comp()})
     p.update(personId=1, countsAsSingle=True)
     duplicated = [p, deepcopy(p)]
-    assert evaluate_athlete_quota_usage(duplicated)[0]['athleteQuotaUsed'] == 1
+    assert evaluate_athlete_quota_usage(duplicated) == []
     assert evaluate_quota_usage(duplicated, duplicated)[0]['singleRoomsUsed'] == 1
     assert evaluate_quota_usage(duplicated, duplicated)[0]['athletesEntered'] == 1
     assert single_room_usage_by_quota_group(duplicated, [1]) == {('AUT', 'TestGroup', 'M'): 1}
@@ -192,7 +195,7 @@ def test_distinct_people_are_not_duplicated_by_repeated_projection_rows():
 def test_exact_approval_evidence_follows_mapping_without_spreading_other_memberships(database):
     a, b = comp(), comp('8179', 'OtherGroup', 'OTHER')
     athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M',
-                      competitions=[a, b])
+                      competitions=[a, b], function='Athlete')
     db.session.add(athlete); db.session.commit()
     details = {'quotaMembershipVersion': 1, 'nationCode': 'AUT', 'discipline': 'TestGroup', 'gender': 'M',
                'singleRoomCandidates': [{'personKey': 'A', 'competitionIds': [str(a.id)]}]}
@@ -262,7 +265,7 @@ def test_eventless_preview_resolves_saved_ids_from_database_and_flags_missing_ev
 def test_legacy_label_collision_uses_historical_exact_catalogue_identity(database):
     mo = comp('8179', 'Freestyle', 'WSC_MO_M_8179')
     collision = comp('6182', 'Moguls', 'WSC_BA_M_6182')
-    athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M',
+    athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M', function='Athlete',
         competitions=[mo, collision])
     db.session.add(athlete); db.session.commit()
     details = {'nationCode': 'AUT', 'gender': 'M', 'discipline': 'Moguls',
@@ -284,7 +287,7 @@ def test_live_unresolved_selection_cannot_borrow_another_roster_membership(datab
         details = json.loads(decision.quota_details_json)
         details['singleRoomCandidates'].append({'personKey': 'OTHER', 'competitionIds': [str(c.id)]})
         decision.quota_details_json = json.dumps(details)
-    athlete = Athlete(fis_code='OTHER', firstname='Other', lastname='Person', nation_code='AUT', gender='M',
+    athlete = Athlete(fis_code='OTHER', firstname='Other', lastname='Person', nation_code='AUT', gender='M', function='Athlete',
         competitions=[c], single_room_status='APPROVED_EXTRA', single_room_entitlement='APPROVED_EXTRA',
         single_room_decision=decision)
     db.session.add_all([decision, athlete]); db.session.commit()
@@ -297,7 +300,7 @@ def test_live_unresolved_selection_cannot_borrow_another_roster_membership(datab
 def test_exemption_removal_without_membership_requires_review(database):
     from app import _update_athlete_operations
     athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M',
-        single_room_quota_exempt_reason='OTHER')
+        single_room_quota_exempt_reason='OTHER', function='Athlete')
     hotel = Hotel(name='Hotel'); room = RoomType(name='Double', max_persons=2)
     booking = RoomBooking(hotel=hotel, room_type=room, counts_as_single=True)
     db.session.add(RoomBookingOccupant(room_booking=booking, athlete=athlete)); db.session.commit()
@@ -308,16 +311,16 @@ def test_exemption_removal_without_membership_requires_review(database):
 
 def test_api_projects_only_the_resolved_approval_membership(database):
     from quota_history import approved_quota_disciplines
-    a, b = comp('6182', 'Snowboard', 'WSC_BA_M_6182'), comp('8179', 'Freestyle', 'WSC_MO_M_8179')
+    a, b = comp('6182', 'Snowboard Park & Pipe', 'WSC_BA_M_6182'), comp('8179', 'Freestyle', 'WSC_MO_M_8179')
     session = ImportSession(nation='AUT'); db.session.add_all([a, b, session]); db.session.flush()
-    decision = canonical_decision(session, a, group='Snowboard')
-    athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M',
+    decision = canonical_decision(session, a, group='Snowboard Park & Pipe')
+    athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M', function='Athlete',
         competitions=[a,b], single_room_status='APPROVED_EXTRA', single_room_decision=decision)
     db.session.add(athlete); db.session.commit()
     from quota_history import applicable_approval_groups
     assert applicable_approval_groups(decision, athlete, 'UNRELATED') == set()
-    assert approved_quota_disciplines(athlete) == ['Snowboard']
-    assert athlete.to_dict()['approvedQuotaDisciplines'] == ['Snowboard']
+    assert approved_quota_disciplines(athlete) == ['Snowboard Park & Pipe']
+    assert athlete.to_dict()['approvedQuotaDisciplines'] == ['Snowboard Park & Pipe']
 
 
 def test_legacy_approval_requires_immutable_person_competition_evidence(database):
@@ -330,7 +333,7 @@ def test_legacy_approval_requires_immutable_person_competition_evidence(database
     decision = ImportApproval(session_id=session.id, nation='AUT', description='Legacy approval', username='test',
         approval_type='NATION_APPROVED', decision='APPROVED', approved_person_keys_json='["A"]',
         quota_details_json=json.dumps({'nationCode': 'AUT', 'gender': 'M', 'discipline': 'Moguls'}))
-    athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M', competitions=[c])
+    athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M', function='Athlete', competitions=[c])
     db.session.add_all([decision, athlete]); db.session.commit()
     assert applicable_approval_groups(decision, athlete) == set()
     decision.version_id = version.id; session.current_version = version; db.session.commit()

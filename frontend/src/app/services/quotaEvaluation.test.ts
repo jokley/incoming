@@ -116,3 +116,99 @@ test('approved room usage is restricted to the backend-resolved approval group',
     { ...person, discipline: 'Snowboard', approvedQuotaDisciplines: undefined },
   ], 1).map(p => p.additionalCost), [true, false, false]);
 });
+
+
+test('shared Officials follow every authoritative athlete M/W context and never their own gender', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { evaluateAllQuotaGroups } = await import('./quotaEvaluation.ts');
+  const fixture = JSON.parse(readFileSync(new URL('../../../../backend/tests/fixtures/fis_quota_contexts.json', import.meta.url), 'utf8'));
+  const assignments = fixture.people.filter((p: { personId: string }) => fixture.assignedPersonIds.includes(p.personId))
+    .flatMap((p: { personId: string; quotaDisciplines: string[] }) => p.quotaDisciplines.map(discipline => ({
+      ...p, discipline, bookingId: p.personId, countsAsSingle: true,
+    })));
+  const evaluated = evaluateAllQuotaGroups(fixture.expected, [...assignments, ...assignments]);
+  assert.deepEqual(evaluated.map(group => ({ key: group.key, used: group.usedSingleRooms,
+    officials: group.people.length })), fixture.expected.map((row: { nationCode: string; discipline: string;
+      gender: string; singleRoomsUsed: number; quotaExemptSingleRooms: number }) => ({
+    key: `${row.nationCode}|${row.discipline}|${row.gender}`, used: row.singleRoomsUsed, officials: row.singleRoomsUsed + row.quotaExemptSingleRooms,
+  })));
+});
+
+test('A definitions cannot become an operational allowance context', async () => {
+  const { evaluateQuotaGroup } = await import('./quotaEvaluation.ts');
+  const definition = { nationCode: 'AUT', discipline: 'Ski Cross', gender: 'A', singleRoomsAllowed: 1 };
+  assert.throws(() => evaluateQuotaGroup(definition, [{ personId: 'O', bookingId: '1', nationCode: 'AUT',
+    discipline: 'Ski Cross', gender: 'A', function: 'Official', countsAsSingle: true }]), /athlete gender M\/W/);
+});
+
+test('an Official approval in W cannot authorize the M context', async () => {
+  const { evaluateAllQuotaGroups } = await import('./quotaEvaluation.ts');
+  const definitions = ['M', 'W'].map(gender => ({ nationCode: 'AUT', discipline: 'Ski Cross',
+    gender, singleRoomsAllowed: 1 }));
+  const official = { personId: 'O', bookingId: '1', nationCode: 'AUT', discipline: 'Ski Cross',
+    gender: 'M', function: 'Official', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA' as const,
+    approvedQuotaDisciplines: ['Ski Cross'],
+    approvedQuotaContexts: [{ nationCode: 'AUT', discipline: 'Ski Cross', gender: 'W' }] };
+  assert.deepEqual(evaluateAllQuotaGroups(definitions, [official]).map(group =>
+    Boolean(group.people[0]?.additionalCost)), [false, true]);
+});
+
+
+test('single-room control lists share athlete-derived context matching', async () => {
+  const { matchesQuotaAllowanceContext } = await import('./quotaEvaluation.ts');
+  const definition = { nationCode: 'AUT', discipline: 'Ski Cross', gender: 'W' };
+  const person = { nationCode: 'AUT', quotaDisciplines: ['Ski Cross'], gender: 'M', function: 'Official' };
+  assert.equal(matchesQuotaAllowanceContext(person, definition), true);
+  assert.equal(matchesQuotaAllowanceContext({ ...person, gender: 'A' }, definition), true);
+  assert.equal(matchesQuotaAllowanceContext({ ...person, function: 'Athlete' }, definition), false);
+  assert.equal(matchesQuotaAllowanceContext({ ...person, function: 'Athlete', gender: 'W' }, definition), true);
+  assert.equal(matchesQuotaAllowanceContext(person, { ...definition, gender: 'A' }), false);
+});
+
+
+test('physical allocation covers shared people once and respects restricted eligibility', async () => {
+  const { evaluateAllQuotaGroups, getQuotaSummary } = await import('./quotaEvaluation.ts');
+  const definitions = ['M', 'W'].map(gender => ({ nationCode: 'AUT', discipline: 'Ski Cross', gender, singleRoomsAllowed: 1 }));
+  const shared = ['A','B'].map(personId => ({ personId, bookingId: personId, nationCode: 'AUT',
+    discipline: 'Ski Cross', gender: 'A', function: 'Official', countsAsSingle: true }));
+  const groups = evaluateAllQuotaGroups(definitions, [...shared, ...shared]);
+  assert.equal(getQuotaSummary(groups).usedSingleRooms, 2);
+  assert.equal(getQuotaSummary(groups).overflow, 0);
+  assert.equal(new Set(groups.flatMap(g => g.people.map(p => p.personId))).size, 2);
+  const single = evaluateAllQuotaGroups(definitions, [shared[0]]);
+  assert.equal(getQuotaSummary(single).usedSingleRooms, 1);
+  const restricted = shared.map(p => ({ ...p, function: 'Athlete', gender: 'M' }));
+  const excess = evaluateAllQuotaGroups(definitions, restricted);
+  assert.equal(getQuotaSummary(excess).overflow, 1);
+  assert.equal(excess.find(g => g.key.endsWith('|W'))?.usedSingleRooms, 0);
+  assert.equal(excess.flatMap(g => g.people).filter(p => p.allocationStatus === 'PENDING').length, 1);
+});
+
+test('augmenting matching and exemptions preserve one normal slot per covered person', async () => {
+  const { allocateSingleRoomPeople } = await import('./quotaEvaluation.ts');
+  const definitions = [
+    { nationCode:'AUT',discipline:'Ski Cross',gender:'M',singleRoomsAllowed:1 },
+    { nationCode:'AUT',discipline:'Ski Cross',gender:'W',singleRoomsAllowed:1 },
+    { nationCode:'AUT',discipline:'Freestyle',gender:'M',singleRoomsAllowed:1 },
+  ];
+  const base = {nationCode:'AUT',countsAsSingle:true,bookingId:'1'};
+  const people = [
+    {...base,personId:'A',discipline:'Ski Cross',function:'Official',gender:'A'},
+    ...['B','C'].flatMap(personId => ['Ski Cross','Freestyle'].map(discipline => ({...base,personId,discipline,function:'Athlete',gender:'M'}))),
+    {...base,personId:'D',discipline:'Ski Cross',function:'Official',gender:'A',singleRoomQuotaExemptReason:'OTHER' as const},
+    {...base,personId:'E',discipline:'Ski Cross',function:'Official',gender:'M',countsAsSingle:false},
+  ];
+  const result = allocateSingleRoomPeople(definitions, people);
+  assert.equal(result.filter(p => p.allocationStatus === 'COVERED').length, 3);
+  assert.equal(result.filter(p => p.allocationStatus === 'EXEMPT').length, 1);
+  assert.equal(result.filter(p => p.allocationStatus === 'PENDING').length, 0);
+  assert.equal(result.some(p => p.personId === 'E'), false);
+  assert.deepEqual(allocateSingleRoomPeople([...definitions].reverse(), [...people].reverse()), result);
+});
+
+
+test('authoritative allocation metadata cannot introduce an A allowance context', async () => {
+  const { evaluateAllQuotaGroups } = await import('./quotaEvaluation.ts');
+  assert.throws(() => evaluateAllQuotaGroups([{ nationCode:'AUT',discipline:'Ski Cross',gender:'A',
+    singleRoomsAllowed:1,singleRoomAllocations:[] }], []), /athlete gender M\/W/);
+});

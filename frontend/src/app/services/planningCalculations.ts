@@ -1,5 +1,5 @@
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
-import { calculateQuotaUsage, quotaAssignmentsFromBookings } from './quotaEvaluation';
+import { physicalSingleRoomUsageFromBookings } from './quotaEvaluation';
 
 export type RoomPlan = { beds: number; rooms: number; singleRooms: number; doubleRooms: number };
 
@@ -42,7 +42,7 @@ export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; 
     const supply = calculateRoomPlan(bedSupply), plannedBeds = plans.reduce((sum, plan) => sum + plan.beds, 0), plannedRooms = plans.reduce((sum, plan) => sum + plan.rooms, 0);
     const livePlan = calculateRoomPlan(data.athletes.filter(athlete => (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }]).some(stay => onDay(stay.arrivalDate, stay.departureDate, date))).length);
     const activeBookings = data.bookings.filter(booking => (!booking.checkInDate || dayKey(booking.checkInDate) <= date) && (!booking.checkOutDate || dayKey(booking.checkOutDate) > date));
-    const assignedRooms = activeBookings.length, assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0), assignedEz = calculateQuotaUsage(quotaAssignmentsFromBookings(activeBookings)), assignedDz = Math.max(0, assignedBeds - assignedEz);
+    const assignedRooms = activeBookings.length, assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0), assignedEz = physicalSingleRoomUsageFromBookings(activeBookings), assignedDz = Math.max(0, assignedBeds - assignedEz);
     const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0), plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0), freeRooms = Math.max(supply.rooms - assignedRooms, 0), freeEz = freeRooms / 2, freeDz = freeRooms - freeEz;
     return { date, label: new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }), roomSupply: supply.rooms, bedSupply, ezSupply: assignedEz + freeEz, dzSupply: assignedDz + freeDz, plannedRooms, plannedBeds, plannedEz, plannedDz, demandRooms: livePlan.rooms, demandBeds: livePlan.beds, demandEz: livePlan.singleRooms, demandDz: livePlan.doubleRooms, assignedRooms, assignedBeds, assignedEz, assignedDz, freeRooms, freeBeds: Math.max(bedSupply - assignedBeds, 0), freeEz, freeDz, eventRoomReserve: supply.rooms - plannedRooms, eventBedReserve: bedSupply - plannedBeds, eventEzReserve: supply.singleRooms - plannedEz, eventDzReserve: supply.doubleRooms - plannedDz, liveRoomReserve: supply.rooms - livePlan.rooms, liveBedReserve: bedSupply - livePlan.beds, liveEzReserve: supply.singleRooms - livePlan.singleRooms, liveDzReserve: supply.doubleRooms - livePlan.doubleRooms };
   });

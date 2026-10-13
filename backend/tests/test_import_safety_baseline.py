@@ -213,33 +213,41 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             def incoming(codes, groups):
                 return {**self.person('KEEP', codes=codes), 'function': 'Official', 'quotaDisciplines': groups,
                         'competitionIds': [str(c.id) for c in Competition.query.filter(Competition.import_code.in_(codes)).all()]}
-            people = [incoming(['MO', 'DM', 'AE'], ['Moguls', 'Moguls', 'Aerials'])]
-            self.preview('approved-first', event, people, [self.single('KEEP')], checks)
+            support = self.person('SUPPORT', codes=['MO', 'DM', 'AE'])
+            support['quotaDisciplines'] = ['Moguls', 'Aerials']
+            people = [support, incoming(['MO', 'DM', 'AE'], ['Moguls', 'Moguls', 'Aerials'])]
+            self.preview('approved-first', event, people, [self.single('SUPPORT'), self.single('KEEP')], checks)
             confirm_fis_import('approved-first', {'KEEP': decision_id})
             for token in ('approved-second', 'approved-third'):
-                people = [incoming(['MO', 'DM', 'AE'], ['Moguls', 'Moguls', 'Aerials'])]
-                preserved = preserved_single_room_approvals(people, [self.single('KEEP')])
-                self.assertEqual(preserved['KEEP']['groups'], {('AUT', 'Moguls', 'F')})
+                people = [support, incoming(['MO', 'DM', 'AE'], ['Moguls', 'Moguls', 'Aerials'])]
+                preserved = preserved_single_room_approvals(people, [self.single('SUPPORT'), self.single('KEEP')])
+                self.assertEqual(preserved['KEEP']['groups'], {('AUT', 'Moguls', 'W')})
                 self.assertEqual(preserved['KEEP']['decisionId'], decision_id)
-                self.preview(token, event, people, [self.single('KEEP')], checks)
+                self.preview(token, event, people, [self.single('SUPPORT'), self.single('KEEP')], checks)
                 confirm_fis_import(token)
                 athlete = Athlete.query.filter_by(fis_code='KEEP').one()
                 self.assertEqual((athlete.single_room_status, athlete.single_room_decision_id), ('APPROVED_EXTRA', decision_id))
             # Moving entirely outside the recorded decision group ends preservation.
-            people = [incoming(['AE'], ['Aerials'])]
-            self.assertEqual(preserved_single_room_approvals(people, [self.single('KEEP')]), {})
-            self.preview('changed-group', event, people, [self.single('KEEP')], checks)
+            people = [support, incoming(['AE'], ['Aerials'])]
+            self.assertEqual(preserved_single_room_approvals(people, [self.single('SUPPORT'), self.single('KEEP')]), {})
+            self.preview('changed-group', event, people, [self.single('SUPPORT'), self.single('KEEP')], checks)
             confirm_fis_import('changed-group')
-            self.assertEqual(Athlete.query.one().single_room_status, 'PENDING_APPROVAL')
+            # The maximum matcher can cover this person using a different free
+            # context. Ending approval continuity must still clear its decision.
+            self.assertEqual(Athlete.query.filter_by(fis_code='KEEP').one().single_room_status, 'IN_QUOTA')
+            self.assertIsNone(Athlete.query.filter_by(fis_code='KEEP').one().single_room_decision_id)
             # Historical evidence does not revive after an intervening non-single snapshot.
-            people = [incoming(['MO'], ['Moguls'])]
+            people = [support, incoming(['MO'], ['Moguls'])]
             self.preview('non-single', event, people)
             confirm_fis_import('non-single')
-            self.assertEqual(Athlete.query.one().single_room_status, 'NONE')
-            self.assertEqual(preserved_single_room_approvals(people, [self.single('KEEP')]), {})
-            self.preview('single-again', event, people, [self.single('KEEP')], checks)
+            self.assertEqual(Athlete.query.filter_by(fis_code='KEEP').one().single_room_status, 'NONE')
+            self.assertEqual(preserved_single_room_approvals(people, [self.single('SUPPORT'), self.single('KEEP')]), {})
+            self.preview('single-again', event, people, [self.single('SUPPORT'), self.single('KEEP')], checks)
             confirm_fis_import('single-again')
-            self.assertEqual(Athlete.query.one().single_room_status, 'PENDING_APPROVAL')
+            # The maximum matcher can cover this person using a different free
+            # context. Ending approval continuity must still clear its decision.
+            self.assertEqual(Athlete.query.filter_by(fis_code='KEEP').one().single_room_status, 'IN_QUOTA')
+            self.assertIsNone(Athlete.query.filter_by(fis_code='KEEP').one().single_room_decision_id)
             self.assertIsNotNone(db.session.get(ImportApproval, decision_id))
 
     def test_staged_exemption_recalculates_typed_and_persisted_json_with_equal_derived_state(self):
