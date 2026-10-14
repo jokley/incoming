@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { WorldChampion } from '../types.ts';
-import { championEditions, championEditionKey, championsForEdition, championDraft, championSourceUrl } from './worldChampionAdministration.ts';
+import { championEditions, championEditionKey, championsForEdition, championDraft, championSourceUrl, newChampionEdition, championDisciplines, filterChampions, emptyChampionFilters, scopedChampionFilters } from './worldChampionAdministration.ts';
 
 const row=(id:string,values:Partial<WorldChampion>={}):WorldChampion=>({id,eventId:'target1',fisCode:id,name:`Person ${id}`,nation:'AUT',gender:'M',discipline:'Parallel Slalom',eventGroup:'Snowboard Alpine',championship:'Engadin',championshipYear:2025,titleType:'INDIVIDUAL',entitlementEnabled:true,source:'https://www.fis-ski.com/results',active:true,createdAt:'',updatedAt:'',...values});
 
@@ -33,5 +33,52 @@ test('create inherits edition, edit preserves every existing field and status',(
 
 test('source links accept HTTP(S) only; prose remains editable source metadata',()=>{
   assert.equal(championSourceUrl('https://www.fis-ski.com/results'),'https://www.fis-ski.com/results');
-  for(const source of ['verified evidence','javascript:alert(1)','file:///tmp/source']) assert.equal(championSourceUrl(source),null);
+  for(const source of ['', ' ', null, undefined, 'verified evidence','javascript:alert(1)','file:///tmp/source']) assert.equal(championSourceUrl(source),null);
+});
+
+test('FIS source links and stored metadata remain exact without availability checks',()=>{
+  const source='https://medias3.fis-ski.com/pdf/2025/FS/8226/2025FS8226RLF.pdf';
+  const existing=row('source',{source});
+  assert.equal(championSourceUrl(existing.source),source);
+  assert.equal(championSourceUrl('HTTPS://Example.com:443/%2f'),'HTTPS://Example.com:443/%2f');
+  const edited=championDraft(existing,undefined,'other');
+  edited.active=false;
+  assert.equal(edited.source,source);
+  assert.equal(existing.source,source);
+  assert.equal(championEditions([existing])[0].count,1);
+});
+
+test('new list becomes an existing-model edition through its first champion',()=>{
+  const edition=newChampionEdition(' Bakuriani ',2023);
+  const draft=championDraft(undefined,edition,'target1');
+  assert.equal(draft.championship,'Bakuriani'); assert.equal(draft.championshipYear,2023);
+  const saved=row('new',{...draft,name:'New champion'});
+  assert.equal(championEditions([saved])[0].key,edition.key);
+  assert.deepEqual(championsForEdition([saved],edition.key),[saved]);
+});
+
+test('gender, discipline and name/nation search combine with AND logic',()=>{
+  const rows=[row('1',{discipline:'Halfpipe',gender:'M',name:'Zoe'}),row('2',{discipline:'Halfpipe',gender:'W',name:'Ada'}),row('3',{discipline:'Slopestyle',gender:'W',nation:'USA'})];
+  const filters=emptyChampionFilters(championEditionKey(rows[0]));
+  assert.deepEqual(filterChampions(rows,{...filters,gender:'W'}).map(r=>r.id),['2','3']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe'}).map(r=>r.id),['1','2']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe',gender:'W'}).map(r=>r.id),['2']);
+  assert.deepEqual(filterChampions(rows,{...filters,search:' usa '}).map(r=>r.id),['3']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe',gender:'W',search:'ada'}).map(r=>r.id),['2']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe',gender:'W',search:'USA'}),[]);
+});
+
+test('discipline options are unique and edition-scoped; switching scopes filters',()=>{
+  const rows=[row('1',{discipline:'Halfpipe'}),row('2',{discipline:'Halfpipe'}),row('3',{championship:'Aspen',discipline:'Big Air'})];
+  const key=championEditionKey(rows[0]);
+  assert.deepEqual(championDisciplines(championsForEdition(rows,key)),['Halfpipe']);
+  const filters={...emptyChampionFilters(key),discipline:'Halfpipe',gender:'W',search:'Ada'};
+  assert.equal(scopedChampionFilters(filters,key),filters);
+  const other=championEditionKey(rows[2]);
+  assert.deepEqual(scopedChampionFilters(filters,other),emptyChampionFilters(other));
+});
+
+test('default sort places gender before name and retains deterministic ties',()=>{
+  const rows=[row('3',{name:'Ada',gender:'W'}),row('2',{name:'Zoe',gender:'M'}),row('1',{name:'Zoe',gender:'M'}),row('4',{discipline:'Halfpipe',gender:'W'})];
+  assert.deepEqual(championsForEdition(rows,championEditionKey(rows[0])).map(r=>r.id),['4','1','2','3']);
 });
