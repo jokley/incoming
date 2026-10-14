@@ -232,10 +232,12 @@ def test_confirmation_rejects_approval_after_remapping_without_rewriting_history
         mapping.competition = replacement
     db.session.commit()
     incoming = person('A', role='Official')
-    preview = dict(createdAt=datetime.utcnow(), eventId=event.id, people=[incoming],
+    # Keep a valid athlete-derived allowance so this isolates historical
+    # approval applicability rather than the missing-context validation gate.
+    preview = dict(createdAt=datetime.utcnow(), eventId=event.id, people=[incoming, person('SUPPORT')],
         rooms=[{'person1Key': 'A', 'person2Key': None, 'roomType': 'Single'}], errors=[], warnings=[])
     recalculate_fis_import_preview(preview)
-    assert incoming['singleRoomEntitlement'] == 'APPROVAL_REQUIRED'
+    assert incoming['singleRoomEntitlement'] == 'IN_QUOTA'
     assert preview['preservedSingleRoomApprovals'] == {}
     PREVIEW_STORE['remap'] = preview
     from excel_import import ImportValidationError

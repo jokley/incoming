@@ -86,6 +86,36 @@ def test_missing_event_group_blocks_despite_resolved_competition():
     assert errors[0]['details']['resolvedEventGroups'] == []
 
 
+def test_one_lost_yes_membership_blocks_person_with_another_valid_membership():
+    selected = mapping(); selected.pop('WSC_BXT_A_6193')
+    parsed = parse_entries_list(frame(), MAPS, selected, 'Montafon', 7)
+    person = parsed['people'][1]
+    assert person['quotaDisciplines'] == ['Snowboard Cross']
+    assert len(person['affirmativeWscColumns']) == 2
+    assert len(person['competitionMemberships']) == 1
+    errors = wsc_membership_errors([person], 7)
+    assert errors[0]['details']['unresolvedMemberships'] == [
+        {'importCode': 'WSC_BXT_A_6193', 'reason': 'COMPETITION_UNRESOLVED'}]
+
+
+@pytest.mark.parametrize('empty_group', [None, '', '  '])
+def test_one_missing_event_group_blocks_even_if_another_group_resolves(empty_group):
+    selected = mapping(); selected['WSC_BXT_A_6193'].quota_discipline = empty_group
+    parsed = parse_entries_list(frame(), MAPS, selected, 'Montafon', 7)
+    person = parsed['people'][1]
+    assert 'Snowboard Cross' in person['quotaDisciplines']
+    assert len(person['competitionMemberships']) == 2
+    assert wsc_membership_errors([person], 7)[0]['details']['unresolvedMemberships'] == [
+        {'importCode': 'WSC_BXT_A_6193', 'reason': 'EVENT_GROUP_MISSING'}]
+
+
+def test_lost_extracted_code_is_not_hidden_by_other_resolved_memberships():
+    person = parse_entries_list(frame(), MAPS, mapping(), 'Montafon', 7)['people'][1]
+    person['competitionImportCodes'].remove('WSC_BXT_A_6193')
+    assert wsc_membership_errors([person], 7)[0]['details']['unresolvedMemberships'] == [
+        {'importCode': 'WSC_BXT_A_6193', 'reason': 'IMPORT_CODE_LOST'}]
+
+
 def test_saved_preview_losing_exact_evidence_is_blocked():
     app = Flask(__name__)
     app.config.update(SQLALCHEMY_DATABASE_URI='sqlite://', SQLALCHEMY_TRACK_MODIFICATIONS=False)
