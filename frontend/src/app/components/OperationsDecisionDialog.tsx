@@ -3,53 +3,12 @@ import { type ReactNode, useEffect, useState } from 'react';
 import { Dialog, DialogContent } from '@mui/material';
 import { AlertTriangle, BedDouble, ChevronDown, ClipboardCheck } from 'lucide-react';
 
-import type { ImportApproval, ImportSession } from '../data/importSessions';
 import { DialogFooter, DialogHeader, InfoPanel, OpsButton, SectionHeader, StatusChip } from '../design-system';
 import { competitionDisplayName } from '../services/competitionPresentation';
 
-export type OperationsTask = {
-  approval: ImportApproval;
-  nation: string;
-  discipline?: string;
-  people: string[];
-  rule: string;
-  impact: string;
-  recommendation: string;
-  gender: string;
-  quota?: { current: number; allowed: number; label: string };
-  singleRoomCandidates: Array<{ personKey: string; name: string; function?: string; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }>;
-  singleRoomReviewPeople: Array<{ personKey: string; name: string; function?: string; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }>;
-  excessCount: number;
-};
-
-export function quotaViolationLabel(label: string, current: number, allowed: number) {
-  return `${label} überschritten (${current} / ${allowed})`;
-}
-
-export function buildOperationsTask(session: ImportSession, approval: ImportApproval): OperationsTask {
-  const quotaRecord = session.preview?.dispositionAnalysis?.categories.quotaAffected.records.find(record =>
-    String(record.nation ?? '') === approval.nation,
-  );
-  const people = [quotaRecord?.athlete, quotaRecord?.person, quotaRecord?.name]
-    .filter((value): value is string => typeof value === 'string' && Boolean(value));
-  const isSingleRoom = /single|einzel|\bsr\b/i.test(`${approval.type} ${approval.description}`);
-  const quotaCheck = session.preview?.quotaChecks?.find(check => check.nationCode === approval.nation && (!session.discipline || check.discipline === session.discipline));
-  const singleRoomCandidates = approval.quotaDetails?.singleRoomCandidates ?? [];
-  return {
-    approval,
-    nation: session.nation,
-    discipline: session.discipline,
-    people,
-    rule: isSingleRoom ? 'Die gemeldeten Einzelzimmer überschreiten die aktuell verfügbare Quote.' : 'Die aktuell gültige Nationenquote wird durch die Meldung überschritten.',
-    impact: 'Die bestehende Planung muss fachlich geprüft werden. Hotel- und Zimmerzuweisungen bleiben unverändert.',
-    recommendation: isSingleRoom ? 'Mehrkosten abstimmen' : 'Neue Meldeliste anfordern',
-    gender: approval.quotaDetails?.gender || quotaCheck?.gender || '—',
-    quota: quotaCheck ? { current: Number(isSingleRoom ? approval.quotaDetails?.importedSingleRooms ?? quotaCheck.singleRooms : approval.quotaDetails?.importedOfficials ?? quotaCheck.officials), allowed: Number(isSingleRoom ? approval.quotaDetails?.singleRoomsAllowed ?? quotaCheck.singleRoomsAllowed : approval.quotaDetails?.officialQuota ?? quotaCheck.officialQuota), label: isSingleRoom ? 'Single Rooms' : 'Officials' } : undefined,
-    singleRoomCandidates,
-    singleRoomReviewPeople: approval.quotaDetails?.singleRoomReviewPeople ?? singleRoomCandidates,
-    excessCount: Number(approval.quotaDetails?.excessCount ?? 0),
-  };
-}
+export { buildOperationsTask, quotaViolationLabel } from '../services/importDecision';
+export type { OperationsTask } from '../services/importDecision';
+import { quotaViolationLabel, type OperationsTask } from '../services/importDecision';
 
 function taskTitle(task: OperationsTask) {
   if (task.approval.type === 'PRESERVED_APPROVED_EXTRA') return task.approval.description;

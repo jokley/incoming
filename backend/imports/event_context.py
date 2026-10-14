@@ -31,11 +31,12 @@ def normalize_event_id(value):
 def active_competition_mapping(event):
     return {
         mapping.import_code: mapping.competition
-        for mapping in event.competition_mappings if mapping.active
+        for mapping in event.competition_mappings
+        if mapping.active and mapping.competition is not None
     }
 
 
-def revalidate_confirmation_event(event_id, people):
+def revalidate_confirmation_event(event_id, people, *, validate_codes=True):
     event_id = normalize_event_id(event_id)
     event = Event.query.get(event_id)
     if not event:
@@ -43,7 +44,7 @@ def revalidate_confirmation_event(event_id, people):
     if not event.active:
         raise ImportValidationError('EVENT_INACTIVE', f'Event {event.name} ist inaktiv.', event_id=event.id)
     competitions_by_import_code = active_competition_mapping(event)
-    for person in people:
+    for person in people if validate_codes else []:
         for import_code in person.get('competitionImportCodes', []):
             if import_code not in competitions_by_import_code:
                 raise ImportValidationError(

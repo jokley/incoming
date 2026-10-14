@@ -24,6 +24,7 @@ from excel_import import (ImportValidationError, InvalidExcelFileError,
                           PREVIEW_STORE, apply_active_single_room_decision, confirm_fis_import,
                           create_fis_import_preview, detect_fis_file_type,
                           normalize_event_id, recalculate_fis_import_preview,
+                          quota_requirement_errors,
                           validate_fis_import_token)
 from simulation import DEFAULT_PERSON_COUNT, SIMULATION_OWNER, build_assignment_units, build_people
 from config import RuntimeSettings
@@ -1888,12 +1889,52 @@ def confirm_previewed_fis_import():
 @app.route('/api/import/sessions', methods=['GET'])
 def list_import_sessions():
     sessions = ImportSession.query.order_by(ImportSession.created_at.desc()).all()
-    return jsonify([session.to_dict() for session in sessions])
+    return jsonify([_current_session_payload(session) for session in sessions])
+
+
+def _current_session_preview(session):
+    """Transient current resolution; stored versions and approvals stay untouched."""
+    preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
+    if preview:
+        try:
+            if preview.get('eventId') is None and (any(str(column).upper().startswith('WSC_')
+                    for column in preview.get('entriesColumns', [])) or any(
+                    str(code).upper().startswith('WSC_') for person in preview.get('people', [])
+                    for code in person.get('affirmativeWscColumns', person.get('competitionImportCodes', [])))):
+                raise ImportValidationError('IMPORT_EVENT_REQUIRED',
+                    'Gespeicherte WSC-Preview benötigt ein aktives Import-Event mit exakten Competition-Zuordnungen.')
+            recalculate_fis_import_preview(preview)
+        except ImportValidationError as exc:
+            preview.setdefault('errors', []).append({'code': exc.code, 'message': str(exc), 'details': exc.details})
+            preview['isValid'] = False
+            preview['quotaChecks'] = []
+            preview['athleteQuotaChecks'] = []
+            for person in preview.get('people', []):
+                for key in ('competitionIds', 'competitionMemberships', 'quotaDisciplines',
+                            'topLevelDisciplines', 'athleteTopLevelDisciplines'):
+                    person[key] = []
+            if 'summary' in preview:
+                preview['summary']['validation'] = {'errorCount': len(preview['errors']),
+                                                    'warningCount': len(preview.get('warnings', []))}
+    return preview
+
+
+def _current_session_payload(session, include_preview=False):
+    payload = session.to_dict(include_preview=include_preview)
+    if session.status not in {'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'}:
+        preview = _current_session_preview(session)
+        payload['errors'] = len(preview.get('errors', []))
+        payload['warnings'] = len(preview.get('warnings', []))
+        if preview.get('errors'):
+            payload['status'] = 'DRAFT'
+        if include_preview:
+            payload['preview'] = preview
+    return payload
 
 
 @app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
 def get_import_session(session_id):
-    return jsonify(ImportSession.query.get_or_404(session_id).to_dict(include_preview=True))
+    return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>', methods=['PATCH'])
@@ -1965,7 +2006,7 @@ def stage_single_room_quota_exemption(session_id, person_key):
                       if quota_issues or other_open_approval
                       else 'PROFESSIONALLY_REVIEWED')
     db.session.commit()
-    return jsonify(session.to_dict(include_preview=True))
+    return jsonify(_current_session_payload(session, include_preview=True))
 
 
 @app.route('/api/import/approvals/<int:approval_id>', methods=['GET'])
@@ -1987,10 +2028,14 @@ def get_import_approval(approval_id):
             people.append({'id': candidate.get('personKey'), 'name': candidate.get('name') or '—',
                            'nation': approval.nation, 'singleRoomStatus': 'APPROVED_EXTRA'})
     payload = approval.to_dict()
-    payload.update({'discipline': session.discipline, 'gender': payload['quotaDetails'].get('gender'),
+    payload.update({'discipline': payload['quotaDetails'].get('discipline'), 'gender': payload['quotaDetails'].get('gender'),
                     'importVersion': version.version if version else None,
                     'importSession': {'id': str(session.id), 'nation': session.nation},
                     'people': people})
+    if approval.version_id == session.current_version_id and session.status not in {'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'}:
+        preview = _current_session_preview(session)
+        payload['validationErrors'] = preview.get('errors', [])
+        payload['isValid'] = not payload['validationErrors']
     return jsonify(payload)
 
 
@@ -2003,6 +2048,13 @@ def decide_import_approval(session_id, approval_id):
     ).first_or_404()
     if approval.id not in {item.id for item in session.current_approvals}:
         return jsonify({'error': 'This decision has been superseded'}), 404
+    preview = _current_session_preview(session)
+    if preview.get('errors'):
+        return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.',
+                        'validationErrors': preview['errors']}), 409
+    requirements = quota_requirement_errors(preview, session.current_approvals, require_approved=False)
+    if requirements:
+        return jsonify({'error': 'QUOTA_REQUIREMENTS_UNREVIEWED', 'validationErrors': requirements}), 409
     data = request.get_json(silent=True) or {}
     decision = data.get('decision')
     if decision not in {'APPROVED', 'NEW_LIST_ANNOUNCED'}:
@@ -2106,15 +2158,19 @@ def decide_import_approval(session_id, approval_id):
         title='Status', description='Warten auf Nation' if decision == 'NEW_LIST_ANNOUNCED' else 'Ausnahme genehmigt',
         username=username))
     db.session.commit()
-    return jsonify(session.to_dict(include_preview=True))
+    return jsonify(_current_session_payload(session, include_preview=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
 def approve_import_session(session_id):
     session = ImportSession.query.get_or_404(session_id)
-    preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
+    preview = _current_session_preview(session)
     if preview.get('errors'):
-        return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.'}), 409
+        return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.',
+                        'validationErrors': preview['errors']}), 409
+    requirements = quota_requirement_errors(preview, session.current_approvals)
+    if requirements:
+        return jsonify({'error': 'QUOTA_REQUIREMENTS_UNREVIEWED', 'validationErrors': requirements}), 409
     if any(approval.decision != 'APPROVED' for approval in session.current_approvals):
         return jsonify({'error': 'Alle erforderlichen Entscheidungen müssen getroffen werden.'}), 409
     if session.status in {'IMPORTED', 'REPLACED', 'ARCHIVED'}:
@@ -2125,7 +2181,7 @@ def approve_import_session(session_id):
         title='Import freigegeben', description='Technische und fachliche Prüfung abgeschlossen.',
         username=current_user().username))
     db.session.commit()
-    return jsonify(session.to_dict(include_preview=True))
+    return jsonify(_current_session_payload(session, include_preview=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/import', methods=['POST'])
@@ -2133,6 +2189,13 @@ def import_approved_session(session_id):
     session = ImportSession.query.get_or_404(session_id)
     if session.status != 'APPROVED' or not session.approved_at:
         return jsonify({'error': 'Die Session muss vor dem Import explizit freigegeben werden.'}), 409
+    preview = _current_session_preview(session)
+    if preview.get('errors'):
+        return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.',
+                        'validationErrors': preview['errors']}), 409
+    requirements = quota_requirement_errors(preview, session.current_approvals)
+    if requirements:
+        return jsonify({'error': 'QUOTA_REQUIREMENTS_UNREVIEWED', 'validationErrors': requirements}), 409
     try:
         if not session.current_version:
             return jsonify({'error': 'Die Session besitzt keine aktuelle Version.'}), 409

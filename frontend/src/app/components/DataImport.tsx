@@ -5,7 +5,7 @@ import { Alert, Dialog, DialogContent, DialogTitle, MenuItem, Snackbar, TextFiel
 import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
-import { competitionDisplayName } from '../services/competitionPresentation';
+import { competitionDisplayName, previewEventGroupLabel } from '../services/competitionPresentation';
 import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange, PreviewImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
@@ -116,7 +116,7 @@ export function DataImport() {
     const name=`${p.firstname} ${p.lastname}`;
     const personKey=String((p as FisImportPreviewPersonWithKey).matchKey??'');
     const exemption=<select aria-label={`EZ-Sonderstatus ${name}`} value={p.singleRoomQuotaExemptReason??''} disabled={!selected||savingTask} onChange={event=>void setPreviewExemption(personKey,event.target.value)} className="rounded-md border border-[var(--ops-border)] bg-[var(--ops-surface)] px-2 py-1 text-xs"><option value="">Keiner</option><option value="WORLD_CHAMPION">👑 Weltmeister</option><option value="OTHER">Allgemeine EZ-Ausnahme</option></select>;
-    return [name, p.nationCode, competitionDisplayName(p.discipline) || '—', p.function || '—', exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
+    return [name, p.nationCode, previewEventGroupLabel(p.quotaDisciplines), p.function || '—', exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
     peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—','—',importStatuses(['Entfernt'])]);
@@ -312,7 +312,9 @@ const issueCopy:Record<string,{message:string;causes?:string[];action:string}>={
   ENTRY_INVALID_DEPARTURE_DATE:{message:'Das Abreisedatum ist ungültig.',action:'Bitte eine korrigierte Meldeliste beim Verband anfordern.'},
   ENTRY_INVALID_STAY_RANGE:{message:'Das Abreisedatum liegt vor dem Anreisedatum.',action:'Bitte die Aufenthaltsdaten durch den Verband korrigieren lassen.'},
   ROOM_PERSON_NOT_FOUND:{message:'Neue Person erkannt.',action:'Die Person wird beim Import neu angelegt.'},
-  ROOM_PARTNER_NOT_FOUND:{message:'Neue Person als Zimmerpartner erkannt.',action:'Die Person wird beim Import neu angelegt.'},
+  ROOM_PARTNER_NOT_FOUND:{message:'Zimmerpartner konnte nicht eindeutig zugeordnet werden.',action:'Bitte vollständigen Namen und Nation mit der Entries-Liste abgleichen. Die Zuordnung bleibt ungeklärt.'},
+  ENTRY_SINGLE_ROOM_CONTEXT_UNRESOLVED:{message:'Einzelzimmer ohne gültigen Quota-Kontext muss geprüft werden.',action:'Bitte die exakten Competition-Zuordnungen klären oder einen ausdrücklich geprüften EZ-Sonderstatus dokumentieren.'},
+  ENTRY_WSC_SOURCE_EVIDENCE_MISSING:{message:'Die gespeicherten WSC-Quellzuordnungen sind unvollständig.',action:'Bitte die Entries-/Room-Listen erneut zur Prüfung hochladen.'},
   ROOM_INVALID_ARRIVAL_DATE:{message:'Das Anreisedatum ist ungültig.',action:'Bitte eine korrigierte Meldeliste beim Verband anfordern.'}, ROOM_INVALID_DEPARTURE_DATE:{message:'Das Abreisedatum ist ungültig.',action:'Bitte eine korrigierte Meldeliste beim Verband anfordern.'},
   ROOM_INVALID_STAY_RANGE:{message:'Die Abreise liegt vor der Anreise.',action:'Bitte die Aufenthaltsdaten durch den Verband korrigieren lassen.'}, ROOM_DAY_VALUE_NOT_NUMERIC:{message:'Die Zimmerbelegung enthält einen ungültigen Wert.',action:'Keine Aktion erforderlich'}, ROOM_NO_DAY_OVERLAP:{message:'Der Aufenthalt liegt außerhalb des gemeldeten Zeitraums.',action:'Keine Aktion erforderlich'},
 };

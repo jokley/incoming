@@ -258,6 +258,13 @@ class SingleRoomStatusTest(unittest.TestCase):
             room_type = RoomType(name='Revision Single', max_persons=1)
             competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
             competition.quota_discipline = 'Snowboard Halfpipe'
+            # Current review uses exact saved memberships in an active event.
+            event = Event(name='Completed decision review', active=True)
+            db.session.add(EventCompetition(event=event, competition=competition,
+                import_code=competition.import_code, fis_codex=competition.code, official_name=competition.name))
+            db.session.flush()
+            preview['eventId'] = event.id
+            version.preview_json = json.dumps(preview)
             patrick.competitions = [competition]
             augustinho.competitions = [competition]
             support = Athlete(fis_code='SUPPORT', firstname='Support', lastname='Athlete',
@@ -381,7 +388,12 @@ class SingleRoomStatusTest(unittest.TestCase):
             people = officials + athletes
             rooms = [{'person1Key': person['matchKey'], 'person2Key': None, 'roomType': 'Single'}
                      for person in officials]
-            preview = {'previewToken': 'stage-exemption', 'errors': [], 'warnings': [],
+            event = Event(name='Staged exemption review', active=True)
+            competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
+            db.session.add(EventCompetition(event=event, competition=competition,
+                import_code=competition.import_code, fis_codex=competition.code, official_name=competition.name))
+            db.session.flush()
+            preview = {'previewToken': 'stage-exemption', 'eventId': event.id, 'errors': [], 'warnings': [],
                        'people': people, 'rooms': rooms, 'quotaChecks': [],
                        'singleRoomQuotaExemptOverrides': {},
                        'dispositionAnalysis': {'categories': {}, 'changes': []}}

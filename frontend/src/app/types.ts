@@ -425,6 +425,8 @@ export interface FisImportIssue {
 }
 
 export interface FisImportPreviewPerson {
+  quotaDisciplines?: string[];
+  athleteTopLevelDisciplines?: string[];
   topLevelDisciplines?: string[];
   rowNumber: number;
   function?: string | null;

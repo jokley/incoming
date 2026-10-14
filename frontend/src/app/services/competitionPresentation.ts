@@ -1,4 +1,8 @@
 /** UI-only label; official FIS values remain unchanged in data and API calls. */
+export function previewEventGroupLabel(groups?: string[]): string {
+  return groups?.join(', ') || '—';
+}
+
 export function competitionDisplayName(name?: string | null): string {
   if (!name) return '';
   return name.replace(/^(?:Men's|Women's)\s+/i, '').replace(/^Mixed\s+/i, '');

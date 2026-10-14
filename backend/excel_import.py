@@ -9,10 +9,10 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
-from quota_history import applicable_approval_groups, preview_approval_person, quota_person
+from quota_history import applicable_approval_groups, historical_approval_groups, preview_approval_person, quota_person
 from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
-from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSessionEvent, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
-from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids
+from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSession, ImportSessionEvent, ImportSessionVersion, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
+from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids, athlete_top_level_discipline
 
 # Compatibility exports retained for existing callers and tests.
 from imports.normalization import (DAY_COLUMN_PATTERN, DATETIME_FORMATS,
@@ -244,6 +244,29 @@ def _split_partner_name(raw_name):
     return cleaned, ''
 
 
+def _match_room_partner(raw_name, nation, people):
+    """Match complete names within the stated nation, never guess a split."""
+    name = normalize_string(normalize_whitespace(raw_name))
+    matches = [person for person in people if person.get('nationCode') == nation
+        and name in {normalize_string(normalize_whitespace(value)) for value in (
+            f"{person['lastname']} {person['firstname']}",
+            f"{person['lastname']}, {person['firstname']}",
+            f"{person['firstname']} {person['lastname']}")}]
+    return matches[0] if len(matches) == 1 else None
+
+
+def single_room_context_errors(people, rooms):
+    singles = {room.get('person1Key') for room in rooms
+               if normalize_string(room.get('roomType')) == 'single'}
+    return [{'code': 'ENTRY_SINGLE_ROOM_CONTEXT_UNRESOLVED',
+             'message': 'Einzelzimmer benötigt eine Prüfung: kein gültiger exakter Quota-Kontext vorhanden.',
+             'details': {'personKey': person.get('matchKey'),
+                         'personName': f"{person.get('firstname', '')} {person.get('lastname', '')}".strip(),
+                         'quotaDisciplines': person.get('quotaDisciplines', [])}}
+            for person in people if person.get('matchKey') in singles
+            and not person.get('singleRoomQuotaExemptReason') and not quota_keys(person, people)]
+
+
 def _daterange_nights(check_in_date, check_out_date):
     if not check_in_date or not check_out_date or check_out_date <= check_in_date:
         return []
@@ -257,9 +280,22 @@ def _daterange_nights(check_in_date, check_out_date):
 
 WSC_MEMBERSHIP_ERROR_MESSAGE = (
     'Competition-Zuordnungen konnten nicht aufgelöst werden. '
-    'Die Entries-Liste enthält aktive WSC-Wettbewerbe, aber keine davon konnte '
-    'dem ausgewählten Event/Katalog zugeordnet werden.'
+    'Jede affirmative WSC-Membership benötigt eine exakte Competition-Zuordnung '
+    'mit gültiger Event Group.'
 )
+
+
+def resolve_current_quota_memberships(person, competition_mapping):
+    """Resolve extracted codes without discarding failed source evidence."""
+    codes = list(person.get('competitionImportCodes') or [])
+    resolved = {**person, 'competitionImportCodes': [code for code in codes
+        if competition_mapping.get(code) is not None]}
+    resolve_quota_memberships(resolved, competition_mapping)
+    for key in ('competitionIds', 'competitionMemberships', 'quotaDisciplines', 'topLevelDisciplines'):
+        person[key] = resolved[key]
+    person['athleteTopLevelDisciplines'] = sorted({athlete_top_level_discipline(group)
+        for group in person['quotaDisciplines']} - {None}) if normalize_string(person.get('function')) == 'athlete' else []
+    return person
 
 
 def wsc_membership_errors(people, event_id=None):
@@ -269,24 +305,42 @@ def wsc_membership_errors(people, event_id=None):
         source = [code for code in person.get(
             'affirmativeWscColumns', person.get('competitionImportCodes', []))
             if str(code).upper().startswith('WSC_')]
-        if not source:
+        saved_ids = {str(value) for value in person.get('savedCompetitionIdsEvidence', [])}
+        missing_ids = saved_ids - {str(value) for value in person.get('competitionIds', [])}
+        if not source and not missing_ids:
             continue
+        extracted = list(person.get('competitionImportCodes') or [])
+        memberships = person.get('competitionMemberships') or []
+        failures = [{'competitionId': value, 'reason': 'SAVED_COMPETITION_UNRESOLVED'}
+                    for value in sorted(missing_ids)]
+        for code in source:
+            matches = [item for item in memberships if item.get('importCode') == code]
+            reason = ('IMPORT_CODE_LOST' if code not in extracted else
+                      'COMPETITION_UNRESOLVED' if len(matches) != 1 else
+                      'EVENT_GROUP_MISSING' if not normalize_whitespace(matches[0].get('quotaDiscipline')) else
+                      'EVENT_GROUP_UNRESOLVED' if matches[0].get('quotaDiscipline') not in person.get('quotaDisciplines', []) else
+                      'COMPETITION_ID_MISSING' if event_id is not None and (
+                          matches[0].get('competitionId') is None or
+                          str(matches[0]['competitionId']) not in {str(value) for value in person.get('competitionIds', [])}) else None)
+            if reason:
+                failures.append({'importCode': code, 'reason': reason})
         diagnostics.append({
             'personKey': person.get('matchKey'),
             'personName': ' '.join(filter(None, [person.get('lastname'), person.get('firstname')])),
             'row': person.get('sourceRowNumber'),
             'affirmativeSourceWscColumns': list(source),
-            'extractedImportCodes': list(source),
+            'extractedImportCodes': extracted,
             'resolvedCompetitionIds': list(person.get('competitionIds', [])),
             'resolvedEventGroups': list(person.get('quotaDisciplines', [])),
             'mappedMembershipCount': len(person.get('competitionMemberships', [])),
             'selectedEventId': event_id,
+            'unresolvedMemberships': failures,
         })
     errors = [
         {'code': 'ENTRY_WSC_MEMBERSHIP_UNRESOLVED', 'message': WSC_MEMBERSHIP_ERROR_MESSAGE,
          'details': detail}
         for detail in diagnostics
-        if not detail['mappedMembershipCount'] or not detail['resolvedEventGroups']
+        if detail['unresolvedMemberships']
     ]
     if diagnostics and (not any(d['mappedMembershipCount'] for d in diagnostics)
                         or not any(d['resolvedEventGroups'] for d in diagnostics)):
@@ -387,7 +441,7 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             'affirmativeWscColumns': [column for column in competition_columns if parse_boolean(row.get(column))],
             'competitionImportCodes': [
                 column for column in competition_columns
-                if column in competition_mapping and parse_boolean(row.get(column))
+                if parse_boolean(row.get(column))
             ],
             'forGender': normalize_whitespace(row.get('For_gender')) or None,
             'gender': normalize_whitespace(row.get('Gender')) or None,
@@ -428,7 +482,7 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
         person['existingAthleteId'] = existing.id if existing else None
         person['operation'] = 'update' if existing else 'create'
         person['matchKey'] = unique_key
-        resolve_quota_memberships(person, competition_mapping)
+        resolve_current_quota_memberships(person, competition_mapping)
         if not person['quotaDisciplines']:
             warnings.append({'code': 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED',
                 'message': 'Keine exakte Competition-Membership für die Quotenprüfung vorhanden',
@@ -500,18 +554,13 @@ def parse_room_list(df, imported_people):
         room_type = _coalesce_room_type(row)
         shared_with_raw_name = normalize_whitespace(row.get('Shared with Name'))
         shared_with_nation_code = normalize_whitespace(row.get('Shared with Nationcode')).upper() or nation_code
-        partner_lastname, partner_firstname = _split_partner_name(shared_with_raw_name)
         person2 = None
         if shared_with_raw_name:
-            person2 = indexed_people['by_name'].get(build_name_key(partner_lastname, partner_firstname, shared_with_nation_code))
-            if not person2 and shared_with_nation_code != nation_code:
-                person2 = indexed_people['by_name'].get(build_name_key(partner_lastname, partner_firstname, nation_code))
-            if not person2:
-                person2 = indexed_people['by_name_no_nation'].get(build_name_key(partner_lastname, partner_firstname, ''))
+            person2 = _match_room_partner(shared_with_raw_name, shared_with_nation_code, imported_people)
             if not person2:
                 warnings.append({
                     'code': 'ROOM_PARTNER_NOT_FOUND',
-                    'message': f'New room partner detected in room row {row_number}',
+                    'message': f'Room partner could not be uniquely resolved in room row {row_number}',
                     'details': {'row': row_number, 'sharedWithName': shared_with_raw_name, 'sharedWithNationcode': shared_with_nation_code},
                 })
 
@@ -590,6 +639,83 @@ def parse_room_list(df, imported_people):
         'warnings': warnings,
         'dayColumns': [item['date'].isoformat() for item in day_columns],
     }
+
+
+def quota_context_competition_evidence(people, context):
+    """Freeze exact person/Competition membership evidence for a reviewed context."""
+    evidence = set()
+    for person in people:
+        if context not in quota_keys(person, people):
+            continue
+        for membership in person.get('competitionMemberships', []):
+            if membership.get('quotaDiscipline') == context[1] and membership.get('competitionId') is not None:
+                evidence.add((person_identity(person), normalize_string(person.get('function')),
+                              str(membership['competitionId']), membership.get('importCode')))
+    return [{'personKey': key, 'function': role, 'competitionId': competition_id, 'importCode': code}
+            for key, role, competition_id, code in sorted(evidence, key=lambda item: tuple(str(v) for v in item))]
+
+
+def quota_requirement_errors(preview, approvals, *, require_approved=True):
+    """Reconcile current violations with immutable, exactly scoped decision evidence.
+
+    During sequential decision processing, matching pending review tasks count
+    as coverage. Release and confirmation require completed applicable decisions.
+    """
+    approvals = list(approvals)
+    people = preview.get('people', [])
+    roster = None
+    errors = []
+    for requirement in preview.get('warnings', []):
+        kind = requirement.get('code')
+        if kind not in {'QUOTA_OFFICIALS_EXCEEDED', 'QUOTA_SINGLE_ROOMS_EXCEEDED'}:
+            continue
+        details = requirement.get('details') or {}
+        needed = details.get('openExcessCount', details.get('excessCount', 0))
+        if kind == 'QUOTA_SINGLE_ROOMS_EXCEEDED' and needed <= 0:
+            continue
+        context = (details.get('nationCode'), details.get('discipline'), normalize_gender(details.get('gender')))
+        covered = False
+        covered_people = set()
+        for approval in sorted(approvals, key=lambda item: item.decision != 'APPROVED'):
+            if require_approved and approval.decision != 'APPROVED':
+                continue
+            reviewed = json.loads(approval.quota_details_json or '{}')
+            if approval.nation != context[0] or (reviewed.get('nationCode'), reviewed.get('discipline'),
+                    normalize_gender(reviewed.get('gender'))) != context:
+                continue
+            if kind == 'QUOTA_OFFICIALS_EXCEEDED':
+                current_evidence = details.get('competitionEvidence') or []
+                covered = bool(current_evidence and reviewed.get('competitionEvidence') == current_evidence
+                    and str(reviewed.get('eventId')) == str(preview.get('eventId'))
+                    and reviewed.get('officialQuota') == details.get('officialQuota')
+                    and isinstance(reviewed.get('importedOfficials'), int)
+                    and reviewed['importedOfficials'] >= details.get('importedOfficials', 0))
+            else:
+                if roster is None:
+                    roster = [preview_approval_person(person) for person in people]
+                preserved_people = {str(person['personKey']) for person in details.get('preservedApprovedPeople', [])}
+                candidates = {str(candidate['personKey']) for candidate in details.get('singleRoomCandidates', [])} - preserved_people
+                if approval.decision == 'APPROVED':
+                    selected = {str(key) for key in json.loads(approval.approved_person_keys_json or '[]')}
+                    eligible = {str(person.get('matchKey')) for person, current in zip(people, roster)
+                        if str(person.get('matchKey')) in candidates & selected
+                        and context in applicable_approval_groups(approval, current, person.get('matchKey'), roster)}
+                    covered_people.update(eligible)
+                    covered = len(covered_people) >= needed
+                else:
+                    eligible = {str(person.get('matchKey')) for person, current in zip(people, roster)
+                        if str(person.get('matchKey')) in candidates
+                        and context in historical_approval_groups(reviewed, current, person.get('matchKey'), roster)}
+                    remaining = max(0, needed - len(covered_people))
+                    covered = len(eligible - covered_people) >= remaining and reviewed.get('excessCount', 0) >= remaining
+            if covered:
+                break
+        if not covered:
+            errors.append({'code': 'QUOTA_REQUIREMENT_UNREVIEWED',
+                'message': 'Aktuelle Quotenverletzung benötigt eine anwendbare Entscheidung mit exakter Competition-Evidence.',
+                'details': {'nationCode': context[0], 'discipline': context[1], 'gender': context[2],
+                            'requirementType': kind, 'eventId': preview.get('eventId')}})
+    return errors
 
 
 def build_quota_warnings(people, rooms, quota_checks=None):
@@ -701,6 +827,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
                     'athletesEntered': athletes_entered,
                     'officialQuota': official_quota,
                     'importedOfficials': imported_officials,
+                    'competitionEvidence': quota_context_competition_evidence(roster, (nation_code, discipline, gender)),
                     'existingAssignedOfficials': next((r['assignedOfficials'] for r in projected_rows if (r['nationCode'], r['discipline'], r['gender']) == (nation_code, discipline, gender)), 0),
                     'violationSources': sorted(row['sources']),
                 },
@@ -1406,6 +1533,9 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
     apply_single_room_quota_exemptions(people_result['people'])
     quota_checks = []
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'], quota_checks)
+    for warning in quota_warnings:
+        if warning.get('code') == 'QUOTA_OFFICIALS_EXCEEDED':
+            warning['details']['eventId'] = event.id if event else None
     preserved = preserved_single_room_approvals(people_result['people'], room_result['rooms'])
     apply_preserved_single_room_approvals(quota_warnings, preserved)
     apply_single_room_entitlement_preview(
@@ -1414,7 +1544,9 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         people_result['people'], room_result['rooms'], quota_warnings
     )
 
-    blocking_errors = people_result['errors'] + room_result['errors'] + quota_gender_errors(people_result['people'])
+    blocking_errors = (people_result['errors'] + room_result['errors']
+        + quota_gender_errors(people_result['people'])
+        + single_room_context_errors(people_result['people'], room_result['rooms']))
     unknown = next((issue for issue in blocking_errors
                     if issue.get('code') == 'ENTRY_UNKNOWN_COMPETITION_COLUMNS'), None)
     if event is not None and unknown:
@@ -1466,8 +1598,8 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
             'rooms': {
                 'total': len(room_result['rooms']),
                 'wouldReplaceFisRooms': FisRoomAssignment.query.count(),
-                'singles': sum(1 for room in room_result['rooms'] if not room.get('person2Key')),
-                'shared': sum(1 for room in room_result['rooms'] if room.get('person2Key')),
+                'singles': sum(normalize_string(room.get('roomType')) == 'single' for room in room_result['rooms']),
+                'shared': sum(normalize_string(room.get('roomType')) == 'double shared' for room in room_result['rooms']),
             },
             'validation': {
                 'errorCount': len(blocking_errors),
@@ -1483,6 +1615,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         'errors': blocking_errors,
         'warnings': preview['warnings'],
         'athleteQuotaChecks': preview['athleteQuotaChecks'],
+        'quotaChecks': preview['quotaChecks'],
         'singleRoomQuotaExemptOverrides': preview['singleRoomQuotaExemptOverrides'],
         'dispositionAnalysis': disposition_analysis,
     }
@@ -1491,7 +1624,18 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
 def resolve_saved_quota_memberships(person, event_mapping=None):
     """Prefer exact saved IDs for eventless previews; never infer from labels."""
     if event_mapping is not None:
-        return resolve_quota_memberships(person, event_mapping)
+        if 'savedCompetitionIdsEvidence' in person or (not person.get('competitionImportCodes') and 'affirmativeWscColumns' not in person):
+            if 'savedCompetitionIdsEvidence' not in person:
+                ids = {str(value) for value in person.get('competitionIds', [])}
+                ids.update(str(item['competitionId']) for item in person.get('competitionMemberships', [])
+                           if item.get('competitionId') is not None)
+                person['savedCompetitionIdsEvidence'] = sorted(ids)
+            ids = set(person['savedCompetitionIdsEvidence'])
+            # Legacy previews can be read through exact IDs within the active
+            # event mapping. No label or source-column inference is permitted.
+            person['competitionImportCodes'] = [code for code, item in event_mapping.items()
+                if str(item.id) in ids]
+        return resolve_current_quota_memberships(person, event_mapping)
     ids = person.get('competitionIds') or [c.get('competitionId')
         for c in person.get('competitionMemberships', []) if c.get('competitionId') is not None]
     if ids:
@@ -1505,11 +1649,14 @@ def resolve_saved_quota_memberships(person, event_mapping=None):
                 for c in sorted(rows, key=lambda row: row.id)]
             person['quotaDisciplines'] = quota_disciplines(rows)
             person['topLevelDisciplines'] = list(person['quotaDisciplines'])
+            person['athleteTopLevelDisciplines'] = sorted({athlete_top_level_discipline(group)
+                for group in person['quotaDisciplines']} - {None}) if normalize_string(person.get('function')) == 'athlete' else []
             return person
     person['competitionIds'] = []
     person['competitionMemberships'] = []
     person['quotaDisciplines'] = []
     person['topLevelDisciplines'] = []
+    person['athleteTopLevelDisciplines'] = []
     return person
 
 
@@ -1524,15 +1671,25 @@ def recalculate_fis_import_preview(preview):
     JSON-compatible preview persisted on an ImportSessionVersion.
     """
     people, rooms = preview.get('people', []), preview.get('rooms', [])
+    missing_evidence = []
+    if any(str(column).upper().startswith('WSC_') for column in preview.get('entriesColumns', [])):
+        missing_evidence = [{'code': 'ENTRY_WSC_SOURCE_EVIDENCE_MISSING',
+            'message': 'Gespeicherte WSC-Quellzuordnungen fehlen; Meldelisten erneut prüfen.',
+            'details': {'personKey': person.get('matchKey')}} for person in people
+            if 'affirmativeWscColumns' not in person and not person.get('competitionImportCodes')
+            and not person.get('competitionIds') and not person.get('competitionMemberships')]
     mapping = None
     if preview.get('eventId') is not None:
-        _, mapping = revalidate_confirmation_event(preview.get('eventId'), people)
+        _, mapping = revalidate_confirmation_event(preview.get('eventId'), people, validate_codes=False)
     for person in people:
         resolve_saved_quota_memberships(person, mapping)
     apply_single_room_quota_exemptions(
         people, preview.get('singleRoomQuotaExemptOverrides', {}))
     quota_checks = []
     quota_warnings = build_quota_warnings(people, rooms, quota_checks)
+    for warning in quota_warnings:
+        if warning.get('code') == 'QUOTA_OFFICIALS_EXCEEDED':
+            warning['details']['eventId'] = preview.get('eventId')
     preserved = preserved_single_room_approvals(people, rooms)
     apply_preserved_single_room_approvals(quota_warnings, preserved)
     apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved)
@@ -1542,8 +1699,9 @@ def recalculate_fis_import_preview(preview):
     preview['quotaChecks'] = quota_checks
     preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people)
     preview['errors'] = ([e for e in preview.get('errors', [])
-        if not e.get('code', '').startswith(('ENTRY_QUOTA_GENDER_', 'ENTRY_WSC_MEMBERSHIP'))]
-        + quota_gender_errors(people) + wsc_membership_errors(people, preview.get('eventId')))
+        if not e.get('code', '').startswith(('ENTRY_QUOTA_GENDER_', 'ENTRY_WSC_MEMBERSHIP', 'ENTRY_WSC_SOURCE_', 'ENTRY_SINGLE_ROOM_CONTEXT_'))]
+        + quota_gender_errors(people) + wsc_membership_errors(people, preview.get('eventId'))
+        + missing_evidence + single_room_context_errors(people, rooms))
     membership_warnings = [
         {'code': 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED',
          'message': 'Keine exakte Competition-Membership für die Quotenprüfung vorhanden',
@@ -1555,6 +1713,11 @@ def recalculate_fis_import_preview(preview):
     preview['dispositionAnalysis'] = build_disposition_analysis(people, rooms, quota_warnings)
     preview['dispositionAnalysis']['changes'] = build_import_changes(
         preview['dispositionAnalysis'], people, rooms, preview.get('errors', []))
+    preview['isValid'] = not preview['errors']
+    if 'summary' in preview:
+        preview['summary']['validation'] = {'errorCount': len(preview['errors']), 'warningCount': len(preview['warnings'])}
+        preview['summary']['rooms']['singles'] = sum(normalize_string(room.get('roomType')) == 'single' for room in rooms)
+        preview['summary']['rooms']['shared'] = sum(normalize_string(room.get('roomType')) == 'double shared' for room in rooms)
     return preview
 
 
@@ -1710,6 +1873,15 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None)
 
     recalculate_fis_import_preview(preview)
     validate_fis_import_token(preview_token)
+    version = ImportSessionVersion.query.join(ImportSession,
+        ImportSession.current_version_id == ImportSessionVersion.id).filter(
+            ImportSessionVersion.preview_token == preview_token).first()
+    if version:
+        requirements = quota_requirement_errors(preview, version.session.current_approvals)
+        if requirements:
+            raise ImportValidationError('QUOTA_REQUIREMENTS_UNREVIEWED',
+                'Aktuelle Quotenverletzungen sind nicht durch anwendbare Entscheidungen abgedeckt.',
+                details={'requirements': requirements})
 
     persisted_people = {}
     created = 0
