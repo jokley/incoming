@@ -2023,8 +2023,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             competitions_by_import_code[code]
             for code in person.get('competitionImportCodes', [])
         ]
-        # This field remains readable for old clients, but is not authoritative.
-        athlete.discipline = ' • '.join(c.name for c in athlete.competitions) or athlete.discipline
+        # _apply_person_record retains the source's legacy discipline label.
+        # Exact memberships live only in AthleteCompetition, never in this label.
         room = room_by_person.get(person.get('matchKey'))
         requests_single = bool((room and normalize_string(room.get('roomType')) == 'single')
             or person.get('singleRoomAllocation') is not None)

@@ -23,6 +23,7 @@ import type { OfficialQuotaUsage } from './fisRules';
 import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
 import { finishAssignmentRequest, isMeasuredAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
 import { downloadResponse } from './download';
+import { requireSuccessfulApiResponse, requireImportConfirmation } from './importConfirmation';
 
 import {
   mockRoomTypes as initialRoomTypes,
@@ -119,10 +120,7 @@ class ApiService {
       if (response.status === 403) {
         throw new Error('FORBIDDEN');
       }
-      if (typeof body === 'object' && body && 'message' in body) {
-        throw body;
-      }
-      throw new Error(`API Error: ${response.statusText}`);
+      requireSuccessfulApiResponse(response, body);
     }
 
     if (response.status === 204) {
@@ -902,7 +900,7 @@ class ApiService {
     });
   }
   async approveImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST' }); }
-  async importSession(id: string): Promise<FisImportConfirmResult> { return this.request(`/import/sessions/${id}/import`, { method: 'POST' }); }
+  async importSession(id: string): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST' })); }
   async cancelImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST' }); }
   async addImportSessionNote(id: string, description: string, waitingForNation = false): Promise<ImportSession> { return this.request(`/import/sessions/${id}/history`, { method: 'POST', body: JSON.stringify({ description, waitingForNation }) }); }
 

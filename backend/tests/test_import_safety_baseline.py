@@ -95,6 +95,58 @@ class ImportSafetyBaselineTest(unittest.TestCase):
         db.session.commit()
         return booking
 
+    def test_long_competition_memberships_keep_legacy_source_label_and_one_person(self):
+        from competitions import COMPETITIONS
+        with app.app_context():
+            event = self.event()
+            codes = ['WSC_PSL_W_6178', 'WSC_PSL_M_6177', 'WSC_PRT_A_6180',
+                     'WSC_PGS_W_6172', 'WSC_PGS_M_6170']
+            for definition in COMPETITIONS:
+                if definition.import_code in codes:
+                    competition = Competition(**definition._asdict())
+                    db.session.add(EventCompetition(event=event, competition=competition,
+                        import_code=definition.import_code, fis_codex=definition.code, official_name=definition.name))
+            db.session.commit()
+            names = [Competition.query.filter_by(import_code=code).one().name for code in codes]
+            self.assertGreater(len(' • '.join(names)), 100)
+            person = self.person('MULTI', discipline='Snowboard', codes=codes)
+            self.preview('multi-long', event, [person], [self.single('MULTI')])
+            session = ImportSession(nation='AUT', status='APPROVED', approved_at=datetime.utcnow())
+            db.session.add(session); db.session.flush()
+            version = ImportSessionVersion(session_id=session.id, version=1,
+                preview_token='multi-long', preview_json=json.dumps(PREVIEW_STORE['multi-long'], default=str), uploaded_by='fixture')
+            db.session.add(version); db.session.flush()
+            session.current_version = version
+            db.session.commit()
+            response = self.client.post(f'/api/import/sessions/{session.id}/import', headers=self.editor)
+            self.assertEqual(response.status_code, 200, response.get_json())
+            result = response.get_json()
+            athlete = Athlete.query.one()
+            self.assertEqual(athlete.discipline, 'Snowboard')
+            self.assertEqual({c.import_code for c in athlete.competitions}, set(codes))
+            self.assertEqual(len(athlete.to_dict()['competitions']), 5)
+            self.assertEqual(result['summary']['peopleCreated'], 1)
+            self.assertEqual(result['summary']['fisRoomsImported'], 0)
+            # Membership count must not multiply the accommodation person.
+            from app import _build_room_booking_units
+            units, _ = _build_room_booking_units()
+            self.assertEqual(sum(unit['occupantCount'] for unit in units), 1)
+            # Re-import with no source label preserves the existing legacy value.
+            person['industryName'] = None
+            self.preview('multi-again', event, [person], [self.single('MULTI')])
+            self.assertEqual(confirm_fis_import('multi-again')['summary']['peopleUpdated'], 1)
+            self.assertEqual(Athlete.query.one().discipline, 'Snowboard')
+            self.assertEqual(len(Athlete.query.one().competitions), 5)
+
+    def test_single_competition_retains_source_legacy_label(self):
+        with app.app_context():
+            event = self.event()
+            self.preview('single-legacy', event, [self.person('SINGLE', codes=['DM'])])
+            confirm_fis_import('single-legacy')
+            athlete = Athlete.query.one()
+            self.assertEqual(athlete.discipline, 'Moguls')
+            self.assertEqual([c.import_code for c in athlete.competitions], ['DM'])
+
     def test_nation_snapshot_replaces_memberships_and_removes_absent_people_across_disciplines(self):
         with app.app_context():
             event = self.event()
