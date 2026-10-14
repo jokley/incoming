@@ -138,7 +138,9 @@ class ImportSession(db.Model):
             if event.event_type == 'QUOTA_DECISION_REVISED_FROM' and event.approval_id
         }
         return [item for item in self.approvals
-                if item.version_id == self.current_version_id and item.id not in superseded_ids]
+                if item.version_id == self.current_version_id and item.id not in superseded_ids
+                and item.approval_type != 'QUOTA_OFFICIALS_EXCEEDED'
+                and not item.description.startswith('Officials überschritten')]
 
     def to_dict(self, include_preview=False):
         current = self.current_version
@@ -236,6 +238,13 @@ class ImportApproval(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
+        # API-only aliases preserve the frozen decision JSON.
+        details = json.loads(self.quota_details_json or '{}')
+        if 'singleRoomCandidates' in details or 'singleRoomsAllowed' in details:
+            details.update(decisionKind='SINGLE_ROOM',
+                ezRequested=details.get('singleRoomsRequested', details.get('importedSingleRooms')),
+                ezEntitlement=details.get('singleRoomsAllowed'), ezExcess=details.get('excessCount'),
+                officialsBasis=details.get('officialQuota'), officialsReported=details.get('importedOfficials'))
         return {'id': str(self.id), 'sessionId': str(self.session_id), 'nation': self.nation,
                 'type': self.approval_type, 'description': self.description,
                 'decision': self.decision, 'comment': self.comment, 'user': self.username,
@@ -246,7 +255,7 @@ class ImportApproval(db.Model):
                 'costCoverage': self.cost_coverage,
                 'deadlineAt': self.deadline_at.isoformat() + 'Z' if self.deadline_at else None,
                 'approvedPersonKeys': json.loads(self.approved_person_keys_json or '[]'),
-                'quotaDetails': json.loads(self.quota_details_json or '{}'),
+                'quotaDetails': details,
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
 class RoomType(db.Model):
@@ -439,6 +448,43 @@ class Event(db.Model):
         return result
 
 
+class WorldChampion(db.Model):
+    """A title reference explicitly applicable to one target championship."""
+    __tablename__ = 'world_champion'
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id'), nullable=False, index=True)
+    fis_code = db.Column(db.String(50), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    nation = db.Column(db.String(10), nullable=False)
+    gender = db.Column(db.String(10), nullable=False)
+    discipline = db.Column(db.String(100), nullable=False)
+    event_group = db.Column(db.String(100), nullable=False)
+    championship = db.Column(db.String(160), nullable=False)
+    championship_year = db.Column(db.Integer, nullable=False)
+    title_type = db.Column(db.String(20), nullable=False)
+    entitlement_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    source = db.Column(db.Text, nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (
+        db.CheckConstraint("title_type IN ('INDIVIDUAL', 'TEAM')", name='world_champion_title_type'),
+        db.CheckConstraint("title_type != 'TEAM' OR entitlement_enabled = false", name='world_champion_team_disabled'),
+        db.UniqueConstraint('event_id', 'fis_code', 'championship', 'championship_year', 'discipline', 'title_type', name='uq_world_champion_title'),
+    )
+
+    def to_dict(self):
+        fields = {'eventId': 'event_id', 'fisCode': 'fis_code', 'name': 'name', 'nation': 'nation',
+                  'gender': 'gender', 'discipline': 'discipline', 'eventGroup': 'event_group',
+                  'championship': 'championship', 'championshipYear': 'championship_year',
+                  'titleType': 'title_type', 'entitlementEnabled': 'entitlement_enabled',
+                  'source': 'source', 'active': 'active'}
+        result = {key: getattr(self, value) for key, value in fields.items()}
+        result.update(id=str(self.id), eventId=str(self.event_id),
+                      createdAt=self.created_at.isoformat() + 'Z', updatedAt=self.updated_at.isoformat() + 'Z')
+        return result
+
+
 class EventCompetition(db.Model):
     """Event-dependent external FIS identity of a stable Competition."""
     __tablename__ = 'event_competition'
@@ -530,6 +576,7 @@ class Athlete(db.Model):
     single_room_status = db.Column(db.String(30), nullable=False, default='NONE')
     # Administrative, person-level exemption from normal single-room quota.
     single_room_quota_exempt_reason = db.Column(db.String(30), nullable=True)
+    single_room_exemption_source = db.Column(db.String(30), nullable=True)
     single_room_decision_id = db.Column(db.Integer, db.ForeignKey('import_approval.id'), nullable=True)
     single_room_decision = db.relationship('ImportApproval', foreign_keys=[single_room_decision_id])
     shared_with_name = db.Column(db.String(200))
@@ -596,6 +643,7 @@ class Athlete(db.Model):
             'singleRoomEntitlement': self.single_room_entitlement,
             'single_room_status': self.single_room_status or 'NONE',
             'singleRoomQuotaExemptReason': self.single_room_quota_exempt_reason,
+            'singleRoomExemptionSource': self.single_room_exemption_source,
             'single_room_decision_id': self.single_room_decision_id,
             'arrivalDate': self.arrival_date.isoformat() if self.arrival_date else None,
             'arrivalTime': self.arrival_time,

@@ -446,6 +446,8 @@ export interface FisImportPreviewPerson {
 }
 
 export interface FisImportPreviewRoom {
+  person1Key?: string;
+  person2Key?: string | null;
   rowNumber: number;
   sourceRowKey: string;
   roomType: string;
@@ -501,7 +503,7 @@ export interface FisImportPreview {
     athleteQuotaStatus: 'EXCEEDED' | 'INCOMPLETE' | 'WITHIN_BASE_LIMITS';
     worldChampionExceptionSupported: false;
   }>;
-  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
+  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
     changes: ImportChange[];
@@ -557,4 +559,11 @@ export interface FisImportConfirmResult {
     startedAt: string | null;
     finishedAt: string | null;
   };
+}
+
+export interface WorldChampion {
+  id: string; eventId: string; fisCode: string; name: string; nation: string;
+  gender: string; discipline: string; eventGroup: string; championship: string;
+  championshipYear: number; titleType: 'INDIVIDUAL' | 'TEAM'; entitlementEnabled: boolean;
+  source: string; active: boolean; createdAt?: string; updatedAt?: string;
 }

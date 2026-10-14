@@ -2,9 +2,10 @@ import type { SingleRoomQuotaExemptReason } from '../types';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { Alert, Dialog, DialogContent, DialogTitle, MenuItem, Snackbar, TextField } from '@mui/material';
-import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
+import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
+import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
 import { competitionDisplayName, previewEventGroupLabel } from '../services/competitionPresentation';
 import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange, PreviewImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
@@ -55,8 +56,8 @@ export function DataImport() {
   const cancel = () => { setFiles([]); if (!selected) setPreview(null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
   const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id, eventId); if (result.alreadyImported) { setSuccess(result.message ?? 'Diese Meldeliste wurde bereits importiert.'); setDuplicateNotice(true); setFiles([]); return; } setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { await api.cancelImportSession(selected.id); setSelected(null); setPreview(null); setFiles([]); setSuccess('Importsession wurde abgebrochen und vollständig bereinigt.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
-  const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = await api.approveImportSession(selected.id); setSelected(updated); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); try { const result = await api.importSession(selected.id); setSuccess(`Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`); setSelected(await api.getImportSession(selected.id)); await refreshSessions(); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+  const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id)); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); try { const result = await api.importSession(selected.id); setSuccess(`Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`); const updated = await api.getImportSession(selected.id); setSelected(updated); setPreview(updated.preview ?? null); await refreshSessions(); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => {
     if (!selected || !activeTask) return;
     setSavingTask(true); setError(null);
@@ -72,14 +73,13 @@ export function DataImport() {
     finally { setSavingTask(false); }
   };
 
-  const approvedPersonKeys = new Set(selected?.approvals.flatMap(approval => approval.approvedPersonKeys ?? []) ?? []);
   const setPreviewExemption = async (personKey: string, reason: string, refreshDialog = false) => {
     if (!selected) return;
     setSavingTask(true); setError(null);
     try {
       const updated = await api.stageSingleRoomQuotaExemption(selected.id, personKey, (reason || null) as SingleRoomQuotaExemptReason);
       setSelected(updated); setPreview(updated.preview ?? null);
-      if (refreshDialog) {
+      if (refreshDialog && activeTask) {
         const pending = updated.approvals.find(approval => approval.decision === 'PENDING'
           && approval.quotaDetails?.singleRoomCandidates
           && approval.quotaDetails?.discipline === activeTask?.approval.quotaDetails?.discipline
@@ -108,14 +108,15 @@ export function DataImport() {
     return statuses;
   };
   const peopleRows = preview?.people.map(p => {
-    const status: SingleRoomStatus = approvedPersonKeys.has((p as FisImportPreviewPersonWithKey).matchKey)
+    const status: SingleRoomStatus = p.singleRoomEntitlement === 'APPROVED_EXTRA'
       ? 'APPROVED_EXTRA'
       : p.singleRoomEntitlement === 'IN_QUOTA' ? 'IN_QUOTA'
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
-    const entitlement = status === 'NONE' ? '—' : <SingleRoomStatusBadge status={status}/>;
+    const single = preview.rooms.some(room => [room.person1Key,room.person2Key].includes(p.matchKey) && room.roomType.toLowerCase() === 'single');
+    const entitlement = <span className="inline-flex flex-wrap gap-1">{single && status !== 'IN_QUOTA' && <StatusChip tone="info">Einzelzimmer</StatusChip>}{status !== 'NONE' && <SingleRoomStatusBadge status={status}/>}</span>;
     const name=`${p.firstname} ${p.lastname}`;
     const personKey=String((p as FisImportPreviewPersonWithKey).matchKey??'');
-    const exemption=<select aria-label={`EZ-Sonderstatus ${name}`} value={p.singleRoomQuotaExemptReason??''} disabled={!selected||savingTask} onChange={event=>void setPreviewExemption(personKey,event.target.value)} className="rounded-md border border-[var(--ops-border)] bg-[var(--ops-surface)] px-2 py-1 text-xs"><option value="">Keiner</option><option value="WORLD_CHAMPION">👑 Weltmeister</option><option value="OTHER">Allgemeine EZ-Ausnahme</option></select>;
+    const exemption=p.function?.toLowerCase() === 'athlete' ? <button type="button" aria-label={`Weltmeisterstatus ${name}`} aria-pressed={p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!selected || savingTask || p.singleRoomQuotaExemptReason === 'OTHER' || ['APPROVED','IMPORTED'].includes(selected.status)} onClick={() => void setPreviewExemption(personKey,p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '' : 'WORLD_CHAMPION',true)} className="inline-flex items-center gap-1 rounded-md border px-2 py-1"><Crown className={`h-4 w-4 ${p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : '—'}</button> : p.singleRoomQuotaExemptReason === 'OTHER' ? 'Historische EZ-Ausnahme' : '—';
     return [name, p.nationCode, previewEventGroupLabel(p.quotaDisciplines), p.function || '—', exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
@@ -123,7 +124,8 @@ export function DataImport() {
   });
   const roomRows = preview?.rooms.map(r => {
     const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
-    return [r.person1Name, r.person2Name || '—', r.roomType, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—', importStatuses(statuses)];
+    const markers = [r.person1Key,r.person2Key].map(key => preview.people.find(p => (p as FisImportPreviewPersonWithKey).matchKey === key)).filter(Boolean).map(p => p?.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '👑 Weltmeister' : p?.singleRoomEntitlement === 'APPROVED_EXTRA' ? 'Mehrpreis genehmigt' : p?.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? '+EZ offen' : '').filter(Boolean);
+    return [r.person1Name, r.person2Name || '—', <span key="room-markers">{r.roomType}{markers.map((label,i) => <span key={i} className="ml-2 text-xs">{label}</span>)}</span>, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—', importStatuses(statuses)];
   }) ?? [];
   const removedAssignments=new Set<string>();
   preview?.dispositionAnalysis.categories.dispositionAffected.records.forEach(record => {
@@ -159,8 +161,8 @@ export function DataImport() {
         </ContentCard>
       </div>
     </SplitPageLayout>
-    <DetailDialog detail={detail} onClose={() => setDetail(null)} />
-    <OperationsDecisionDialog task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask} onSetExemption={(personKey,reason)=>void setPreviewExemption(personKey,reason??'',true)}/>
+    <DetailDialog detail={currentPreviewDetail(detail, {people:peopleRows, rooms:roomRows, quota:quotaRows(preview)})} onClose={() => setDetail(null)} />
+    <OperationsDecisionDialog task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />
     <Snackbar open={duplicateNotice} autoHideDuration={7000} onClose={()=>setDuplicateNotice(false)} anchorOrigin={{vertical:'top',horizontal:'center'}}><Alert severity="info" variant="filled" onClose={()=>setDuplicateNotice(false)}><strong>Diese Meldeliste wurde bereits importiert.</strong><br/>Es wurde keine neue Version erzeugt.</Alert></Snackbar>
   </div>;
@@ -290,7 +292,11 @@ function PreviewCard({preview,peopleRows,roomRows,onOpen}:{preview:FisImportPrev
   const changes=preview?.dispositionAnalysis.changes??[];
   const peopleHints=aggregateChanges(changes.filter(change=>change.preview==='persons'));
   const roomHints=aggregateChanges(changes.filter(change=>change.preview==='rooms'));
-  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-2"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','EZ-Sonderstatus','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/></div></ContentCard>;
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-3"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','EZ-Sonderstatus','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/><button type="button" onClick={() => onOpen({title:'Quota & EZ',rows:quotaRows(preview),headers:quotaHeaders})} className="flex min-h-40 flex-col rounded-xl border-2 border-[var(--ops-border)] bg-[var(--ops-surface)] p-4 text-left"><strong className="text-base">Quota & EZ</strong><span className="mt-2">{preview?.quotaChecks?.length ?? 0} Kontexte</span><span>{preview?.quotaChecks?.filter(q => q.singleRoomsPending > 0).length ?? 0} mit Handlungsbedarf</span><span>{preview?.quotaChecks?.reduce((sum,q) => sum + q.singleRoomsPending,0) ?? 0} zusätzliche EZ offen</span><span className="mt-auto pt-3 text-right text-xs font-bold text-[var(--ops-primary)]">Quota öffnen →</span></button></div></ContentCard>;
+}
+const quotaHeaders = ['Event Group','Gender','Athleten','Officials Basis','Officials gemeldet','EZ Anspruch','EZ angefordert','Handlungsbedarf'];
+function quotaRows(preview: FisImportPreview | null): ReactNode[][] {
+  return preview?.quotaChecks?.map(q => [q.discipline,q.gender,q.athletes,q.officialQuota,q.officials,q.singleRoomsAllowed,q.singleRoomsRequested,q.singleRoomsPending > 0 ? <StatusChip tone="warning">+{q.singleRoomsPending} EZ offen</StatusChip> : <StatusChip tone="success">✓</StatusChip>]) ?? [];
 }
 function PreviewWorkspaceCard({icon,label,count,unit,hints,onClick}:{icon:ReactNode;label:string;count:number;unit:string;hints:PreviewHint[];onClick:()=>void}) {
   const hasErrors=hints.some(hint=>hint.severity==='error'), hasChanges=hints.length>0;

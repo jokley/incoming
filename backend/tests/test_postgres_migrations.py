@@ -173,7 +173,7 @@ class PostgresMigrationTest(unittest.TestCase):
         before = snapshot()
         with engine.connect() as conn:
             competition_before = [dict(row._mapping) for row in conn.execute(text('SELECT * FROM competition ORDER BY id'))]
-        upgrade('head')
+        upgrade('20261012_01')
         self.assertEqual(snapshot(), before)
         expected_groups = {(c.import_code, c.code): c.quota_discipline for c in COMPETITIONS}
         with engine.connect() as conn:
@@ -182,7 +182,7 @@ class PostgresMigrationTest(unittest.TestCase):
             row['quota_discipline'] = expected_groups.get((row['import_code'], row['code']), row['quota_discipline'])
         self.assertEqual(competition_after, competition_before)
         # Re-running head cannot change even the data snapshot.
-        upgrade('head')
+        upgrade('20261012_01')
         self.assertEqual(snapshot(), before)
 
     def test_empty_database_reaches_head_twice(self):
@@ -214,6 +214,11 @@ class PostgresMigrationTest(unittest.TestCase):
                     self.assertEqual(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one(),
                                      scripts.get_current_head())
                     tables = inspect(conn).get_table_names()
+                    self.assertIn('world_champion', tables)
+                    self.assertIn('single_room_exemption_source', {c['name'] for c in inspect(conn).get_columns('athlete')})
+                    self.assertEqual(conn.execute(text('SELECT count(*) FROM world_champion')).scalar_one(), 35)
+                    self.assertEqual(conn.execute(text("SELECT count(*) FROM world_champion WHERE title_type = 'INDIVIDUAL' AND entitlement_enabled")).scalar_one(), 26)
+                    self.assertEqual(conn.execute(text("SELECT count(*) FROM world_champion WHERE title_type = 'TEAM' AND NOT entitlement_enabled")).scalar_one(), 9)
                     for table in ('athlete', 'room_booking', 'import_session', 'event_competition'):
                         self.assertIn(table, tables)
                     self.assertEqual(conn.execute(text('SELECT count(*) FROM competition WHERE active')).scalar_one(), 31)

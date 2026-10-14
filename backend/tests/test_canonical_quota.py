@@ -302,11 +302,15 @@ def test_live_unresolved_selection_cannot_borrow_another_roster_membership(datab
 def test_exemption_removal_without_membership_requires_review(database):
     from app import _update_athlete_operations
     athlete = Athlete(fis_code='A', firstname='A', lastname='Person', nation_code='AUT', gender='M',
-        single_room_quota_exempt_reason='OTHER', function='Athlete')
+        single_room_quota_exempt_reason='WORLD_CHAMPION', function='Athlete')
     hotel = Hotel(name='Hotel'); room = RoomType(name='Double', max_persons=2)
     booking = RoomBooking(hotel=hotel, room_type=room, counts_as_single=True)
     db.session.add(RoomBookingOccupant(room_booking=booking, athlete=athlete)); db.session.commit()
-    _update_athlete_operations(athlete, {'singleRoomQuotaExemptReason': None})
+    from flask import current_app
+    from unittest.mock import patch
+    from types import SimpleNamespace
+    with current_app.test_request_context(), patch('app.current_user', return_value=SimpleNamespace(username='reviewer')):
+        _update_athlete_operations(athlete, {'singleRoomQuotaExemptReason': None})
     assert athlete.single_room_status == 'PENDING_APPROVAL'
     assert athlete.single_room_entitlement is None
 

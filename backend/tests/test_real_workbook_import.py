@@ -56,7 +56,7 @@ def test_real_pairs_through_initial_and_saved_preview(database, monkeypatch, nat
     assert result['athleteQuotaChecks'][0]['athleteQuotaStatus'] == 'WITHIN_BASE_LIMITS'
     assert result['summary']['rooms']['total'] == rooms
     assert result['summary']['rooms']['singles'] == singles
-    assert len([w for w in result['warnings'] if w['code'] == 'QUOTA_OFFICIALS_EXCEEDED']) == decisions
+    assert len([w for w in result['warnings'] if w['code'] == 'INFO_OFFICIALS_OVER_BASIS']) == decisions
     assert result['quotaChecks']
     assert all(q['gender'] in {'M', 'W'} for q in result['quotaChecks'])
     assert not any(e['code'].startswith('ENTRY_WSC_MEMBERSHIP') for e in result['errors'])
@@ -103,10 +103,10 @@ def add_session(result, nation='USA'):
     version = ImportSessionVersion(session_id=session.id, version=1,
         preview_json=json.dumps(result), preview_token=result['previewToken'], uploaded_by='regression')
     db.session.add(version); db.session.flush(); session.current_version = version
-    issue = next((w for w in result['warnings'] if w['code'] == 'QUOTA_OFFICIALS_EXCEEDED'), None)
+    issue = next((w for w in result['warnings'] if w['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED'), None) or next((w for w in result['warnings'] if w['code'] == 'INFO_OFFICIALS_OVER_BASIS'), None)
     approval = ImportApproval(session_id=session.id, version_id=version.id, nation=nation,
-        approval_type='QUOTA_OFFICIALS_EXCEEDED',
-        description=issue['message'] if issue else 'Review', decision='PENDING', username='regression',
+        approval_type=issue['code'] if issue and issue['code']=='QUOTA_SINGLE_ROOMS_EXCEEDED' else 'REVIEW',
+        description=issue['message'] if issue and issue['code']=='QUOTA_SINGLE_ROOMS_EXCEEDED' else 'Review', decision='PENDING', username='regression',
         quota_details_json=json.dumps(issue['details'] if issue else {}))
     db.session.add(approval); db.session.commit()
     return session, version, approval

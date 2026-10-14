@@ -41,6 +41,8 @@ from routes.import_mock_files import import_mock_files
 from routes.booking_reads import booking_reads
 from routes.identity import identity
 from routes.audit_events import audit_events
+from routes.world_champions import world_champions
+from world_champions import audit_status, persisted_manual_revision
 
 settings = RuntimeSettings.from_environment()
 configure_logging(settings.log_level)
@@ -63,6 +65,7 @@ app.register_blueprint(import_mock_files)
 app.register_blueprint(booking_reads)
 app.register_blueprint(identity)
 app.register_blueprint(audit_events)
+app.register_blueprint(world_champions)
 
 
 @app.errorhandler(QuotaGenderValidationError)
@@ -563,6 +566,15 @@ def _business_activity(entity_type, entity_id, action, payload, response):
                 title = f"EZ-Sonderstatus geändert: {labels.get(old_reason, old_reason)} → {labels.get(new_reason, new_reason)}"
             else:
                 title = f"EZ-Sonderstatus gesetzt: {labels.get(new_reason, new_reason)}"
+
+    elif entity_type == 'admin' and '/world-champions' in request.path:
+        ref('worldChampionId', entity_id or response.get('id'))
+        ref('eventId', response.get('eventId'))
+        label = response.get('name') or 'World Champion'
+        category = 'Administration'
+        title = 'Weltmeisterreferenz angelegt' if action == 'create' else 'Weltmeisterreferenz geändert'
+        details.extend([str(response.get('fisCode') or ''), str(response.get('championship') or ''),
+                        str(response.get('championshipYear') or '')])
 
     elif entity_type == 'events':
         ref('eventId', entity_id or response.get('id'))
@@ -1575,6 +1587,8 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                 people_by_key.setdefault(str(identity), {})[athlete.id] = athlete
     for details_json, decision, session_nation, session_discipline, approval_id, selected_json, approval in approval_rows:
         details = json.loads(details_json or '{}')
+        if approval.approval_type == 'QUOTA_OFFICIALS_EXCEEDED' or approval.description.startswith('Officials überschritten'):
+            continue
         if nation_code and (details.get('nationCode') or session_nation) != nation_code:
             continue
         groups = set()
@@ -1611,10 +1625,10 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         row['implementedSingleRooms'] = len(implemented_by_key.get(key, set()))
         row['remainingSingleRooms'] = max(0, row['requiredSingleRooms'] - row['implementedSingleRooms'])
         decisions = approval_state.get(key, {'pending': set(), 'approved': set()})
-        row['openApprovals'] = len(decisions['pending'])
+        row['openApprovals'] = len(decisions['pending']) if row['singleRoomsPending'] > 0 else 0
         row['approvedExceptions'] = len(decisions['approved'])
         row['unresolvedHistoricalApprovalIds'] = sorted(set(unresolved_approvals))
-        row['quotaStatus'] = ('DECISION_REQUIRED' if decisions['pending'] else
+        row['quotaStatus'] = ('DECISION_REQUIRED' if row['singleRoomsPending'] > 0 else
             'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
     return [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
             and (not discipline or row['discipline'] == discipline)]
@@ -1738,9 +1752,32 @@ def preview_fis_import():
             if len(nations) != 1:
                 return jsonify({'error': 'Eine Import Session muss genau eine Nation enthalten.', 'nations': nations}), 400
             nation = nations[0]
+            user = current_user()
+            session = ImportSession.query.get(int(session_id)) if session_id else None
+            if session and session.nation != nation:
+                return jsonify({'error': 'Eine Version kann nur zur Session derselben Nation hinzugefügt werden.'}), 409
+            if not session:
+                # There is exactly one durable workflow per nation, including completed workflows.
+                session = ImportSession.query.filter_by(nation=nation).first()
+            if session and session.current_version:
+                previous_preview = json.loads(session.current_version.preview_json or '{}')
+                keys = {p.get('matchKey') for p in result['people']}
+                commands = {key: value for key, value in previous_preview.get('singleRoomQuotaExemptOverrides', {}).items()
+                            if key in keys and value in {None, 'WORLD_CHAMPION'}}
+                if commands:
+                    result['singleRoomQuotaExemptOverrides'] = commands
+                    result['carriedSingleRoomQuotaExemptKeys'] = list(commands)
+                    result['singleRoomQuotaExemptOverrideRevisions'] = {key: value for key, value in previous_preview.get('singleRoomQuotaExemptOverrideRevisions', {}).items() if key in commands}
+                    recalculate_fis_import_preview(result)
+                    raw = PREVIEW_STORE.get(result['previewToken'])
+                    if raw is not None:
+                        raw['singleRoomQuotaExemptOverrides'] = dict(commands)
+                        raw['carriedSingleRoomQuotaExemptKeys'] = list(commands)
+                        raw['singleRoomQuotaExemptOverrideRevisions'] = dict(result['singleRoomQuotaExemptOverrideRevisions'])
+                        recalculate_fis_import_preview(raw)
             quota_issues = [
                 issue for issue in result['warnings']
-                if issue.get('code', '').startswith('QUOTA_')
+                if issue.get('code') == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
                 and (issue.get('code') != 'QUOTA_SINGLE_ROOMS_EXCEEDED'
                      or (issue.get('details') or {}).get('openExcessCount',
                                                         (issue.get('details') or {}).get('excessCount', 0)) > 0)
@@ -1751,13 +1788,6 @@ def preview_fis_import():
                 and (issue.get('details') or {}).get('preservedApprovedPeople')
             ]
             status = 'DRAFT' if result['errors'] else ('WAITING_FOR_NATION' if quota_issues else 'PROFESSIONALLY_REVIEWED')
-            user = current_user()
-            session = ImportSession.query.get(int(session_id)) if session_id else None
-            if session and session.nation != nation:
-                return jsonify({'error': 'Eine Version kann nur zur Session derselben Nation hinzugefügt werden.'}), 409
-            if not session:
-                # There is exactly one durable workflow per nation, including completed workflows.
-                session = ImportSession.query.filter_by(nation=nation).first()
             if session and any(version.source_hash == source_hash for version in session.versions):
                 result.update({
                     'alreadyImported': True,
@@ -1788,6 +1818,14 @@ def preview_fis_import():
             db.session.add(version)
             db.session.flush()
             session.current_version = version
+            for person in result['people']:
+                if person.get('singleRoomExemptionSource') == 'AUTO_REFERENCE' and person.get('worldChampionReferences'):
+                    audit_status(person.get('matchKey'), 'AUTO_REFERENCE', 'WORLD_CHAMPION', user.username,
+                        person['worldChampionReferences'], result.get('eventId'), person.get('fisCode'),
+                        person.get('existingAthleteId'), session.id)
+                    db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id,
+                        event_type='WORLD_CHAMPION_AUTO_REFERENCE', title='Weltmeisterstatus automatisch angewendet',
+                        description=json.dumps({'fisCode': person.get('fisCode'), 'references': person['worldChampionReferences']}, ensure_ascii=False), username=user.username))
             for issue in preserved_issues:
                 details = issue.get('details') or {}
                 people = details.get('preservedApprovedPeople') or []
@@ -1896,6 +1934,9 @@ def _current_session_preview(session):
     """Transient current resolution; stored versions and approvals stay untouched."""
     preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
     if preview:
+        preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
+        if session.status == 'IMPORTED':
+            preview['carriedSingleRoomQuotaExemptKeys'] = list(preview.get('singleRoomQuotaExemptOverrides', {}))
         try:
             if preview.get('eventId') is None and (any(str(column).upper().startswith('WSC_')
                     for column in preview.get('entriesColumns', [])) or any(
@@ -1921,11 +1962,11 @@ def _current_session_preview(session):
 
 def _current_session_payload(session, include_preview=False):
     payload = session.to_dict(include_preview=include_preview)
-    if session.status not in {'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'}:
+    if session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
         preview = _current_session_preview(session)
         payload['errors'] = len(preview.get('errors', []))
         payload['warnings'] = len(preview.get('warnings', []))
-        if preview.get('errors'):
+        if preview.get('errors') and session.status != 'IMPORTED':
             payload['status'] = 'DRAFT'
         if include_preview:
             payload['preview'] = preview
@@ -1954,13 +1995,31 @@ def stage_single_room_quota_exemption(session_id, person_key):
         return jsonify({'error': 'Import session has no current version'}), 409
     data = request.get_json(silent=True) or {}
     reason = data.get('reason')
-    if reason not in {None, 'WORLD_CHAMPION', 'OTHER'}:
-        return jsonify({'error': 'reason must be WORLD_CHAMPION, OTHER, or null'}), 400
+    if reason not in {None, 'WORLD_CHAMPION'}:
+        return jsonify({'error': 'reason must be WORLD_CHAMPION or null'}), 400
     preview = json.loads(session.current_version.preview_json or '{}')
     if person_key not in {person.get('matchKey') for person in preview.get('people', [])}:
         return jsonify({'error': 'Person is not part of the current import version'}), 404
+    from excel_import import apply_single_room_quota_exemptions
+    apply_single_room_quota_exemptions(preview['people'], preview.get('singleRoomQuotaExemptOverrides'), preview.get('eventId'),
+        preview.get('carriedSingleRoomQuotaExemptKeys', []),
+        preview.get('singleRoomQuotaExemptOverrideRevisions', {}))
+    target = next(person for person in preview['people'] if person.get('matchKey') == person_key)
+    if target.get('singleRoomQuotaExemptReason') == 'OTHER':
+        return jsonify({'error': 'Historical OTHER requires documented workflow review'}), 409
+    if (target.get('function') or '').strip().lower() != 'athlete':
+        return jsonify({'error': 'World Champion status applies only to Athletes'}), 400
+    audit_status(person_key, 'MANUAL_SET' if reason else 'MANUAL_REMOVE', reason, current_user().username, event_id=preview.get('eventId'), fis_code=target.get('fisCode'), person_id=target.get('existingAthleteId'), session_id=session.id)
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id,
+        event_type='WORLD_CHAMPION_MANUAL', title='Weltmeisterstatus manuell geändert',
+        description=f'{person_key}: {reason or "MANUAL_REMOVE"}', username=current_user().username))
+    preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
     overrides = preview.setdefault('singleRoomQuotaExemptOverrides', {})
+    from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
+    existing = _find_existing_athlete(target, _build_existing_athlete_maps())
+    preview.setdefault('singleRoomQuotaExemptOverrideRevisions', {})[person_key] = persisted_manual_revision(existing)
     overrides[person_key] = reason
+    preview['carriedSingleRoomQuotaExemptKeys'] = [key for key in preview.get('carriedSingleRoomQuotaExemptKeys', []) if key != person_key]
     try:
         recalculate_fis_import_preview(preview)
     except ImportValidationError as exc:
@@ -1968,7 +2027,10 @@ def stage_single_room_quota_exemption(session_id, person_key):
     session.current_version.preview_json = json.dumps(preview, ensure_ascii=False)
     raw_preview = PREVIEW_STORE.get(session.current_version.preview_token)
     if raw_preview is not None:
+        raw_preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
         raw_preview.setdefault('singleRoomQuotaExemptOverrides', {})[person_key] = reason
+        raw_preview['carriedSingleRoomQuotaExemptKeys'] = list(preview['carriedSingleRoomQuotaExemptKeys'])
+        raw_preview['singleRoomQuotaExemptOverrideRevisions'] = dict(preview['singleRoomQuotaExemptOverrideRevisions'])
         recalculate_fis_import_preview(raw_preview)
 
     # Pending tasks are derived review state and may be rebuilt. Completed
@@ -2079,10 +2141,17 @@ def decide_import_approval(session_id, approval_id):
     details = json.loads(approval.quota_details_json or '{}')
     is_single_room_approval = bool(details.get('singleRoomCandidates')) or 'Single Rooms' in approval.description
     if is_single_room_approval and decision == 'APPROVED':
-        valid_keys = {person.get('personKey') for person in details.get('singleRoomCandidates', [])}
-        if len(set(approved_person_keys)) != details.get('excessCount') or not set(approved_person_keys) <= valid_keys:
-            return jsonify({'error': 'Exactly the affected extra single-room persons must be selected'}), 400
+        other_approved = {key for key, evidence in preview.get('preservedSingleRoomApprovals', {}).items()
+                          if evidence.get('decisionId') != approval.id}
+        valid_keys = {person.get('personKey') for person in details.get('singleRoomCandidates', [])} - other_approved
+        maximum = len(json.loads(approval.approved_person_keys_json or '[]')) if approval.decision == 'APPROVED' else details.get('excessCount', 0)
+        if (not isinstance(approved_person_keys, list) or not approved_person_keys
+                or len(set(approved_person_keys)) != len(approved_person_keys)
+                or len(approved_person_keys) > maximum
+                or not set(approved_person_keys) <= valid_keys):
+            return jsonify({'error': 'Select one or more unresolved extra single-room persons, up to the remaining excess'}), 400
     username = current_user().username
+    superseded_decision_id = approval.id
     was_completed = approval.decision == 'APPROVED'
     if was_completed and decision != 'APPROVED':
         return jsonify({'error': 'A completed approval can only revise its approved persons'}), 400
@@ -2116,7 +2185,7 @@ def decide_import_approval(session_id, approval_id):
             current_preview = json.loads(session.current_version.preview_json or '{}')
             try:
                 apply_active_single_room_decision(
-                    details, approved_person_keys, approval.id, current_preview.get('people', []))
+                    details, approved_person_keys, approval.id, current_preview.get('people', []), superseded_decision_id)
             except ImportValidationError as exc:
                 db.session.rollback()
                 return jsonify(exc.to_dict()), 400
@@ -2157,8 +2226,45 @@ def decide_import_approval(session_id, approval_id):
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='STATUS_CHANGED',
         title='Status', description='Warten auf Nation' if decision == 'NEW_LIST_ANNOUNCED' else 'Ausnahme genehmigt',
         username=username))
+    db.session.flush()
+    if is_single_room_approval and decision == 'APPROVED':
+        for key in approved_person_keys:
+            db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id,
+                approval_id=approval.id, event_type='SINGLE_ROOM_PERSON_APPROVED',
+                title='Zusätzliches Einzelzimmer genehmigt', description=str(key), username=username))
+        # A completed batch remains immutable; the remainder is a new task.
+        previous_status = session.status
+        reconcile_single_room_tasks(session)
+        if was_completed and not any(a.decision == 'PENDING' for a in session.current_approvals):
+            session.status = previous_status
     db.session.commit()
     return jsonify(_current_session_payload(session, include_preview=True))
+
+
+def reconcile_single_room_tasks(session):
+    preview = _current_session_preview(session)
+    for item in list(session.current_approvals):
+        details = json.loads(item.quota_details_json or '{}')
+        if item.decision == 'PENDING' and (details.get('singleRoomCandidates') or 'Single Rooms' in item.description):
+            db.session.delete(item)
+    db.session.flush()
+    for issue in preview.get('warnings', []):
+        if issue.get('code') != 'QUOTA_SINGLE_ROOMS_EXCEEDED':
+            continue
+        details = dict(issue['details'])
+        remaining = details.get('openExcessCount', details.get('excessCount', 0))
+        if not remaining:
+            continue
+        approved = {p['personKey'] for p in details.get('preservedApprovedPeople', [])}
+        details['singleRoomCandidates'] = [p for p in details['singleRoomCandidates'] if p['personKey'] not in approved]
+        details['excessCount'] = remaining
+        db.session.add(ImportApproval(session_id=session.id, version_id=session.current_version_id,
+            nation=session.nation, approval_type='QUOTA_SINGLE_ROOMS_EXCEEDED',
+            description=f"Zusätzliche EZ · {details['discipline']} · {details['gender']}",
+            quota_details_json=json.dumps(details, ensure_ascii=False), decision='PENDING', username=current_user().username))
+    db.session.flush()
+    db.session.expire(session, ['approvals'])
+    session.status = 'WAITING_FOR_NATION' if any(a.decision != 'APPROVED' for a in session.current_approvals) else 'EXCEPTION_APPROVED'
 
 
 @app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
@@ -2205,7 +2311,7 @@ def import_approved_session(session_id):
                 'NATION_APPROVED', 'ORGANIZER_APPROVED', 'PRESERVED_APPROVED_EXTRA'}
             for key in json.loads(approval.approved_person_keys_json or '[]')
         }
-        result = confirm_fis_import(session.current_version.preview_token, approved_extra_decisions)
+        result = confirm_fis_import(session.current_version.preview_token, approved_extra_decisions, confirmer=current_user().username)
         now = datetime.utcnow()
         session.status, session.imported_at = 'IMPORTED', now
         db.session.add(ImportSessionEvent(session_id=session.id, event_type='IMPORTED',
@@ -2561,9 +2667,15 @@ def _update_athlete_operations(athlete, data):
         athlete.internal_note = note.strip() or None if note is not None else None
     if 'singleRoomQuotaExemptReason' in data:
         reason = data['singleRoomQuotaExemptReason']
-        if reason not in {None, 'WORLD_CHAMPION', 'OTHER'}:
-            return jsonify({'error': 'singleRoomQuotaExemptReason must be WORLD_CHAMPION, OTHER, or null'}), 400
+        if reason not in {None, 'WORLD_CHAMPION'}:
+            return jsonify({'error': 'singleRoomQuotaExemptReason must be WORLD_CHAMPION or null'}), 400
+        if (athlete.function or '').strip().lower() != 'athlete':
+            return jsonify({'error': 'World Champion status applies only to Athletes'}), 400
+        if previous_exempt_reason == 'OTHER':
+            return jsonify({'error': 'Historical OTHER requires documented workflow review'}), 409
         athlete.single_room_quota_exempt_reason = reason
+        athlete.single_room_exemption_source = 'MANUAL_SET' if reason else 'MANUAL_REMOVE'
+        audit_status(athlete.id, athlete.single_room_exemption_source, reason, current_user().username, fis_code=athlete.fis_code, person_id=athlete.id)
         if reason:
             # The immutable approval remains in history; only active person state
             # ceases to behave as an approved surcharge.

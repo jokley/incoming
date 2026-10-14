@@ -281,6 +281,10 @@ class ImportSafetyBaselineTest(unittest.TestCase):
                 db.session.commit()
                 response = self.client.patch(f'/api/import/sessions/{session.id}/single-room-exemptions/P1',
                                              json={'reason': reason}, headers=self.editor)
+                if reason == 'OTHER':
+                    self.assertEqual(response.status_code, 400)
+                    self.assertEqual(raw.get('singleRoomQuotaExemptOverrides', {}), {})
+                    continue
                 self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
                 db.session.expire_all()
                 persisted = json.loads(db.session.get(ImportSessionVersion, version.id).preview_json)
