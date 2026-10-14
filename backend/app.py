@@ -1277,6 +1277,14 @@ def _build_assignment_planning_view(validation_keys=None):
             'hotelName': hotel.name,
             'location': hotel.location,
             'region': hotel.region,
+            'comment': hotel.comment,
+            'inventoryComments': [
+                {'id': str(inv.id), 'roomTypeId': str(inv.room_type_id),
+                 'availableFrom': inv.available_from.isoformat(),
+                 'availableUntil': inv.available_until.isoformat(), 'comment': inv.comment}
+                for inv in sorted(hotel.room_inventories or [], key=lambda row: row.id)
+                if inv.comment and inv.comment.strip()
+            ],
             'slots': [
                 {
                     **slot,

@@ -1,3 +1,5 @@
+import { AssignmentComment } from './assignment/AssignmentComment';
+import { contingentComments, visibleAssignmentComment } from '../services/assignmentComments';
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { Profiler, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -1796,7 +1798,7 @@ function HotelDetailView({
   return (
     <div className="flex h-full flex-col">
       <div className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] px-4 py-2.5">
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
             <button
               onClick={onBack}
               className="rounded-lg px-2 py-1.5 text-xs font-semibold text-[var(--ops-assignment-text-body)] transition-colors hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-assignment-text-bright)]"
@@ -1813,6 +1815,7 @@ function HotelDetailView({
             </div>
             <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
           </div>
+          {visibleAssignmentComment(hotel.comment) && <div className="w-full min-w-0 sm:w-52"><AssignmentComment label="Hotelkommentar" comment={hotel.comment}/></div>}
           <div className="flex items-center gap-4">
             <div className="text-right">
               <div className="font-mono text-base font-bold text-[var(--ops-assignment-text-strong)]">
@@ -1859,6 +1862,7 @@ function HotelDetailView({
                   </div>
                 </button>
 
+                {isOpen && contingentComments(hotel,group.roomTypeId).length>0 && <div className="grid gap-3 border-t border-[var(--ops-divider)] px-3 py-2 sm:grid-cols-2">{contingentComments(hotel,group.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
                 {isOpen && (
                   <div className="grid auto-rows-fr grid-cols-1 gap-2 bg-[var(--ops-surface-elevated)] p-2 2xl:grid-cols-2">
                     {flattenBookingsFromSlots(group.slots).map((entry, index) => (
@@ -2433,6 +2437,7 @@ function DetailPanel({
               <span className="font-semibold text-[var(--ops-text-muted)]">Hotelkontingent</span>
               <span className="font-mono font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</span>
             </div>
+            {(visibleAssignmentComment(hotel.comment) || contingentComments(hotel,slot.roomTypeId).length>0) && <div className="mt-2 grid gap-2 border-t border-[var(--ops-divider)] pt-2"><AssignmentComment label="Hotelkommentar" comment={hotel.comment}/>{contingentComments(hotel,slot.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
             <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
           </div>
         </DetailSection>
