@@ -23,13 +23,37 @@ export const emptyChampionFilters = (editionKey=''):ChampionFilters => ({edition
 export function scopedChampionFilters(filters:ChampionFilters,key:string):ChampionFilters {
   return filters.editionKey===key ? filters : emptyChampionFilters(key);
 }
-export function championDisciplines(rows:WorldChampion[]):string[] {
-  return [...new Set(rows.map(row=>row.discipline))].sort((a,b)=>a.localeCompare(b,'de'));
+const championDisciplineLabels:Record<string,string> = {
+  BA:'Big Air',HP:'Halfpipe',SS:'Slopestyle',PGS:'Parallel Giant Slalom',PSL:'Parallel Slalom',
+  PRT:'Parallel Team',SBX:'Snowboard Cross',BXT:'Snowboard Cross Team',SX:'Ski Cross',
+  SXT:'Ski Cross Team',MO:'Moguls',DM:'Dual Moguls',DMT:'Dual Moguls Team',AE:'Aerials',AET:'Aerials Team',
+};
+export function championDisciplineKey(row:Pick<WorldChampion,'eventGroup'|'discipline'>):string {
+  return JSON.stringify([row.eventGroup,row.discipline]);
+}
+export function championDisciplines(rows:WorldChampion[]):Array<{value:string;label:string}> {
+  const groupsByLabel=new Map<string,Set<string>>();
+  for(const row of rows) {
+    const label=championDisciplineLabels[row.discipline] ?? row.discipline;
+    const groups=groupsByLabel.get(label) ?? new Set<string>();
+    groups.add(row.eventGroup); groupsByLabel.set(label,groups);
+  }
+  const options=new Map<string,{value:string;label:string}>();
+  for(const row of rows) {
+    const value=championDisciplineKey(row);
+    const name=championDisciplineLabels[row.discipline] ?? row.discipline;
+    // Exact structured Event Groups distinguish sports; no inference from names.
+    const prefix=row.eventGroup==='Freeski Park & Pipe' ? 'Freeski'
+      : row.eventGroup==='Snowboard Park & Pipe' ? 'Snowboard' : row.eventGroup;
+    const label=(groupsByLabel.get(name)?.size ?? 0)>1 ? `${prefix} ${name}` : name;
+    options.set(value,{value,label});
+  }
+  return [...options.values()].sort((a,b)=>a.label.localeCompare(b.label,'de') || a.value.localeCompare(b.value));
 }
 export function filterChampions(rows:WorldChampion[],filters:ChampionFilters):WorldChampion[] {
   const search=filters.search.trim().toLocaleLowerCase('de');
   return rows.filter(row=>(!filters.gender || row.gender===filters.gender) &&
-    (!filters.discipline || row.discipline===filters.discipline) &&
+    (!filters.discipline || championDisciplineKey(row)===filters.discipline) &&
     (!search || `${row.name} ${row.nation}`.toLocaleLowerCase('de').includes(search)));
 }
 /** An edition is persisted by its first title, using existing structured fields. */
