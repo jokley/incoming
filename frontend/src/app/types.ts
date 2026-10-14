@@ -353,6 +353,8 @@ export interface AssignmentGridHotel {
   hotelName: string;
   location?: string | null;
   region?: string | null;
+  comment?: string | null;
+  inventoryComments?: Array<{id:string;roomTypeId:string;availableFrom:string;availableUntil:string;comment:string}>;
   slots: AssignmentSlot[];
 }
 

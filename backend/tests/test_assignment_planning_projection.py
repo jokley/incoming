@@ -50,6 +50,30 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         with app.app_context():
             db.session.remove()
 
+    def test_existing_hotel_and_contingent_comments_are_projected_without_capacity_changes(self):
+        with app.app_context():
+            hotel=Hotel.query.one()
+            inventory=HotelRoomInventory.query.one()
+            hotel.comment='Hotel operational note'
+            inventory.comment='Contingent operational note'
+            inventory_id=str(inventory.id)
+            room_type_id=str(inventory.room_type_id)
+            db.session.commit()
+        response=app.test_client().get('/api/assignments/planning-view?includeValidations=false')
+        self.assertEqual(response.status_code,200)
+        projected=response.get_json()['hotels'][0]
+        self.assertEqual(projected['comment'],'Hotel operational note')
+        self.assertEqual(projected['inventoryComments'],[{'id':inventory_id,'roomTypeId':room_type_id,
+            'availableFrom':'2027-03-01','availableUntil':'2027-03-31','comment':'Contingent operational note'}])
+        self.assertEqual(len(projected['slots']),5)
+        with app.app_context():
+            Hotel.query.one().comment=None
+            HotelRoomInventory.query.one().comment='   '
+            db.session.commit()
+        projected=app.test_client().get('/api/assignments/planning-view?includeValidations=false').get_json()['hotels'][0]
+        self.assertIsNone(projected['comment'])
+        self.assertEqual(projected['inventoryComments'],[])
+
     @staticmethod
     def athlete(firstname, lastname, nation='AUT', discipline='Big Air', gender='F', partner=None):
         return Athlete(
