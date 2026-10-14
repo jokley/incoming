@@ -1850,6 +1850,11 @@ def _remove_duplicates():
     groups = {}
     for athlete in Athlete.query.order_by(Athlete.id).all():
         identifiers = [('fis', athlete.fis_code), ('accred', athlete.accred_id), ('competitor', athlete.competitor_id)]
+        # FIS exports use numeric zero for an unassigned accreditation. It is
+        # source metadata, not a shared identity for unrelated staff members.
+        identifiers = [(kind, value) for kind, value in identifiers
+                       if not (kind == 'accred' and value and
+                               value.strip() in {'0', '0.0'})]
         key = next(((kind, value.strip().casefold()) for kind, value in identifiers if value and value.strip()), None)
         if key:
             groups.setdefault(key, []).append(athlete)

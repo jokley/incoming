@@ -33,6 +33,7 @@ import { ActivityInfoBlock } from './activity';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
+import { personFunctionOptions, matchesPersonFunction } from '../services/personFunctions';
 
 type FilterKey = 'nation' | 'sport' | 'gender' | 'function' | 'status' | 'notes';
 type Filters = Record<FilterKey, string> & { competitions: string[] };
@@ -303,7 +304,7 @@ export function Athletes() {
     sport: countValues(athletes, athlete => athlete.competitions?.[0]?.sport || ''),
     competitions: competitionFilterGroups(athletes),
     gender: countValues(athletes, athlete => genderLabel(athlete.gender || athlete.forGender)),
-    function: countValues(athletes, athlete => athlete.function || 'Athlet'),
+    function: personFunctionOptions(athletes),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
       { value: 'open', label: 'Offen', count: athletes.filter(athlete => ['new', 'open'].includes(athleteWorkCategory(athlete))).length },
@@ -328,7 +329,7 @@ export function Athletes() {
       && (!filters.sport || athlete.competitions?.some(competition => competition.sport === filters.sport))
       && matchesCompetitionSelection(athlete, filters.competitions)
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
-      && (!filters.function || (athlete.function || 'Athlet') === filters.function)
+      && matchesPersonFunction(athlete, filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
       && statusMatches
       && singleRoomMatches

@@ -1,7 +1,7 @@
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
-import { Alert, Dialog, DialogContent, DialogTitle, MenuItem, Snackbar, TextField } from '@mui/material';
+import { Alert, Dialog, DialogContent, DialogTitle, MenuItem, Snackbar, TextField, Tooltip } from '@mui/material';
 import { AlertTriangle, BedDouble, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, FileCheck2, FileText, Loader2, RefreshCcw, Upload, Users, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
@@ -297,7 +297,7 @@ function PreviewCard({preview,peopleRows,roomRows,onOpen}:{preview:FisImportPrev
 }
 const quotaHeaders = ['Event Group','Gender','Athleten','Officials Basis','Officials gemeldet','EZ Anspruch','EZ angefordert','Handlungsbedarf'];
 function quotaRows(preview: FisImportPreview | null): ReactNode[][] {
-  return preview?.quotaChecks?.map(q => [q.discipline,q.gender,q.athletes,q.officialQuota,q.officials,q.singleRoomsAllowed,q.singleRoomsRequested,q.singleRoomsPending > 0 ? <StatusChip tone="warning">+{q.singleRoomsPending} EZ offen</StatusChip> : <StatusChip tone="success">✓</StatusChip>]) ?? [];
+  return preview?.quotaChecks?.map(q => [q.discipline,q.gender,q.athletes,q.officialQuota,<Tooltip title={`${q.officials} eindeutige Officials in diesem Kontext. Dieselbe Person kann in M und W berücksichtigt sein. M/W-Werte nicht als globale Personenzahl addieren.`}><span tabIndex={0} className="cursor-help border-b border-dotted border-[var(--ops-border)]">{q.officials}</span></Tooltip>,q.singleRoomsAllowed,q.singleRoomsRequested,q.singleRoomsPending > 0 ? <StatusChip tone="warning">+{q.singleRoomsPending} EZ offen</StatusChip> : <StatusChip tone="success">✓</StatusChip>]) ?? [];
 }
 function PreviewWorkspaceCard({icon,label,count,unit,hints,onClick}:{icon:ReactNode;label:string;count:number;unit:string;hints:PreviewHint[];onClick:()=>void}) {
   const hasErrors=hints.some(hint=>hint.severity==='error'), hasChanges=hints.length>0;

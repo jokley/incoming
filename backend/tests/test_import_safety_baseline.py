@@ -138,6 +138,21 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             self.assertEqual(Athlete.query.one().discipline, 'Snowboard')
             self.assertEqual(len(Athlete.query.one().competitions), 5)
 
+    def test_zero_accreditation_preserves_staff_but_real_duplicate_ids_still_collapse(self):
+        from excel_import import _remove_duplicates
+        with app.app_context():
+            staff = [Athlete(firstname=f'Staff {i}', lastname='Person', nation_code='AUS',
+                     function='NSA Coach', competitor_id=f'staff-{i}', accred_id=accred)
+                     for i,accred in enumerate(('0','0','0.0',None))]
+            genuine = [Athlete(firstname='Duplicate', lastname='Person', nation_code='AUS',
+                       function='NSA Coach', accred_id='12345') for _ in range(2)]
+            db.session.add_all([*staff,*genuine]); db.session.commit()
+            self.assertEqual(_remove_duplicates(), 1)
+            db.session.commit()
+            self.assertEqual(Athlete.query.count(), 5)
+            self.assertEqual({a.competitor_id for a in Athlete.query.filter(Athlete.competitor_id.isnot(None)).all()},
+                             {f'staff-{i}' for i in range(4)})
+
     def test_single_competition_retains_source_legacy_label(self):
         with app.app_context():
             event = self.event()
