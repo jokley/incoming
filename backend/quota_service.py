@@ -314,7 +314,5 @@ def evaluate_quota_usage(people, assigned_people=()):
 
 
 def quota_violations(rows):
-    return [row for row in rows if (
-        row['assignedOfficials'] > row['officialQuota']
-        or row['singleRoomsUsed'] > row['singleRoomsAllowed']
-    )]
+    """Only unresolved physical single-room excess requires a decision."""
+    return [row for row in rows if row['singleRoomsPending'] > 0]

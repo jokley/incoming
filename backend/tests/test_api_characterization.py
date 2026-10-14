@@ -303,7 +303,7 @@ class ApiCharacterizationTest(unittest.TestCase):
         with patch('app.confirm_fis_import', wraps=confirm_fis_import) as confirm:
             confirmed = self.client.post(path,
                 json={'previewToken': token}, headers=self.editor)
-            confirm.assert_called_once_with(token, {person_key: decision_id})
+            confirm.assert_called_once_with(token, {person_key: decision_id}, confirmer='editor')
         self.assertEqual(confirmed.status_code, 200, confirmed.get_data(as_text=True))
         expected_keys = {'success', 'summary', 'run'} | (set() if direct else {'session'})
         self.assertEqual(set(confirmed.get_json()), expected_keys)
@@ -445,8 +445,8 @@ class ApiCharacterizationTest(unittest.TestCase):
             ({'approvalBy': ''}, 'approvalBy is required'),
             ({'approvalDate': 'invalid'}, 'approvalDate or deadlineAt is invalid'),
             ({'approvalType': 'ORGANIZER_APPROVED'}, 'deadlineAt is required for organizer approval'),
-            ({'approvedPersonKeys': []}, 'Exactly the affected extra single-room persons must be selected'),
-            ({'approvedPersonKeys': ['OTHER']}, 'Exactly the affected extra single-room persons must be selected')]
+            ({'approvedPersonKeys': []}, 'Select one or more unresolved extra single-room persons, up to the remaining excess'),
+            ({'approvedPersonKeys': ['OTHER']}, 'Select one or more unresolved extra single-room persons, up to the remaining excess')]
         for change, error in cases:
             with self.subTest(change=change):
                 self.assert_json(self.client.patch(path, json={**valid, **change},

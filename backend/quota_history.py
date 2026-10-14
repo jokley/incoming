@@ -194,3 +194,25 @@ def preview_approval_person(person):
         for_gender=person.get('forGender'), fis_code=person.get('fisCode'),
         competitor_id=person.get('competitorId'), lastname=person.get('lastname'),
         firstname=person.get('firstname'), competitions=competitions)
+
+
+def approval_event_matches(approval, event_id):
+    """Resolve Event identity without modifying immutable decision evidence.
+
+    Older EZ decisions omitted eventId while their owning upload version retained
+    it. Exact Competition/context/person checks remain separate and mandatory.
+    An explicit conflicting Event never falls back to version evidence.
+    """
+    import json
+    from models import ImportSessionVersion, db
+    if event_id is None:
+        return True  # Retain eventless internal/legacy compatibility.
+    details = json.loads(approval.quota_details_json or '{}')
+    saved_event = details.get('eventId')
+    if saved_event is None:
+        version_id = getattr(approval, 'version_id', None)
+        version = db.session.get(ImportSessionVersion, version_id) if version_id else None
+        if not version or version.session_id != getattr(approval, 'session_id', None):
+            return False
+        saved_event = json.loads(version.preview_json or '{}').get('eventId')
+    return saved_event is not None and str(saved_event) == str(event_id)

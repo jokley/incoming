@@ -859,6 +859,11 @@ class ApiService {
     return this.request(`/admin/events/${eventId}/copy-mappings`, { method: 'POST', body: JSON.stringify({ sourceEventId }) });
   }
 
+  async getWorldChampions(): Promise<import('../types').WorldChampion[]> { return this.request('/admin/world-champions'); }
+  async saveWorldChampion(value: Partial<import('../types').WorldChampion>): Promise<import('../types').WorldChampion> {
+    return this.request(`/admin/world-champions${value.id ? '/' + value.id : ''}`, { method: value.id ? 'PUT' : 'POST', body: JSON.stringify(value) });
+  }
+
   async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; message?: string }> {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));

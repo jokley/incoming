@@ -107,7 +107,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 team_competition=True, quota_discipline='Ski Cross')
             athlete = Athlete(firstname='Malformed', lastname='Athlete', nation_code='AUT',
                 function='Athlete', gender=None, for_gender='A', competitions=[competition],
-                single_room_quota_exempt_reason='OTHER')
+                single_room_quota_exempt_reason='WORLD_CHAMPION')
             booking = RoomBooking(hotel=Hotel.query.one(), room_type=RoomType.query.one(), counts_as_single=True)
             db.session.add(RoomBookingOccupant(room_booking=booking, athlete=athlete))
             db.session.commit()
@@ -117,7 +117,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.get_json()['code'], 'QUOTA_GENDER_REVIEW_REQUIRED')
         with app.app_context():
-            self.assertEqual(db.session.get(Athlete, athlete_id).single_room_quota_exempt_reason, 'OTHER')
+            self.assertEqual(db.session.get(Athlete, athlete_id).single_room_quota_exempt_reason, 'WORLD_CHAMPION')
 
     def test_live_quota_uses_import_entitlements_not_assigned_room_types(self):
         with app.app_context():
@@ -144,7 +144,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
 
             warnings = build_quota_warnings([self.person(person) for person in roster], [])
             self.assertEqual({warning['code'] for warning in warnings}, {
-                'QUOTA_OFFICIALS_EXCEEDED', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
+                'INFO_OFFICIALS_OVER_BASIS', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
             with patch.dict(os.environ, {'ASSIGNMENT_PERFORMANCE_ENABLED': 'true'}):
                 response = app.test_client().get('/api/fis/official-quotas')
             live = response.get_json()[0]
@@ -164,7 +164,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 'approvedExtraSingleRooms': 0,
                 'requiredSingleRooms': 2, 'implementedSingleRooms': 2,
                 'remainingSingleRooms': 0, 'openApprovals': 0,
-                'approvedExceptions': 0, 'quotaStatus': 'FULFILLED',
+                'approvedExceptions': 0, 'quotaStatus': 'DECISION_REQUIRED',
                 'peopleTotal': 5, 'peopleAssigned': 4,
                 'unresolvedHistoricalApprovalIds': [],
             })

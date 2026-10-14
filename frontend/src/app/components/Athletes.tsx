@@ -1,4 +1,3 @@
-import type { SingleRoomQuotaExemptReason } from '../types';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
@@ -11,12 +10,11 @@ import {
   DialogContent,
   DialogTitle,
   Divider,
-  MenuItem,
   Stack,
   TextField,
   Typography,
 } from '@mui/material';
-import { Building2, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, MessageSquareText, Search, ShieldCheck, UserRound } from 'lucide-react';
+import { Building2, Crown, CalendarDays, Check, ChevronRight, ClipboardList, FilterX, LockKeyhole, MessageSquareText, Search, ShieldCheck, UserRound } from 'lucide-react';
 import { clsx } from 'clsx';
 
 import { usePermissions } from '../auth/AuthProvider';
@@ -124,7 +122,7 @@ function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 
   return <Tooltip><TooltipTrigger asChild><button type="button" onClick={event => { event.stopPropagation(); onOpen(athlete); }} className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.info}`}><MessageSquareText className="h-3 w-3" aria-hidden="true" />{label}</button></TooltipTrigger><TooltipContent side="top" sideOffset={5} className="max-w-80 whitespace-pre-wrap break-words bg-[var(--ops-text)] text-left text-xs leading-relaxed text-[var(--ops-surface)]">{note}</TooltipContent></Tooltip>;
 }
 
-function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
+function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { onUpdate: (athlete: Athlete) => void; athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
   const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '' });
@@ -145,8 +143,8 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
     if (!athlete) return;
     setSaving(true); setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, singleRoomQuotaExemptReason: (stay.exemptReason || null) as SingleRoomQuotaExemptReason });
-      Object.assign(athlete, updated);
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null });
+      onUpdate(updated);
       onClose();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Änderungen konnten nicht gespeichert werden.');
@@ -202,9 +200,12 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision }: { athlete: At
 
         <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Nur Information – Zuweisungen erfolgen ausschließlich im Assignment-Modul.">
           <FieldGrid>
-            <TextField select fullWidth label="EZ-Sonderstatus" value={stay.exemptReason} onChange={event => setStay(current => ({ ...current, exemptReason: event.target.value }))} disabled={!permissions.canEdit}>
-              <MenuItem value="">Keiner</MenuItem><MenuItem value="WORLD_CHAMPION">👑 Weltmeister</MenuItem><MenuItem value="OTHER">Allgemeine EZ-Ausnahme</MenuItem>
-            </TextField>
+            {athlete?.function?.toLowerCase() === 'athlete' && <OpsButton aria-label="Weltmeisterstatus ändern" aria-pressed={athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!permissions.canEdit || saving || athlete.singleRoomQuotaExemptReason === 'OTHER'} onClick={async () => {
+              setSaving(true); setSaveError(null);
+              try { const updated = await api.updateAthlete(athlete.id, { singleRoomQuotaExemptReason: athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? null : 'WORLD_CHAMPION' }); onUpdate(updated); }
+              catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
+              finally { setSaving(false); }
+            }}><Crown className={`mr-2 inline h-5 w-5 ${athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : 'Weltmeister bestätigen'}</OpsButton>}
             <ReadonlyField label="Hotel" value={athlete?.assignments?.map(item => item.hotelName).filter(Boolean).join(', ') || athlete?.assignment?.hotelName} />
             <ReadonlyField label="Zimmertyp" value={athlete?.assignment?.roomTypeName || athlete?.roomType} />
             <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{hasSingleRoomSurcharge(athlete) ? <StatusChip tone="warning">Mehrpreis</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
@@ -405,7 +406,7 @@ export function Athletes() {
         </div>
       </ContentCard>
     </div>
-    <AthleteDialog athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} onShowDecision={setDecisionId} />
+    <AthleteDialog onUpdate={updated => { setSelectedAthlete(current => current ? {...current,...updated} : updated); setAthletes(current => current.map(person => person.id === updated.id ? {...person, ...updated} : person)); }} athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} onShowDecision={setDecisionId} />
     <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
   </SplitPageLayout>;
 }

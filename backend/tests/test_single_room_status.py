@@ -351,7 +351,7 @@ class SingleRoomStatusTest(unittest.TestCase):
                 competition=Competition.query.filter_by(import_code='WSC_BA_W_6183').one(),
                 import_code='WSC_BA_W_6183', fis_codex='6183', official_name='Display'))
             db.session.add(event); db.session.commit()
-            person = {**self.person('WC'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'}
+            person = {**self.person('WC', 'Athlete'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'}
             PREVIEW_STORE['exemption-confirm'] = {
                 'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': [person], 'rooms': [],
@@ -381,7 +381,7 @@ class SingleRoomStatusTest(unittest.TestCase):
 
     def test_import_review_stages_exemption_and_recalculates_current_preview(self):
         with app.app_context():
-            officials = [{**self.person(f'O{index}'), 'nationCode': 'BRA',
+            officials = [{**self.person(f'O{index}', 'Athlete' if index == 0 else 'Official'), 'nationCode': 'BRA',
                           'industryName': 'Halfpipe', 'gender': 'M'} for index in range(3)]
             athletes = [{**self.person(f'A{index}', 'Athlete'), 'nationCode': 'BRA',
                          'industryName': 'Halfpipe', 'gender': 'M'} for index in range(2)]
@@ -437,19 +437,15 @@ class SingleRoomStatusTest(unittest.TestCase):
                 f'/api/import/sessions/{session.id}/single-room-exemptions/O1',
                 headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
                 json={'reason': 'OTHER'})
-            self.assertEqual(response.status_code, 200)
-            check = response.get_json()['preview']['quotaChecks'][0]
-            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 2))
-            self.assertEqual(check['quotaExemptSingleRooms'], 1)
-            self.assertFalse(any(approval['decision'] == 'PENDING'
-                                 for approval in response.get_json()['approvals']))
+            self.assertEqual(response.status_code, 400)
+            self.assertIsNone(response.get_json().get('preview'))
 
     def test_staged_exemption_reports_invalid_event_mapping_without_writes(self):
         with app.app_context():
             event = Event(name='Inactive mapping', active=False)
             session = ImportSession(nation='AUT', status='PROFESSIONALLY_REVIEWED')
             db.session.add_all([event, session]); db.session.flush()
-            original = json.dumps({'eventId': event.id, 'people': [self.person('O')],
+            original = json.dumps({'eventId': event.id, 'people': [self.person('O', 'Athlete')],
                                    'errors': [], 'warnings': []})
             version = ImportSessionVersion(session_id=session.id, version=1,
                 preview_json=original, uploaded_by='test')
@@ -458,7 +454,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             response = app.test_client().patch(
                 f'/api/import/sessions/{session.id}/single-room-exemptions/O',
                 headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
-                json={'reason': 'OTHER'})
+                json={'reason': 'WORLD_CHAMPION'})
             self.assertEqual(response.status_code, 400)
             self.assertEqual(response.get_json()['error'], 'EVENT_INACTIVE')
             db.session.expire_all()

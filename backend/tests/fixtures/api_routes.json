@@ -50,6 +50,14 @@
   "/api/admin/test-data/reset": [
     "POST"
   ],
+  "/api/admin/world-champions": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/world-champions/<int:champion_id>": [
+    "GET",
+    "PUT"
+  ],
   "/api/analytics/occupancy-timeline": [
     "GET"
   ],

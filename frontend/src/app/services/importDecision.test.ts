@@ -30,3 +30,17 @@ test('USA decision uses approval event group and exact gender, not the session o
   session.discipline = undefined;
   assert.equal(buildOperationsTask(session, approval).discipline, 'Snowboard Cross');
 });
+
+test('completed residual EZ decision retains structured EZ figures after its type changes', () => {
+  const approval = {nation:'AUT', type:'NATION_APPROVED', decision:'APPROVED', description:'Zusätzliche EZ · Ski Cross · M',
+    quotaDetails:{decisionKind:'SINGLE_ROOM',discipline:'Ski Cross',gender:'M',ezRequested:4,ezEntitlement:2,ezExcess:2,
+      officialsBasis:6,officialsReported:9,singleRoomCandidates:[{personKey:'P',name:'P'}]}} as ImportApproval;
+  const session = {nation:'AUT',preview:{dispositionAnalysis:{categories:{quotaAffected:{records:[]}}},
+    quotaChecks:[{nationCode:'AUT',discipline:'Ski Cross',gender:'M',officials:9,officialQuota:6,singleRooms:4,singleRoomsAllowed:2}]}} as unknown as ImportSession;
+  const task = buildOperationsTask(session,approval);
+  assert.deepEqual(task.quota,{current:4,allowed:2,label:'Single Rooms'});
+  assert.equal(task.excessCount,2);
+  assert.equal(task.recommendation,'Mehrkosten abstimmen');
+  approval.description='A human-readable description without rule names';
+  assert.deepEqual(buildOperationsTask(session,approval).quota,task.quota);
+});

@@ -1,28 +1,28 @@
-import type { SingleRoomQuotaExemptReason } from '../types';
 import { type ReactNode, useEffect, useState } from 'react';
 import { Dialog, DialogContent } from '@mui/material';
 import { AlertTriangle, BedDouble, ChevronDown, ClipboardCheck } from 'lucide-react';
 
 import { DialogFooter, DialogHeader, InfoPanel, OpsButton, SectionHeader, StatusChip } from '../design-system';
 import { competitionDisplayName } from '../services/competitionPresentation';
+import { canApproveSingleRoomSelection } from '../services/importPreview';
 
 export { buildOperationsTask, quotaViolationLabel } from '../services/importDecision';
 export type { OperationsTask } from '../services/importDecision';
-import { quotaViolationLabel, type OperationsTask } from '../services/importDecision';
+import { type OperationsTask } from '../services/importDecision';
 
 function taskTitle(task: OperationsTask) {
   if (task.approval.type === 'PRESERVED_APPROVED_EXTRA') return task.approval.description;
-  return task.quota ? quotaViolationLabel(task.quota.label, task.quota.current, task.quota.allowed) : task.approval.description;
+  return task.singleRoomCandidates.length ? `${task.discipline} · ${task.gender}` : task.approval.description;
 }
 
-export function OperationsDecisionDialog({ task, saving, onClose, onSave, onSetExemption }: {
+export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
   task: OperationsTask | null;
   saving: boolean;
   onClose: () => void;
-  onSetExemption: (personKey: string, reason: SingleRoomQuotaExemptReason) => void;
   onSave: (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => void;
 }) {
   const completed = task?.approval.decision === 'APPROVED';
+  const selectionLimit = completed ? task?.approval.approvedPersonKeys?.length ?? 0 : task?.excessCount ?? 0;
   const now = () => new Date().toISOString().slice(0,16);
   const [decision, setDecision] = useState<'nation' | 'newList'>('nation');
   const [organizerApproval,setOrganizerApproval]=useState(false);
@@ -44,13 +44,16 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave, onSetE
           </div>
         </section>
 
+        {task.quota && <section className="grid grid-cols-2 gap-3 rounded-lg border border-[var(--ops-border)] p-3">{[
+          ['Athleten', task.approval.quotaDetails?.athletesEntered], ['Officials Basis', task.approval.quotaDetails?.officialsBasis ?? task.approval.quotaDetails?.officialQuota], ['Officials gemeldet', task.approval.quotaDetails?.officialsReported ?? task.approval.quotaDetails?.importedOfficials], ['EZ Anspruch', task.quota.allowed], ['EZ angefordert', task.approval.quotaDetails?.singleRoomsRequested ?? task.quota.current], ['Zusätzliche EZ', task.excessCount],
+        ].map(([label,value]) => <DecisionFact key={String(label)} label={String(label)} value={String(value ?? '—')}/>)}</section>}
         <InfoPanel tone="info" title="Empfehlung"><strong>{task.recommendation}</strong><span className="mt-1 block text-sm">Folgen Sie dieser Aktion oder dokumentieren Sie unten eine abweichende Entscheidung.</span></InfoPanel>
 
         {!completed && <section><SectionHeader title="Entscheidung" subtitle="Wie soll mit der Quotenverletzung weitergearbeitet werden?"/><div className="mt-3 grid gap-2">
           {([['nation','Ausnahme durch Nation genehmigt'],['newList','Neue Meldeliste angekündigt']] as const).map(([value,label])=><label key={value} className={`rounded-lg border px-3 py-2.5 ${decision===value?'border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]':'border-[var(--ops-border)]'}`}><input type="radio" className="mr-3" checked={decision===value} onChange={()=>setDecision(value)}/><strong>{label}</strong></label>)}
         </div><div className="mt-3 rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] p-3"><label className="font-bold"><input type="checkbox" className="mr-3" checked={organizerApproval} onChange={e=>{setOrganizerApproval(e.target.checked);if(e.target.checked)setDecision('nation')}}/>Organisatorische Freigabe (keine Reaktion innerhalb der Frist)</label>{organizerApproval&&<div className="mt-3"><Field label="Frist gesetzt bis"><input type="datetime-local" value={deadline} onChange={e=>setDeadline(e.target.value)} className="field"/></Field><div className="mt-2"><InfoPanel tone="warning" title="Ausnahme">Diese Freigabe wird ausdrücklich als organisatorische Entscheidung protokolliert.</InfoPanel></div></div>}</div></section>}
 
-        {task.singleRoomReviewPeople.length > 0 && decision === 'nation' && <section><SectionHeader title="Betroffene Personen" subtitle={`Genau ${task.excessCount} Person(en) außerhalb der Quote auswählen.`}/><div className="mt-2 grid gap-2">{task.singleRoomReviewPeople.map(person=>{const eligible=task.singleRoomCandidates.some(candidate=>candidate.personKey===person.personKey);return <div key={person.personKey} className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ops-border)] px-3 py-2"><label className="flex min-w-0 flex-1 items-center gap-3">{eligible&&<input type="checkbox" checked={approvedPersonKeys.includes(person.personKey)} onChange={event=>setApprovedPersonKeys(current=>event.target.checked?[...current,person.personKey]:current.filter(key=>key!==person.personKey))}/>}<span><strong className="block">{person.name}</strong><span className="text-xs text-[var(--ops-text-muted)]">{person.function || 'Official'} · Einzelzimmer</span></span></label><label className="text-xs font-bold text-[var(--ops-text-muted)]">EZ-Sonderstatus<select aria-label={`EZ-Sonderstatus ${person.name}`} value={person.singleRoomQuotaExemptReason??''} disabled={saving} onChange={event=>onSetExemption(person.personKey,(event.target.value||null) as SingleRoomQuotaExemptReason)} className="ml-2 rounded-md border border-[var(--ops-border)] bg-[var(--ops-surface)] px-2 py-1 text-xs text-[var(--ops-text)]"><option value="">Keiner</option><option value="WORLD_CHAMPION">👑 Weltmeister</option><option value="OTHER">Allgemeine EZ-Ausnahme</option></select></label></div>})}</div><p className="mt-2 text-xs text-[var(--ops-text-muted)]">{approvedPersonKeys.length} von {task.excessCount} ausgewählt. Diese Auswahl bestimmt Anspruch und Mehrkosten unabhängig vom später zugewiesenen Zimmertyp.</p></section>}
+        {task.singleRoomReviewPeople.length > 0 && decision === 'nation' && <section><SectionHeader title="Betroffene Personen" subtitle={`Bis zu ${selectionLimit} zusätzliche EZ auswählen. Teilentscheidungen sind möglich.`}/><div className="mt-2 grid gap-2">{task.singleRoomReviewPeople.map(person=>{const eligible=task.singleRoomCandidates.some(candidate=>candidate.personKey===person.personKey);return <div key={person.personKey} className="flex flex-wrap items-center gap-3 rounded-lg border border-[var(--ops-border)] px-3 py-2"><label className="flex min-w-0 flex-1 items-center gap-3">{eligible&&<input type="checkbox" checked={approvedPersonKeys.includes(person.personKey)} onChange={event=>setApprovedPersonKeys(current=>event.target.checked?[...current,person.personKey]:current.filter(key=>key!==person.personKey))}/>}<span><strong className="block">{person.name}</strong><span className="text-xs text-[var(--ops-text-muted)]">{person.function || 'Official'} · Einzelzimmer</span></span></label></div>})}</div><p className="mt-2 text-xs text-[var(--ops-text-muted)]">{approvedPersonKeys.length} von {selectionLimit} ausgewählt. Diese Auswahl bestimmt Anspruch und Mehrkosten unabhängig vom später zugewiesenen Zimmertyp.</p></section>}
 
         <section><SectionHeader title="Dokumentation" subtitle="Rücksprache und fachliche Notiz festhalten"/><div className="mt-2 grid gap-3 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3 sm:grid-cols-2">
           <Field label="Ansprechpartner / Verantwortlicher"><input value={contact} onChange={e=>setContact(e.target.value)} className="field"/></Field>
@@ -65,7 +68,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave, onSetE
           <div className="grid gap-3 border-t border-[var(--ops-divider)] p-4 text-sm sm:grid-cols-2"><DecisionFact label="Entscheidungs-ID" value={task.approval.id}/><DecisionFact label="Session-ID" value={task.approval.sessionId}/><DecisionFact label="Regeltyp" value={task.approval.type}/><DecisionFact label="Version" value="Aktuelle Importversion"/></div>
         </details>
       </DialogContent>
-      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&approvedPersonKeys.length!==task.excessCount)} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,costCoverage:costCoverage||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[]})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
+      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&!canApproveSingleRoomSelection(approvedPersonKeys,selectionLimit))} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,costCoverage:costCoverage||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[]})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
     </div>}
   </Dialog>;
 }
