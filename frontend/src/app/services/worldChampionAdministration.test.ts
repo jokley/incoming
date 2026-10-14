@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { WorldChampion } from '../types.ts';
-import { championEditions, championEditionKey, championsForEdition, championDraft, championSourceUrl, newChampionEdition, championDisciplines, filterChampions, emptyChampionFilters, scopedChampionFilters } from './worldChampionAdministration.ts';
+import { championEditions, championEditionKey, championsForEdition, championDraft, championSourceUrl, newChampionEdition, championDisciplineKey, championDisciplines, filterChampions, emptyChampionFilters, scopedChampionFilters } from './worldChampionAdministration.ts';
 
 const row=(id:string,values:Partial<WorldChampion>={}):WorldChampion=>({id,eventId:'target1',fisCode:id,name:`Person ${id}`,nation:'AUT',gender:'M',discipline:'Parallel Slalom',eventGroup:'Snowboard Alpine',championship:'Engadin',championshipYear:2025,titleType:'INDIVIDUAL',entitlementEnabled:true,source:'https://www.fis-ski.com/results',active:true,createdAt:'',updatedAt:'',...values});
 
@@ -61,18 +61,18 @@ test('gender, discipline and name/nation search combine with AND logic',()=>{
   const rows=[row('1',{discipline:'Halfpipe',gender:'M',name:'Zoe'}),row('2',{discipline:'Halfpipe',gender:'W',name:'Ada'}),row('3',{discipline:'Slopestyle',gender:'W',nation:'USA'})];
   const filters=emptyChampionFilters(championEditionKey(rows[0]));
   assert.deepEqual(filterChampions(rows,{...filters,gender:'W'}).map(r=>r.id),['2','3']);
-  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe'}).map(r=>r.id),['1','2']);
-  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe',gender:'W'}).map(r=>r.id),['2']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:championDisciplineKey(rows[0])}).map(r=>r.id),['1','2']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:championDisciplineKey(rows[0]),gender:'W'}).map(r=>r.id),['2']);
   assert.deepEqual(filterChampions(rows,{...filters,search:' usa '}).map(r=>r.id),['3']);
-  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe',gender:'W',search:'ada'}).map(r=>r.id),['2']);
-  assert.deepEqual(filterChampions(rows,{...filters,discipline:'Halfpipe',gender:'W',search:'USA'}),[]);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:championDisciplineKey(rows[0]),gender:'W',search:'ada'}).map(r=>r.id),['2']);
+  assert.deepEqual(filterChampions(rows,{...filters,discipline:championDisciplineKey(rows[0]),gender:'W',search:'USA'}),[]);
 });
 
 test('discipline options are unique and edition-scoped; switching scopes filters',()=>{
   const rows=[row('1',{discipline:'Halfpipe'}),row('2',{discipline:'Halfpipe'}),row('3',{championship:'Aspen',discipline:'Big Air'})];
   const key=championEditionKey(rows[0]);
-  assert.deepEqual(championDisciplines(championsForEdition(rows,key)),['Halfpipe']);
-  const filters={...emptyChampionFilters(key),discipline:'Halfpipe',gender:'W',search:'Ada'};
+  assert.deepEqual(championDisciplines(championsForEdition(rows,key)),[{value:championDisciplineKey(rows[0]),label:'Halfpipe'}]);
+  const filters={...emptyChampionFilters(key),discipline:championDisciplineKey(rows[0]),gender:'W',search:'Ada'};
   assert.equal(scopedChampionFilters(filters,key),filters);
   const other=championEditionKey(rows[2]);
   assert.deepEqual(scopedChampionFilters(filters,other),emptyChampionFilters(other));
@@ -81,4 +81,23 @@ test('discipline options are unique and edition-scoped; switching scopes filters
 test('default sort places gender before name and retains deterministic ties',()=>{
   const rows=[row('3',{name:'Ada',gender:'W'}),row('2',{name:'Zoe',gender:'M'}),row('1',{name:'Zoe',gender:'M'}),row('4',{discipline:'Halfpipe',gender:'W'})];
   assert.deepEqual(championsForEdition(rows,championEditionKey(rows[0])).map(r=>r.id),['4','1','2','3']);
+});
+
+for (const [code,label] of [['HP','Halfpipe'],['BA','Big Air'],['SS','Slopestyle']]) {
+  test(`${code} options separate Freeski and Snowboard and retain independent gender`,()=>{
+    const rows=[row('fm',{eventGroup:'Freeski Park & Pipe',discipline:code,gender:'M'}),row('fw',{eventGroup:'Freeski Park & Pipe',discipline:code,gender:'W'}),row('sm',{eventGroup:'Snowboard Park & Pipe',discipline:code,gender:'M'}),row('sw',{eventGroup:'Snowboard Park & Pipe',discipline:code,gender:'W',name:'Chloe KIM'})];
+    const before=structuredClone(rows);
+    const options=championDisciplines(rows);
+    assert.deepEqual(options.map(option=>option.label),[`Freeski ${label}`,`Snowboard ${label}`]);
+    const filters=emptyChampionFilters(championEditionKey(rows[0]));
+    assert.deepEqual(filterChampions(rows,{...filters,discipline:options[0].value}).map(r=>r.id),['fm','fw']);
+    assert.deepEqual(filterChampions(rows,{...filters,discipline:options[1].value}).map(r=>r.id),['sm','sw']);
+    assert.deepEqual(filterChampions(rows,{...filters,discipline:options[1].value,gender:'W'}).map(r=>r.name),['Chloe KIM']);
+    assert.deepEqual(rows,before);
+  });
+}
+
+test('unique disciplines use readable labels without unnecessary group prefixes',()=>{
+  const rows=[row('pgs',{discipline:'PGS'}),row('mo',{eventGroup:'Freestyle',discipline:'MO'}),row('custom',{discipline:'Custom event'})];
+  assert.deepEqual(championDisciplines(rows).map(option=>option.label),['Custom event','Moguls','Parallel Giant Slalom']);
 });
