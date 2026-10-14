@@ -97,6 +97,27 @@ def test_real_pairs_through_initial_and_saved_preview(database, monkeypatch, nat
     assert saved['summary']['rooms']['singles'] == singles
 
 
+@pytest.mark.parametrize('nation', ['USA', 'AUS', 'KOR'])
+def test_mixed_parallel_memberships_follow_affirmative_staff_source_columns(database, monkeypatch, nation):
+    _, event = database
+    result = preview(nation, event, monkeypatch)
+    fixture = json.loads((Path(__file__).parent / 'fixtures' / 'real_entries' / f'{nation}.json').read_text())
+    codes = {'WSC_PSL_W_6178', 'WSC_PSL_M_6177', 'WSC_PRT_A_6180',
+             'WSC_PGS_W_6172', 'WSC_PGS_M_6170'}
+    matching = [row for row in fixture['entries'] if all(row.get(code) == 'YES' for code in codes)]
+    assert matching
+    for row in matching:
+        person = next(p for p in result['people'] if p['firstname'] == row['Firstname']
+                      and p['lastname'] == row['Lastname'])
+        assert person['function'] != 'Athlete'
+        assert person['forGender'] == 'A'
+        affirmative = {code for code, value in row.items() if code.startswith('WSC_') and value == 'YES'}
+        assert set(person['competitionImportCodes']) == affirmative
+        assert set(person['affirmativeWscColumns']) == affirmative
+        assert len(person['competitionIds']) == len(affirmative)
+        assert codes <= {membership['importCode'] for membership in person['competitionMemberships']}
+
+
 def add_session(result, nation='USA'):
     session = ImportSession(nation=nation, status='PROFESSIONALLY_REVIEWED')
     db.session.add(session); db.session.flush()
