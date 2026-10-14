@@ -186,6 +186,13 @@ def test_reference_admin_crud_and_team_default(database):
         response, status = champion(row_id); assert status == 200
     assert not response.get_json()['active']
     assert not response.get_json()['entitlementEnabled']
+    with current_app.test_request_context(method='PUT', json={'active':True, 'name':'Edited champion'}):
+        response, status = champion(row_id); assert status == 200
+    assert response.get_json()['active']
+    assert response.get_json()['name'] == 'Edited champion'
+    assert response.get_json()['championship'] == 'Engadin'
+    assert response.get_json()['championshipYear'] == 2025
+    assert not response.get_json()['entitlementEnabled']
     with current_app.test_request_context(method='PUT', json={'entitlementEnabled':True}):
         _, status = champion(row_id); assert status == 400
 
