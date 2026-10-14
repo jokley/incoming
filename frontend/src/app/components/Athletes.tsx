@@ -22,6 +22,7 @@ import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHe
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
+import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
 import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
 import { hasSingleRoomSurcharge } from '../services/quotaEvaluation';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
@@ -78,20 +79,10 @@ function countValues(athletes: Athlete[], getValue: (athlete: Athlete) => string
     .sort((a, b) => a.label.localeCompare(b.label, 'de'));
 }
 
-function countCompetitionValues(athletes: Athlete[]): CountItem[] {
-  const counts = new Map<string, { label: string; athletes: Set<string> }>();
-  athletes.forEach(athlete => athlete.competitions?.forEach(competition => {
-    const current = counts.get(competition.id) || { label: competitionDisplayName(competition.name), athletes: new Set<string>() };
-    current.athletes.add(athlete.id); counts.set(competition.id, current);
-  }));
-  return [...counts].map(([value, item]) => ({ value, label: item.label, count: item.athletes.size }))
-    .sort((a, b) => a.label.localeCompare(b.label, 'de'));
-}
-
-function CompetitionFilter({ items, selected, onToggle }: { items: CountItem[]; selected: string[]; onToggle: (id: string) => void }) {
+function CompetitionFilter({ items, selected, onToggle }: { items: CompetitionFilterGroup[]; selected: string[]; onToggle: (group: CompetitionFilterGroup) => void }) {
   return <section><h3 className="mb-2 px-2 text-[10px] font-extrabold uppercase tracking-[0.16em] text-[var(--ops-text-subtle)]">Wettbewerbe</h3><div className="space-y-1">{items.map(item => {
-    const active = selected.includes(item.value);
-    return <button key={item.value} type="button" aria-pressed={active} onClick={() => onToggle(item.value)} className={clsx('flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm', active ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]' : 'border-transparent hover:bg-[var(--ops-surface-elevated)]')}><span className="min-w-0 flex-1 truncate font-semibold">{item.label}</span><span className="text-xs">{item.count}</span>{active && <Check className="h-3.5 w-3.5" />}</button>;
+    const active = competitionGroupSelected(item, selected);
+    return <button key={item.value} type="button" aria-pressed={active} onClick={() => onToggle(item)} className={clsx('flex w-full items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm', active ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]' : 'border-transparent hover:bg-[var(--ops-surface-elevated)]')}><span className="min-w-0 flex-1 truncate font-semibold">{item.label}</span><span className="text-xs">{item.count}</span>{active && <Check className="h-3.5 w-3.5" />}</button>;
   })}</div></section>;
 }
 
@@ -310,7 +301,7 @@ export function Athletes() {
   const groups = useMemo(() => ({
     nation: countValues(athletes, athlete => athlete.nationCode),
     sport: countValues(athletes, athlete => athlete.competitions?.[0]?.sport || ''),
-    competitions: countCompetitionValues(athletes),
+    competitions: competitionFilterGroups(athletes),
     gender: countValues(athletes, athlete => genderLabel(athlete.gender || athlete.forGender)),
     function: countValues(athletes, athlete => athlete.function || 'Athlet'),
     status: [
@@ -335,7 +326,7 @@ export function Athletes() {
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
       && (!filters.sport || athlete.competitions?.some(competition => competition.sport === filters.sport))
-      && (!filters.competitions.length || athlete.competitions?.some(competition => filters.competitions.includes(competition.id) || filters.competitions.includes(competition.name)))
+      && matchesCompetitionSelection(athlete, filters.competitions)
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.function || (athlete.function || 'Athlet') === filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
@@ -363,7 +354,7 @@ export function Athletes() {
         <nav aria-label="Athletenfilter" className="space-y-5 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           <FilterGroup title="Nationen" filterKey="nation" items={groups.nation} selected={filters.nation} onSelect={setFilter} />
           <FilterGroup title="Sport" filterKey="sport" items={groups.sport} selected={filters.sport} onSelect={setFilter} />
-          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || athletes.some(athlete => athlete.competitions?.some(c => c.id === item.value && c.sport === filters.sport)))} selected={filters.competitions} onToggle={id => setFilters(current => ({ ...current, competitions: current.competitions.includes(id) ? current.competitions.filter(value => value !== id) : [...current.competitions, id] }))} />
+          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || item.sports.includes(filters.sport))} selected={filters.competitions} onToggle={group => setFilters(current => ({ ...current, competitions: toggleCompetitionGroup(group, current.competitions) }))} />
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
           <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
