@@ -12,6 +12,7 @@ sys.path.insert(0, str(BACKEND))
 from test_support import validate_test_url  # noqa: E402
 
 POSTGRES_TESTS = [
+    'test_segment_transactions.py',
     'test_booking_read_routes.py',
     'test_identity_audit_read_routes.py',
     'test_competition_routes.py',

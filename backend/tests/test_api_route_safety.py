@@ -30,6 +30,11 @@ class ApiRouteSafetyTest(unittest.TestCase):
                                  AUTH_PROXY_SECRET='baseline-secret')
         self.config.start()
         self.addCleanup(self.config.stop)
+        # These guard/manifest tests replace endpoint bodies with sentinels and
+        # intentionally use no database; real transaction locking is tested with PG.
+        lock = patch('app.lock_accommodation_writes')
+        lock.start()
+        self.addCleanup(lock.stop)
         self.client = app.test_client()
 
     @staticmethod
@@ -114,6 +119,9 @@ class ApiRouteSafetyTest(unittest.TestCase):
             ('PATCH', '/api/athletes/1', 'data.write'),
             ('POST', '/api/events', 'data.write'),
             ('POST', '/api/assignments/bookings', 'assignments.write'),
+            ('POST', '/api/assignments/persons/1/segments', 'assignments.write'),
+            ('PUT', '/api/assignments/persons/1/segments/1', 'assignments.write'),
+            ('DELETE', '/api/assignments/persons/1/segments/1', 'assignments.write'),
             ('DELETE', '/api/room-assignments/1', 'assignments.write'),
             ('POST', '/api/import/fis/preview', 'imports.write'),
             ('POST', '/api/import/fis/confirm', 'imports.write'),

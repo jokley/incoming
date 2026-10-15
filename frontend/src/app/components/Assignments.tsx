@@ -1,3 +1,5 @@
+import { PersonAccommodationPanel } from './assignment/PersonAccommodationPanel';
+import { canUseFullStayDrag, unitCoverageComplete, coverageLabels } from '../services/segmentWorkflow';
 import { AssignmentComment } from './assignment/AssignmentComment';
 import { contingentComments, visibleAssignmentComment } from '../services/assignmentComments';
 import type { SingleRoomQuotaExemptReason } from '../types';
@@ -274,9 +276,11 @@ export function Assignments() {
   // Keep collection identities stable while unrelated UI state (saving, dialogs,
   // drag targets) changes. The profiler showed these short-lived arrays invalidated
   // every downstream memo on each parent render even though planning was unchanged.
-  const allUnits = useMemo(() => planning?.units.unassigned ?? [], [planning]);
-  const assignedUnits = useMemo(() => planning?.units.assigned ?? [], [planning]);
-  const allUnitsCombined = useMemo(() => [...allUnits, ...assignedUnits], [allUnits, assignedUnits]);
+  // Coverage changes only the Assignments work queues, not backend/global counts.
+  const allUnitsCombined = useMemo(() => [...(planning?.units.unassigned ?? []), ...(planning?.units.assigned ?? [])]
+    .map(unit=>({...unit,isFullyAssigned:unitCoverageComplete(unit)})), [planning]);
+  const allUnits = useMemo(()=>allUnitsCombined.filter(unit=>!unit.isFullyAssigned),[allUnitsCombined]);
+  const assignedUnits = useMemo(()=>allUnitsCombined.filter(unit=>unit.isFullyAssigned),[allUnitsCombined]);
   const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
   const currentQuotaUsage = useMemo(() => evaluateCurrentQuotaUsage(quotaUsage, quotaAssignmentsFromPlanning(allHotels)), [allHotels, quotaUsage]);
   const additionalCostPersonIds = useMemo(() => new Set(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId))), [allHotels, quotaUsage]);
@@ -469,6 +473,11 @@ export function Assignments() {
     }
     const unit = unitById.get(unitId);
     if (!unit) return;
+    if (!canUseFullStayDrag(unit, athleteIds)) {
+      setSelected({type:'unit',id:unitId});
+      setError('Für Teilaufenthalte bitte den offenen Zeitraum unter Unterkunft → Neue Zuweisung auswählen.');
+      return;
+    }
     const normalizedAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
     try {
       setPendingAction({ kind: 'assign', unitId, athleteIds: normalizedAthleteIds, hotelId: slot.hotelId });
@@ -578,23 +587,20 @@ export function Assignments() {
     const unit = unitById.get(unitId);
     if (!unit) return;
     const incomingAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
-    const combinedAthleteIds = Array.from(new Set([
-      ...booking.occupants.map((occupant) => occupant.athleteId),
-      ...incomingAthleteIds,
-    ]));
+    if (incomingAthleteIds.length !== 1 || !canUseFullStayDrag(unit,incomingAthleteIds)
+      || booking.checkInDate !== unit.checkInDate || booking.checkOutDate !== unit.checkOutDate) {
+      setSelected({type:'unit',id:unitId});
+      setError('Zum Beitreten müssen die Aufenthaltsdaten übereinstimmen. Teilaufenthalte bitte unter Unterkunft → Neue Zuweisung bearbeiten.');
+      return;
+    }
 
     try {
       setPendingAction({ kind: 'assign', unitId, athleteIds: incomingAthleteIds, hotelId: booking.hotelId, bookingId: booking.bookingId });
       setSaving(true);
       setError(null);
-      await api.assignRoomBookingUnit({
-        hotelId: booking.hotelId,
-        roomTypeId: booking.roomTypeId,
-        roomNumber: booking.roomNumber || undefined,
-        checkInDate: booking.checkInDate || unit.checkInDate || undefined,
-        checkOutDate: booking.checkOutDate || unit.checkOutDate || undefined,
-        assignedBookingId: booking.bookingId,
-        athleteIds: combinedAthleteIds,
+      await api.mutateAccommodationSegment(incomingAthleteIds[0],'POST',undefined,{
+        hotelId:booking.hotelId,roomTypeId:booking.roomTypeId,roomNumber:booking.roomNumber ?? undefined,
+        checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!,joinBookingId:booking.bookingId,
       });
       setDragging(null);
       setDragOverHotelId(null);
@@ -786,6 +792,13 @@ export function Assignments() {
 
         {selected && (
           <AssignmentDialog title="Zimmer / Zuweisung" subtitle="Bewohner, Importinformationen und Disposition im Überblick" onClose={() => setSelected(null)}>
+          <PersonAccommodationPanel
+            people={selectedUnit?.occupants ?? allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext?.booking.occupants.some(occupant=>occupant.athleteId===person.athleteId))}
+            hotels={allHotels} canEdit={permissions.canManageAssignments} onChanged={async personId=>{
+              const unit=allUnitsCombined.find(item=>item.occupants.some(person=>person.athleteId===personId));
+              await refreshOperationalState();
+              if(unit) setSelected({type:'unit',id:unit.unitId});
+            }}/>
           <DetailPanel
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
@@ -1234,7 +1247,7 @@ function QueueUnitCard({
           key={occupant.athleteId}
           occupant={occupant}
           isDragging={dragging && draggingAthleteIds.length === 1 && draggingAthleteIds[0] === occupant.athleteId}
-          canEditAssignments={canEditAssignments && !isReadOnly}
+          canEditAssignments={canEditAssignments && !isReadOnly && canUseFullStayDrag(unit)}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}
           onQuickAssign={onQuickAssign}
@@ -1246,8 +1259,8 @@ function QueueUnitCard({
         />)}
         {unit.occupants.length >= 2 && (
           <button
-            draggable={canEditAssignments && !isReadOnly && !pending}
-            disabled={pending || isReadOnly || !canEditAssignments}
+            draggable={canEditAssignments && !isReadOnly && !pending && canUseFullStayDrag(unit)}
+            disabled={pending || isReadOnly || !canEditAssignments || !canUseFullStayDrag(unit)}
             title={isReadOnly ? 'Disposition bereits erledigt.' : !canEditAssignments ? 'Nur für Benutzer mit Bearbeitungsrechten verfügbar.' : undefined}
             onDragStart={() => onDragStart(unit.unitId, unit.occupants.map((occupant) => occupant.athleteId), 'Beide zusammen')}
             onDragEnd={onDragEnd}
@@ -1293,14 +1306,14 @@ function QueueOccupantActionRow({
   return (
     <OccupantCard
       person={occupant}
-      status={occupant.hasPendingReview ? 'review' : occupant.isAssigned ? 'assigned' : 'open'}
+      status={occupant.hasPendingReview || occupant.accommodationCoverage?.coverageStatus==='CONFLICT' ? 'review' : occupant.accommodationCoverage ? occupant.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' ? 'assigned' : 'open' : occupant.isAssigned ? 'assigned' : 'open'}
       fallbackArrival={fallbackArrival}
       fallbackDeparture={fallbackDeparture}
       hideNation
       hideDiscipline
       hideRole={!showRole}
       className={isDragging ? 'opacity-70' : ''}
-      footer={<><div className="flex items-center gap-1.5">
+      footer={<>{occupant.accommodationCoverage && <div className="mb-1 text-[10px] font-semibold">{coverageLabels[occupant.accommodationCoverage.coverageStatus]}</div>}<div className="flex items-center gap-1.5">
         <SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={occupant.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} />
         <button
           draggable={canEditAssignments && !pending}
@@ -2464,7 +2477,7 @@ function DetailPanel({
             className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
           >
             {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-            {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? 'Ausbuchen läuft...' : 'Zuweisung entfernen'}
+            {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? 'Ausbuchen läuft...' : 'Zimmerzuweisung für alle Personen entfernen'}
           </button>
         </DetailSection>
         <ActivitySummaryCard entityType="assignments" entityId={booking.bookingId} />
@@ -2522,7 +2535,7 @@ function DetailPanel({
             <OccupantCard
               key={occupant.athleteId}
               person={occupant}
-              status={occupant.hasPendingReview ? 'review' : occupant.isAssigned ? 'assigned' : 'open'}
+              status={occupant.hasPendingReview || occupant.accommodationCoverage?.coverageStatus==='CONFLICT' ? 'review' : occupant.accommodationCoverage ? occupant.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' ? 'assigned' : 'open' : occupant.isAssigned ? 'assigned' : 'open'}
               fallbackArrival={selectedUnit.checkInDate}
               fallbackDeparture={selectedUnit.checkOutDate}
               hideNation
@@ -2576,7 +2589,7 @@ function DetailPanel({
                 className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
               >
                 <Trash2 className="h-3.5 w-3.5" />
-                Zuweisung entfernen
+                Zimmerzuweisung für alle Personen entfernen
               </button>
             )}
           </div>

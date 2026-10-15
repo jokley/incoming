@@ -90,6 +90,10 @@ flags, quota allocation, approval applicability, imports and identity are untouc
 
 ## Remaining mutation and atomicity limitations (Step 2)
 
+The following describes the Step-1 baseline. Implemented Step-2 operations,
+atomicity fixes and Assignments behavior are documented in
+[split-stay-segments.md](split-stay-segments.md).
+
 The controlled assignment POST still reuses an exact occupant-set booking and
 detaches other memberships; PUT still performs its existing detachment. They are
 not new-segment commands. The legacy POST already could create multiple bookings;
