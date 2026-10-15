@@ -21,7 +21,7 @@ const value=(extra:Partial<AccommodationCoverage>={}):AccommodationCoverage=>({o
   segments:[],coveredIntervals:[],openIntervals:[span(14,27)],conflicts:[],coverageStatus:'UNASSIGNED',...extra});
 function render(coverage:AccommodationCoverage) {
   const person={athleteId:'1',name:'One Person',accommodationCoverage:coverage} as RoomBookingUnitOccupant;
-  return renderToStaticMarkup(createElement(PersonAccommodationPanel,{people:[person],hotels:[],canEdit:true,onChanged:async()=>{},onShowDisposition:()=>{},onSplit:()=>{}}));
+  return renderToStaticMarkup(createElement(PersonAccommodationPanel,{people:[person],hotels:[],canEdit:true,onChanged:async()=>{},onShowDisposition:()=>{},onSplit:()=>{},onExternal:()=>{}}));
 }
 
 test('unassigned full stay and each middle-booking gap have actionable controls',()=>{
@@ -45,15 +45,15 @@ test('updated backend responses render multiple segments, edits, removals and re
 test('conflict is visible, add/edit disabled, removal remains available',()=>{
   const html=render(value({coverageStatus:'CONFLICT',segments:[segment('1',14,20,'Hotel A')],conflicts:[{code:'BOOKING_OVERLAP',bookingIds:['1','2']}]}));
   assert.match(html,/Prüfen/); assert.match(html,/Klärung gesperrt/);
-  assert.match(html,/<button[^>]*disabled=""[^>]*>Bearbeiten</);
+  assert.match(html,/aria-label="Aktionen ·/);
   assert.match(html,/<button[^>]*disabled=""[^>]*>In Disposition anzeigen</);
-  assert.doesNotMatch(html.match(/<button[^>]*>Entfernen</)?.[0] ?? 'missing',/\sdisabled(?:=|\s|>)/);
+  assert.doesNotMatch(html,/>Bearbeiten<|>Zuweisung entfernen</);
 });
 
 test('split action belongs only to assigned periods and no activation controls remain',()=>{
   assert.doesNotMatch(render(value()),/>Zuweisung teilen</);
   const html=render(value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[segment('1',14,20,'Hotel A')]}));
-  assert.match(html,/>Bearbeiten</);assert.match(html,/>Zuweisung teilen</);assert.match(html,/>Entfernen</);
+  assert.match(html,/aria-label="Aktionen ·/);assert.doesNotMatch(html,/>Bearbeiten<|>Aufenthalt teilen<|>Zuweisung entfernen</);
   assert.doesNotMatch(html,/AKTIVE ZUWEISUNG|Neue Zuweisung/);
 });
 test('queue cards expose their dates and direct destination actions',()=>{
@@ -79,7 +79,7 @@ test('queue hierarchy separates pair identities, primary pair action and quiet s
   assert.match(html,/James JOHNSTONE/);assert.match(html,/William MCCARTHY/);
   assert.match(html,/Beide hier zuweisen/);assert.match(html,/James hier zuweisen/);assert.match(html,/William hier zuweisen/);
   assert.match(html,/Bisher:/);assert.match(html,/14.03–20.03 · Adler/);
-  assert.match(html,/Zuweisung teilen<\/button>/);assert.match(html,/title="14.03–20.03 · Adler"/);
+  assert.match(html,/aria-label="Weitere Aufenthaltsaktionen"/);assert.doesNotMatch(html,/>Aufenthalt teilen</);
   assert.doesNotMatch(html,/AKTIVE ZUWEISUNG|activeTarget/);
   const open=renderToStaticMarkup(createElement(DispositionQueueCard,{...props,splitOptions:[]}));
   assert.doesNotMatch(open,/>Zuweisung teilen</);
@@ -100,10 +100,26 @@ test('external preview renders canonical middle gaps and compact external histor
   assert.match(html,/Extern zugewiesen/);assert.match(html,/18.03–22.03/);assert.match(html,/14.03–18.03/);assert.match(html,/22.03–27.03/);
   assert.match(render(coverage),/Kühtai · Extern/);
 });
-test('open queue exposes Aufenthalt teilen without an existing booking',()=>{
+test('open queue exposes Externen Aufenthalt without an existing booking',()=>{
   const unit={unitId:'need:1',occupants:[{athleteId:'1',name:'One Person',firstname:'One'}],openPeriod:span(14,27),previous:[],canAssign:true};
   const props={unit,selected:false,canEditAssignments:true,pending:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{},onExternal:()=>{}};
   const html=renderToStaticMarkup(createElement(DispositionQueueCard,props));
-  assert.match(html,/Aufenthalt teilen/);assert.doesNotMatch(html,/Zuweisung teilen/);
-  assert.doesNotMatch(renderToStaticMarkup(createElement(DispositionQueueCard,{...props,canEditAssignments:false})),/Aufenthalt teilen/);
+  assert.match(html,/Externen Aufenthalt/);assert.doesNotMatch(html,/Zuweisung teilen/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(DispositionQueueCard,{...props,canEditAssignments:false})),/Externen Aufenthalt/);
+});
+
+
+test('one external shortcut remains available below fully assigned accommodation history',()=>{
+  const html=render(value({coverageStatus:'FULLY_ASSIGNED',segments:[segment('1',14,20,'Hotel A'),segment('2',20,27,'Hotel B')],openIntervals:[]}));
+  assert.equal((html.match(/>Externen Aufenthalt</g) ?? []).length,1);
+  assert.equal((html.match(/aria-label="Aktionen ·/g) ?? []).length,2);
+  assert.doesNotMatch(html,/>Bearbeiten<|>Aufenthalt teilen<|>Zuweisung entfernen</);
+});
+
+
+test('external replacement preview retains the full projected timeline',()=>{
+  const coverage=value({coverageStatus:'FULLY_ASSIGNED',openIntervals:[],segments:[segment('1',14,18,'Hotel A'),{...segment('-1',18,22,'Kühtai'),accommodationType:'EXTERNAL'},segment('2',22,27,'Hotel A')]});
+  const html=renderToStaticMarkup(createElement(ExternalStayPreview,{plan:{replaceStandard:true,hotelName:'Kühtai',...span(18,22),people:[{personId:'1',name:'One Person',accommodationCoverage:coverage}]}}));
+  assert.match(html,/14.03–18.03/);assert.match(html,/18.03–22.03/);assert.match(html,/22.03–27.03/);
+  assert.match(html,/Hotel A/);assert.match(html,/Kühtai · Extern/);assert.match(html,/Kein offener Zeitraum/);
 });

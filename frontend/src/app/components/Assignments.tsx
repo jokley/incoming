@@ -1,4 +1,4 @@
-import { ExternalStayDialog } from './assignment/ExternalStayDialog';
+import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
 import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount } from '../services/assignmentRoomUsage';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
@@ -127,7 +127,7 @@ export function Assignments() {
   const [decisionId, setDecisionId] = useState<string | null>(null);
 
   const [view, setView] = useState<AppView>(routeState?.view || (routeState?.operationsContext?.quotaKey ? 'quotas' : 'dispatch'));
-  const [externalItem,setExternalItem]=useState<DispositionItem|null>(null);
+  const [externalItem,setExternalItem]=useState<ExternalStayTarget|null>(null);
   const [splitBookingId,setSplitBookingId]=useState<string|null>(null);
   const [notice,setNotice]=useState('');
   const [reveal,setReveal]=useState<{ids:string[];interval?:import('../types').AccommodationInterval}|null>(null);
@@ -828,6 +828,7 @@ export function Assignments() {
           <AssignmentDialog title="Zimmer / Zuweisung" subtitle="Bewohner, Importinformationen und Disposition im Überblick" onClose={() => setSelected(null)}>
           <PersonAccommodationPanel
             people={selectedUnit?.occupants ?? allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext?.booking.occupants.some(occupant=>occupant.athleteId===person.athleteId))}
+            onExternal={people=>{const interval=people[0]?.accommodationCoverage?.overallInterval;if(interval)setExternalItem({occupants:people,openPeriod:interval,replaceStandard:true});}}
             hotels={allHotels} canEdit={permissions.canManageAssignments} onShowDisposition={(id,interval)=>showDisposition([id],interval)}
             onSplit={setSplitBookingId} canSplit={id=>!allUnitsCombined.flatMap(u=>u.occupants).some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT' && p.accommodationCoverage.segments.some(s=>s.bookingId===id))} onChanged={async personId=>{
               const unit=allUnitsCombined.find(item=>item.occupants.some(person=>person.athleteId===personId));

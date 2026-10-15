@@ -603,6 +603,7 @@ export interface AccommodationSplitPlan {
 export type AccommodationSplitResult=Pick<AccommodationSplitPlan,'booking'|'athleteIds'|'splitDate'|'people'> & {success:boolean};
 
 export interface ExternalStayPlan {
+  replaceStandard?:boolean;
   previewToken:string;hotelId:string;hotelName:string;athleteIds:string[];
   checkInDate:string;checkOutDate:string;openInterval:AccommodationInterval;
   people:Array<{personId:string;name:string;accommodationCoverage:AccommodationCoverage}>;

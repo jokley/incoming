@@ -200,3 +200,35 @@ def test_external_preview_rejects_person_change_without_gap_change(state):
     response=client.post('/api/assignments/segments',json=plan.json,headers=headers)
     assert response.status_code==409,response.json
     with app.app_context():assert RoomBooking.query.count()==0
+
+
+@pytest.mark.parametrize('both',[True,False])
+def test_external_standard_replacement_is_atomic_and_stale_under_postgres(state,both):
+    client=app.test_client()
+    original=client.post('/api/assignments/segments',json={**payload(state,14,27),'athleteIds':list(map(str,state[0]))},headers=headers)
+    assert original.status_code==201
+    with app.app_context():
+        hotel=Hotel(name='Outside',accommodation_type='EXTERNAL');db.session.add(hotel);db.session.commit();identity=hotel.id
+    query={'athleteIds':','.join(map(str,state[0] if both else state[0][:1])),'hotelId':str(identity),'replaceStandard':'true',
+           'checkInDate':'2027-03-18','checkOutDate':'2027-03-22','openCheckInDate':'2027-03-14','openCheckOutDate':'2027-03-27'}
+    plan=client.get('/api/assignments/segments/preview',query_string=query,headers=headers)
+    assert plan.status_code==200,plan.json
+    import routes.accommodation_segments as routes
+    actual=routes._mutate_segment
+    def fail(*args,**kwargs):
+        actual(*args,**kwargs)
+        raise RuntimeError('failure after external insert')
+    with patch.object(routes,'_mutate_segment',side_effect=fail),pytest.raises(RuntimeError):
+        client.post('/api/assignments/segments',json=plan.json,headers=headers)
+    with app.app_context():
+        assert RoomBooking.query.count()==1
+        assert RoomBooking.query.one().check_out_date==date(2027,3,27)
+        assert RoomBookingOccupant.query.count()==2
+    response=client.post('/api/assignments/segments',json=plan.json,headers=headers)
+    assert response.status_code==201,response.json
+    assert all(p['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED' for p in response.json['people'])
+    assert client.post('/api/assignments/segments',json=plan.json,headers=headers).status_code==409
+    with app.app_context():
+        from accommodation_mutations import physical_room_usage
+        assert physical_room_usage(RoomBooking.query.filter_by(hotel_id=state[1]).all())==1
+        assert len(RoomBooking.query.filter_by(hotel_id=identity).one().occupants)==(2 if both else 1)

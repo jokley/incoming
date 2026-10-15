@@ -61,6 +61,20 @@ def _copy(booking, identity, start, end):
         check_in_date=start, check_out_date=end, counts_as_single=booking.counts_as_single)
 
 
+def validate_partition_source(booking):
+    """Common physical-room safety for explicit split and external replacement."""
+    external = booking.hotel.accommodation_type == 'EXTERNAL'
+    require(external or (booking.room_type and len(booking.occupants) <= booking.room_type.max_persons), 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
+    from app import _planned_room_key
+    key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
+    for other in RoomBooking.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
+        same_room = not external and key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
+        require(not (other.id != booking.id and same_room and booking_intervals_overlap(
+            booking.check_in_date, booking.check_out_date, other.check_in_date, other.check_out_date)),
+            'ROOM_BOOKING_CONFLICT', 'Bestehende Zimmerbelegung prüfen.')
+    return external, key
+
+
 def split_plan(booking, ids, split_date):
     try:
         selected = sorted(int(value) for value in ids) if isinstance(ids, list) else []
@@ -73,15 +87,7 @@ def split_plan(booking, ids, split_date):
             'INVALID_OCCUPANTS', 'Nur Bewohner dieser Zuweisung auswählen.')
     require(booking.check_in_date and booking.check_out_date and booking.check_in_date < cut < booking.check_out_date,
             'INVALID_SPLIT_DATE', 'Teilungsdatum muss zwischen Anreise und Abreise liegen.')
-    external = booking.hotel.accommodation_type == 'EXTERNAL'
-    require(external or (booking.room_type and len(occupants) <= booking.room_type.max_persons), 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
-    from app import _planned_room_key
-    key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
-    for other in RoomBooking.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
-        same_room = not external and key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
-        require(not (other.id != booking.id and same_room and booking_intervals_overlap(
-            booking.check_in_date, booking.check_out_date, other.check_in_date, other.check_out_date)),
-            'ROOM_BOOKING_CONFLICT', 'Bestehende Zimmerbelegung prüfen.')
+    external, key = validate_partition_source(booking)
     remaining = [identity for identity in all_ids if identity not in selected]
     require(external or not remaining or key, 'ACCOMMODATION_REVIEW_REQUIRED', 'Für das Teilen einzelner Bewohner muss die Zimmernummer geklärt sein.')
     prefix = _copy(booking, booking.id, booking.check_in_date, cut)
@@ -108,10 +114,14 @@ def split_plan(booking, ids, split_date):
             'previewToken': preview_token(booking, selected, cut.isoformat()), 'retainedSegments': retained, 'people': people}
 
 
-def apply_split(booking, plan):
-    """Only flush; the caller owns the sole commit/rollback boundary."""
-    cut = date.fromisoformat(plan['splitDate'])
-    remaining = [o for o in booking.occupants if str(o.athlete_id) not in plan['athleteIds']]
+def partition_booking(booking, cut, remaining):
+    """Keep all occupants in the prefix and copy chosen memberships to the suffix.
+
+    Flush only; both business flows own their single transaction boundary.
+    """
+    require(booking.check_in_date < cut < booking.check_out_date,
+            'INVALID_SPLIT_DATE', 'Teilungsdatum muss innerhalb der Zuweisung liegen.')
+    continuation = None
     if remaining:
         continuation = RoomBooking(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id,
             room_number=booking.room_number, check_in_date=cut, check_out_date=booking.check_out_date,
@@ -120,6 +130,14 @@ def apply_split(booking, plan):
         db.session.add(continuation)
     booking.check_out_date = cut
     db.session.flush()
+    return continuation
+
+
+def apply_split(booking, plan):
+    """Only flush; the caller owns the sole commit/rollback boundary."""
+    cut = date.fromisoformat(plan['splitDate'])
+    remaining = [o for o in booking.occupants if str(o.athlete_id) not in plan['athleteIds']]
+    partition_booking(booking, cut, remaining)
     people = []
     for o in booking.occupants:
         p = o.athlete

@@ -174,16 +174,24 @@ def add_shared_segment():
                  'INVALID_PEOPLE', 'Eine Person oder zwei Zimmerpartner auswählen.')
         ids = [int(value) for value in ids]
         _require(len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Personen müssen unterschiedlich sein.')
-        from external_accommodation import external_plan
+        from external_accommodation import external_plan, release_standard_period
         hotel = db.session.get(Hotel, int(data.get('hotelId', 0)))
         external = bool(hotel and hotel.accommodation_type == 'EXTERNAL')
         if data.get('previewToken') and not external:
             raise SplitError('STALE_EXTERNAL_STAY', 'Externe Unterkunft hat sich geändert. Bitte Vorschau erneut prüfen.', 409)
         if external:
             _require(not data.get('joinBookingId'), 'INVALID_JOIN', 'Externe Aufenthalte als neue Zuweisung anlegen.')
-            plan = external_plan(data)
-            if not data.get('previewToken') or data['previewToken'] != plan['previewToken']:
+            if not data.get('previewToken'):
+                raise SplitError('STALE_EXTERNAL_STAY', 'Bitte Vorschau vor dem Speichern prüfen.', 409)
+            try:
+                plan = external_plan(data)
+            except SplitError as error:
+                raise SplitError(error.code, error.message, 409) from error
+            if data['previewToken'] != plan['previewToken']:
                 raise SplitError('STALE_EXTERNAL_STAY', 'Aufenthalt hat sich geändert. Bitte Vorschau erneut prüfen.', 409)
+            if plan['replacedBookings']:
+                g.audit_snapshot = {'replacedBookings':[db.session.get(RoomBooking,int(row['bookingId'])).to_dict() for row in plan['replacedBookings']]}
+                release_standard_period(plan)
         interval = {key: data.get(key) for key in ('checkInDate', 'checkOutDate')}
         # Exact frozen selection, no implicit intersection or replacement.
         people = [Athlete.query.get_or_404(identity) for identity in ids]
@@ -266,6 +274,7 @@ def preview_external_segment():
         data = {'athleteIds': request.args.get('athleteIds', '').split(','),
                 'hotelId': request.args.get('hotelId'), 'checkInDate': request.args.get('checkInDate'),
                 'checkOutDate': request.args.get('checkOutDate'),
+                'replaceStandard': request.args.get('replaceStandard') == 'true',
                 'openInterval': {'checkInDate': request.args.get('openCheckInDate'), 'checkOutDate': request.args.get('openCheckOutDate')}}
         plan = external_plan(data)
         response = jsonify(plan)
