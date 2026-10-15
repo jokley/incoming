@@ -655,8 +655,8 @@ class ApiService {
     });
   }
 
-  async previewExternalStay(data:{athleteIds:string[];hotelId:string;checkInDate:string;checkOutDate:string;openInterval:import('../types').AccommodationInterval}) {
-    const params=new URLSearchParams({athleteIds:data.athleteIds.join(','),hotelId:data.hotelId,checkInDate:data.checkInDate,checkOutDate:data.checkOutDate,openCheckInDate:data.openInterval.checkInDate!,openCheckOutDate:data.openInterval.checkOutDate!});
+  async previewExternalStay(data:{athleteIds:string[];hotelId:string;checkInDate:string;checkOutDate:string;openInterval:import('../types').AccommodationInterval;replaceStandard?:boolean}) {
+    const params=new URLSearchParams({athleteIds:data.athleteIds.join(','),hotelId:data.hotelId,checkInDate:data.checkInDate,checkOutDate:data.checkOutDate,openCheckInDate:data.openInterval.checkInDate!,openCheckOutDate:data.openInterval.checkOutDate!,replaceStandard:String(!!data.replaceStandard)});
     return this.request<import('../types').ExternalStayPlan>(`/assignments/segments/preview?${params}`);
   }
 

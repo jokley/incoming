@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Scissors } from 'lucide-react';
+import { MoreHorizontal } from 'lucide-react';
+import { IconButton, Menu, MenuItem } from '@mui/material';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
 
@@ -10,7 +11,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
   onExternal?:()=>void;
   splitOptions?:{bookingId:string;label:string}[];onSplit?:(bookingId:string)=>void;
 }) {
-  const [choosingSplit,setChoosingSplit]=useState(false);
+  const [splitAnchor,setSplitAnchor]=useState<HTMLElement|null>(null);
   const enabled=canEditAssignments && unit.canAssign && !pending;
   const ids=unit.occupants.map(p=>p.athleteId);
   const drag=(event:React.DragEvent,people:string[])=>{
@@ -43,13 +44,12 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       {unit.occupants.length===2 && <div className="mt-2">{action(ids,'Beide')}</div>}
       <div className="mt-1 text-[10px] leading-snug text-[var(--ops-text-muted)]">{hotelName ? `Ziel: ${hotelName}` : 'In den Zimmerbereich ziehen oder Hotel rechts öffnen.'}</div>
     </>}
-    {canEditAssignments && unit.canAssign && onExternal && <div className="mt-2"><button type="button" disabled={pending} onClick={event=>{event.stopPropagation();onExternal();}} onDragStart={event=>{event.preventDefault();event.stopPropagation();}} className="rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] disabled:opacity-40">Aufenthalt teilen</button></div>}
-    {canEditAssignments && unit.canAssign && onSplit && splitOptions.length>0 && <div className="mt-2 border-t border-[var(--ops-border)] pt-1.5" onClick={event=>event.stopPropagation()} onDragStart={event=>{event.preventDefault();event.stopPropagation();}}>
-      <button type="button" disabled={pending} className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] hover:bg-[var(--ops-surface-elevated)] disabled:opacity-40"
-        aria-expanded={splitOptions.length>1 ? choosingSplit : undefined}
-        title={splitOptions.length===1 ? splitOptions[0].label : 'Zugewiesenen Zeitraum auswählen'}
-        onClick={()=>splitOptions.length===1 ? onSplit(splitOptions[0].bookingId) : setChoosingSplit(!choosingSplit)}><Scissors aria-hidden="true" className="h-3 w-3 shrink-0" />Zuweisung teilen</button>
-      {choosingSplit && splitOptions.length>1 && <div className="mt-1 space-y-1" aria-label="Zugewiesenen Zeitraum auswählen">{splitOptions.map(option=><button type="button" key={option.bookingId} disabled={pending} onClick={()=>onSplit(option.bookingId)} className="block w-full rounded border border-[var(--ops-border)] px-2 py-1 text-left text-[11px] text-[var(--ops-primary)]">{option.label}</button>)}</div>}
+    {canEditAssignments && unit.canAssign && (onExternal || (onSplit && splitOptions.length>0)) && <div className="mt-2 flex items-center justify-between gap-2" onClick={event=>event.stopPropagation()} onDragStart={event=>{event.preventDefault();event.stopPropagation();}}>
+      {onExternal && <button type="button" disabled={pending} onClick={onExternal} className="rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] disabled:opacity-40">Externen Aufenthalt</button>}
+      {onSplit && splitOptions.length>0 && <>
+        <IconButton size="small" disabled={pending} aria-label="Weitere Aufenthaltsaktionen" aria-haspopup="menu" aria-expanded={!!splitAnchor} onClick={event=>setSplitAnchor(event.currentTarget)}><MoreHorizontal size={16}/></IconButton>
+        <Menu anchorEl={splitAnchor} open={!!splitAnchor} onClose={()=>setSplitAnchor(null)}>{splitOptions.map(option=><MenuItem key={option.bookingId} onClick={()=>{setSplitAnchor(null);onSplit(option.bookingId);}}>{splitOptions.length===1 ? 'Aufenthalt teilen' : `Aufenthalt teilen · ${option.label}`}</MenuItem>)}</Menu>
+      </>}
     </div>}
   </div>;
 }

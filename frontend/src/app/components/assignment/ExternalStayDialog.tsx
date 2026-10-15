@@ -8,38 +8,41 @@ import { api } from '../../services/api';
 export function ExternalStayPreview({plan}:{plan:ExternalStayPlan}) {
   return <div className="space-y-3 rounded-lg border border-[var(--ops-border)] p-3 text-sm">
     <p><b>Extern zugewiesen</b><br/>{periodLabel(plan)} · {plan.hotelName} · Extern</p>
-    {plan.people.map(person=><div key={person.personId}><b>{person.name} · Danach offen</b>{person.accommodationCoverage.openIntervals.length ? person.accommodationCoverage.openIntervals.map(interval=><p key={`${interval.checkInDate}:${interval.checkOutDate}`}>{periodLabel(interval)} · Offen</p>) : <p>Kein offener Zeitraum</p>}</div>)}
+    {plan.people.map(person=><div key={person.personId}><b>{person.name} · {plan.replaceStandard ? 'Danach' : 'Danach offen'}</b>{plan.replaceStandard && person.accommodationCoverage.segments.map(segment=><p key={`${segment.bookingId}:${segment.checkInDate}`}>{periodLabel(segment)} · {segment.hotelName}{segment.accommodationType==='EXTERNAL' ? ' · Extern' : ''}</p>)}{person.accommodationCoverage.openIntervals.length ? person.accommodationCoverage.openIntervals.map(interval=><p key={`${interval.checkInDate}:${interval.checkOutDate}`}>{periodLabel(interval)} · Offen</p>) : <p>Kein offener Zeitraum</p>}</div>)}
   </div>;
 }
 
-export function ExternalStayDialog({item,hotels,onClose,onComplete}:{item:DispositionItem;hotels:AssignmentGridHotel[];onClose:()=>void;onComplete:(ids:string[])=>Promise<void>}) {
-  const [selection,setSelection]=useState('all'),[hotelId,setHotelId]=useState('');
+export type ExternalStayTarget=Pick<DispositionItem,'occupants'|'openPeriod'> & {replaceStandard?:boolean};
+
+export function ExternalStayDialog({item,hotels,onClose,onComplete}:{item:ExternalStayTarget;hotels:AssignmentGridHotel[];onClose:()=>void;onComplete:(ids:string[])=>Promise<void>}) {
+  const [selection,setSelection]=useState(item.occupants.length>2 ? item.occupants[0].athleteId : 'all'),[hotelId,setHotelId]=useState('');
   const [start,setStart]=useState(item.openPeriod.checkInDate ?? ''),[end,setEnd]=useState(item.openPeriod.checkOutDate ?? '');
   const [plan,setPlan]=useState<ExternalStayPlan|null>(null),[error,setError]=useState(''),[loading,setLoading]=useState(false),[saving,setSaving]=useState(false);
   const generation=useRef(0);
   const ids=selection==='all' ? item.occupants.map(p=>p.athleteId) : [selection];
   const key=ids.join(',');
-  const valid=!!hotelId && !!start && !!end && item.openPeriod.checkInDate!<=start && start<end && end<=item.openPeriod.checkOutDate!;
+  const bounds=item.replaceStandard && ids.length===1 ? item.occupants.find(p=>p.athleteId===ids[0])?.accommodationCoverage?.overallInterval ?? item.openPeriod : item.openPeriod;
+  const valid=!!hotelId && !!start && !!end && bounds.checkInDate!<=start && start<end && end<=bounds.checkOutDate!;
   useEffect(()=>{
     const request=++generation.current;setPlan(null);setError('');setLoading(false);
     if(!valid)return;
     setLoading(true);
-    api.previewExternalStay({athleteIds:key.split(','),hotelId,checkInDate:start,checkOutDate:end,openInterval:item.openPeriod})
+    api.previewExternalStay({athleteIds:key.split(','),hotelId,checkInDate:start,checkOutDate:end,openInterval:bounds,replaceStandard:item.replaceStandard})
       .then(value=>{if(generation.current===request)setPlan(value);})
       .catch(reason=>{if(generation.current===request)setError(reason.message);})
       .finally(()=>{if(generation.current===request)setLoading(false);});
     return ()=>{generation.current++;};
-  },[key,hotelId,start,end,valid,item]);
-  const matches=plan && plan.hotelId===hotelId && plan.checkInDate===start && plan.checkOutDate===end && plan.athleteIds.join(',')===[...ids].sort((a,b)=>Number(a)-Number(b)).join(',');
+  },[key,hotelId,start,end,valid,item,bounds]);
+  const matches=plan && !!plan.replaceStandard===!!item.replaceStandard && plan.hotelId===hotelId && plan.checkInDate===start && plan.checkOutDate===end && plan.athleteIds.join(',')===[...ids].sort((a,b)=>Number(a)-Number(b)).join(',');
   return <Dialog open fullWidth maxWidth="sm" onClose={()=>!saving && onClose()}>
-    <DialogTitle>Aufenthalt teilen</DialogTitle>
-    <DialogContent dividers><div className="space-y-4">
-      <p className="text-sm">Offener Aufenthalt · <b>{periodLabel(item.openPeriod)}</b><br/>{item.occupants.map(p=>p.name).join(' + ')}</p>
-      {item.occupants.length>1 && <RadioGroup aria-label="Personen" value={selection} onChange={e=>setSelection(e.target.value)}><FormControlLabel value="all" control={<Radio disabled={saving}/>} label="Beide"/>{item.occupants.map(p=><FormControlLabel key={p.athleteId} value={p.athleteId} control={<Radio disabled={saving}/>} label={p.name}/>)}</RadioGroup>}
-      <TextField select fullWidth size="small" label="Externe Unterkunft" value={hotelId} disabled={saving} onChange={e=>setHotelId(e.target.value)}>{hotels.filter(h=>h.accommodationType==='EXTERNAL').map(h=><MenuItem key={h.hotelId} value={h.hotelId}>{h.hotelName}</MenuItem>)}</TextField>
+    <DialogTitle>Externen Aufenthalt</DialogTitle>
+    <DialogContent dividers><div className="space-y-4 flex flex-col">
+      <p className="text-sm">{item.replaceStandard ? 'Gesamtaufenthalt' : 'Offener Aufenthalt'} · <b>{periodLabel(bounds)}</b><br/>{item.occupants.map(p=>p.name).join(' + ')}</p>
+      {item.occupants.length>1 && <RadioGroup aria-label="Personen" value={selection} onChange={e=>setSelection(e.target.value)}>{item.occupants.length===2 && <FormControlLabel value="all" control={<Radio disabled={saving}/>} label="Beide"/>}{item.occupants.map(p=><FormControlLabel key={p.athleteId} value={p.athleteId} control={<Radio disabled={saving}/>} label={p.name}/>)}</RadioGroup>}
+      <TextField select SelectProps={{MenuProps:{PaperProps:{sx:{maxHeight:280}}}}} fullWidth size="small" label="Externe Unterkunft" value={hotelId} disabled={saving} onChange={e=>setHotelId(e.target.value)}>{hotels.filter(h=>h.accommodationType==='EXTERNAL').map(h=><MenuItem key={h.hotelId} value={h.hotelId}>{h.hotelName}</MenuItem>)}</TextField>
       {!hotels.some(h=>h.accommodationType==='EXTERNAL') && <Alert severity="info">Zuerst eine externe Unterkunft unter Hotels anlegen.</Alert>}
-      <div className="grid grid-cols-2 gap-3">{(['Von','Bis'] as const).map(label=><TextField key={label} type="date" size="small" label={label} disabled={saving} value={label==='Von' ? start : end} onChange={e=>label==='Von' ? setStart(e.target.value) : setEnd(e.target.value)} slotProps={{inputLabel:{shrink:true}}} inputProps={{min:item.openPeriod.checkInDate,max:item.openPeriod.checkOutDate}}/>)}</div>
-      {!valid && hotelId && <p className="text-xs">Von muss vor Bis und innerhalb des offenen Aufenthalts liegen.</p>}
+      <div className="grid grid-cols-2 gap-3">{(['Von','Bis'] as const).map(label=><TextField key={label} type="date" size="small" label={label} disabled={saving} value={label==='Von' ? start : end} onChange={e=>label==='Von' ? setStart(e.target.value) : setEnd(e.target.value)} slotProps={{inputLabel:{shrink:true}}} inputProps={{min:bounds.checkInDate,max:bounds.checkOutDate}}/>)}</div>
+      {!valid && hotelId && <p className="text-xs">Von muss vor Bis und innerhalb des angezeigten Aufenthalts liegen.</p>}
       {loading && <p className="text-sm">Vorschau wird geladen…</p>}{error && <Alert severity="error">{error}</Alert>}{matches && <ExternalStayPreview plan={plan}/>}
     </div></DialogContent>
     <DialogActions><Button disabled={saving} onClick={onClose}>Abbrechen</Button><Button variant="contained" disabled={saving || loading || !matches} onClick={async()=>{
@@ -47,6 +50,6 @@ export function ExternalStayDialog({item,hotels,onClose,onComplete}:{item:Dispos
       try {await api.addExternalStay(plan);await onComplete(plan.athleteIds);onClose();}
       catch(reason){setError(reason instanceof Error ? reason.message : 'Zuweisung fehlgeschlagen.');setPlan(null);}
       finally{setSaving(false);}
-    }}>Extern zuweisen</Button></DialogActions>
+    }}>Speichern</Button></DialogActions>
   </Dialog>;
 }
