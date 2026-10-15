@@ -88,6 +88,13 @@
   "/api/assignments/bookings/<int:booking_id>/unassign/": [
     "POST"
   ],
+  "/api/assignments/persons/<int:person_id>/segments": [
+    "POST"
+  ],
+  "/api/assignments/persons/<int:person_id>/segments/<int:booking_id>": [
+    "DELETE",
+    "PUT"
+  ],
   "/api/assignments/planning-view": [
     "GET"
   ],

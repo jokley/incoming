@@ -5,6 +5,8 @@ from auth import load_user_from_request, current_user
 from quota_history import historical_approval_groups, applicable_approval_groups, approved_quota_disciplines, approved_quota_contexts, person_keys, quota_person
 from competitions import quota_disciplines
 from accommodation_coverage import booking_intervals_overlap, person_accommodation_coverage
+from accommodation_mutations import lock_accommodation_writes
+from routes.accommodation_segments import accommodation_segments
 from quota_service import (quota_keys, disposition_by_quota_group, evaluate_quota_usage,
                            normalize_gender, QuotaGenderValidationError)
 from datetime import datetime
@@ -67,6 +69,7 @@ app.register_blueprint(booking_reads)
 app.register_blueprint(identity)
 app.register_blueprint(audit_events)
 app.register_blueprint(world_champions)
+app.register_blueprint(accommodation_segments)
 
 
 @app.errorhandler(QuotaGenderValidationError)
@@ -143,8 +146,16 @@ def _assignment_jsonify(payload):
 def _measure_assignment_logic(function):
     @wraps(function)
     def measured(*args, **kwargs):
-        with _assignment_phase('assignment'):
-            return function(*args, **kwargs)
+        mutation = request.method in {'POST', 'PUT', 'DELETE', 'PATCH'}
+        try:
+            if mutation:
+                lock_accommodation_writes()
+            with _assignment_phase('assignment'):
+                return function(*args, **kwargs)
+        except Exception:
+            if mutation:
+                db.session.rollback()
+            raise
     return measured
 
 
@@ -451,6 +462,9 @@ def authenticate_api_request():
     permission = _required_permission()
     if permission and not g.current_user.has_permission(permission):
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
+    if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and (
+            g.api_path.startswith('/api/assignments/') or g.api_path.startswith('/api/room-assignments')):
+        lock_accommodation_writes()
     # Keep the fachliche description of objects that may be deleted by the
     # endpoint. This snapshot is request-local and contains no transport data.
     g.audit_snapshot = None
@@ -502,16 +516,20 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 
     if entity_type in {'assignments', 'room-assignments'}:
         category = 'Disposition'
-        booking = response
+        segment_operation = '/persons/' in request.path and '/segments' in request.path
+        booking = (response.get('booking') or snapshot or {}) if segment_operation else response
         occupants = booking.get('occupants') or []
         athletes = [item.get('athlete') or {} for item in occupants]
         athlete_ids = payload.get('athleteIds') or [a.get('id') for a in athletes]
+        if segment_operation:
+            athlete_ids = [response.get('personId')]
+            athletes = [athlete for athlete in athletes if str(athlete.get('id')) == str(response.get('personId'))]
         path_ids = [part for part in request.path.split('/') if part.isdigit()]
         if '/occupants/' in request.path and path_ids:
             athlete_ids = [path_ids[-1]]
         for index, athlete_id in enumerate(filter(None, athlete_ids)):
             ref('personId' if index == 0 else f'personId{index + 1}', athlete_id)
-        booking_id = booking.get('id') or (path_ids[0] if path_ids else entity_id)
+        booking_id = booking.get('id') or (response.get('bookingId') if segment_operation else None) or (path_ids[0] if path_ids else entity_id)
         ref('bookingId', booking_id)
         hotel = booking.get('hotel') or {}
         room_type = booking.get('roomType') or {}
@@ -525,6 +543,8 @@ def _business_activity(entity_type, entity_id, action, payload, response):
             title = 'Quotenbewertung auf EZ gesetzt' if set(payload) == {'countsAsSingle'} and payload.get('countsAsSingle') else ('Quotenbewertung auf DZ gesetzt' if set(payload) == {'countsAsSingle'} else 'Zimmerpartner geändert')
         else:
             title = 'Zimmer zugewiesen'
+        if segment_operation:
+            title = 'Unterkunftszuweisung entfernt' if request.method == 'DELETE' else 'Unterkunftszuweisung bearbeitet' if request.method == 'PUT' else 'Unterkunftszuweisung hinzugefügt'
         if hotel.get('name'):
             details.append(f"Hotel: {hotel['name']}")
         room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber')]))
@@ -1369,7 +1389,7 @@ def _build_assignment_planning_view(validation_keys=None):
     }
 
 
-def _validate_booking_payload(data, existing_booking=None):
+def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None):
     athlete_ids = data.get('athleteIds', [])
     if not isinstance(athlete_ids, list) or len(athlete_ids) < 1 or len(athlete_ids) > 4:
         return None, None, _booking_error('INVALID_OCCUPANTS', 'athleteIds must include between 1 and 4 athlete IDs')
@@ -1406,8 +1426,9 @@ def _validate_booking_payload(data, existing_booking=None):
         RoomBookingOccupant.athlete_id.in_(unique_athlete_ids),
         RoomBooking.check_in_date < check_out_date,
         RoomBooking.check_out_date > check_in_date)
-    if existing_booking:
-        person_bookings = person_bookings.filter(RoomBooking.id != existing_booking.id)
+    person_exclusion = person_booking_exclusion_id or (existing_booking.id if existing_booking else None)
+    if person_exclusion:
+        person_bookings = person_bookings.filter(RoomBooking.id != person_exclusion)
     if person_bookings.first():
         return None, None, _booking_error('PERSON_BOOKING_OVERLAP', 'Person already has accommodation during this period')
 
@@ -1520,7 +1541,8 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
             remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
             if remaining == 0:
                 db.session.delete(booking)
-    db.session.commit()
+    # The caller saves and commits the entire replacement operation atomically.
+    db.session.flush()
 
 
 def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
@@ -2799,6 +2821,12 @@ def create_room_booking():
     if 'countsAsSingle' in data:
         payload_data['countsAsSingle'] = data['countsAsSingle']
 
+    multiple = db.session.query(RoomBookingOccupant.athlete_id).filter(
+        RoomBookingOccupant.athlete_id.in_([int(value) for value in payload_data['athleteIds']])
+    ).group_by(RoomBookingOccupant.athlete_id).having(func.count(RoomBookingOccupant.id) > 1).first()
+    if multiple:
+        return _booking_error('SEGMENT_OPERATION_REQUIRED', 'Mehrere Aufenthalte vorhanden. Bitte die einzelne Unterkunftszuweisung bearbeiten.')
+
     existing_booking = None
     if data.get('assignedBookingId'):
         existing_booking = RoomBooking.query.get_or_404(int(data['assignedBookingId']))
@@ -2838,7 +2866,6 @@ def update_assigned_unit(booking_id):
     payload, _, error = _validate_booking_payload(payload_data, existing_booking=booking)
     if error:
         return error
-    _detach_athletes_from_existing_bookings(payload['athlete_ids'], exclude_booking_id=booking.id)
     booking = _save_booking_from_payload(payload, existing_booking=booking)
     return _assignment_jsonify(booking.to_dict())
 

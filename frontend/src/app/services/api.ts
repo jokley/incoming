@@ -646,6 +646,14 @@ class ApiService {
     );
   }
 
+  async mutateAccommodationSegment(personId:string, operation:'POST'|'PUT'|'DELETE', bookingId?:string, data?:{
+    hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string;
+  }):Promise<{success:boolean;personId:string;booking:RoomBooking|null;accommodationCoverage:import('../types').AccommodationCoverage}> {
+    return this.request(`/assignments/persons/${personId}/segments${bookingId ? `/${bookingId}` : ''}`,{
+      method:operation, ...(data ? {body:JSON.stringify(data)} : {}),
+    });
+  }
+
   async assignRoomBookingUnit(data: {
     hotelId: string;
     roomTypeId: string;
