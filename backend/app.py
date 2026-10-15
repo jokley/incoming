@@ -4,6 +4,7 @@ from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, Accommod
 from auth import load_user_from_request, current_user
 from quota_history import historical_approval_groups, applicable_approval_groups, approved_quota_disciplines, approved_quota_contexts, person_keys, quota_person
 from competitions import quota_disciplines
+from accommodation_coverage import booking_intervals_overlap, person_accommodation_coverage
 from quota_service import (quota_keys, disposition_by_quota_group, evaluate_quota_usage,
                            normalize_gender, QuotaGenderValidationError)
 from datetime import datetime
@@ -831,9 +832,7 @@ def _normalize_gender(athlete):
 
 
 def _dates_overlap(start_a, end_a, start_b, end_b):
-    if not start_a or not end_a or not start_b or not end_b:
-        return False
-    return start_a <= end_b and start_b <= end_a
+    return booking_intervals_overlap(start_a, end_a, start_b, end_b)
 
 
 def _booking_error(reason_code, message, details=None):
@@ -1169,6 +1168,9 @@ def _build_room_booking_units():
                 'hasPendingReview': assigned_change,
                 'changeTouchesAssignment': assigned_change,
                 'isAssigned': bool(athlete_booking),
+                'accommodationCoverage': person_accommodation_coverage(
+                    athlete.arrival_date, athlete.departure_date,
+                    athlete_booking_index.get(athlete.id, [])),
                 'assignedBookingId': str(athlete_booking.id) if athlete_booking else None,
                 'assignedHotelId': str(athlete_booking.hotel_id) if athlete_booking else None,
                 'assignedHotelName': athlete_booking.hotel.name if athlete_booking and athlete_booking.hotel else None,
@@ -1389,12 +1391,25 @@ def _validate_booking_payload(data, existing_booking=None):
     if len(athletes) != len(unique_athlete_ids):
         return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
 
-    check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
-    check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
+    try:
+        check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
+        check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
+    except (ValueError, TypeError):
+        return None, None, _booking_error('INVALID_DATES', 'Booking dates must be valid ISO dates')
     if not check_in_date or not check_out_date:
         return None, None, _booking_error('MISSING_DATES', 'Booking requires check-in and check-out dates')
-    if check_in_date > check_out_date:
-        return None, None, _booking_error('INVALID_DATES', 'Check-in must be before or equal to check-out')
+    if check_in_date >= check_out_date:
+        return None, None, _booking_error('INVALID_DATES', 'Check-in must be before check-out')
+
+    # Exclude only the booking being edited/moved, never another segment.
+    person_bookings = RoomBooking.query.join(RoomBookingOccupant).filter(
+        RoomBookingOccupant.athlete_id.in_(unique_athlete_ids),
+        RoomBooking.check_in_date < check_out_date,
+        RoomBooking.check_out_date > check_in_date)
+    if existing_booking:
+        person_bookings = person_bookings.filter(RoomBooking.id != existing_booking.id)
+    if person_bookings.first():
+        return None, None, _booking_error('PERSON_BOOKING_OVERLAP', 'Person already has accommodation during this period')
 
     inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
         HotelRoomInventory.hotel_id == hotel_id,
@@ -1416,8 +1431,8 @@ def _validate_booking_payload(data, existing_booking=None):
         RoomBooking.room_type_id == room_type_id,
         RoomBooking.check_in_date.isnot(None),
         RoomBooking.check_out_date.isnot(None),
-        RoomBooking.check_in_date <= check_out_date,
-        RoomBooking.check_out_date >= check_in_date,
+        RoomBooking.check_in_date < check_out_date,
+        RoomBooking.check_out_date > check_in_date,
     )
     if existing_booking:
         query = query.filter(RoomBooking.id != existing_booking.id)

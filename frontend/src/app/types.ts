@@ -101,7 +101,25 @@ export interface ChampionshipEvent {
 export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
 export type SingleRoomQuotaExemptReason = 'WORLD_CHAMPION' | 'OTHER' | null;
 
+export interface AccommodationInterval {
+  checkInDate: string | null;
+  checkOutDate: string | null;
+}
+export interface AccommodationCoverage {
+  overallInterval: AccommodationInterval;
+  segments: Array<AccommodationInterval & {
+    bookingId: string; hotelId: string; hotelName: string | null;
+    roomTypeId: string; roomTypeName: string | null; roomNumber: string | null;
+    countsAsSingle: boolean; conflictCodes: string[];
+  }>;
+  coveredIntervals: AccommodationInterval[];
+  openIntervals: AccommodationInterval[];
+  conflicts: Array<{code:string;bookingIds:string[]}>;
+  coverageStatus: 'UNASSIGNED' | 'PARTIALLY_ASSIGNED' | 'FULLY_ASSIGNED' | 'CONFLICT';
+}
+
 export interface Athlete {
+  accommodationCoverage?: AccommodationCoverage;
   id: string;
   function?: string;
   competitorId?: string;
@@ -231,6 +249,7 @@ export interface RoomBooking {
 }
 
 export interface RoomBookingUnitOccupant {
+  accommodationCoverage?: AccommodationCoverage;
   athleteId: string;
   name: string;
   firstname: string;

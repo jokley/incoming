@@ -50,6 +50,31 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         with app.app_context():
             db.session.remove()
 
+    def test_person_and_planning_coverage_expose_adjacent_segments_without_rewriting_bookings(self):
+        with app.app_context():
+            athlete=self.athlete('Split','Person')
+            athlete.arrival_date=date(2027,3,14)
+            athlete.departure_date=date(2027,3,27)
+            db.session.add(athlete); db.session.flush()
+            person_id=athlete.id
+            for start,end in [(14,20),(20,27)]:
+                booking=RoomBooking(hotel=Hotel.query.one(),room_type=RoomType.query.one(),
+                    check_in_date=date(2027,3,start),check_out_date=date(2027,3,end),counts_as_single=False)
+                db.session.add(RoomBookingOccupant(athlete=athlete,room_booking=booking))
+            db.session.commit()
+            frozen=[(b.id,b.check_in_date,b.check_out_date,b.counts_as_single) for b in RoomBooking.query.order_by(RoomBooking.id).all()]
+        client=app.test_client()
+        person=client.get(f'/api/athletes/{person_id}').get_json()
+        coverage=person['accommodationCoverage']
+        self.assertEqual(coverage['coverageStatus'],'FULLY_ASSIGNED')
+        self.assertEqual(coverage['openIntervals'],[])
+        self.assertEqual(len(coverage['segments']),2)
+        self.assertEqual(client.get('/api/athletes').get_json()[0]['accommodationCoverage'],coverage)
+        planning=client.get('/api/assignments/planning-view?includeValidations=false').get_json()
+        self.assertEqual(planning['units']['assigned'][0]['occupants'][0]['accommodationCoverage'],coverage)
+        with app.app_context():
+            self.assertEqual([(b.id,b.check_in_date,b.check_out_date,b.counts_as_single) for b in RoomBooking.query.order_by(RoomBooking.id).all()],frozen)
+
     def test_existing_hotel_and_contingent_comments_are_projected_without_capacity_changes(self):
         with app.app_context():
             hotel=Hotel.query.one()
