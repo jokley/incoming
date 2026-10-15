@@ -46,3 +46,25 @@ test('conflicts remain visible and prevent ambiguous additions',()=>{
   assert.equal(accommodationView(value).canAdd,false);
   assert.equal(unitCoverageComplete(unit(value)),false);
 });
+
+test('active assignment selects exact backend gap and pairs only identical gaps',async()=>{
+  const {assignmentTarget}=await import('./segmentWorkflow.ts');
+  const value=unit(coverage({coverageStatus:'PARTIALLY_ASSIGNED',openIntervals:[interval(20,27)]}));
+  value.unitId='pair';value.occupants[0].name='Nicholas';
+  value.occupants.push({...value.occupants[0],athleteId:'2',name:'Justin'});
+  assert.deepEqual(assignmentTarget(value,['1','2'])?.openInterval,interval(20,27));
+  assert.deepEqual(assignmentTarget(value,['1','2'])?.athleteIds,['1','2']);
+  value.occupants[1]={...value.occupants[1],accommodationCoverage:coverage({openIntervals:[interval(19,27)]})};
+  assert.equal(assignmentTarget(value,['1','2']),null);
+  assert.deepEqual(assignmentTarget(value,['2'])?.openInterval,interval(19,27));
+});
+test('multiple open intervals require explicit selection; full and conflict cannot activate',async()=>{
+  const {assignmentTarget}=await import('./segmentWorkflow.ts');
+  const value=unit(coverage({coverageStatus:'PARTIALLY_ASSIGNED',openIntervals:[interval(14,18),interval(22,27)]}));
+  assert.equal(assignmentTarget(value,['1']),null);
+  assert.deepEqual(assignmentTarget(value,['1'],interval(22,27))?.openInterval,interval(22,27));
+  assert.equal(assignmentTarget(value,['1'],interval(18,22)),null);
+  assert.equal(assignmentTarget(unit(coverage({coverageStatus:'FULLY_ASSIGNED',openIntervals:[]})),['1']),null);
+  assert.equal(assignmentTarget(unit(coverage({coverageStatus:'CONFLICT'})),['1']),null);
+  assert.equal(assignmentTarget(value,['missing']),null);
+});

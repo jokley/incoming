@@ -93,3 +93,29 @@ def test_legacy_post_cannot_replace_a_split_person(state):
     response=client.post('/api/assignments/bookings',json={**payload(state,14,27),'athleteIds':[str(person)]},headers=headers)
     assert response.status_code==400 and response.get_json()['reasonCode']=='SEGMENT_OPERATION_REQUIRED'
     with app.app_context():assert RoomBooking.query.count()==2
+
+
+def test_pair_http_audit_and_interval_validation(state):
+    client=app.test_client()
+    for index,person in enumerate(state[0]):
+        response=client.post(url(person),json=payload(state,14,20,f'Zimmer 0{index+1}'),headers=headers)
+        assert response.status_code==201,response.get_json()
+    planning=client.get('/api/assignments/planning-view?includeValidations=false',headers=headers).get_json()
+    units=planning['units']['assigned']+planning['units']['unassigned']
+    key=next(u['unitId'] for u in units if any(o['athleteId']==str(state[0][0]) for o in u['occupants']))
+    import urllib.parse
+    response=client.get('/api/assignments/planning-view/validations/'+urllib.parse.quote(key,safe='')+'?checkInDate=2027-03-20&checkOutDate=2027-03-27',headers=headers)
+    assert response.status_code==200,response.get_json()
+    # The adjacent earlier reservation must not block the selected open period.
+    slot=next(v for v in response.get_json()['validations'] if v['slotId']==f'{state[1]}:{state[2]}:1')
+    assert slot['status']!='blocked',slot
+    response=client.post('/api/assignments/segments',json={**payload(state,20,27,'Zimmer 03'),'athleteIds':[str(p) for p in state[0]]},headers=headers)
+    assert response.status_code==201,response.get_json()
+    assert all(p['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED' for p in response.get_json()['people'])
+    with app.app_context():
+        assert RoomBooking.query.count()==3
+        audit=AuditEvent.query.order_by(AuditEvent.id.desc()).first()
+        refs=json.loads(audit.entity_refs_json)
+        assert refs['personId']==str(state[0][0])
+        assert refs['personId2']==str(state[0][1])
+        assert refs['bookingId']==response.get_json()['booking']['id']

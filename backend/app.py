@@ -516,14 +516,14 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 
     if entity_type in {'assignments', 'room-assignments'}:
         category = 'Disposition'
-        segment_operation = '/persons/' in request.path and '/segments' in request.path
+        segment_operation = '/segments' in request.path
         booking = (response.get('booking') or snapshot or {}) if segment_operation else response
         occupants = booking.get('occupants') or []
         athletes = [item.get('athlete') or {} for item in occupants]
         athlete_ids = payload.get('athleteIds') or [a.get('id') for a in athletes]
         if segment_operation:
-            athlete_ids = [response.get('personId')]
-            athletes = [athlete for athlete in athletes if str(athlete.get('id')) == str(response.get('personId'))]
+            athlete_ids = [item['personId'] for item in response.get('people', [])] or [response.get('personId')]
+            athletes = [athlete for athlete in athletes if str(athlete.get('id')) in athlete_ids]
         path_ids = [part for part in request.path.split('/') if part.isdigit()]
         if '/occupants/' in request.path and path_ids:
             athlete_ids = [path_ids[-1]]
@@ -1254,7 +1254,7 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
     return validations
 
 
-def _build_assignment_planning_view(validation_keys=None):
+def _build_assignment_planning_view(validation_keys=None, assignment_interval=None):
     with _assignment_phase('assignment'):
         units, bookings = _build_room_booking_units()
     rooms_started = time.perf_counter()
@@ -1359,14 +1359,17 @@ def _build_assignment_planning_view(validation_keys=None):
     validation_by_unit = {}
     for unit in units:
         unit_key = unit['unitId']
+        validation_unit = {**unit, **(assignment_interval or {})}
+        if assignment_interval:
+            validation_unit['assignedBookingId'] = None
         if validation_keys is None or unit_key in validation_keys:
             validation_by_unit[unit_key] = _build_unit_validations(
-                unit, hotel_sections, bookings_by_slot)
+                validation_unit, hotel_sections, bookings_by_slot)
 
         for occupant in unit.get('occupants', []):
             partial_key = f"{unit_key}:athlete:{occupant['athleteId']}"
             if validation_keys is None or partial_key in validation_keys:
-                partial_unit = _build_partial_unit_variant(unit, occupant)
+                partial_unit = _build_partial_unit_variant(validation_unit, occupant)
                 validation_by_unit[partial_key] = _build_unit_validations(
                     partial_unit, hotel_sections, bookings_by_slot)
 
@@ -2792,7 +2795,17 @@ def get_assignments_planning_view():
 
 @app.route('/api/assignments/planning-view/validations/<path:validation_key>', methods=['GET'])
 def get_assignment_planning_validations(validation_key):
-    planning = _build_assignment_planning_view({validation_key})
+    interval = None
+    if request.args.get('checkInDate') or request.args.get('checkOutDate'):
+        try:
+            start = datetime.fromisoformat(request.args['checkInDate']).date()
+            end = datetime.fromisoformat(request.args['checkOutDate']).date()
+            if start >= end:
+                raise ValueError()
+            interval = {'checkInDate': start.isoformat(), 'checkOutDate': end.isoformat()}
+        except (KeyError, ValueError, TypeError):
+            return jsonify(error='INVALID_DATES', message='Gültigen Zeitraum auswählen.'), 400
+    planning = _build_assignment_planning_view({validation_key}, assignment_interval=interval)
     validations = planning['validationByUnit'].get(validation_key)
     if validations is None:
         return _assignment_jsonify({

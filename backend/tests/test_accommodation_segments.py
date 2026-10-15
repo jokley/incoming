@@ -174,3 +174,92 @@ def test_empty_booking_cleanup_and_commit_failure_are_atomic(state):
     assert snapshot()==before
     assert state[0].delete(path(state[1][0],first['booking']['id'])).status_code==200
     assert RoomBooking.query.count()==0
+
+
+def pair(state,start,end,ids=None,**extra):
+    return state[0].post('/api/assignments/segments',json=data(state,start,end,'Zimmer 03',
+        athleteIds=ids or [str(p.id) for p in state[1][:2]],**extra))
+
+
+def test_pair_add_preserves_other_segments_and_returns_both_coverages(state):
+    first=add(state,14,20)
+    second=add(state,14,20,'Zimmer 02',person=1)
+    before=snapshot()
+    response=pair(state,20,27)
+    assert response.status_code==201,response.get_json()
+    result=response.get_json()
+    assert len(result['booking']['occupants'])==2
+    assert len(result['people'])==2
+    assert all(p['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED' for p in result['people'])
+    assert all(len(p['accommodationCoverage']['segments'])==2 for p in result['people'])
+    assert snapshot()[:2]==before
+    assert RoomBooking.query.count()==3
+    assert Athlete.query.count()==3
+    # Removing/editing a member of the new shared stay retains Step-2 semantics.
+    booking=result['booking']['id']
+    edited=state[0].put(path(state[1][0],booking),json=data(state,20,26,'Zimmer 04'))
+    assert edited.status_code==200,edited.get_json()
+    assert db.session.get(RoomBooking,int(booking)).check_out_date==date(2027,3,27)
+    assert [o.athlete_id for o in db.session.get(RoomBooking,int(booking)).occupants]==[state[1][1].id]
+    removed=state[0].delete(path(state[1][0],edited.get_json()['booking']['id']))
+    assert removed.status_code==200
+    assert snapshot()[:2]==before
+
+
+def test_pair_second_occupant_failure_rolls_back_everything(state):
+    add(state,14,20);add(state,14,20,'Zimmer 02',person=1)
+    before=snapshot()
+    import app as routes
+    original=routes._validate_booking_payload
+    def fail_second(data,*args,**kwargs):
+        if data['athleteIds']==[str(state[1][1].id)]:
+            from flask import jsonify
+            return None,None,(jsonify(error='VALIDATION_ERROR',message='second rejected'),400)
+        return original(data,*args,**kwargs)
+    with patch.object(routes,'_validate_booking_payload',side_effect=fail_second):
+        response=pair(state,20,27)
+    assert response.status_code==400
+    assert snapshot()==before
+
+
+def test_pair_different_open_intervals_rejected_without_intersection(state):
+    add(state,14,20);add(state,14,19,'Zimmer 02',person=1)
+    before=snapshot()
+    response=pair(state,20,27)
+    assert response.status_code==400
+    assert response.get_json()['reasonCode']=='OPEN_INTERVAL_CHANGED'
+    assert snapshot()==before
+    # Individual selection remains available.
+    result=add(state,19,27,'Zimmer 03',person=1)
+    assert result['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED'
+
+
+def test_pair_full_stay_and_capacity_failure(state):
+    state[3].max_persons=1;db.session.commit()
+    before=snapshot()
+    response=pair(state,14,27)
+    assert response.status_code==400
+    assert response.get_json()['reasonCode']=='CAPACITY_EXCEEDED'
+    assert snapshot()==before
+    state[3].max_persons=2;db.session.commit()
+    response=pair(state,14,27)
+    assert response.status_code==201,response.get_json()
+    assert RoomBooking.query.count()==1
+    assert len(response.get_json()['booking']['occupants'])==2
+
+
+def test_pair_commit_failure_rolls_back_both_occupants(state):
+    before=snapshot()
+    with patch.object(db.session,'commit',side_effect=RuntimeError('commit failed')):
+        with pytest.raises(RuntimeError):
+            pair(state,14,27)
+    assert snapshot()==before
+
+
+@pytest.mark.parametrize('approved_index',[0,1])
+def test_pair_preserves_existing_approved_extra_default_independent_of_order(state,approved_index):
+    state[1][approved_index].single_room_status='APPROVED_EXTRA';db.session.commit()
+    response=pair(state,14,27)
+    assert response.status_code==201,response.get_json()
+    assert response.get_json()['booking']['countsAsSingle'] is True
+    assert [p.single_room_status for p in state[1][:2]].count('APPROVED_EXTRA')==1

@@ -640,10 +640,14 @@ class ApiService {
     return this.request<AssignmentPlanningView>('/assignments/planning-view?includeValidations=false');
   }
 
-  async getAssignmentValidations(validationKey: string): Promise<AssignmentValidationView> {
+  async getAssignmentValidations(validationKey: string, interval?:import('../types').AccommodationInterval): Promise<AssignmentValidationView> {
     return this.request<AssignmentValidationView>(
-      `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}`,
+      `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}${interval ? `?checkInDate=${interval.checkInDate}&checkOutDate=${interval.checkOutDate}` : ''}`,
     );
+  }
+
+  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
+    return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
   }
 
   async mutateAccommodationSegment(personId:string, operation:'POST'|'PUT'|'DELETE', bookingId?:string, data?:{
