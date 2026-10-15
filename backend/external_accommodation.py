@@ -9,6 +9,22 @@ from accommodation_split import SplitError, require, person_bookings, _copy, val
 from accommodation_coverage import booking_intervals_overlap
 
 
+def ensure_external_create_allowed(person_ids, editing_booking_id=None):
+    """One external relationship per person; historical edits do not add one.
+
+    Called under the common accommodation transaction lock by every write path.
+    Historical duplicates remain untouched and can be edited/removed explicitly.
+    """
+    for identity in person_ids:
+        bookings = person_bookings(identity)
+        if editing_booking_id and any(b.id == editing_booking_id and b.hotel.accommodation_type == 'EXTERNAL' for b in bookings):
+            continue
+        if any(b.hotel.accommodation_type == 'EXTERNAL' for b in bookings):
+            person = db.session.get(Athlete, identity)
+            name = f'{person.firstname} {person.lastname}'.strip() if person else str(identity)
+            raise SplitError('EXTERNAL_ALREADY_EXISTS', f'{name}: Bereits externer Aufenthalt vorhanden.')
+
+
 def external_plan(data):
     try:
         if not isinstance(data['athleteIds'], list):
@@ -23,6 +39,7 @@ def external_plan(data):
     require(start < end, 'INVALID_DATES', 'Von muss vor Bis liegen.')
     frozen = data.get('openInterval')
     require(isinstance(frozen, dict) and all(isinstance(frozen.get(key), str) for key in ('checkInDate', 'checkOutDate')), 'OPEN_INTERVAL_REQUIRED', 'Offenen Zeitraum auswählen.')
+    ensure_external_create_allowed(ids)
     from app import _initialize_new_booking_counts_as_single
     flag = _initialize_new_booking_counts_as_single({'athleteIds': ids})['countsAsSingle']
     replace_standard = data.get('replaceStandard') is True

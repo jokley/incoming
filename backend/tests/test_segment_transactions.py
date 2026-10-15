@@ -232,3 +232,36 @@ def test_external_standard_replacement_is_atomic_and_stale_under_postgres(state,
         from accommodation_mutations import physical_room_usage
         assert physical_room_usage(RoomBooking.query.filter_by(hotel_id=state[1]).all())==1
         assert len(RoomBooking.query.filter_by(hotel_id=identity).one().occupants)==(2 if both else 1)
+
+
+def test_concurrent_disjoint_external_creates_allow_only_one_per_person(state):
+    with app.app_context():
+        hotel=Hotel(name='Outside',accommodation_type='EXTERNAL');db.session.add(hotel);db.session.commit();identity=hotel.id
+    barrier=Barrier(2)
+    def post(index):
+        barrier.wait(timeout=5)
+        start,end=(14,18) if index==0 else (20,27)
+        response=app.test_client().post(url(state[0][0]),headers=headers,json={
+            'hotelId':str(identity),'checkInDate':f'2027-03-{start}','checkOutDate':f'2027-03-{end}'})
+        return response.status_code,response.json
+    with ThreadPoolExecutor(max_workers=2) as pool:results=list(pool.map(post,[0,1]))
+    assert sorted(code for code,_ in results)==[201,400],results
+    assert next(body for code,body in results if code==400)['reasonCode']=='EXTERNAL_ALREADY_EXISTS'
+    with app.app_context():assert RoomBooking.query.count()==1
+
+
+def test_pair_external_confirmation_rejects_one_ineligible_person_without_partial_add(state):
+    client=app.test_client()
+    with app.app_context():
+        hotel=Hotel(name='Outside',accommodation_type='EXTERNAL');db.session.add(hotel);db.session.commit();identity=hotel.id
+    plan=client.get('/api/assignments/segments/preview',headers=headers,query_string={
+        'hotelId':str(identity),'athleteIds':','.join(map(str,state[0])),
+        'checkInDate':'2027-03-20','checkOutDate':'2027-03-27','openCheckInDate':'2027-03-14','openCheckOutDate':'2027-03-27'})
+    assert plan.status_code==200
+    assert client.post(url(state[0][0]),headers=headers,json={
+        'hotelId':str(identity),'checkInDate':'2027-03-14','checkOutDate':'2027-03-18'}).status_code==201
+    response=client.post('/api/assignments/segments',headers=headers,json=plan.json)
+    assert response.status_code==409 and response.json['reasonCode']=='EXTERNAL_ALREADY_EXISTS'
+    with app.app_context():
+        assert RoomBooking.query.count()==1
+        assert RoomBookingOccupant.query.filter_by(athlete_id=state[0][1]).count()==0

@@ -1,3 +1,4 @@
+import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { SegmentActionMenu } from './SegmentActionMenu';
 import { useState } from 'react';
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, TextField } from '@mui/material';
@@ -38,6 +39,7 @@ export function PersonAccommodationPanel({people,hotels,canEdit,onChanged,onShow
     } catch(failure) {setError(failure instanceof Error ? failure.message : 'Zuweisung fehlgeschlagen.');}
     finally {setBusy(false);}
   };
+  const externalEligibility=externalStayEligibility(people.map(p=>({...p,accommodationCoverage:coverageFor(p)})));
   return <section className="space-y-3 border-b border-[var(--ops-divider)] p-4">
     <h3 className="text-sm font-bold">Unterkunft · Gesamtaufenthalt</h3>
     {error && !editor && <Alert severity="error">{error}</Alert>}
@@ -53,13 +55,13 @@ export function PersonAccommodationPanel({people,hotels,canEdit,onChanged,onShow
           <span>{segment.conflictCodes.length ? '⚠' : '✓'} {dateLabel(segment.checkInDate)}–{dateLabel(segment.checkOutDate)} · {segment.hotelName} · {segment.accommodationType==='EXTERNAL' ? 'Extern' : [segment.roomTypeName,segment.roomNumber].filter(Boolean).join(' · ')}</span>
           {canEdit && <SegmentActionMenu label={`${person.name} · ${dateLabel(segment.checkInDate)}–${dateLabel(segment.checkOutDate)} · ${segment.hotelName}`} busy={busy}
             canChange={coverage.coverageStatus!=='CONFLICT'} canSplit={canSplit?.(segment.bookingId)!==false}
-            onEdit={()=>open(person,coverage.overallInterval,segment)} onSplit={onSplit ? ()=>onSplit(segment.bookingId) : undefined}
+            onEdit={()=>open(person,coverage.overallInterval,segment)} onSplit={onSplit && segment.accommodationType!=='EXTERNAL' ? ()=>onSplit(segment.bookingId) : undefined}
             onRemove={()=>void mutate(person,'DELETE',segment.bookingId)}/>}
         </div>)}
         {view.openIntervals.map(interval=><div key={`${interval.checkInDate}:${interval.checkOutDate}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2"><span>○ {dateLabel(interval.checkInDate)}–{dateLabel(interval.checkOutDate)} · Offen</span>{onShowDisposition && <button type="button" disabled={busy || !view.canAdd} onClick={()=>onShowDisposition(person.athleteId,interval)} className="font-semibold text-[var(--ops-primary)] disabled:opacity-40">In Disposition anzeigen</button>}</div>)}
       </div>;
     })}
-    {canEdit && onExternal && people.length>0 && <Button size="small" variant="outlined" disabled={busy || people.some(p=>coverageFor(p)?.coverageStatus==='CONFLICT')} onClick={()=>onExternal(people)}>Externen Aufenthalt</Button>}
+    {canEdit && onExternal && people.length>0 && <span className="inline-block" title={!externalEligibility.canCreate ? allExternalReason : undefined}><Button size="small" variant="outlined" disabled={busy || !externalEligibility.canCreate || people.some(p=>coverageFor(p)?.coverageStatus==='CONFLICT')} onClick={()=>onExternal(people)}>Externen Aufenthalt</Button></span>}
     <Dialog open={Boolean(editor)} onClose={()=>!busy && setEditor(null)} fullWidth maxWidth="sm">
       <DialogTitle>Zuweisung bearbeiten · {editor?.person.name}</DialogTitle>
       <DialogContent dividers><div className="grid gap-4 pt-1">

@@ -123,3 +123,12 @@ test('external replacement preview retains the full projected timeline',()=>{
   assert.match(html,/14.03–18.03/);assert.match(html,/18.03–22.03/);assert.match(html,/22.03–27.03/);
   assert.match(html,/Hotel A/);assert.match(html,/Kühtai · Extern/);assert.match(html,/Kein offener Zeitraum/);
 });
+
+
+test('external create shortcut is disabled with a reason for an existing external stay',()=>{
+  const coverage=value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[{...segment('1',14,20,'Kühtai'),accommodationType:'EXTERNAL'}],openIntervals:[span(20,27)]});
+  const html=render(coverage);
+  assert.match(html,/Für alle Personen ist bereits ein externer Aufenthalt vorhanden/);
+  assert.match(html,/<button[^>]*disabled=""[^>]*>Externen Aufenthalt</);
+  assert.match(html,/Kühtai · Extern/);
+});
