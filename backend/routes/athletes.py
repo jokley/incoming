@@ -5,6 +5,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
+from accommodation_coverage import person_accommodation_coverage
 
 
 athletes = Blueprint('athletes', __name__)
@@ -31,11 +32,13 @@ def get_athletes():
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type),
     ).all()
     assignment_map = {}
+    bookings_by_person = {}
     for occupant in booking_rows:
         booking = occupant.room_booking
         athlete = occupant.athlete
         if not booking or not athlete:
             continue
+        bookings_by_person.setdefault(athlete.id, []).append(booking)
         current = assignment_map.get(athlete.id)
         summary = {
             'hasAssignment': True,
@@ -67,6 +70,9 @@ def get_athletes():
         record_ids = {record.id for record in records}
         data['id'] = str(min(record_ids))
         data['sourceRecordIds'] = [str(value) for value in sorted(record_ids)]
+        data['accommodationCoverage'] = person_accommodation_coverage(
+            a.arrival_date, a.departure_date,
+            [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])])
         competitions = {competition.id: competition for record in records for competition in record.competitions}
         data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
         data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
@@ -147,7 +153,14 @@ def get_athletes():
 @athletes.route('/api/athletes/<int:athlete_id>', methods=['GET'])
 @athletes.route('/api/athletes/<int:athlete_id>/', methods=['GET'])
 def get_athlete(athlete_id):
-    return jsonify(Athlete.query.get_or_404(athlete_id).to_dict())
+    athlete = Athlete.query.get_or_404(athlete_id)
+    bookings = RoomBooking.query.join(RoomBookingOccupant).filter(
+        RoomBookingOccupant.athlete_id == athlete.id).options(
+            db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
+    data = athlete.to_dict()
+    data['accommodationCoverage'] = person_accommodation_coverage(
+        athlete.arrival_date, athlete.departure_date, bookings)
+    return jsonify(data)
 
 
 @athletes.route('/api/athletes', methods=['POST'])
