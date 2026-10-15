@@ -204,3 +204,38 @@ def add_shared_segment():
     except Exception:
         db.session.rollback()
         raise
+
+
+@accommodation_segments.route('/api/assignments/bookings/<int:booking_id>/split-preview', methods=['GET'])
+@accommodation_segments.route('/api/assignments/bookings/<int:booking_id>/split', methods=['POST'])
+def split_booking(booking_id):
+    from accommodation_split import SplitError, split_plan, preview_token, apply_split
+    try:
+        lock_accommodation_writes()
+        booking = db.session.get(RoomBooking, booking_id)
+        if not booking:
+            raise SplitError('STALE_SPLIT', 'Zuweisung wurde entfernt. Bitte Ansicht aktualisieren.', 409)
+        if request.method == 'GET':
+            data = {'athleteIds': request.args.get('athleteIds', '').split(','), 'splitDate': request.args.get('splitDate')}
+        else:
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict):
+                raise SplitError('INVALID_SPLIT', 'Ungültige Teilungsdaten.')
+            if not data.get('previewToken') or data.get('previewToken') != preview_token(booking, data.get('athleteIds'), data.get('splitDate')):
+                raise SplitError('STALE_SPLIT', 'Zuweisungen haben sich geändert. Bitte Vorschau erneut prüfen.', 409)
+        plan = split_plan(booking, data.get('athleteIds'), data.get('splitDate'))
+        if request.method == 'GET':
+            db.session.rollback()  # release the preview's transaction lock; no writes
+            response = jsonify(plan)
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        g.audit_snapshot = booking.to_dict()
+        result = apply_split(booking, plan)
+        db.session.commit()
+        return jsonify(result)
+    except SplitError as error:
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), error.status
+    except Exception:
+        db.session.rollback()
+        raise

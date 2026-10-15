@@ -5,7 +5,7 @@ from auth import load_user_from_request, current_user
 from quota_history import historical_approval_groups, applicable_approval_groups, approved_quota_disciplines, approved_quota_contexts, person_keys, quota_person
 from competitions import quota_disciplines
 from accommodation_coverage import booking_intervals_overlap, person_accommodation_coverage
-from accommodation_mutations import lock_accommodation_writes
+from accommodation_mutations import lock_accommodation_writes, physical_room_usage
 from routes.accommodation_segments import accommodation_segments
 from quota_service import (quota_keys, disposition_by_quota_group, evaluate_quota_usage,
                            normalize_gender, QuotaGenderValidationError)
@@ -516,7 +516,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 
     if entity_type in {'assignments', 'room-assignments'}:
         category = 'Disposition'
-        segment_operation = '/segments' in request.path
+        segment_operation = '/segments' in request.path or request.path.endswith('/split')
         booking = (response.get('booking') or snapshot or {}) if segment_operation else response
         occupants = booking.get('occupants') or []
         athletes = [item.get('athlete') or {} for item in occupants]
@@ -545,6 +545,9 @@ def _business_activity(entity_type, entity_id, action, payload, response):
             title = 'Zimmer zugewiesen'
         if segment_operation:
             title = 'Unterkunftszuweisung entfernt' if request.method == 'DELETE' else 'Unterkunftszuweisung bearbeitet' if request.method == 'PUT' else 'Unterkunftszuweisung hinzugefügt'
+        if request.path.endswith('/split'):
+            title = 'Zuweisung geteilt'
+            details.append(f"Teilungsdatum: {response.get('splitDate', '')}; Personen: {', '.join(str(value) for value in payload.get('athleteIds', []))}")
         if hotel.get('name'):
             details.append(f"Hotel: {hotel['name']}")
         room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber')]))
@@ -1460,7 +1463,7 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     )
     if existing_booking:
         query = query.filter(RoomBooking.id != existing_booking.id)
-    used_rooms = query.count()
+    used_rooms = physical_room_usage(query.all())
     if used_rooms >= inv_rooms:
         return None, None, _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
             'hotelId': str(hotel_id),
@@ -2805,6 +2808,27 @@ def get_assignment_planning_validations(validation_key):
             interval = {'checkInDate': start.isoformat(), 'checkOutDate': end.isoformat()}
         except (KeyError, ValueError, TypeError):
             return jsonify(error='INVALID_DATES', message='Gültigen Zeitraum auswählen.'), 400
+    if request.args.get('athleteIds'):
+        try:
+            ids = [str(int(value)) for value in request.args['athleteIds'].split(',')]
+            if not interval or len(ids) not in (1, 2) or len(set(ids)) != len(ids):
+                raise ValueError()
+        except (TypeError, ValueError):
+            return jsonify(error='INVALID_OCCUPANTS', message='Personen und Zeitraum prüfen.'), 400
+        planning = _build_assignment_planning_view(set())
+        index = {p['athleteId']: (p, u) for u in planning['units']['assigned'] + planning['units']['unassigned'] for p in u['occupants']}
+        if any(identity not in index or index[identity][0]['accommodationCoverage']['coverageStatus'] == 'CONFLICT'
+               or interval not in index[identity][0]['accommodationCoverage']['openIntervals'] for identity in ids):
+            return jsonify(error='OPEN_INTERVAL_CHANGED', message='Offener Zeitraum hat sich geändert. Bitte aktualisieren.'), 400
+        unit = {**index[ids[0]][1], **interval, 'assignedBookingId': None,
+                'occupants': [index[identity][0] for identity in ids],
+                'allowedRoomTypeLabels': ['single', 'double'] if len(ids) == 1 else ['double']}
+        by_slot = {}
+        for booking in RoomBooking.query.all():
+            key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
+            by_slot.setdefault(key, []).append(booking)
+        return _assignment_jsonify({'validationKey': validation_key,
+            'validations': _build_unit_validations(unit, planning['hotels'], by_slot)})
     planning = _build_assignment_planning_view({validation_key}, assignment_interval=interval)
     validations = planning['validationByUnit'].get(validation_key)
     if validations is None:

@@ -640,10 +640,19 @@ class ApiService {
     return this.request<AssignmentPlanningView>('/assignments/planning-view?includeValidations=false');
   }
 
-  async getAssignmentValidations(validationKey: string, interval?:import('../types').AccommodationInterval): Promise<AssignmentValidationView> {
+  async getAssignmentValidations(validationKey: string, interval?:import('../types').AccommodationInterval, athleteIds?:string[]): Promise<AssignmentValidationView> {
     return this.request<AssignmentValidationView>(
-      `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}${interval ? `?checkInDate=${interval.checkInDate}&checkOutDate=${interval.checkOutDate}` : ''}`,
+      `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}${interval ? `?checkInDate=${interval.checkInDate}&checkOutDate=${interval.checkOutDate}${athleteIds?.length ? `&athleteIds=${athleteIds.join(',')}` : ''}` : ''}`,
     );
+  }
+
+  async previewAccommodationSplit(bookingId:string,athleteIds:string[],splitDate:string) {
+    return this.request<import('../types').AccommodationSplitPlan>(`/assignments/bookings/${bookingId}/split-preview?${new URLSearchParams({athleteIds:athleteIds.join(','),splitDate})}`);
+  }
+  async splitAccommodation(bookingId:string,plan:import('../types').AccommodationSplitPlan) {
+    return this.request<import('../types').AccommodationSplitResult>(`/assignments/bookings/${bookingId}/split`,{
+      method:'POST',body:JSON.stringify({athleteIds:plan.athleteIds,splitDate:plan.splitDate,previewToken:plan.previewToken}),
+    });
   }
 
   async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {

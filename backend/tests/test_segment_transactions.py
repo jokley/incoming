@@ -119,3 +119,49 @@ def test_pair_http_audit_and_interval_validation(state):
         assert refs['personId']==str(state[0][0])
         assert refs['personId2']==str(state[0][1])
         assert refs['bookingId']==response.get_json()['booking']['id']
+
+
+def split_preview(client,booking,ids,cut=20):
+    return client.get(f'/api/assignments/bookings/{booking}/split-preview',query_string={'athleteIds':','.join(str(i) for i in ids),'splitDate':f'2027-03-{cut}'},headers=headers)
+
+
+def split_confirm(client,plan):
+    return client.post(f"/api/assignments/bookings/{plan['booking']['id']}/split",json={k:plan[k] for k in ('athleteIds','splitDate','previewToken')},headers=headers)
+
+
+def test_split_partition_http_preview_is_read_only_audit_and_queue_validation(state):
+    client=app.test_client()
+    response=client.post('/api/assignments/segments',json={**payload(state,14,27),'athleteIds':[str(p) for p in state[0]]},headers=headers)
+    identity=response.get_json()['booking']['id']
+    with app.app_context():before_audit=AuditEvent.query.count()
+    plan=split_preview(client,identity,[state[0][0]]).get_json()
+    with app.app_context():
+        assert AuditEvent.query.count()==before_audit
+        assert RoomBooking.query.one().check_out_date==date(2027,3,27)
+    result=split_confirm(client,plan)
+    assert result.status_code==200,result.get_json()
+    assert next(p for p in result.get_json()['people'] if p['personId']==str(state[0][1]))['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED'
+    with app.app_context():
+        assert RoomBooking.query.count()==2
+        audit=AuditEvent.query.order_by(AuditEvent.id.desc()).first()
+        assert audit.username=='segment-editor'
+        assert 'Zuweisung geteilt' in audit.activity
+    # Derived item keys need not be legacy preferred-pair unit IDs.
+    response=client.get(f'/api/assignments/planning-view/validations/need:any?athleteIds={state[0][0]}&checkInDate=2027-03-20&checkOutDate=2027-03-27',headers=headers)
+    assert response.status_code==200,response.get_json()
+    assert response.get_json()['validations']
+
+
+def test_concurrent_split_confirmations_only_one_commits(state):
+    client=app.test_client()
+    booking=client.post(url(state[0][0]),json=payload(state,14,27),headers=headers).get_json()['booking']['id']
+    plan=split_preview(client,booking,[state[0][0]]).get_json()
+    barrier=Barrier(2)
+    def confirm(_):
+        barrier.wait(timeout=5)
+        return split_confirm(app.test_client(),plan).status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:codes=list(pool.map(confirm,[0,1]))
+    assert sorted(codes)==[200,409]
+    with app.app_context():
+        assert RoomBooking.query.count()==1
+        assert RoomBooking.query.one().check_out_date==date(2027,3,20)

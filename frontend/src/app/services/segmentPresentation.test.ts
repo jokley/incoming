@@ -9,6 +9,8 @@ import type { AccommodationCoverage, RoomBookingUnitOccupant } from '../types.ts
 const server=await createServer({server:{middlewareMode:true,hmr:false,ws:false,watch:null},
   optimizeDeps:{noDiscovery:true,entries:[],include:[]},appType:'custom'});
 const {PersonAccommodationPanel}=await server.ssrLoadModule('/src/app/components/assignment/PersonAccommodationPanel.tsx');
+const {DispositionQueueCard}=await server.ssrLoadModule('/src/app/components/assignment/DispositionQueueCard.tsx');
+const {SplitPreview}=await server.ssrLoadModule('/src/app/components/assignment/SplitAssignmentDialog.tsx');
 await server.close();
 
 const span=(start:number,end:number)=>({checkInDate:`2027-03-${start}`,checkOutDate:`2027-03-${end}`});
@@ -18,22 +20,22 @@ const value=(extra:Partial<AccommodationCoverage>={}):AccommodationCoverage=>({o
   segments:[],coveredIntervals:[],openIntervals:[span(14,27)],conflicts:[],coverageStatus:'UNASSIGNED',...extra});
 function render(coverage:AccommodationCoverage) {
   const person={athleteId:'1',name:'One Person',accommodationCoverage:coverage} as RoomBookingUnitOccupant;
-  return renderToStaticMarkup(createElement(PersonAccommodationPanel,{people:[person],hotels:[],canEdit:true,onChanged:async()=>{}}));
+  return renderToStaticMarkup(createElement(PersonAccommodationPanel,{people:[person],hotels:[],canEdit:true,onChanged:async()=>{},onShowDisposition:()=>{},onSplit:()=>{}}));
 }
 
 test('unassigned full stay and each middle-booking gap have actionable controls',()=>{
   assert.match(render(value()),/Nicht zugewiesen/);
   const html=render(value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[segment('1',18,22,'Hotel A')],openIntervals:[span(14,18),span(22,27)]}));
   assert.match(html,/Teilweise zugewiesen/);
-  assert.equal((html.match(/>Neue Zuweisung</g) ?? []).length,2);
+  assert.equal((html.match(/>In Disposition anzeigen</g) ?? []).length,2);
   assert.match(html,/14.03–18.03/); assert.match(html,/22.03–27.03/);
   assert.match(html,/Hotel A/);
 });
 test('updated backend responses render multiple segments, edits, removals and restored gaps',()=>{
   const complete=value({coverageStatus:'FULLY_ASSIGNED',segments:[segment('1',14,20,'Hotel A'),segment('2',20,27,'Hotel B')],openIntervals:[]});
   const html=render(complete);
-  assert.match(html,/Vollständig zugewiesen/); assert.match(html,/Hotel A/); assert.match(html,/Hotel B/);
-  assert.equal((html.match(/>Neue Zuweisung</g) ?? []).length,0);
+  assert.match(html,/Zugewiesen/); assert.match(html,/Hotel A/); assert.match(html,/Hotel B/);
+  assert.equal((html.match(/>In Disposition anzeigen</g) ?? []).length,0);
   const edited=render({...complete,coverageStatus:'PARTIALLY_ASSIGNED',segments:[segment('1',14,19,'Hotel A'),complete.segments[1]],openIntervals:[span(19,20)]});
   assert.match(edited,/19.03–20.03/);
   const removed=render({...complete,coverageStatus:'PARTIALLY_ASSIGNED',segments:[complete.segments[0]],openIntervals:[span(20,27)]});
@@ -41,21 +43,30 @@ test('updated backend responses render multiple segments, edits, removals and re
 });
 test('conflict is visible, add/edit disabled, removal remains available',()=>{
   const html=render(value({coverageStatus:'CONFLICT',segments:[segment('1',14,20,'Hotel A')],conflicts:[{code:'BOOKING_OVERLAP',bookingIds:['1','2']}]}));
-  assert.match(html,/Aufenthalt prüfen/); assert.match(html,/BOOKING_OVERLAP/);
+  assert.match(html,/Prüfen/); assert.match(html,/Klärung gesperrt/);
   assert.match(html,/<button[^>]*disabled=""[^>]*>Bearbeiten</);
-  assert.match(html,/<button[^>]*disabled=""[^>]*>Neue Zuweisung</);
+  assert.match(html,/<button[^>]*disabled=""[^>]*>In Disposition anzeigen</);
   assert.doesNotMatch(html.match(/<button[^>]*>Entfernen</)?.[0] ?? 'missing',/\sdisabled(?:=|\s|>)/);
 });
 
-test('compact queue exposes each canonical gap independently and no completed action',async()=>{
-  const vite=await createServer({server:{middlewareMode:true,hmr:false,ws:false,watch:null},optimizeDeps:{noDiscovery:true,entries:[],include:[]},appType:'custom'});
-  const {OpenIntervalActions,OpenAssignmentContext}=await vite.ssrLoadModule('/src/app/components/assignment/OpenIntervalActions.tsx');
-  await vite.close();
-  const renderQueue=(coverage:AccommodationCoverage)=>renderToStaticMarkup(createElement(OpenAssignmentContext.Provider,{value:{available:true,activate:()=>{}}},createElement(OpenIntervalActions,{person:{athleteId:'1',accommodationCoverage:coverage}})));
-  const html=renderQueue(value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[segment('1',18,22,'Hotel A')],openIntervals:[span(14,18),span(22,27)]}));
-  assert.equal((html.match(/>Zuweisen</g)??[]).length,2);
-  assert.match(html,/14.03–18.03/);assert.match(html,/22.03–27.03/);assert.match(html,/Hotel A/);
-  assert.match(renderQueue(value({coverageStatus:'PARTIALLY_ASSIGNED',openIntervals:[span(20,27)]})),/>Rest zuweisen</);
-  assert.equal(renderQueue(value({coverageStatus:'FULLY_ASSIGNED',openIntervals:[]})),'');
-  assert.doesNotMatch(renderQueue(value({coverageStatus:'CONFLICT'})),/<button/);
+test('split action belongs only to assigned periods and no activation controls remain',()=>{
+  assert.doesNotMatch(render(value()),/>Zuweisung teilen</);
+  const html=render(value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[segment('1',14,20,'Hotel A')]}));
+  assert.match(html,/>Bearbeiten</);assert.match(html,/>Zuweisung teilen</);assert.match(html,/>Entfernen</);
+  assert.doesNotMatch(html,/AKTIVE ZUWEISUNG|Neue Zuweisung/);
+});
+test('queue cards expose their dates and direct destination actions',()=>{
+  const unit={unitId:'need:1',occupants:[{athleteId:'1',name:'One Person',firstname:'One'}],openPeriod:span(20,27),previous:['14.03–20.03 · Adler'],canAssign:true};
+  const html=renderToStaticMarkup(createElement(DispositionQueueCard,{unit,hotelName:'Taube',selected:false,canEditAssignments:true,pending:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{}}));
+  assert.match(html,/20.03–27.03/);assert.match(html,/draggable="true"/);assert.match(html,/Person hier zuweisen/);assert.match(html,/Ziel: Taube/);
+  assert.doesNotMatch(html,/AKTIVE|Rest zuweisen/);
+});
+test('split preview displays canonical merged gap and unchanged occupant continuation',()=>{
+  const plan={booking:{hotel:{name:'Adler'}},retainedSegments:[{bookingId:'1',...span(14,20),athleteIds:['1','2']},{bookingId:'-1',...span(20,22),athleteIds:['2']}],people:[
+    {personId:'1',name:'Nicholas',selected:true,affectedOpenIntervals:[span(20,27)],accommodationCoverage:value()},
+    {personId:'2',name:'Justin',selected:false,affectedOpenIntervals:[],accommodationCoverage:value()},
+  ]};
+  const html=renderToStaticMarkup(createElement(SplitPreview,{plan}));
+  assert.match(html,/Bestehender Teil/);assert.match(html,/20.03–27.03/);assert.match(html,/20.03–22.03/);assert.match(html,/durchgehend erhalten/);
+  assert.doesNotMatch(html,/Hotel auswählen|Kontingent|Quote/);
 });
