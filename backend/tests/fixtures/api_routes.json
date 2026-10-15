@@ -82,6 +82,12 @@
   "/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign/": [
     "POST"
   ],
+  "/api/assignments/bookings/<int:booking_id>/split": [
+    "POST"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/split-preview": [
+    "GET"
+  ],
   "/api/assignments/bookings/<int:booking_id>/unassign": [
     "POST"
   ],

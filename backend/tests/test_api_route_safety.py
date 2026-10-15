@@ -121,6 +121,7 @@ class ApiRouteSafetyTest(unittest.TestCase):
             ('POST', '/api/assignments/bookings', 'assignments.write'),
             ('POST', '/api/assignments/persons/1/segments', 'assignments.write'),
             ('POST', '/api/assignments/segments', 'assignments.write'),
+            ('POST', '/api/assignments/bookings/1/split', 'assignments.write'),
             ('PUT', '/api/assignments/persons/1/segments/1', 'assignments.write'),
             ('DELETE', '/api/assignments/persons/1/segments/1', 'assignments.write'),
             ('DELETE', '/api/room-assignments/1', 'assignments.write'),

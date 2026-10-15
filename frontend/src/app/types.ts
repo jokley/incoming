@@ -588,3 +588,13 @@ export interface WorldChampion {
   championshipYear: number; titleType: 'INDIVIDUAL' | 'TEAM'; entitlementEnabled: boolean;
   source: string; active: boolean; createdAt?: string; updatedAt?: string;
 }
+
+export interface AccommodationSplitPlan {
+  booking:RoomBooking;
+  athleteIds:string[];
+  splitDate:string;
+  previewToken:string;
+  retainedSegments:Array<AccommodationInterval & {bookingId:string;athleteIds:string[]}>;
+  people:Array<{personId:string;name:string;selected:boolean;affectedOpenIntervals:AccommodationInterval[];accommodationCoverage:AccommodationCoverage}>;
+}
+export type AccommodationSplitResult=Pick<AccommodationSplitPlan,'booking'|'athleteIds'|'splitDate'|'people'> & {success:boolean};

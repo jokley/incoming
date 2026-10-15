@@ -1,5 +1,9 @@
 # Split stays: Step 2
 
+The operator workflow described below is superseded by
+[explicit assignment splitting](explicit-assignment-split.md). The existing segment
+APIs and coverage foundation remain; activation controls have been removed.
+
 ## Explicit person-segment API
 
 - `POST /api/assignments/persons/<personId>/segments`: ADD; never searches for an
