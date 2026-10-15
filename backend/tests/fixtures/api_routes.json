@@ -113,6 +113,9 @@
   "/api/assignments/segments": [
     "POST"
   ],
+  "/api/assignments/segments/preview": [
+    "GET"
+  ],
   "/api/athletes": [
     "GET",
     "POST"

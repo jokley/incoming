@@ -206,7 +206,7 @@ export function Dashboard() {
       return role.includes('official') || role.includes('coach') || role.includes('staff') || role.includes('trainer');
     }).length;
     const athleteCount = Math.max(athletes.length - officials, 0);
-    const assignedRooms = assignments.length;
+    const assignedRooms = assignments.filter(b=>b.hotel.accommodationType!=='EXTERNAL').length;
     const assignedPersonIds = new Set(assignments.flatMap(assignment =>
       assignment.occupants.map(occupant => occupant.athlete.id)
     ));

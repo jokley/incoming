@@ -1288,7 +1288,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     hotel_sections = []
     for hotel in hotels:
         by_room_type = {}
-        for inventory in hotel.room_inventories or []:
+        for inventory in ([] if hotel.accommodation_type == 'EXTERNAL' else hotel.room_inventories or []):
             by_room_type.setdefault(inventory.room_type_id, {'roomType': inventory.room_type, 'inventories': []})
             by_room_type[inventory.room_type_id]['inventories'].append(inventory)
 
@@ -1300,6 +1300,8 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
         hotel_sections.append({
             'hotelId': str(hotel.id),
             'hotelName': hotel.name,
+            'accommodationType': hotel.accommodation_type,
+            'externalBookings': [booking.to_dict() for booking in bookings if booking.hotel_id == hotel.id] if hotel.accommodation_type == 'EXTERNAL' else [],
             'location': hotel.location,
             'region': hotel.region,
             'comment': hotel.comment,
@@ -1401,8 +1403,12 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         return None, None, _booking_error('INVALID_OCCUPANTS', 'athleteIds must include between 1 and 4 athlete IDs')
 
     hotel_id = int(data['hotelId'])
-    room_type_id = int(data['roomTypeId'])
-    room_type = RoomType.query.get_or_404(room_type_id)
+    hotel = Hotel.query.get_or_404(hotel_id)
+    external = hotel.accommodation_type == 'EXTERNAL'
+    room_type_id = int(data['roomTypeId']) if data.get('roomTypeId') else None
+    room_type = RoomType.query.get_or_404(room_type_id) if room_type_id else None
+    if not external and not room_type:
+        return None, None, _booking_error('ROOM_TYPE_REQUIRED', 'Standard accommodation requires a room type')
 
     unique_athlete_ids = []
     for athlete_id in athlete_ids:
@@ -1410,7 +1416,7 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         if int_id not in unique_athlete_ids:
             unique_athlete_ids.append(int_id)
 
-    if len(unique_athlete_ids) > room_type.max_persons:
+    if not external and len(unique_athlete_ids) > room_type.max_persons:
         return None, None, _booking_error('CAPACITY_EXCEEDED', f'Room type max occupancy is {room_type.max_persons}')
 
     athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
@@ -1438,41 +1444,42 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     if person_bookings.first():
         return None, None, _booking_error('PERSON_BOOKING_OVERLAP', 'Person already has accommodation during this period')
 
-    inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
-        HotelRoomInventory.hotel_id == hotel_id,
-        HotelRoomInventory.room_type_id == room_type_id,
-        HotelRoomInventory.available_from <= check_in_date,
-        HotelRoomInventory.available_until >= check_out_date,
-    ).scalar()
+    if not external:
+        inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
+            HotelRoomInventory.hotel_id == hotel_id,
+            HotelRoomInventory.room_type_id == room_type_id,
+            HotelRoomInventory.available_from <= check_in_date,
+            HotelRoomInventory.available_until >= check_out_date,
+        ).scalar()
 
-    if not inv_rooms or inv_rooms <= 0:
-        return None, None, _booking_error('NO_KONTINGENT', 'No kontingent available for this hotel/room type in the given date range', {
-            'hotelId': str(hotel_id),
-            'roomTypeId': str(room_type_id),
-            'checkInDate': check_in_date.isoformat(),
-            'checkOutDate': check_out_date.isoformat(),
-        })
+        if not inv_rooms or inv_rooms <= 0:
+            return None, None, _booking_error('NO_KONTINGENT', 'No kontingent available for this hotel/room type in the given date range', {
+                'hotelId': str(hotel_id),
+                'roomTypeId': str(room_type_id),
+                'checkInDate': check_in_date.isoformat(),
+                'checkOutDate': check_out_date.isoformat(),
+            })
 
-    query = RoomBooking.query.filter(
-        RoomBooking.hotel_id == hotel_id,
-        RoomBooking.room_type_id == room_type_id,
-        RoomBooking.check_in_date.isnot(None),
-        RoomBooking.check_out_date.isnot(None),
-        RoomBooking.check_in_date < check_out_date,
-        RoomBooking.check_out_date > check_in_date,
-    )
-    if existing_booking:
-        query = query.filter(RoomBooking.id != existing_booking.id)
-    used_rooms = physical_room_usage(query.all())
-    if used_rooms >= inv_rooms:
-        return None, None, _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
-            'hotelId': str(hotel_id),
-            'roomTypeId': str(room_type_id),
-            'checkInDate': check_in_date.isoformat(),
-            'checkOutDate': check_out_date.isoformat(),
-            'inventoryRooms': int(inv_rooms),
-            'usedRooms': int(used_rooms),
-        })
+        query = RoomBooking.query.filter(
+            RoomBooking.hotel_id == hotel_id,
+            RoomBooking.room_type_id == room_type_id,
+            RoomBooking.check_in_date.isnot(None),
+            RoomBooking.check_out_date.isnot(None),
+            RoomBooking.check_in_date < check_out_date,
+            RoomBooking.check_out_date > check_in_date,
+        )
+        if existing_booking:
+            query = query.filter(RoomBooking.id != existing_booking.id)
+        used_rooms = physical_room_usage(query.all())
+        if used_rooms >= inv_rooms:
+            return None, None, _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
+                'hotelId': str(hotel_id),
+                'roomTypeId': str(room_type_id),
+                'checkInDate': check_in_date.isoformat(),
+                'checkOutDate': check_out_date.isoformat(),
+                'inventoryRooms': int(inv_rooms),
+                'usedRooms': int(used_rooms),
+            })
 
     return {
         'hotel_id': hotel_id,

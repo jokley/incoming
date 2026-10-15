@@ -59,7 +59,7 @@ class BookingReadRoutesTest(unittest.TestCase):
                     db.session.flush()
                     occupants = [{'id': str(occupant.id), 'roomBookingId': str(booking.id),
                                   'athlete': person.to_dict(), 'role': None}]
-                expected.append({'id': str(booking.id), 'hotel': {'id': str(hotel.id), 'name': hotel.name},
+                expected.append({'id': str(booking.id), 'hotel': {'id': str(hotel.id), 'name': hotel.name, 'accommodationType': 'STANDARD'},
                     'roomType': {'id': str(room_type.id), 'name': 'Double', 'maxPersons': 2},
                     'roomNumber': number, 'checkInDate': '2027-03-01' if dated else None,
                     'checkOutDate': '2027-03-05' if dated else None,

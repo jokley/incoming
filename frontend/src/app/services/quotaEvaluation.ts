@@ -113,7 +113,7 @@ export function quotaAssignmentsFromBookings(bookings: RoomBooking[]): QuotaAssi
 }
 
 export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): QuotaAssignment[] {
-  return hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings.flatMap(booking =>
+  const local = hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings.flatMap(booking =>
     booking.occupants.flatMap(person => [...new Set(person.quotaDisciplines || [])].filter(Boolean).map(discipline => ({
         personId: person.athleteId, bookingId: booking.bookingId,
         nationCode: person.nationCode, discipline, gender: person.gender,
@@ -122,6 +122,7 @@ export function quotaAssignmentsFromPlanning(hotels: AssignmentGridHotel[]): Quo
         approvedQuotaContexts: person.approvedQuotaContexts,
         singleRoomQuotaExemptReason: person.singleRoomQuotaExemptReason,
       }))))));
+  return [...local,...quotaAssignmentsFromBookings(hotels.flatMap(hotel=>hotel.externalBookings ?? []))];
 }
 
 /** Reconciles quota definitions with the current disposition for every consumer. */

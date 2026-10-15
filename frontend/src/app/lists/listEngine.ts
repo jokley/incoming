@@ -122,7 +122,7 @@ const roomTypeCode = (name?: string | null) => name?.toUpperCase().match(/(?:^|\
 export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] = []): HotelContactRow[] {
   return hotels.map(hotel => {
     const inventories = hotel.roomInventories || [];
-    const hotelBookings = bookings.filter(booking => booking.hotel.id === hotel.id);
+    const hotelBookings = bookings.filter(booking => hotel.accommodationType!=='EXTERNAL' && booking.hotel.id === hotel.id);
     const totalRooms = inventories.reduce((sum, inventory) => sum + inventory.roomCount, 0);
     const totalBeds = inventories.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0);
     const occupiedRooms = hotelBookings.length;
@@ -145,7 +145,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
   const counters = new Map<string, number>();
   const displayRoomByBooking = new Map<string, string>();
   bookings.forEach(booking => {
-    const code = roomTypeCode(booking.roomType.name);
+    if(booking.hotel.accommodationType==='EXTERNAL'){displayRoomByBooking.set(booking.id,'Extern');return;}
+    const code = roomTypeCode(booking.roomType?.name);
     const key = `${booking.hotel.id}/${code}`;
     const next = (counters.get(key) || 0) + 1;
     counters.set(key, next);
@@ -163,8 +164,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
   return athletes.map((athlete) => {
     const assignment = assignments.get(athlete.id);
     const booking = assignment?.booking;
-    const inventory = booking && inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType.id}`)?.find(item =>
-      item.roomType.id === booking.roomType.id
+    const inventory = booking && inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
+      item.roomType.id === booking.roomType?.id
       && (!booking.checkInDate || item.availableUntil >= booking.checkInDate.slice(0, 10))
       && (!booking.checkOutDate || item.availableFrom <= booking.checkOutDate.slice(0, 10)));
     return {
@@ -172,9 +173,9 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       hotelId: booking?.hotel.id || '',
       bookingId: booking?.id || '',
       hotel: value(booking?.hotel.name),
-      contingent: booking ? `${booking.hotel.name} → ${inventory?.roomType.name || booking.roomType.name}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}` : '—',
+      contingent: booking ? `${booking.hotel.name} → ${inventory?.roomType.name || (booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name)}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}` : '—',
       room: booking ? displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber) : '—',
-      roomType: value(booking?.roomType.name || athlete.roomType),
+      roomType: value(booking?.hotel.accommodationType==='EXTERNAL' ? 'Extern' : booking?.roomType?.name || athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
       discipline: value(competitionDisplayList(athlete.disciplines, athlete.discipline)),
@@ -258,13 +259,13 @@ export function groupListRows(rows: ListRow[], kind: ListKind) {
 /** Mirrors the capacity calculation used by the hotel detail for every inventory. */
 export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[]): ContingentRow[] {
   const bookingsByHotelAndRoomType = new Map<string, RoomBooking[]>();
-  bookings.forEach(booking => {
-    const key = `${booking.hotel.id}/${booking.roomType.id}`;
+  bookings.filter(b=>b.hotel.accommodationType!=='EXTERNAL').forEach(booking => {
+    const key = `${booking.hotel.id}/${booking.roomType?.id}`;
     const entries = bookingsByHotelAndRoomType.get(key) || [];
     entries.push(booking);
     bookingsByHotelAndRoomType.set(key, entries);
   });
-  return hotels.flatMap((hotel) => (hotel.roomInventories || []).map((inventory) => {
+  return hotels.filter(h=>h.accommodationType!=='EXTERNAL').flatMap((hotel) => (hotel.roomInventories || []).map((inventory) => {
     const matching = bookingsByHotelAndRoomType.get(`${hotel.id}/${inventory.roomType.id}`) || [];
     const totalRooms = inventory.roomCount;
     const totalBeds = totalRooms * inventory.roomType.maxPersons;

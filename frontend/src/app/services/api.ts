@@ -655,12 +655,21 @@ class ApiService {
     });
   }
 
+  async previewExternalStay(data:{athleteIds:string[];hotelId:string;checkInDate:string;checkOutDate:string;openInterval:import('../types').AccommodationInterval}) {
+    const params=new URLSearchParams({athleteIds:data.athleteIds.join(','),hotelId:data.hotelId,checkInDate:data.checkInDate,checkOutDate:data.checkOutDate,openCheckInDate:data.openInterval.checkInDate!,openCheckOutDate:data.openInterval.checkOutDate!});
+    return this.request<import('../types').ExternalStayPlan>(`/assignments/segments/preview?${params}`);
+  }
+
+  async addExternalStay(plan:import('../types').ExternalStayPlan) {
+    return this.request('/assignments/segments',{method:'POST',body:JSON.stringify(plan)});
+  }
+
   async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
     return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
   }
 
   async mutateAccommodationSegment(personId:string, operation:'POST'|'PUT'|'DELETE', bookingId?:string, data?:{
-    hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string;
+    hotelId:string;roomTypeId?:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string;
   }):Promise<{success:boolean;personId:string;booking:RoomBooking|null;accommodationCoverage:import('../types').AccommodationCoverage}> {
     return this.request(`/assignments/persons/${personId}/segments${bookingId ? `/${bookingId}` : ''}`,{
       method:operation, ...(data ? {body:JSON.stringify(data)} : {}),

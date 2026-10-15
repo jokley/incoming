@@ -11,6 +11,7 @@ const server=await createServer({server:{middlewareMode:true,hmr:false,ws:false,
 const {PersonAccommodationPanel}=await server.ssrLoadModule('/src/app/components/assignment/PersonAccommodationPanel.tsx');
 const {DispositionQueueCard}=await server.ssrLoadModule('/src/app/components/assignment/DispositionQueueCard.tsx');
 const {SplitPreview}=await server.ssrLoadModule('/src/app/components/assignment/SplitAssignmentDialog.tsx');
+const {ExternalStayPreview}=await server.ssrLoadModule('/src/app/components/assignment/ExternalStayDialog.tsx');
 await server.close();
 
 const span=(start:number,end:number)=>({checkInDate:`2027-03-${start}`,checkOutDate:`2027-03-${end}`});
@@ -90,4 +91,19 @@ test('queue split entry stays hidden for read-only operators',()=>{
   const unit={unitId:'need:1',occupants:[{athleteId:'1',name:'One Person',firstname:'One'}],openPeriod:span(20,27),previous:['14.03–20.03 · Adler'],canAssign:true};
   const html=renderToStaticMarkup(createElement(DispositionQueueCard,{unit,selected:false,canEditAssignments:false,pending:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{},onSplit:()=>{},splitOptions:[{bookingId:'1',label:'Adler'}]}));
   assert.doesNotMatch(html,/Zuweisung teilen/);
+});
+
+
+test('external preview renders canonical middle gaps and compact external history',()=>{
+  const coverage=value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[{...segment('10',18,22,'Kühtai'),roomTypeId:null,roomTypeName:null,roomNumber:null,accommodationType:'EXTERNAL'}],openIntervals:[span(14,18),span(22,27)]});
+  const html=renderToStaticMarkup(createElement(ExternalStayPreview,{plan:{hotelName:'Kühtai',...span(18,22),people:[{personId:'1',name:'One Person',accommodationCoverage:coverage}]}}));
+  assert.match(html,/Extern zugewiesen/);assert.match(html,/18.03–22.03/);assert.match(html,/14.03–18.03/);assert.match(html,/22.03–27.03/);
+  assert.match(render(coverage),/Kühtai · Extern/);
+});
+test('open queue exposes Aufenthalt teilen without an existing booking',()=>{
+  const unit={unitId:'need:1',occupants:[{athleteId:'1',name:'One Person',firstname:'One'}],openPeriod:span(14,27),previous:[],canAssign:true};
+  const props={unit,selected:false,canEditAssignments:true,pending:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{},onExternal:()=>{}};
+  const html=renderToStaticMarkup(createElement(DispositionQueueCard,props));
+  assert.match(html,/Aufenthalt teilen/);assert.doesNotMatch(html,/Zuweisung teilen/);
+  assert.doesNotMatch(renderToStaticMarkup(createElement(DispositionQueueCard,{...props,canEditAssignments:false})),/Aufenthalt teilen/);
 });

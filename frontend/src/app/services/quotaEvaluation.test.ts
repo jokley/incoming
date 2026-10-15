@@ -212,3 +212,12 @@ test('authoritative allocation metadata cannot introduce an A allowance context'
   assert.throws(() => evaluateAllQuotaGroups([{ nationCode:'AUT',discipline:'Ski Cross',gender:'A',
     singleRoomsAllowed:1,singleRoomAllocations:[] }], []), /athlete gender M\/W/);
 });
+
+
+test('external segments retain countsAsSingle and distinct-person quota consumption',async()=>{
+  const {quotaAssignmentsFromPlanning,calculateQuotaUsage}=await import('./quotaEvaluation.ts');
+  const booking={id:'external',countsAsSingle:true,occupants:[{athlete:{id:'1',nationCode:'AUT',gender:'M',competitions:[{quotaDiscipline:'Ski Cross'}]}}]};
+  const hotels=[{slots:[],externalBookings:[booking,{...booking,id:'external-2'}]}] as never;
+  const assignments=quotaAssignmentsFromPlanning(hotels);
+  assert.equal(assignments.length,2);assert.equal(calculateQuotaUsage(assignments),1);
+});

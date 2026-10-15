@@ -28,7 +28,7 @@ export function PersonAccommodationPanel({people,hotels,canEdit,onChanged,onShow
     setBusy(true);setError('');
     try {
       const result=await api.mutateAccommodationSegment(person.athleteId,method,bookingId,method==='DELETE' ? undefined : {
-        hotelId:editor!.hotelId,roomTypeId:option!.slot.roomTypeId,roomNumber:option!.slot.roomNumber ?? undefined,
+        hotelId:editor!.hotelId,roomTypeId:hotel?.accommodationType==='EXTERNAL' ? undefined : option!.slot.roomTypeId,roomNumber:hotel?.accommodationType==='EXTERNAL' ? undefined : option!.slot.roomNumber ?? undefined,
         checkInDate:editor!.checkInDate,checkOutDate:editor!.checkOutDate,
       });
       setCurrent(values=>({...values,[person.athleteId]:{source:person.accommodationCoverage!,value:result.accommodationCoverage}}));
@@ -49,7 +49,7 @@ export function PersonAccommodationPanel({people,hotels,canEdit,onChanged,onShow
         <p>{dateLabel(coverage.overallInterval.checkInDate)}–{dateLabel(coverage.overallInterval.checkOutDate)}</p>
         {view.conflicts.length>0 && <Alert severity="warning">Prüfen: Zuweisungen oder Aufenthaltsdaten sind widersprüchlich. Teilen ist bis zur Klärung gesperrt.</Alert>}
         {view.segments.map(segment=><div key={segment.bookingId} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2">
-          <span>{segment.conflictCodes.length ? '⚠' : '✓'} {dateLabel(segment.checkInDate)}–{dateLabel(segment.checkOutDate)} · {segment.hotelName} · {segment.roomTypeName} · {segment.roomNumber}</span>
+          <span>{segment.conflictCodes.length ? '⚠' : '✓'} {dateLabel(segment.checkInDate)}–{dateLabel(segment.checkOutDate)} · {segment.hotelName} · {segment.accommodationType==='EXTERNAL' ? 'Extern' : [segment.roomTypeName,segment.roomNumber].filter(Boolean).join(' · ')}</span>
           {canEdit && <div className="flex gap-2"><button type="button" disabled={busy || coverage.coverageStatus==='CONFLICT'} onClick={()=>open(person,coverage.overallInterval,segment)} className="font-semibold text-[var(--ops-primary)] disabled:opacity-40">Bearbeiten</button>{onSplit && <button type="button" disabled={busy || coverage.coverageStatus==='CONFLICT' || canSplit?.(segment.bookingId)===false} onClick={()=>onSplit(segment.bookingId)} className="font-semibold text-[var(--ops-primary)] disabled:opacity-40">Zuweisung teilen</button>}<button type="button" disabled={busy} onClick={()=>void mutate(person,'DELETE',segment.bookingId)} className="text-[var(--ops-error)] disabled:opacity-40">Entfernen</button></div>}
         </div>)}
         {view.openIntervals.map(interval=><div key={`${interval.checkInDate}:${interval.checkOutDate}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2"><span>○ {dateLabel(interval.checkInDate)}–{dateLabel(interval.checkOutDate)} · Offen</span>{onShowDisposition && <button type="button" disabled={busy || !view.canAdd} onClick={()=>onShowDisposition(person.athleteId,interval)} className="font-semibold text-[var(--ops-primary)] disabled:opacity-40">In Disposition anzeigen</button>}</div>)}
@@ -61,10 +61,10 @@ export function PersonAccommodationPanel({people,hotels,canEdit,onChanged,onShow
         {error && <Alert severity="error">{error}</Alert>}
         <p className="text-xs">Nur diese Person und dieser Zeitraum werden geändert. Andere Zuweisungen bleiben erhalten. Bei einem geteilten Zimmer für abweichende Daten ein anderes freies Zimmer wählen.</p>
         <TextField select size="small" label="Hotel" disabled={busy} value={editor?.hotelId ?? ''} onChange={event=>setEditor(editor && {...editor,hotelId:event.target.value,room:''})}>{hotels.map(h=><MenuItem key={h.hotelId} value={h.hotelId}>{h.hotelName}{h.slots[0]?.dateCoverage.availableFrom && ` · ${dateLabel(h.slots[0].dateCoverage.availableFrom)}–${dateLabel(h.slots[0].dateCoverage.availableUntil)}`}</MenuItem>)}</TextField>
-        <TextField select size="small" label="Zimmer / Zimmertyp" disabled={busy} value={editor?.room ?? ''} onChange={event=>setEditor(editor && {...editor,room:event.target.value})}>{options.map(o=><MenuItem key={o.key} value={o.key}>{o.label}</MenuItem>)}</TextField>
+        {hotel?.accommodationType!=='EXTERNAL' && <TextField select size="small" label="Zimmer / Zimmertyp" disabled={busy} value={editor?.room ?? ''} onChange={event=>setEditor(editor && {...editor,room:event.target.value})}>{options.map(o=><MenuItem key={o.key} value={o.key}>{o.label}</MenuItem>)}</TextField>}
         <div className="grid grid-cols-2 gap-3">{(['checkInDate','checkOutDate'] as const).map(field=><TextField key={field} type="date" size="small" disabled={busy} label={field==='checkInDate' ? 'Von' : 'Bis'} value={editor?.[field] ?? ''} slotProps={{inputLabel:{shrink:true}}} inputProps={{min:editor?.bounds.checkInDate,max:editor?.bounds.checkOutDate}} onChange={event=>setEditor(editor && {...editor,[field]:event.target.value})}/>)}</div>
       </div></DialogContent>
-      <DialogActions><Button disabled={busy} onClick={()=>setEditor(null)}>Abbrechen</Button><Button variant="contained" disabled={busy || !editor || !option || !datesWithinInterval(editor.checkInDate,editor.checkOutDate,editor.bounds)} onClick={()=>editor && void mutate(editor.person,'PUT',editor.bookingId)}>Speichern</Button></DialogActions>
+      <DialogActions><Button disabled={busy} onClick={()=>setEditor(null)}>Abbrechen</Button><Button variant="contained" disabled={busy || !editor || (hotel?.accommodationType!=='EXTERNAL' && !option) || !datesWithinInterval(editor.checkInDate,editor.checkOutDate,editor.bounds)} onClick={()=>editor && void mutate(editor.person,'PUT',editor.bookingId)}>Speichern</Button></DialogActions>
     </Dialog>
   </section>;
 }

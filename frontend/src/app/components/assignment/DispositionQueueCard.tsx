@@ -3,10 +3,11 @@ import { Scissors } from 'lucide-react';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
 
-export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragStart,onDragEnd,onQuickAssign,canEditAssignments,pending,hotelName,splitOptions=[],onSplit}:{
+export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragStart,onDragEnd,onQuickAssign,canEditAssignments,pending,hotelName,splitOptions=[],onSplit,onExternal}:{
   unit:DispositionItem;selected:boolean;highlighted?:boolean;onSelect:()=>void;
   onDragStart:(id:string,ids:string[],label:string)=>void;onDragEnd:()=>void;
   onQuickAssign:(id:string,ids:string[])=>void;canEditAssignments:boolean;pending:boolean;hotelName?:string;
+  onExternal?:()=>void;
   splitOptions?:{bookingId:string;label:string}[];onSplit?:(bookingId:string)=>void;
 }) {
   const [choosingSplit,setChoosingSplit]=useState(false);
@@ -42,6 +43,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       {unit.occupants.length===2 && <div className="mt-2">{action(ids,'Beide')}</div>}
       <div className="mt-1 text-[10px] leading-snug text-[var(--ops-text-muted)]">{hotelName ? `Ziel: ${hotelName}` : 'In den Zimmerbereich ziehen oder Hotel rechts öffnen.'}</div>
     </>}
+    {canEditAssignments && unit.canAssign && onExternal && <div className="mt-2"><button type="button" disabled={pending} onClick={event=>{event.stopPropagation();onExternal();}} onDragStart={event=>{event.preventDefault();event.stopPropagation();}} className="rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] disabled:opacity-40">Aufenthalt teilen</button></div>}
     {canEditAssignments && unit.canAssign && onSplit && splitOptions.length>0 && <div className="mt-2 border-t border-[var(--ops-border)] pt-1.5" onClick={event=>event.stopPropagation()} onDragStart={event=>{event.preventDefault();event.stopPropagation();}}>
       <button type="button" disabled={pending} className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] hover:bg-[var(--ops-surface-elevated)] disabled:opacity-40"
         aria-expanded={splitOptions.length>1 ? choosingSplit : undefined}

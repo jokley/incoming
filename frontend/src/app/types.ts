@@ -44,6 +44,7 @@ export interface HotelRoomInventory {
 }
 
 export interface Hotel {
+  accommodationType?: 'STANDARD' | 'EXTERNAL';
   id: string;
   name: string;
   location?: string;
@@ -108,8 +109,8 @@ export interface AccommodationInterval {
 export interface AccommodationCoverage {
   overallInterval: AccommodationInterval;
   segments: Array<AccommodationInterval & {
-    bookingId: string; hotelId: string; hotelName: string | null;
-    roomTypeId: string; roomTypeName: string | null; roomNumber: string | null;
+    bookingId: string; hotelId: string; hotelName: string | null; accommodationType?: 'STANDARD' | 'EXTERNAL';
+    roomTypeId: string | null; roomTypeName: string | null; roomNumber: string | null;
     countsAsSingle: boolean; conflictCodes: string[];
   }>;
   coveredIntervals: AccommodationInterval[];
@@ -239,8 +240,8 @@ export interface RoomBookingOccupant {
 
 export interface RoomBooking {
   id: string;
-  hotel: { id: string; name: string };
-  roomType: RoomType;
+  hotel: { id: string; name: string; accommodationType?: 'STANDARD' | 'EXTERNAL' };
+  roomType: RoomType | null;
   roomNumber?: string | null;
   checkInDate?: string | null;
   checkOutDate?: string | null;
@@ -368,6 +369,8 @@ export interface AssignmentSlot {
 }
 
 export interface AssignmentGridHotel {
+  accommodationType?: 'STANDARD' | 'EXTERNAL';
+  externalBookings?: RoomBooking[];
   hotelId: string;
   hotelName: string;
   location?: string | null;
@@ -598,3 +601,9 @@ export interface AccommodationSplitPlan {
   people:Array<{personId:string;name:string;selected:boolean;affectedOpenIntervals:AccommodationInterval[];accommodationCoverage:AccommodationCoverage}>;
 }
 export type AccommodationSplitResult=Pick<AccommodationSplitPlan,'booking'|'athleteIds'|'splitDate'|'people'> & {success:boolean};
+
+export interface ExternalStayPlan {
+  previewToken:string;hotelId:string;hotelName:string;athleteIds:string[];
+  checkInDate:string;checkOutDate:string;openInterval:AccommodationInterval;
+  people:Array<{personId:string;name:string;accommodationCoverage:AccommodationCoverage}>;
+}

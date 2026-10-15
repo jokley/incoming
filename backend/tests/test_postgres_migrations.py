@@ -230,3 +230,30 @@ class PostgresMigrationTest(unittest.TestCase):
                         conn.execute(text("INSERT INTO athlete (lastname, firstname, nation_code, single_room_status) "
                                           "VALUES ('Test', 'Person', 'AUT', 'INVALID')"))
                     self.assertEqual(getattr(rejected.exception.orig, 'sqlstate', None), '23514')
+
+    def test_external_hotel_migration_preserves_standard_bookings(self):
+        url = postgres_test_url()
+        engine = create_engine(url)
+        self.addCleanup(engine.dispose)
+        environment = {**os.environ, 'DATABASE_URL': url}
+        with engine.begin() as conn:
+            conn.execute(text('DROP SCHEMA public CASCADE'))
+            conn.execute(text('CREATE SCHEMA public'))
+        def upgrade(target):
+            result = subprocess.run([sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'upgrade', target],
+                                    cwd=BACKEND, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        upgrade('20261014_01')
+        with engine.begin() as conn:
+            hotel = conn.execute(text("INSERT INTO hotel (name) VALUES ('Existing') RETURNING id")).scalar_one()
+            room = conn.execute(text("INSERT INTO room_type (name, max_persons) VALUES ('Double', 2) RETURNING id")).scalar_one()
+            booking = conn.execute(text("INSERT INTO room_booking (hotel_id, room_type_id, room_number, check_in_date, check_out_date, counts_as_single) VALUES (:h,:r,'01','2027-03-14','2027-03-27',false) RETURNING id"),{'h':hotel,'r':room}).scalar_one()
+            before = tuple(conn.execute(text('SELECT * FROM room_booking WHERE id=:id'),{'id':booking}).one())
+        upgrade('head')
+        upgrade('head')
+        with engine.begin() as conn:
+            self.assertEqual(conn.execute(text('SELECT accommodation_type FROM hotel WHERE id=:id'),{'id':hotel}).scalar_one(),'STANDARD')
+            self.assertEqual(tuple(conn.execute(text('SELECT * FROM room_booking WHERE id=:id'),{'id':booking}).one()),before)
+            external = conn.execute(text("INSERT INTO hotel (name, accommodation_type) VALUES ('Kühtai','EXTERNAL') RETURNING id")).scalar_one()
+            conn.execute(text("INSERT INTO room_booking (hotel_id, check_in_date, check_out_date) VALUES (:h,'2027-03-14','2027-03-20')"),{'h':external})
+        self.assertTrue(next(c for c in inspect(engine).get_columns('room_booking') if c['name']=='room_type_id')['nullable'])

@@ -31,7 +31,7 @@ export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHo
     });
   };
   // A retained shared booking is persistent context, not a new roommate preference.
-  const bookings=hotels.flatMap(h=>h.slots.flatMap(s=>s.bookings)).sort((a,b)=>(b.checkOutDate ?? '').localeCompare(a.checkOutDate ?? '') || a.bookingId.localeCompare(b.bookingId));
+  const bookings=hotels.flatMap(h=>[...h.slots.flatMap(s=>s.bookings),...(h.externalBookings ?? []).map(b=>({bookingId:b.id,checkOutDate:b.checkOutDate,occupants:b.occupants.map(o=>({athleteId:o.athlete.id}))}))]).sort((a,b)=>(b.checkOutDate ?? '').localeCompare(a.checkOutDate ?? '') || a.bookingId.localeCompare(b.bookingId));
   bookings.forEach(b=>common(b.occupants.map(p=>p.athleteId),b.checkOutDate));
   units.filter(u=>u.occupants.length===2).forEach(u=>common(u.occupants.map(p=>p.athleteId)));
   people.forEach(({person})=>{
