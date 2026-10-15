@@ -50,7 +50,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       {onExternal && <span className="inline-block" title={!externalEligibility.canCreate ? allExternalReason : undefined}><button type="button" disabled={pending || !externalEligibility.canCreate} onClick={onExternal} className="rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] disabled:opacity-40">Externen Aufenthalt</button></span>}
       {onSplit && splitOptions.length>0 && <>
         <IconButton size="small" disabled={pending} aria-label="Weitere Aufenthaltsaktionen" aria-haspopup="menu" aria-expanded={!!splitAnchor} onClick={event=>setSplitAnchor(event.currentTarget)}><MoreHorizontal size={16}/></IconButton>
-        <Menu anchorEl={splitAnchor} open={!!splitAnchor} onClose={()=>setSplitAnchor(null)}>{splitOptions.map(option=><MenuItem key={option.bookingId} onClick={()=>{setSplitAnchor(null);onSplit(option.bookingId);}}>{splitOptions.length===1 ? 'Aufenthalt teilen' : `Aufenthalt teilen · ${option.label}`}</MenuItem>)}</Menu>
+        <Menu anchorEl={splitAnchor} open={!!splitAnchor} onClose={()=>setSplitAnchor(null)}>{splitOptions.map(option=><MenuItem key={option.bookingId} onClick={()=>{setSplitAnchor(null);onSplit(option.bookingId);}}>{splitOptions.length===1 ? 'Hotelwechsel / Aufenthalt teilen' : `Hotelwechsel / Aufenthalt teilen · ${option.label}`}</MenuItem>)}</Menu>
       </>}
     </div>}
   </div>;
