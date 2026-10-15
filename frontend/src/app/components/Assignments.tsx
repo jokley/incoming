@@ -828,7 +828,7 @@ export function Assignments() {
           <PersonAccommodationPanel
             people={selectedUnit?.occupants ?? allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext?.booking.occupants.some(occupant=>occupant.athleteId===person.athleteId))}
             onExternal={people=>{const interval=people[0]?.accommodationCoverage?.overallInterval;if(interval)setExternalItem({occupants:people,openPeriod:interval,replaceStandard:true});}}
-            hotels={allHotels} canEdit={permissions.canManageAssignments} onShowDisposition={(id,interval)=>showDisposition([id],interval)}
+            canEdit={permissions.canManageAssignments} onShowDisposition={(id,interval)=>showDisposition([id],interval)}
             onSplit={setSplitBookingId} canSplit={id=>!allUnitsCombined.flatMap(u=>u.occupants).some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT' && p.accommodationCoverage.segments.some(s=>s.bookingId===id))} onChanged={async personId=>{
               const unit=allUnitsCombined.find(item=>item.occupants.some(person=>person.athleteId===personId));
               await refreshOperationalState();

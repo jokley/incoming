@@ -21,7 +21,7 @@ const value=(extra:Partial<AccommodationCoverage>={}):AccommodationCoverage=>({o
   segments:[],coveredIntervals:[],openIntervals:[span(14,27)],conflicts:[],coverageStatus:'UNASSIGNED',...extra});
 function render(coverage:AccommodationCoverage) {
   const person={athleteId:'1',name:'One Person',accommodationCoverage:coverage} as RoomBookingUnitOccupant;
-  return renderToStaticMarkup(createElement(PersonAccommodationPanel,{people:[person],hotels:[],canEdit:true,onChanged:async()=>{},onShowDisposition:()=>{},onSplit:()=>{},onExternal:()=>{}}));
+  return renderToStaticMarkup(createElement(PersonAccommodationPanel,{people:[person],canEdit:true,onChanged:async()=>{},onShowDisposition:()=>{},onSplit:()=>{},onExternal:()=>{}}));
 }
 
 test('unassigned full stay and each middle-booking gap have actionable controls',()=>{
@@ -131,4 +131,11 @@ test('external create shortcut is disabled with a reason for an existing externa
   assert.match(html,/Für alle Personen ist bereits ein externer Aufenthalt vorhanden/);
   assert.match(html,/<button[^>]*disabled=""[^>]*>Externen Aufenthalt</);
   assert.match(html,/Kühtai · Extern/);
+});
+
+
+test('accommodation overview has no operator segment date editor',()=>{
+  const html=render(value({coverageStatus:'FULLY_ASSIGNED',segments:[segment('1',14,27,'Hotel A')],openIntervals:[]}));
+  assert.doesNotMatch(html,/Zuweisung bearbeiten|Bearbeiten|type="date"|Zimmer \/ Zimmertyp/);
+  assert.match(html,/aria-label="Aktionen ·/);
 });
