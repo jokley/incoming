@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Scissors } from 'lucide-react';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
 
@@ -42,10 +43,10 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       <div className="mt-1 text-[10px] leading-snug text-[var(--ops-text-muted)]">{hotelName ? `Ziel: ${hotelName}` : 'In den Zimmerbereich ziehen oder Hotel rechts öffnen.'}</div>
     </>}
     {canEditAssignments && unit.canAssign && onSplit && splitOptions.length>0 && <div className="mt-2 border-t border-[var(--ops-border)] pt-1.5" onClick={event=>event.stopPropagation()} onDragStart={event=>{event.preventDefault();event.stopPropagation();}}>
-      <button type="button" disabled={pending} className="text-[11px] font-semibold text-[var(--ops-text-muted)] hover:text-[var(--ops-primary)] disabled:opacity-40"
+      <button type="button" disabled={pending} className="inline-flex items-center gap-1.5 rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] hover:bg-[var(--ops-surface-elevated)] disabled:opacity-40"
         aria-expanded={splitOptions.length>1 ? choosingSplit : undefined}
         title={splitOptions.length===1 ? splitOptions[0].label : 'Zugewiesenen Zeitraum auswählen'}
-        onClick={()=>splitOptions.length===1 ? onSplit(splitOptions[0].bookingId) : setChoosingSplit(!choosingSplit)}>Zuweisung teilen</button>
+        onClick={()=>splitOptions.length===1 ? onSplit(splitOptions[0].bookingId) : setChoosingSplit(!choosingSplit)}><Scissors aria-hidden="true" className="h-3 w-3 shrink-0" />Zuweisung teilen</button>
       {choosingSplit && splitOptions.length>1 && <div className="mt-1 space-y-1" aria-label="Zugewiesenen Zeitraum auswählen">{splitOptions.map(option=><button type="button" key={option.bookingId} disabled={pending} onClick={()=>onSplit(option.bookingId)} className="block w-full rounded border border-[var(--ops-border)] px-2 py-1 text-left text-[11px] text-[var(--ops-primary)]">{option.label}</button>)}</div>}
     </div>}
   </div>;

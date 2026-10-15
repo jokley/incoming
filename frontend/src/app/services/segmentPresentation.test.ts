@@ -78,10 +78,16 @@ test('queue hierarchy separates pair identities, primary pair action and quiet s
   assert.match(html,/James JOHNSTONE/);assert.match(html,/William MCCARTHY/);
   assert.match(html,/Beide hier zuweisen/);assert.match(html,/James hier zuweisen/);assert.match(html,/William hier zuweisen/);
   assert.match(html,/Bisher:/);assert.match(html,/14.03–20.03 · Adler/);
-  assert.match(html,/>Zuweisung teilen</);assert.match(html,/title="14.03–20.03 · Adler"/);
+  assert.match(html,/Zuweisung teilen<\/button>/);assert.match(html,/title="14.03–20.03 · Adler"/);
   assert.doesNotMatch(html,/AKTIVE ZUWEISUNG|activeTarget/);
   const open=renderToStaticMarkup(createElement(DispositionQueueCard,{...props,splitOptions:[]}));
   assert.doesNotMatch(open,/>Zuweisung teilen</);
   const conflict=renderToStaticMarkup(createElement(DispositionQueueCard,{...props,unit:{...unit,canAssign:false},splitOptions:[{bookingId:'1',label:'Adler'}]}));
   assert.match(conflict,/Prüfen/);assert.doesNotMatch(conflict,/>Zuweisung teilen</);
+});
+
+test('queue split entry stays hidden for read-only operators',()=>{
+  const unit={unitId:'need:1',occupants:[{athleteId:'1',name:'One Person',firstname:'One'}],openPeriod:span(20,27),previous:['14.03–20.03 · Adler'],canAssign:true};
+  const html=renderToStaticMarkup(createElement(DispositionQueueCard,{unit,selected:false,canEditAssignments:false,pending:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{},onSplit:()=>{},splitOptions:[{bookingId:'1',label:'Adler'}]}));
+  assert.doesNotMatch(html,/Zuweisung teilen/);
 });
