@@ -1,11 +1,14 @@
+import { useState } from 'react';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
 
-export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragStart,onDragEnd,onQuickAssign,canEditAssignments,pending,hotelName}:{
+export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragStart,onDragEnd,onQuickAssign,canEditAssignments,pending,hotelName,splitOptions=[],onSplit}:{
   unit:DispositionItem;selected:boolean;highlighted?:boolean;onSelect:()=>void;
   onDragStart:(id:string,ids:string[],label:string)=>void;onDragEnd:()=>void;
   onQuickAssign:(id:string,ids:string[])=>void;canEditAssignments:boolean;pending:boolean;hotelName?:string;
+  splitOptions?:{bookingId:string;label:string}[];onSplit?:(bookingId:string)=>void;
 }) {
+  const [choosingSplit,setChoosingSplit]=useState(false);
   const enabled=canEditAssignments && unit.canAssign && !pending;
   const ids=unit.occupants.map(p=>p.athleteId);
   const drag=(event:React.DragEvent,people:string[])=>{
@@ -17,16 +20,33 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
     onDragStart={event=>drag(event,people)} onDragEnd={onDragEnd}
     onClick={event=>{event.stopPropagation();if(hotelName)onQuickAssign(unit.unitId,people);}}
     title={hotelName ? `${label} in ${hotelName} zuweisen` : `${label} in den Zimmerbereich ziehen`}
-    className="rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] disabled:opacity-40">
+    className={`${people.length>1 ? 'w-full bg-blue-600 !text-white hover:bg-blue-700' : ''} rounded-md border border-[var(--ops-border-strong)] px-2 py-1 text-[11px] font-semibold text-[var(--ops-primary)] disabled:opacity-40`}>
     {label}{hotelName ? ' hier zuweisen' : ' ziehen'}
   </button>;
   return <div id={encodeURIComponent(unit.unitId)} role="group" aria-label={`${unit.occupants.map(p=>p.name).join(' + ')} · ${periodLabel(unit.openPeriod)}`}
     draggable={enabled} onDragStart={event=>drag(event,ids)} onDragEnd={onDragEnd} onClick={onSelect}
     className={`rounded-xl border p-3 text-xs ${highlighted || selected ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]'} ${pending ? 'opacity-60' : ''}`}>
-    <div className="font-bold">{unit.occupants.map(p=>p.name).join(' + ')}</div>
-    <div className="mt-1 flex justify-between gap-2"><b>{periodLabel(unit.openPeriod)}</b><span>{unit.canAssign ? 'Offen' : 'Prüfen'}</span></div>
-    {unit.previous.length>0 && <div className="mt-1 truncate text-[10px] text-[var(--ops-text-muted)]" title={unit.previous.join('\n')}>Bisher: {unit.previous.join(' · ')}</div>}
-    {enabled && <><div className="mt-2 flex flex-wrap gap-1">{unit.occupants.length===2 && action(ids,'Beide')}{unit.occupants.map(p=>action([p.athleteId],unit.occupants.length===1 ? 'Person' : p.firstname))}</div>
-      <div className="mt-1 text-[10px] text-[var(--ops-text-muted)]">{hotelName ? `Ziel: ${hotelName}` : 'In den Zimmerbereich ziehen oder zuerst Hotel rechts öffnen.'}</div></>}
+    <div className="flex items-center justify-between gap-2">
+      <b className="text-sm tabular-nums">{periodLabel(unit.openPeriod)}</b>
+      <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.canAssign ? 'Offen' : 'Prüfen'}</span>
+    </div>
+    <div className="mt-2 space-y-1">
+      {unit.occupants.map(person=><div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
+        <span className="min-w-0 break-words font-bold">{person.name}</span>
+        {enabled && action([person.athleteId],unit.occupants.length===1 ? 'Person' : person.firstname)}
+      </div>)}
+    </div>
+    {unit.previous.length>0 && <div className="mt-2 text-[10px] leading-snug text-[var(--ops-text-muted)]" title={unit.previous.join('\n')}><span className="font-semibold">Bisher: </span><span className="line-clamp-2 break-words">{unit.previous.join(' · ')}</span></div>}
+    {enabled && <>
+      {unit.occupants.length===2 && <div className="mt-2">{action(ids,'Beide')}</div>}
+      <div className="mt-1 text-[10px] leading-snug text-[var(--ops-text-muted)]">{hotelName ? `Ziel: ${hotelName}` : 'In den Zimmerbereich ziehen oder Hotel rechts öffnen.'}</div>
+    </>}
+    {canEditAssignments && unit.canAssign && onSplit && splitOptions.length>0 && <div className="mt-2 border-t border-[var(--ops-border)] pt-1.5" onClick={event=>event.stopPropagation()} onDragStart={event=>{event.preventDefault();event.stopPropagation();}}>
+      <button type="button" disabled={pending} className="text-[11px] font-semibold text-[var(--ops-text-muted)] hover:text-[var(--ops-primary)] disabled:opacity-40"
+        aria-expanded={splitOptions.length>1 ? choosingSplit : undefined}
+        title={splitOptions.length===1 ? splitOptions[0].label : 'Zugewiesenen Zeitraum auswählen'}
+        onClick={()=>splitOptions.length===1 ? onSplit(splitOptions[0].bookingId) : setChoosingSplit(!choosingSplit)}>Zuweisung teilen</button>
+      {choosingSplit && splitOptions.length>1 && <div className="mt-1 space-y-1" aria-label="Zugewiesenen Zeitraum auswählen">{splitOptions.map(option=><button type="button" key={option.bookingId} disabled={pending} onClick={()=>onSplit(option.bookingId)} className="block w-full rounded border border-[var(--ops-border)] px-2 py-1 text-left text-[11px] text-[var(--ops-primary)]">{option.label}</button>)}</div>}
+    </div>}
   </div>;
 }

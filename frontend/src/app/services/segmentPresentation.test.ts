@@ -70,3 +70,18 @@ test('split preview displays canonical merged gap and unchanged occupant continu
   assert.match(html,/Bestehender Teil/);assert.match(html,/20.03–27.03/);assert.match(html,/20.03–22.03/);assert.match(html,/durchgehend erhalten/);
   assert.doesNotMatch(html,/Hotel auswählen|Kontingent|Quote/);
 });
+
+test('queue hierarchy separates pair identities, primary pair action and quiet split entry',()=>{
+  const unit={unitId:'need:1,2',occupants:[{athleteId:'1',name:'James JOHNSTONE',firstname:'James'},{athleteId:'2',name:'William MCCARTHY',firstname:'William'}],openPeriod:span(20,27),previous:['14.03–20.03 · Adler'],canAssign:true};
+  const props={unit,hotelName:'Taube',selected:false,canEditAssignments:true,pending:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{},onSplit:()=>{}};
+  const html=renderToStaticMarkup(createElement(DispositionQueueCard,{...props,splitOptions:[{bookingId:'1',label:'14.03–20.03 · Adler'}]}));
+  assert.match(html,/James JOHNSTONE/);assert.match(html,/William MCCARTHY/);
+  assert.match(html,/Beide hier zuweisen/);assert.match(html,/James hier zuweisen/);assert.match(html,/William hier zuweisen/);
+  assert.match(html,/Bisher:/);assert.match(html,/14.03–20.03 · Adler/);
+  assert.match(html,/>Zuweisung teilen</);assert.match(html,/title="14.03–20.03 · Adler"/);
+  assert.doesNotMatch(html,/AKTIVE ZUWEISUNG|activeTarget/);
+  const open=renderToStaticMarkup(createElement(DispositionQueueCard,{...props,splitOptions:[]}));
+  assert.doesNotMatch(open,/>Zuweisung teilen</);
+  const conflict=renderToStaticMarkup(createElement(DispositionQueueCard,{...props,unit:{...unit,canAssign:false},splitOptions:[{bookingId:'1',label:'Adler'}]}));
+  assert.match(conflict,/Prüfen/);assert.doesNotMatch(conflict,/>Zuweisung teilen</);
+});

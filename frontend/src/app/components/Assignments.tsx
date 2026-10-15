@@ -1,3 +1,4 @@
+import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount } from '../services/assignmentRoomUsage';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
 import { DispositionQueueCard } from './assignment/DispositionQueueCard';
@@ -699,6 +700,13 @@ export function Assignments() {
             <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
               units={queueUnits}
+              onSplit={setSplitBookingId}
+              splitOptionsFor={unit=>Array.from(bookingContextById.values()).filter(({booking})=>
+                booking.occupants.some(p=>unit.occupants.some(person=>person.athleteId===p.athleteId)) &&
+                !!booking.checkInDate && !!booking.checkOutDate &&
+                Date.parse(booking.checkOutDate)-Date.parse(booking.checkInDate)>86400000 &&
+                !allUnitsCombined.flatMap(u=>u.occupants).some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT' && p.accommodationCoverage.segments.some(segment=>segment.bookingId===booking.bookingId))
+              ).map(({booking,hotel})=>({bookingId:booking.bookingId,label:`${periodLabel({checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!})} · ${hotel.hotelName} · ${booking.occupants.map(p=>p.name).join(' + ')}`}))}
               filterMode={filterMode}
               onFilterMode={setFilterMode}
               regularUnits={regularQueueUnits}
@@ -1074,9 +1082,11 @@ function QueueSidebar({
   onQuickAssignPair,
   selectedUnitId,
   pendingAction,
-  hotelName,highlightedItems,
+  hotelName,highlightedItems,onSplit,splitOptionsFor,
 }: {
   hotelName?:string;highlightedItems:string[];
+  onSplit:(bookingId:string)=>void;
+  splitOptionsFor:(unit:DispositionItem)=>{bookingId:string;label:string}[];
   units: DispositionItem[];
   filterMode: FilterMode;
   onFilterMode: (value: FilterMode) => void;
@@ -1163,6 +1173,8 @@ function QueueSidebar({
                 <DispositionQueueCard
                   key={unit.unitId}
                   unit={unit}
+                onSplit={onSplit}
+                splitOptions={splitOptionsFor(unit)}
                   selected={selectedUnitId === unit.unitId}
                   canEditAssignments={canEditAssignments}
                   onSelect={() => onSelectUnit(unit.unitId)}
@@ -1178,6 +1190,8 @@ function QueueSidebar({
               <DispositionQueueCard
                 key={unit.unitId}
                 unit={unit}
+                onSplit={onSplit}
+                splitOptions={splitOptionsFor(unit)}
                 selected={selectedUnitId === unit.unitId}
                 canEditAssignments={canEditAssignments}
                 onSelect={() => onSelectUnit(unit.unitId)}
