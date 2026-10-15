@@ -61,29 +61,50 @@ button label now distinguishes it from the person-segment Remove action.
 
 ## Assignments workflow
 
-The existing detail dialog includes each selected person's overall stay, status,
-all segments and all backend-derived open intervals. Each open interval has its
-own Neue Zuweisung action, prefilling From/To from that interval. Dates can be
-shortened or shifted within it; no frontend interval-subtraction algorithm exists.
-Each existing segment has edit/remove actions. A compact dialog chooses hotel,
-room or explicit shared-booking join, and dates. Conflicts block add/edit in the UI;
-removal remains available to resolve them. Nothing auto-fills remaining gaps.
+The queue displays compact assigned segments and every backend-derived open
+interval. Rest zuweisen (one remaining gap) or Zuweisen (several gaps) selects an
+active target. The detail dialog's Neue Zuweisung does the same and closes the
+dialog. No booking is written during selection. The active target banner shows
+people and dates, can be dragged into the usual room area, and can be cancelled.
+Normal hotel/room actions use that exact interval. Multiple gaps always require an
+explicit choice. The existing compact edit dialog remains for known segments;
+hotel options include the already available contingent date range.
 
-Mutation responses update the displayed coverage immediately, then the canonical
-planning/person state is refetched. Selection follows the person, even if editing
-or removing changes the selected booking ID. Partial/conflict units stay in the
-Assignments open queue. Local progress/labels use coverage; backend/global counts
-are not changed.
+Full-stay drag/drop still defaults to the complete stay. Both normal and split
+adds now use POST /api/assignments/segments, never the legacy replacement route.
+This endpoint accepts athleteIds (one person or two partners), the existing
+hotel/room/date fields and optional joinBookingId. The interval must still be an
+exact openInterval for every selected person. It validates and saves all people
+under the existing transaction lock, commits once and returns booking plus
+people: [{personId, accommodationCoverage}]. A failure for either person rolls
+back all changes. Shared joins require identical booking dates and capacity;
+no roommate's dates or flag is changed. The approved-extra default for a new
+shared booking is initialized from all selected people, matching the legacy rule.
+Audit references include both selected people and the resulting booking.
 
-Full-stay drag/drop and quick assign remain for completely unassigned people with
-one open interval matching the unit's full stay. Partial, conflicted or ambiguous
-stays use explicit person actions; drag controls are disabled and handlers are
-guarded. Drag-to-join uses the new endpoint for one person with identical dates;
-it cannot resize a roommate's stay. Paired normal full-stay assignment remains.
+Beide zusammen zuweisen is enabled only for identical backend-projected gaps.
+For several common gaps, explicit date-specific pair actions are shown; no
+intersection is calculated. Different gaps retain independent person actions.
+The old full-stay pair action now uses this same safe ADD flow. Shared edit/remove
+retain the Step-2 person separation rules above.
+
+The existing validation GET accepts optional checkInDate/checkOutDate to reuse
+backend room checks for the selected period. Frontend validation caches include
+the selected dates; target changes invalidate older requests. Room drop feedback
+uses those backend checks. Occupancy summary counters remain whole-timeline
+summaries, not nightly availability. Mutation success refetches canonical planning
+state; segment edit/remove also apply returned coverage before refresh.
+
+Assignments partial/conflict units remain open work. The Athlete list now uses
+coverageStatus for accommodation labels and its assigned/open header counts. It
+keeps one person row, deduplicates hotel names for display and shows N Segmente
+with a full date/hotel/type/room tooltip for multiple segments. Existing single
+booking fields remain for backwards compatibility. No frontend subtraction or
+persisted slots are introduced.
 
 ## Deferred consumers and limits
 
-Dashboard, quota disposition cards, Analytics, person-list legacy statuses,
+Dashboard, quota disposition cards, Analytics,
 print/export and hotel/contingent summaries retain legacy first/any-booking or
 whole-timeline aggregate semantics. In particular, hotel summary occupancy is not
 a new nightly capacity calculation. The Step-1 consumer inventory remains relevant.

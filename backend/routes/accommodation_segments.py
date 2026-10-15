@@ -31,6 +31,10 @@ def _require(condition, code, message):
 @accommodation_segments.route('/api/assignments/persons/<int:person_id>/segments', methods=['POST'])
 @accommodation_segments.route('/api/assignments/persons/<int:person_id>/segments/<int:booking_id>', methods=['PUT', 'DELETE'])
 def mutate_segment(person_id, booking_id=None):
+    return _mutate_segment(person_id, booking_id)
+
+
+def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=True, new_booking_default=None):
     # Import lazily: app owns the existing validator/defaults and audit behavior.
     from app import (_validate_booking_payload, _initialize_new_booking_counts_as_single,
                      _save_booking_from_payload, _acknowledge_import_changes,
@@ -44,7 +48,7 @@ def mutate_segment(person_id, booking_id=None):
         _require(not existing or membership, 'SEGMENT_NOT_FOUND', 'Diese Person gehört nicht zur gewählten Zuweisung.')
         if existing:
             g.audit_snapshot = existing.to_dict()
-        data = request.get_json(silent=True) or {}
+        data = data_override if data_override is not None else (request.get_json(silent=True) or {})
         if request.method == 'DELETE':
             db.session.delete(membership)
             db.session.flush()
@@ -54,7 +58,8 @@ def mutate_segment(person_id, booking_id=None):
             db.session.flush()
             result = {'success': True, 'bookingId': str(booking_id), 'personId': str(person.id),
                       'booking': None, 'accommodationCoverage': coverage_for(person)}
-            db.session.commit()
+            if commit:
+                db.session.commit()
             return jsonify(result)
 
         other_bookings = [b for b in bookings_for(person.id) if not existing or b.id != existing.id]
@@ -92,6 +97,8 @@ def mutate_segment(person_id, booking_id=None):
         if existing or target:
             payload_data['countsAsSingle'] = (existing or target).counts_as_single
         else:
+            if new_booking_default is not None:
+                payload_data['countsAsSingle'] = new_booking_default
             payload_data = _initialize_new_booking_counts_as_single(payload_data)
         if (shared and start == existing.check_in_date and end == existing.check_out_date
                 and str(payload_data['hotelId']) == str(existing.hotel_id)
@@ -101,7 +108,8 @@ def mutate_segment(person_id, booking_id=None):
             # Saving an unchanged shared segment must not force a new reservation.
             result = {'success': True, 'personId': str(person.id), 'booking': existing.to_dict(),
                       'accommodationCoverage': coverage_for(person)}
-            db.session.commit()
+            if commit:
+                db.session.commit()
             return jsonify(result)
         # A shared edit creates a separate room booking. Its old room still
         # consumes capacity for the other occupants, but is excluded for this person.
@@ -138,7 +146,8 @@ def mutate_segment(person_id, booking_id=None):
         db.session.expire(booking, ['occupants'])
         result = {'success': True, 'personId': str(person.id), 'booking': booking.to_dict(),
                   'accommodationCoverage': coverage_for(person)}
-        db.session.commit()
+        if commit:
+            db.session.commit()
         return jsonify(result), 201 if request.method == 'POST' else 200
     except InvalidSegment as error:
         db.session.rollback()
@@ -146,6 +155,52 @@ def mutate_segment(person_id, booking_id=None):
     except (ValueError, TypeError):
         db.session.rollback()
         return jsonify(error='VALIDATION_ERROR', reasonCode='INVALID_SEGMENT', message='Ungültige Zuweisungsdaten.'), 400
+    except Exception:
+        db.session.rollback()
+        raise
+
+
+@accommodation_segments.route('/api/assignments/segments', methods=['POST'])
+def add_shared_segment():
+    """One explicit ADD for one/two people; all occupants succeed or all roll back."""
+    try:
+        lock_accommodation_writes()
+        data = request.get_json(silent=True) or {}
+        ids = data.get('athleteIds')
+        _require(isinstance(ids, list) and 1 <= len(ids) <= 2,
+                 'INVALID_PEOPLE', 'Eine Person oder zwei Zimmerpartner auswählen.')
+        ids = [int(value) for value in ids]
+        _require(len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Personen müssen unterschiedlich sein.')
+        interval = {key: data.get(key) for key in ('checkInDate', 'checkOutDate')}
+        # Exact frozen selection, no implicit intersection or replacement.
+        people = [Athlete.query.get_or_404(identity) for identity in ids]
+        for person in people:
+            coverage = coverage_for(person)
+            _require(coverage['coverageStatus'] != 'CONFLICT' and interval in coverage['openIntervals'],
+                     'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')
+        from app import _initialize_new_booking_counts_as_single
+        default_flag = _initialize_new_booking_counts_as_single({'athleteIds': ids})['countsAsSingle']
+        join_id = data.get('joinBookingId')
+        for person in people:
+            response = _mutate_segment(person.id, data_override={**data, 'joinBookingId': join_id}, commit=False, new_booking_default=default_flag)
+            body, status = response if isinstance(response, tuple) else (response, 200)
+            if status >= 400:
+                db.session.rollback()
+                return response
+            result = body.get_json()
+            join_id = result['booking']['id']
+        booking = db.session.get(RoomBooking, int(join_id))
+        db.session.expire(booking, ['occupants'])
+        result = {'success': True, 'booking': booking.to_dict(),
+                  'people': [{'personId': str(person.id), 'accommodationCoverage': coverage_for(person)} for person in people]}
+        db.session.commit()
+        return jsonify(result), 201
+    except InvalidSegment as error:
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), 400
+    except (ValueError, TypeError):
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode='INVALID_PEOPLE', message='Ungültige Personenauswahl.'), 400
     except Exception:
         db.session.rollback()
         raise

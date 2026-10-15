@@ -30,3 +30,14 @@ export function datesWithinInterval(start:string,end:string,interval:Accommodati
 export function segmentDateDefaults(interval:AccommodationInterval) {
   return {checkInDate:interval.checkInDate ?? '',checkOutDate:interval.checkOutDate ?? ''};
 }
+
+export type ActiveAssignmentTarget = {unitId:string;athleteIds:string[];label:string;openInterval:AccommodationInterval};
+/** Select an exact backend-projected gap. Never infer an intersection. */
+export function assignmentTarget(unit:RoomBookingUnit,ids:string[],interval?:AccommodationInterval):ActiveAssignmentTarget|null {
+  const people=unit.occupants.filter(person=>ids.includes(person.athleteId));
+  if(!people.length || people.length!==new Set(ids).size || people.some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT')) return null;
+  const chosen=interval ?? (people[0].accommodationCoverage?.openIntervals.length===1 ? people[0].accommodationCoverage.openIntervals[0] : undefined);
+  if(!chosen?.checkInDate || !chosen.checkOutDate) return null;
+  if(!people.every(person=>person.accommodationCoverage?.openIntervals.some(open=>open.checkInDate===chosen.checkInDate && open.checkOutDate===chosen.checkOutDate))) return null;
+  return {unitId:unit.unitId,athleteIds:people.map(p=>p.athleteId),label:people.map(p=>p.name).join(' + '),openInterval:chosen};
+}

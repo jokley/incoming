@@ -1,3 +1,4 @@
+import { personAccommodation } from '../services/personAccommodation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import {
@@ -48,7 +49,7 @@ const genderLabel = (value?: string) => {
   if (normalized === 'A' || normalized === 'X' || normalized === 'MIXED') return 'Mixed';
   return value || 'Nicht angegeben';
 };
-const assignmentLabel = (athlete: Athlete) => athlete.assignment?.hasAssignment ? 'Zugewiesen' : 'Nicht zugewiesen';
+const assignmentLabel = (athlete: Athlete) => personAccommodation(athlete).label;
 const importLabel = (athlete: Athlete) => WORK_CATEGORY_LABELS[athleteWorkCategory(athlete)];
 const shortDate = (value?: string | null) => value ? new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }) : '—';
 const reviewHint = (athlete: Athlete) => {
@@ -62,7 +63,7 @@ const reviewHint = (athlete: Athlete) => {
   return athlete.importChangeTypes?.length ? ({ ROOM_DEMAND_CHANGED: 'Zimmerbedarf geändert', EVENT_CHANGED: 'Event geändert', NATION_CHANGED: 'Nation geändert', NEW_ATHLETE: 'Neu', DATE_CHANGED: 'Aufenthalt geändert', ROOMMATE_CHANGED: 'Zimmerpartner geändert' }[athlete.importChangeTypes[0]]) : null;
 };
 const roomTypeLabel = (athlete: Athlete) => {
-  const roomType = athlete.assignment?.roomTypeName || athlete.roomType;
+  const roomType = personAccommodation(athlete).roomLabel;
   if (!roomType) return '—';
 
   const abbreviation = roomType.toUpperCase().match(/(?:^|\s|\/)(3BZ|4BZ|EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1];
@@ -198,8 +199,8 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
               catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
               finally { setSaving(false); }
             }}><Crown className={`mr-2 inline h-5 w-5 ${athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : 'Weltmeister bestätigen'}</OpsButton>}
-            <ReadonlyField label="Hotel" value={athlete?.assignments?.map(item => item.hotelName).filter(Boolean).join(', ') || athlete?.assignment?.hotelName} />
-            <ReadonlyField label="Zimmertyp" value={athlete?.assignment?.roomTypeName || athlete?.roomType} />
+            <ReadonlyField label="Hotel" value={athlete ? personAccommodation(athlete).hotelLabel : undefined} />
+            <ReadonlyField label="Zimmertyp" value={athlete ? personAccommodation(athlete).roomLabel : undefined} />
             <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{hasSingleRoomSurcharge(athlete) ? <StatusChip tone="warning">Mehrpreis</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
             <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
             <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
@@ -307,7 +308,7 @@ export function Athletes() {
     function: personFunctionOptions(athletes),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
-      { value: 'open', label: 'Offen', count: athletes.filter(athlete => ['new', 'open'].includes(athleteWorkCategory(athlete))).length },
+      { value: 'open', label: 'Offen', count: athletes.filter(athlete => personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
       { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
       { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
@@ -317,9 +318,9 @@ export function Athletes() {
 
   const filtered = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
-    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${athlete.assignment?.hotelName || ''} ${athlete.assignment?.roomNumber || ''} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
+    const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
-    const statusMatches = !filters.status || (filters.status === 'open' ? ['new', 'open'].includes(category) : filters.status === category);
+    const statusMatches = !filters.status || (filters.status === 'open' ? personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
     const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
     const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
@@ -344,7 +345,7 @@ export function Athletes() {
 
   return <SplitPageLayout>
     <ImportConflictNotice />
-    <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => athlete.assignment?.hasAssignment).length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => !athlete.assignment?.hasAssignment).length} offen</StatusChip></>} />
+    <PageHeader eyebrow="Operations Center" title="Athleten" subtitle="Zentrale Suche, Filterung und Verwaltung aller Athleten und Teammitglieder." meta={<><StatusChip tone="primary">{athletes.length} Personen</StatusChip><StatusChip tone="success">{athletes.filter(athlete => personAccommodation(athlete).status==='FULLY_ASSIGNED').length} zugewiesen</StatusChip><StatusChip tone="neutral">{athletes.filter(athlete => personAccommodation(athlete).status!=='FULLY_ASSIGNED').length} offen</StatusChip></>} />
     {error && <InfoPanel tone="error" title="Fehler">{error}</InfoPanel>}
 
     <div className="flex flex-col gap-4 xl:min-h-0 xl:flex-1 xl:flex-row">
@@ -376,7 +377,7 @@ export function Athletes() {
         </div>
         <div className="min-h-[24rem] overflow-x-hidden overflow-y-auto xl:min-h-0 xl:flex-1">
           <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
-            <colgroup><col className="w-[17%]"/><col className="w-[6%]"/><col className="w-[15%]"/><col className="w-[8%]"/><col className="w-[8%]"/><col className="w-[14%]"/><col className="w-[7%]"/><col className="w-[9%]"/><col className="w-[8%]"/><col className="w-[8%]"/></colgroup>
+            <colgroup><col className="w-[16%]"/><col className="w-[6%]"/><col className="w-[13%]"/><col className="w-[8%]"/><col className="w-[8%]"/><col className="w-[13%]"/><col className="w-[7%]"/><col className="w-[9%]"/><col className="w-[12%]"/><col className="w-[8%]"/></colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
               <tr>{['Name', 'Nation', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
             </thead>
@@ -386,10 +387,10 @@ export function Athletes() {
                 <Cell><b>{athlete.nationCode}</b></Cell>
                 <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
-                <Cell>{athlete.assignment?.hotelName && athlete.assignment.hotelId ? <span className="block truncate" title={athlete.assignment.hotelName}><InlineActionLink onClick={event => { event.stopPropagation(); navigate(`/hotels?hotelId=${athlete.assignment?.hotelId}`); }}>{athlete.assignment.hotelName}</InlineActionLink></span> : <span className="font-semibold text-[var(--ops-text)]">—</span>}</Cell>
-                <Cell>{athlete.assignment?.hasAssignment ? <InlineActionLink onClick={event => { event.stopPropagation(); navigate(assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })); }}>{roomTypeLabel(athlete)}</InlineActionLink> : <b className="text-[var(--ops-text)]">{roomTypeLabel(athlete)}</b>}</Cell>
+                <Cell><span className="block truncate" title={personAccommodation(athlete).details || personAccommodation(athlete).hotelLabel}>{personAccommodation(athlete).hotelLabel==='—' ? '—' : <InlineActionLink onClick={event=>{event.stopPropagation();navigate(personAccommodation(athlete).segments.length>1 ? assignmentWorkspaceHref({personId:athlete.id}) : `/hotels?hotelId=${personAccommodation(athlete).segments[0]?.hotelId || athlete.assignment?.hotelId || ''}`);}}>{personAccommodation(athlete).hotelLabel}</InlineActionLink>}</span></Cell>
+                <Cell><span title={personAccommodation(athlete).details}><InlineActionLink className="ops-table-wrap text-xs" onClick={event=>{event.stopPropagation();navigate(assignmentWorkspaceHref({personId:athlete.id}));}}>{roomTypeLabel(athlete)}</InlineActionLink></span></Cell>
                 <Cell><div className="flex flex-col items-start gap-1"><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={setSelectedAthlete}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={setSelectedAthlete}/></div></Cell>
-                <Cell><StatusChip tone={athlete.assignment?.hasAssignment ? 'success' : 'neutral'}>{assignmentLabel(athlete)}</StatusChip></Cell>
+                <Cell><span className="ops-table-wrap"><StatusChip tone={personAccommodation(athlete).tone}>{assignmentLabel(athlete)}</StatusChip></span></Cell>
                 <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>
               </tr>)}
             </tbody>

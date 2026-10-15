@@ -46,3 +46,16 @@ test('conflict is visible, add/edit disabled, removal remains available',()=>{
   assert.match(html,/<button[^>]*disabled=""[^>]*>Neue Zuweisung</);
   assert.doesNotMatch(html.match(/<button[^>]*>Entfernen</)?.[0] ?? 'missing',/\sdisabled(?:=|\s|>)/);
 });
+
+test('compact queue exposes each canonical gap independently and no completed action',async()=>{
+  const vite=await createServer({server:{middlewareMode:true,hmr:false,ws:false,watch:null},optimizeDeps:{noDiscovery:true,entries:[],include:[]},appType:'custom'});
+  const {OpenIntervalActions,OpenAssignmentContext}=await vite.ssrLoadModule('/src/app/components/assignment/OpenIntervalActions.tsx');
+  await vite.close();
+  const renderQueue=(coverage:AccommodationCoverage)=>renderToStaticMarkup(createElement(OpenAssignmentContext.Provider,{value:{available:true,activate:()=>{}}},createElement(OpenIntervalActions,{person:{athleteId:'1',accommodationCoverage:coverage}})));
+  const html=renderQueue(value({coverageStatus:'PARTIALLY_ASSIGNED',segments:[segment('1',18,22,'Hotel A')],openIntervals:[span(14,18),span(22,27)]}));
+  assert.equal((html.match(/>Zuweisen</g)??[]).length,2);
+  assert.match(html,/14.03–18.03/);assert.match(html,/22.03–27.03/);assert.match(html,/Hotel A/);
+  assert.match(renderQueue(value({coverageStatus:'PARTIALLY_ASSIGNED',openIntervals:[span(20,27)]})),/>Rest zuweisen</);
+  assert.equal(renderQueue(value({coverageStatus:'FULLY_ASSIGNED',openIntervals:[]})),'');
+  assert.doesNotMatch(renderQueue(value({coverageStatus:'CONFLICT'})),/<button/);
+});

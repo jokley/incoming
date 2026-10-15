@@ -104,6 +104,9 @@
   "/api/assignments/planning-view/validations/<path:validation_key>": [
     "GET"
   ],
+  "/api/assignments/segments": [
+    "POST"
+  ],
   "/api/athletes": [
     "GET",
     "POST"
