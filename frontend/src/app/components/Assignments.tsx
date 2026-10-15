@@ -706,7 +706,6 @@ export function Assignments() {
               onSplit={setSplitBookingId}
               splitOptionsFor={unit=>[
                 ...Array.from(bookingContextById.values()).map(({booking,hotel})=>({bookingId:booking.bookingId,checkInDate:booking.checkInDate,checkOutDate:booking.checkOutDate,hotelName:hotel.hotelName,occupants:booking.occupants})),
-                ...allHotels.flatMap(h=>h.externalBookings ?? []).map(b=>({bookingId:b.id,checkInDate:b.checkInDate,checkOutDate:b.checkOutDate,hotelName:b.hotel.name,occupants:b.occupants.map(o=>({athleteId:o.athlete.id,name:`${o.athlete.firstname} ${o.athlete.lastname}`}))})),
               ].filter(booking=>
                 booking.occupants.some(p=>unit.occupants.some(person=>person.athleteId===p.athleteId)) &&
                 !!booking.checkInDate && !!booking.checkOutDate &&

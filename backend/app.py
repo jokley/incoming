@@ -1423,6 +1423,15 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     if len(athletes) != len(unique_athlete_ids):
         return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
 
+    if external:
+        from external_accommodation import ensure_external_create_allowed
+        from accommodation_split import SplitError
+        try:
+            ensure_external_create_allowed(unique_athlete_ids,
+                person_booking_exclusion_id or (existing_booking.id if existing_booking else None))
+        except SplitError as error:
+            return None, None, _booking_error(error.code, error.message)
+
     try:
         check_in_date = datetime.fromisoformat(data['checkInDate']).date() if data.get('checkInDate') else None
         check_out_date = datetime.fromisoformat(data['checkOutDate']).date() if data.get('checkOutDate') else None
@@ -1442,7 +1451,9 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     if person_exclusion:
         person_bookings = person_bookings.filter(RoomBooking.id != person_exclusion)
     if person_bookings.first():
-        return None, None, _booking_error('PERSON_BOOKING_OVERLAP', 'Person already has accommodation during this period')
+        return None, None, _booking_error('PERSON_BOOKING_OVERLAP',
+            'Der gewählte Zeitraum überschneidet sich mit einer bestehenden Zuweisung. Bitte zuerst die betroffene Zuweisung anpassen oder entfernen.'
+            if external else 'Person already has accommodation during this period')
 
     if not external:
         inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(

@@ -76,6 +76,8 @@ def validate_partition_source(booking):
 
 
 def split_plan(booking, ids, split_date):
+    require(booking.hotel.accommodation_type != 'EXTERNAL', 'EXTERNAL_SPLIT_DISABLED',
+            'Externe Aufenthalte über Bearbeiten ändern.')
     try:
         selected = sorted(int(value) for value in ids) if isinstance(ids, list) else []
         cut = date.fromisoformat(split_date)

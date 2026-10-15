@@ -47,7 +47,7 @@ def test_external_coverage_no_inventory(state,start,end,gaps):
     assert len(row['externalBookings'])==1
 
 
-def test_pair_external_then_standard_and_shared_split(state):
+def test_pair_external_then_standard_and_external_split_blocked(state):
     client,people,_,_=state;hotel=external(state)
     plan=preview(state,hotel,people[:2]).json
     response=client.post('/api/assignments/segments',json=plan)
@@ -63,11 +63,9 @@ def test_pair_external_then_standard_and_shared_split(state):
     assert all(p['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED' for p in complete.json['people'])
     booking=response.json['booking']['id']
     preview_split=client.get(f'/api/assignments/bookings/{booking}/split-preview',query_string={'athleteIds':str(people[0].id),'splitDate':'2027-03-17'})
-    assert preview_split.status_code==200,preview_split.json
-    split=client.post(f'/api/assignments/bookings/{booking}/split',json=preview_split.json)
-    assert split.status_code==200,split.json
-    assert split.json['people'][0]['accommodationCoverage']['coverageStatus']=='PARTIALLY_ASSIGNED'
-    assert split.json['people'][1]['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED'
+    assert preview_split.status_code==400,preview_split.json
+    assert preview_split.json['reasonCode']=='EXTERNAL_SPLIT_DISABLED'
+    assert all(p['accommodationCoverage']['coverageStatus']=='FULLY_ASSIGNED' for p in complete.json['people'])
 
 
 def test_individual_external_does_not_change_partner_and_edit_remove(state):

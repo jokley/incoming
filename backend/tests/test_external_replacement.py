@@ -93,7 +93,7 @@ def test_existing_external_overlap_requires_explicit_edit_not_silent_replacement
     preview=plan(state,hotel,[people[0].id]);assert client.post('/api/assignments/segments',json=preview.json).status_code==201
     retry=plan(state,hotel,[people[0].id],'2027-03-18','2027-03-22')
     assert retry.status_code==400,retry.json
-    assert retry.json['reasonCode']=='EXTERNAL_OVERLAP'
+    assert retry.json['reasonCode']=='EXTERNAL_ALREADY_EXISTS'
 
 
 def test_middle_replacement_without_physical_room_identity_requires_review(state):
