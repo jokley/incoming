@@ -40,3 +40,10 @@ test('paired items and individual remaining gaps never duplicate a person/period
   assert.equal(items.length,2);assert.equal(items.filter(i=>i.occupants.length===2).length,1);
   assert.equal(items.filter(i=>i.occupants.length===1)[0].checkInDate,'2027-03-04');
 });
+
+
+test('external shared booking preserves paired remainder without local inventory',()=>{
+  const hotels=[{slots:[],externalBookings:[{id:'100',checkOutDate:'2027-03-14',occupants:[{athlete:{id:'1'}},{athlete:{id:'2'}}]}]}] as never;
+  const items=dispositionItems([unit([person('1')],'first'),unit([person('2')],'second')],hotels);
+  assert.equal(items.length,1);assert.equal(items[0].occupants.length,2);assert.deepEqual(items[0].openPeriod,period(14,21));
+});

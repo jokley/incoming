@@ -23,3 +23,14 @@ test('capacity counts distinct physical people across groups, including exempt a
   assert.equal(timeline[0].assignedEz, 3);
   assert.equal(timeline[0].assignedBeds, 4);
 });
+
+
+test('external bookings contribute no local rooms or beds',async t=>{
+  const server=await createServer({configFile:false,envFile:false,logLevel:'silent',server:{middlewareMode:true,hmr:false,ws:false,watch:null},appType:'custom'});t.after(()=>server.close());
+  const {buildCapacityTimeline,buildHotelRiskRows}=await server.ssrLoadModule('/src/app/services/planningCalculations.ts');
+  const external={id:'10',name:'Kühtai',accommodationType:'EXTERNAL',roomInventories:[]};
+  const booking={id:'1',hotel:external,roomType:null,checkInDate:'2027-03-14',checkOutDate:'2027-03-20',occupants:[{athlete:{id:'A'}}]};
+  const days=buildCapacityTimeline({hotels:[external],events:[],athletes:[],bookings:[booking]});
+  assert.ok(days.every(day=>day.assignedRooms===0 && day.assignedBeds===0));
+  assert.deepEqual(buildHotelRiskRows([external],[booking]),[]);
+});

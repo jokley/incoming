@@ -281,6 +281,8 @@ class Hotel(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
+    accommodation_type = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
+    __table_args__ = (db.CheckConstraint("accommodation_type IN ('STANDARD', 'EXTERNAL')", name='hotel_accommodation_type'),)
     location = db.Column(db.String(100))  # Ort
     region = db.Column(db.String(100))  # Region
     contact_person = db.Column(db.String(150))
@@ -296,6 +298,7 @@ class Hotel(db.Model):
         return {
             'id': str(self.id),
             'name': self.name,
+            'accommodationType': self.accommodation_type,
             'location': self.location,
             'region': self.region,
             'contactPerson': self.contact_person,
@@ -767,7 +770,7 @@ class RoomBooking(db.Model):
     # or by relationships to otherwise unmarked data.
     created_by = db.Column(db.String(50), nullable=True, index=True)
     hotel_id = db.Column(db.Integer, db.ForeignKey('hotel.id'), nullable=False)
-    room_type_id = db.Column(db.Integer, db.ForeignKey('room_type.id'), nullable=False)
+    room_type_id = db.Column(db.Integer, db.ForeignKey('room_type.id'), nullable=True)
     room_number = db.Column(db.String(20))
     check_in_date = db.Column(db.Date)
     check_out_date = db.Column(db.Date)
@@ -781,8 +784,8 @@ class RoomBooking(db.Model):
     def to_dict(self):
         return {
             'id': str(self.id),
-            'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name},
-            'roomType': self.room_type.to_dict(),
+            'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name, 'accommodationType': self.hotel.accommodation_type},
+            'roomType': self.room_type.to_dict() if self.room_type else None,
             'roomNumber': self.room_number,
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,

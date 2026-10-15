@@ -4,7 +4,7 @@ from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
-from models import AccommodationEvent, EventRoomDemand, HotelRoomInventory, RoomType
+from models import AccommodationEvent, EventRoomDemand, HotelRoomInventory, RoomType, Hotel
 
 
 analytics = Blueprint('analytics', __name__)
@@ -33,7 +33,7 @@ def get_room_availability():
 
     for rt in room_types:
         # Calculate available rooms
-        query = HotelRoomInventory.query.filter_by(room_type_id=rt.id)
+        query = HotelRoomInventory.query.filter_by(room_type_id=rt.id).join(Hotel).filter(Hotel.accommodation_type == 'STANDARD')
         if start_date and end_date:
             query = query.filter(
                 HotelRoomInventory.available_from <= end_date,

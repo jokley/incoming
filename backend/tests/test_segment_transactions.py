@@ -165,3 +165,38 @@ def test_concurrent_split_confirmations_only_one_commits(state):
     with app.app_context():
         assert RoomBooking.query.count()==1
         assert RoomBooking.query.one().check_out_date==date(2027,3,20)
+
+
+def test_external_pair_preview_atomic_add_and_audit_without_inventory(state):
+    client=app.test_client()
+    with app.app_context():
+        hotel=Hotel(name='Kühtai',accommodation_type='EXTERNAL');db.session.add(hotel);db.session.commit();hotel_id=hotel.id
+    query={'athleteIds':','.join(map(str,state[0])),'hotelId':str(hotel_id),
+           'checkInDate':'2027-03-14','checkOutDate':'2027-03-20',
+           'openCheckInDate':'2027-03-14','openCheckOutDate':'2027-03-27'}
+    plan=client.get('/api/assignments/segments/preview',query_string=query,headers=headers)
+    assert plan.status_code==200,plan.json
+    with app.app_context():assert AuditEvent.query.count()==0
+    result=client.post('/api/assignments/segments',json=plan.json,headers=headers)
+    assert result.status_code==201,result.json
+    assert len(result.json['booking']['occupants'])==2
+    assert all(p['accommodationCoverage']['coverageStatus']=='PARTIALLY_ASSIGNED' for p in result.json['people'])
+    assert client.post('/api/assignments/segments',json=plan.json,headers=headers).status_code==409
+    with app.app_context():
+        assert RoomBooking.query.count()==1
+        assert RoomBooking.query.one().room_type_id is None
+        audit=AuditEvent.query.one();assert json.loads(audit.entity_refs_json)['personId']==str(state[0][0])
+
+
+def test_external_preview_rejects_person_change_without_gap_change(state):
+    client=app.test_client()
+    with app.app_context():
+        hotel=Hotel(name='Kühtai',accommodation_type='EXTERNAL');db.session.add(hotel);db.session.commit();hotel_id=hotel.id
+    plan=client.get('/api/assignments/segments/preview',query_string={'athleteIds':str(state[0][0]),'hotelId':str(hotel_id),
+        'checkInDate':'2027-03-14','checkOutDate':'2027-03-20','openCheckInDate':'2027-03-14','openCheckOutDate':'2027-03-27'},headers=headers)
+    assert plan.status_code==200
+    with app.app_context():
+        person=db.session.get(Athlete,state[0][0]);person.firstname='Changed';db.session.commit()
+    response=client.post('/api/assignments/segments',json=plan.json,headers=headers)
+    assert response.status_code==409,response.json
+    with app.app_context():assert RoomBooking.query.count()==0

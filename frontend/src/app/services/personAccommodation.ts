@@ -8,8 +8,8 @@ export function personAccommodation(athlete:Athlete) {
   const hotelNames=segments ? Array.from(new Set(segments.map(s=>s.hotelName).filter(Boolean))) : [athlete.assignment?.hotelName].filter(Boolean);
   return {status,label:labels[status],tone:status==='FULLY_ASSIGNED' ? 'success' as const : status==='PARTIALLY_ASSIGNED' || status==='CONFLICT' ? 'warning' as const : 'neutral' as const,
     hotelLabel:hotelNames.join(' · ') || '—',
-    roomLabel:segments && segments.length>1 ? `${segments.length} Segmente` : segments?.[0]?.roomTypeName || athlete.assignment?.roomTypeName || athlete.roomType || '—',
-    details:segments?.map(s=>`${s.checkInDate ?? '—'}–${s.checkOutDate ?? '—'} · ${s.hotelName ?? '—'} · ${s.roomTypeName ?? '—'} · ${s.roomNumber ?? '—'}`).join('\n') ?? '',
+    roomLabel:segments && segments.length>1 ? `${segments.length} Segmente` : (segments?.[0]?.accommodationType==='EXTERNAL' ? 'Extern' : segments?.[0]?.roomTypeName) || athlete.assignment?.roomTypeName || athlete.roomType || '—',
+    details:segments?.map(s=>`${s.checkInDate ?? '—'}–${s.checkOutDate ?? '—'} · ${s.hotelName ?? '—'} · ${s.accommodationType==='EXTERNAL' ? 'Extern' : `${s.roomTypeName ?? '—'} · ${s.roomNumber ?? '—'}`}`).join('\n') ?? '',
     segments:segments ?? [],
   };
 }

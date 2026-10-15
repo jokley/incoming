@@ -42,7 +42,7 @@ def snapshot_token(booking):
     state = [booking.id, rows, [[p.id, p.arrival_date, p.departure_date, p.updated_at,
                     p.single_room_status, p.single_room_decision_id] for p in people],
              [[i.id, i.room_count, i.available_from, i.available_until] for i in sorted(inventories, key=lambda i: i.id)],
-             booking.room_type.max_persons]
+             booking.room_type.max_persons if booking.room_type else None, booking.hotel.accommodation_type]
     return hashlib.sha256(json.dumps(state, default=str, ensure_ascii=False).encode()).hexdigest()
 
 
@@ -73,16 +73,17 @@ def split_plan(booking, ids, split_date):
             'INVALID_OCCUPANTS', 'Nur Bewohner dieser Zuweisung auswählen.')
     require(booking.check_in_date and booking.check_out_date and booking.check_in_date < cut < booking.check_out_date,
             'INVALID_SPLIT_DATE', 'Teilungsdatum muss zwischen Anreise und Abreise liegen.')
-    require(len(occupants) <= booking.room_type.max_persons, 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
+    external = booking.hotel.accommodation_type == 'EXTERNAL'
+    require(external or (booking.room_type and len(occupants) <= booking.room_type.max_persons), 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
     from app import _planned_room_key
     key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
     for other in RoomBooking.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
-        same_room = key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
+        same_room = not external and key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
         require(not (other.id != booking.id and same_room and booking_intervals_overlap(
             booking.check_in_date, booking.check_out_date, other.check_in_date, other.check_out_date)),
             'ROOM_BOOKING_CONFLICT', 'Bestehende Zimmerbelegung prüfen.')
     remaining = [identity for identity in all_ids if identity not in selected]
-    require(not remaining or key, 'ACCOMMODATION_REVIEW_REQUIRED', 'Für das Teilen einzelner Bewohner muss die Zimmernummer geklärt sein.')
+    require(external or not remaining or key, 'ACCOMMODATION_REVIEW_REQUIRED', 'Für das Teilen einzelner Bewohner muss die Zimmernummer geklärt sein.')
     prefix = _copy(booking, booking.id, booking.check_in_date, cut)
     suffix = _copy(booking, -booking.id, cut, booking.check_out_date)
     people = []

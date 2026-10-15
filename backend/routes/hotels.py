@@ -43,7 +43,10 @@ def get_hotel(hotel_id):
 @hotels.route('/hotels/', methods=['POST'])
 def create_hotel():
     data = request.json
+    if data.get('accommodationType', 'STANDARD') not in ('STANDARD', 'EXTERNAL'):
+        return jsonify(message='Ungültige Unterkunftsart.'), 400
     hotel = Hotel(
+        accommodation_type=data.get('accommodationType', 'STANDARD'),
         name=data['name'],
         location=data.get('location'),
         region=data.get('region'),
@@ -62,9 +65,18 @@ def create_hotel():
 @hotels.route('/hotels/<int:hotel_id>', methods=['PUT'])
 @hotels.route('/hotels/<int:hotel_id>/', methods=['PUT'])
 def update_hotel(hotel_id):
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
     hotel = Hotel.query.get_or_404(hotel_id)
     data = request.json
 
+    if 'accommodationType' in data:
+        kind = data['accommodationType']
+        if kind not in ('STANDARD', 'EXTERNAL'):
+            return jsonify(message='Ungültige Unterkunftsart.'), 400
+        if kind != hotel.accommodation_type and (hotel.room_bookings or hotel.room_inventories):
+            return jsonify(message='Unterkunftsart kann bei bestehenden Buchungen oder Kontingenten nicht geändert werden.'), 409
+        hotel.accommodation_type = kind
     if 'name' in data:
         hotel.name = data['name']
     if 'location' in data:
@@ -101,9 +113,13 @@ def delete_hotel(hotel_id):
 @hotels.route('/hotels/<int:hotel_id>/inventory', methods=['POST'])
 @hotels.route('/hotels/<int:hotel_id>/inventory/', methods=['POST'])
 def add_hotel_inventory(hotel_id):
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
     hotel = Hotel.query.get_or_404(hotel_id)
     data = request.json
 
+    if hotel.accommodation_type == 'EXTERNAL':
+        return jsonify(message='Externe Unterkünfte verwenden keine lokalen Kontingente.'), 400
     inventory = HotelRoomInventory(
         hotel_id=hotel_id,
         room_type_id=int(data['roomTypeId']),
@@ -163,7 +179,7 @@ def get_hotels_capacity_overview():
     start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
     end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
 
-    inventory_query = HotelRoomInventory.query.join(RoomType)
+    inventory_query = HotelRoomInventory.query.join(RoomType).join(Hotel).filter(Hotel.accommodation_type == 'STANDARD')
     if hotel_id:
         inventory_query = inventory_query.filter(HotelRoomInventory.hotel_id == hotel_id)
     if room_type_id:
@@ -174,7 +190,7 @@ def get_hotels_capacity_overview():
             HotelRoomInventory.available_until >= start_date
         )
 
-    booking_query = RoomBookingOccupant.query.join(RoomBooking).join(Athlete).join(RoomType, RoomBooking.room_type_id == RoomType.id)
+    booking_query = RoomBookingOccupant.query.join(RoomBooking).join(Athlete).join(RoomType, RoomBooking.room_type_id == RoomType.id).join(Hotel, RoomBooking.hotel_id == Hotel.id).filter(Hotel.accommodation_type == 'STANDARD')
     if hotel_id:
         booking_query = booking_query.filter(RoomBooking.hotel_id == hotel_id)
     if room_type_id:

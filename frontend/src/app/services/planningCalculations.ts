@@ -34,6 +34,7 @@ const daysBetween = (from: string, until: string) => { const result: string[] = 
 
 /** Shared capacity projection consumed by both Analytics and the Dashboard. */
 export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] }): CapacityDay[] {
+  data={...data,hotels:data.hotels.filter(h=>h.accommodationType!=='EXTERNAL'),bookings:data.bookings.filter(b=>b.hotel?.accommodationType!=='EXTERNAL')};
   const dates = [...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]), ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])), ...data.athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])), ...data.bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)])].filter(Boolean).sort();
   return (dates.length ? daysBetween(dates[0], dates.at(-1)!) : []).map(date => {
     const inventory = data.hotels.flatMap(hotel => hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
@@ -61,7 +62,7 @@ export function capacitySummary(timeline: CapacityDay[], source: DemandSource) {
 export function buildHotelRiskRows(hotels: Hotel[], bookings: RoomBooking[]) {
   const dates = [...hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])), ...bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)])].filter(Boolean).sort();
   const days = dates.length ? daysBetween(dates[0], dates.at(-1)!) : [];
-  return hotels.map(hotel => {
+  return hotels.filter(h=>h.accommodationType!=='EXTERNAL').map(hotel => {
     const hotelBookings = bookings.filter(booking => booking.hotel.id === hotel.id);
     const daily = days.map(date => {
       const inventories = (hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);

@@ -1,3 +1,4 @@
+import { ExternalStayDialog } from './assignment/ExternalStayDialog';
 import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount } from '../services/assignmentRoomUsage';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
@@ -126,6 +127,7 @@ export function Assignments() {
   const [decisionId, setDecisionId] = useState<string | null>(null);
 
   const [view, setView] = useState<AppView>(routeState?.view || (routeState?.operationsContext?.quotaKey ? 'quotas' : 'dispatch'));
+  const [externalItem,setExternalItem]=useState<DispositionItem|null>(null);
   const [splitBookingId,setSplitBookingId]=useState<string|null>(null);
   const [notice,setNotice]=useState('');
   const [reveal,setReveal]=useState<{ids:string[];interval?:import('../types').AccommodationInterval}|null>(null);
@@ -380,8 +382,8 @@ export function Assignments() {
 
   const synchronizedHotels = useMemo(
     () => filterMode === 'synchronized' && hasActiveAssignmentFilters(assignmentFilters)
-      ? filterHotelsByMatchingUnits(allHotels, queueUnits)
-      : allHotels,
+      ? filterHotelsByMatchingUnits(allHotels.filter(h=>h.accommodationType!=='EXTERNAL'), queueUnits)
+      : allHotels.filter(h=>h.accommodationType!=='EXTERNAL'),
     [allHotels, assignmentFilters, filterMode, queueUnits],
   );
 
@@ -700,13 +702,17 @@ export function Assignments() {
             <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
               units={queueUnits}
+              onExternal={setExternalItem}
               onSplit={setSplitBookingId}
-              splitOptionsFor={unit=>Array.from(bookingContextById.values()).filter(({booking})=>
+              splitOptionsFor={unit=>[
+                ...Array.from(bookingContextById.values()).map(({booking,hotel})=>({bookingId:booking.bookingId,checkInDate:booking.checkInDate,checkOutDate:booking.checkOutDate,hotelName:hotel.hotelName,occupants:booking.occupants})),
+                ...allHotels.flatMap(h=>h.externalBookings ?? []).map(b=>({bookingId:b.id,checkInDate:b.checkInDate,checkOutDate:b.checkOutDate,hotelName:b.hotel.name,occupants:b.occupants.map(o=>({athleteId:o.athlete.id,name:`${o.athlete.firstname} ${o.athlete.lastname}`}))})),
+              ].filter(booking=>
                 booking.occupants.some(p=>unit.occupants.some(person=>person.athleteId===p.athleteId)) &&
                 !!booking.checkInDate && !!booking.checkOutDate &&
                 Date.parse(booking.checkOutDate)-Date.parse(booking.checkInDate)>86400000 &&
                 !allUnitsCombined.flatMap(u=>u.occupants).some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT' && p.accommodationCoverage.segments.some(segment=>segment.bookingId===booking.bookingId))
-              ).map(({booking,hotel})=>({bookingId:booking.bookingId,label:`${periodLabel({checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!})} · ${hotel.hotelName} · ${booking.occupants.map(p=>p.name).join(' + ')}`}))}
+              ).map(booking=>({bookingId:booking.bookingId,label:`${periodLabel({checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!})} · ${booking.hotelName} · ${booking.occupants.map(p=>p.name).join(' + ')}`}))}
               filterMode={filterMode}
               onFilterMode={setFilterMode}
               regularUnits={regularQueueUnits}
@@ -843,10 +849,16 @@ export function Assignments() {
           </AssignmentDialog>
         )}
 
+        {externalItem && <ExternalStayDialog item={externalItem} hotels={allHotels} onClose={()=>setExternalItem(null)} onComplete={async ids=>{
+          try {await refreshOperationalState();setNotice('Externe Unterkunft gespeichert.');showDisposition(ids);}
+          catch {setError('Externe Unterkunft gespeichert. Ansicht konnte nicht aktualisiert werden. Bitte aktualisieren.');}
+        }}/>}
         {splitBookingId && (()=>{
           const booking=bookingContextById.get(splitBookingId)?.booking;
           const hotel=booking && allHotels.find(h=>h.hotelId===booking.hotelId);
           const slot=booking && hotel?.slots.find(s=>s.roomTypeId===booking.roomTypeId);
+          const external=allHotels.flatMap(h=>h.externalBookings ?? []).find(b=>b.id===splitBookingId);
+          if(external)return <SplitAssignmentDialog booking={external} onClose={()=>setSplitBookingId(null)} onSplit={splitComplete}/>;
           if(!booking || !hotel || !slot)return null;
           return <SplitAssignmentDialog booking={{id:booking.bookingId,hotel:{id:hotel.hotelId,name:hotel.hotelName},roomType:{id:slot.roomTypeId,name:slot.roomTypeName,maxPersons:slot.capacity},roomNumber:booking.roomNumber,checkInDate:booking.checkInDate,checkOutDate:booking.checkOutDate,
             occupants:booking.occupants.map(p=>({id:p.athleteId,roomBookingId:booking.bookingId,athlete:{...p,id:p.athleteId}}))} }
@@ -1082,10 +1094,11 @@ function QueueSidebar({
   onQuickAssignPair,
   selectedUnitId,
   pendingAction,
-  hotelName,highlightedItems,onSplit,splitOptionsFor,
+  hotelName,highlightedItems,onSplit,splitOptionsFor,onExternal,
 }: {
   hotelName?:string;highlightedItems:string[];
   onSplit:(bookingId:string)=>void;
+  onExternal:(unit:DispositionItem)=>void;
   splitOptionsFor:(unit:DispositionItem)=>{bookingId:string;label:string}[];
   units: DispositionItem[];
   filterMode: FilterMode;
@@ -1175,6 +1188,7 @@ function QueueSidebar({
                   unit={unit}
                 onSplit={onSplit}
                 splitOptions={splitOptionsFor(unit)}
+                onExternal={()=>onExternal(unit)}
                   selected={selectedUnitId === unit.unitId}
                   canEditAssignments={canEditAssignments}
                   onSelect={() => onSelectUnit(unit.unitId)}
@@ -1192,6 +1206,7 @@ function QueueSidebar({
                 unit={unit}
                 onSplit={onSplit}
                 splitOptions={splitOptionsFor(unit)}
+                onExternal={()=>onExternal(unit)}
                 selected={selectedUnitId === unit.unitId}
                 canEditAssignments={canEditAssignments}
                 onSelect={() => onSelectUnit(unit.unitId)}

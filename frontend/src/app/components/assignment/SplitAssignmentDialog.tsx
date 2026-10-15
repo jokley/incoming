@@ -45,7 +45,7 @@ export function SplitAssignmentDialog({booking,onClose,onSplit}:{booking:SplitSo
   };
   return <Dialog open onClose={()=>!saving && onClose()} fullWidth maxWidth="sm">
     <DialogTitle>Zuweisung teilen</DialogTitle><DialogContent dividers>
-      <div className="mb-4 text-sm"><b>{booking.hotel.name}</b><p>{booking.roomType.name} · {booking.roomNumber} · {periodLabel({checkInDate:booking.checkInDate ?? null,checkOutDate:booking.checkOutDate ?? null})}</p><p>{booking.occupants.map(o=>`${o.athlete.firstname} ${o.athlete.lastname}`).join(' + ')}</p></div>
+      <div className="mb-4 text-sm"><b>{booking.hotel.name}</b><p>{booking.hotel.accommodationType==='EXTERNAL' ? 'Extern' : booking.roomType?.name} {booking.roomNumber && `· ${booking.roomNumber}`} · {periodLabel({checkInDate:booking.checkInDate ?? null,checkOutDate:booking.checkOutDate ?? null})}</p><p>{booking.occupants.map(o=>`${o.athlete.firstname} ${o.athlete.lastname}`).join(' + ')}</p></div>
       {booking.occupants.length>1 && <fieldset className="mb-3"><legend>Personen</legend><RadioGroup value={selection} onChange={event=>setSelection(event.target.value)}>
         <FormControlLabel disabled={saving} value="all" control={<Radio size="small"/>} label={booking.occupants.length===2 ? 'Beide' : 'Alle Bewohner'}/>
         {booking.occupants.map(o=><FormControlLabel key={o.athlete.id} disabled={saving} value={o.athlete.id} control={<Radio size="small"/>} label={`${o.athlete.firstname} ${o.athlete.lastname}`}/>)}

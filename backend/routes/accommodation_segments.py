@@ -1,9 +1,10 @@
 """Explicit person-segment operations; no implicit replacement of other stays."""
 from datetime import datetime
 from flask import Blueprint, jsonify, request, g
-from models import db, Athlete, RoomBooking, RoomBookingOccupant
+from models import db, Athlete, RoomBooking, RoomBookingOccupant, Hotel
 from accommodation_coverage import person_accommodation_coverage
 from accommodation_mutations import lock_accommodation_writes
+from accommodation_split import SplitError
 
 accommodation_segments = Blueprint('accommodation_segments', __name__)
 
@@ -83,14 +84,14 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
                      'ALREADY_ATTACHED', 'Person ist diesem Zimmer bereits zugewiesen.')
             _require(target.check_in_date == start and target.check_out_date == end,
                      'SHARED_DATES_DIFFER', 'Beim Beitreten müssen die Aufenthaltsdaten übereinstimmen.')
-            _require(len(target.occupants) < target.room_type.max_persons,
+            _require(target.hotel.accommodation_type == 'EXTERNAL' or (target.room_type and len(target.occupants) < target.room_type.max_persons),
                      'CAPACITY_EXCEEDED', 'Zimmer ist bereits voll belegt.')
 
         shared = bool(existing and len(existing.occupants) > 1)
         payload_data = {
             'athleteIds': [str(person.id)],
             'hotelId': str(target.hotel_id) if target else data.get('hotelId'),
-            'roomTypeId': str(target.room_type_id) if target else data.get('roomTypeId'),
+            'roomTypeId': target.room_type_id if target else data.get('roomTypeId'),
             'roomNumber': target.room_number if target else data.get('roomNumber'),
             'checkInDate': data['checkInDate'], 'checkOutDate': data['checkOutDate'],
         }
@@ -119,10 +120,11 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if error:
             db.session.rollback()
             return error
-        _require(bool(payload['room_number']), 'ROOM_REQUIRED', 'Ein Zimmer auswählen.')
+        external = db.session.get(Hotel, payload['hotel_id']).accommodation_type == 'EXTERNAL'
+        _require(external or bool(payload['room_number']), 'ROOM_REQUIRED', 'Ein Zimmer auswählen.')
         excluded = {b.id for b in (target, existing if not shared else None) if b}
         same_room = RoomBooking.query.filter_by(hotel_id=payload['hotel_id'], room_type_id=payload['room_type_id']).all()
-        for other in same_room:
+        for other in ([] if external else same_room):
             if other.id in excluded:
                 continue
             same_number = (_planned_room_key(other.room_number) or other.room_number) == (
@@ -166,17 +168,28 @@ def add_shared_segment():
     try:
         lock_accommodation_writes()
         data = request.get_json(silent=True) or {}
+        _require(isinstance(data, dict), 'INVALID_SEGMENT', 'Ungültige Zuweisungsdaten.')
         ids = data.get('athleteIds')
         _require(isinstance(ids, list) and 1 <= len(ids) <= 2,
                  'INVALID_PEOPLE', 'Eine Person oder zwei Zimmerpartner auswählen.')
         ids = [int(value) for value in ids]
         _require(len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Personen müssen unterschiedlich sein.')
+        from external_accommodation import external_plan
+        hotel = db.session.get(Hotel, int(data.get('hotelId', 0)))
+        external = bool(hotel and hotel.accommodation_type == 'EXTERNAL')
+        if data.get('previewToken') and not external:
+            raise SplitError('STALE_EXTERNAL_STAY', 'Externe Unterkunft hat sich geändert. Bitte Vorschau erneut prüfen.', 409)
+        if external:
+            _require(not data.get('joinBookingId'), 'INVALID_JOIN', 'Externe Aufenthalte als neue Zuweisung anlegen.')
+            plan = external_plan(data)
+            if not data.get('previewToken') or data['previewToken'] != plan['previewToken']:
+                raise SplitError('STALE_EXTERNAL_STAY', 'Aufenthalt hat sich geändert. Bitte Vorschau erneut prüfen.', 409)
         interval = {key: data.get(key) for key in ('checkInDate', 'checkOutDate')}
         # Exact frozen selection, no implicit intersection or replacement.
         people = [Athlete.query.get_or_404(identity) for identity in ids]
         for person in people:
             coverage = coverage_for(person)
-            _require(coverage['coverageStatus'] != 'CONFLICT' and interval in coverage['openIntervals'],
+            _require(coverage['coverageStatus'] != 'CONFLICT' and (external or interval in coverage['openIntervals']),
                      'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')
         from app import _initialize_new_booking_counts_as_single
         default_flag = _initialize_new_booking_counts_as_single({'athleteIds': ids})['countsAsSingle']
@@ -195,6 +208,9 @@ def add_shared_segment():
                   'people': [{'personId': str(person.id), 'accommodationCoverage': coverage_for(person)} for person in people]}
         db.session.commit()
         return jsonify(result), 201
+    except SplitError as error:
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), error.status
     except InvalidSegment as error:
         db.session.rollback()
         return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), 400
@@ -239,3 +255,23 @@ def split_booking(booking_id):
     except Exception:
         db.session.rollback()
         raise
+
+
+@accommodation_segments.route('/api/assignments/segments/preview', methods=['GET'])
+def preview_external_segment():
+    """Read-only preview; confirmation reuses the atomic shared ADD endpoint."""
+    from external_accommodation import external_plan
+    try:
+        lock_accommodation_writes()
+        data = {'athleteIds': request.args.get('athleteIds', '').split(','),
+                'hotelId': request.args.get('hotelId'), 'checkInDate': request.args.get('checkInDate'),
+                'checkOutDate': request.args.get('checkOutDate'),
+                'openInterval': {'checkInDate': request.args.get('openCheckInDate'), 'checkOutDate': request.args.get('openCheckOutDate')}}
+        plan = external_plan(data)
+        response = jsonify(plan)
+        response.headers['Cache-Control'] = 'no-store'
+        return response
+    except SplitError as error:
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), error.status
+    finally:
+        db.session.rollback()

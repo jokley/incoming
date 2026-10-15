@@ -55,7 +55,7 @@ class ApiCharacterizationTest(unittest.TestCase):
         hotel_id = created.get_json()['id']
         self.assertIsInstance(hotel_id, str)
         expected = {'id': hotel_id, 'name': 'Baseline Hotel', 'location': None,
-            'region': None, 'contactPerson': 'Desk', 'email': None, 'phone': None,
+            'region': None, 'accommodationType': 'STANDARD', 'contactPerson': 'Desk', 'email': None, 'phone': None,
             'comment': 'Accessible', 'roomInventories': []}
         self.assert_json(created, 201, expected)
         with app.app_context():
