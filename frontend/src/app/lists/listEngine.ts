@@ -1,6 +1,7 @@
+import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { hasSingleRoomSurcharge, isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation.ts';
+import { isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation.ts';
 import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus.ts';
 import { competitionDisplayList } from '../services/competitionPresentation.ts';
 
@@ -186,7 +187,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       lastMeal: value(athlete.lastMeal),
       specialMeal: value(athlete.specialMeal),
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
-      surcharge: hasSingleRoomSurcharge(athlete) ? 'Ja' : 'Nein',
+      surcharge: accommodationSurcharge(athlete).hasAccommodationSurcharge ? 'Ja' : 'Nein',
       singleRoomSpecialStatus: singleRoomSpecialStatusLabel(
         athlete.single_room_status, athlete.singleRoomQuotaExemptReason),
       quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
