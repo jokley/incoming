@@ -27,7 +27,7 @@ import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
 import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
-import { hasSingleRoomSurcharge } from '../services/quotaEvaluation';
+import { accommodationSurcharge } from '../services/accommodationSurcharge';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
 import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
@@ -205,7 +205,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
             <AccommodationRateField value={stay.rate} disabled={!permissions.canEdit || saving} onChange={rate=>setStay(current=>({...current,rate}))}/>
             <ReadonlyField label="Hotel" value={athlete ? personAccommodation(athlete).hotelLabel : undefined} />
             <ReadonlyField label="Zimmertyp" value={athlete ? personAccommodation(athlete).roomLabel : undefined} />
-            <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{hasSingleRoomSurcharge(athlete) ? <StatusChip tone="warning">Mehrpreis</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
+            <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{accommodationSurcharge(athlete).hasAccommodationSurcharge ? <StatusChip tone="warning">Ja</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
             <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
             <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
           </FieldGrid>

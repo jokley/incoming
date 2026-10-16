@@ -1,3 +1,4 @@
+import { queueFunctionLabel } from '../../services/queuePersonType';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { useState } from 'react';
 import { MoreHorizontal } from 'lucide-react';
@@ -37,7 +38,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
     </div>
     <div className="mt-2 space-y-1">
       {unit.occupants.map(person=><div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
-        <span className="min-w-0 break-words font-bold">{person.name}</span>
+        <div className="min-w-0"><span className="block break-words font-bold">{person.name}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
         {enabled && action([person.athleteId],unit.occupants.length===1 ? 'Person' : person.firstname)}
       </div>)}
     </div>

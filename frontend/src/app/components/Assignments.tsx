@@ -1,3 +1,4 @@
+import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
 import { periodLabel } from '../services/dispositionItems';
@@ -144,6 +145,7 @@ export function Assignments() {
   const [filterNation, setFilterNation] = useState('');
   const [filterDiscipline, setFilterDiscipline] = useState('');
   const [filterGender, setFilterGender] = useState('');
+  const [filterPersonType, setFilterPersonType] = useState<QueuePersonType>('');
   const requestedWorkflow = routeQuery.get('workflow') || (routeQuery.get('status') === 'open' ? 'open' : '');
   const [filterStatus, setFilterStatus] = useState<QueueStatus>(requestedWorkflow === 'review' ? 'all' : 'pending');
   const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
@@ -364,8 +366,8 @@ export function Assignments() {
     if (importReviewCount === 0 && filterImportReview) setFilterImportReview(false);
   }, [filterImportReview, importReviewCount]);
 
-  // Every assignment filter is represented once and evaluated by one predicate.
-  // The mode only controls whether that result is also projected onto the hotel pane.
+  // Operational criteria share one predicate. Person type is a separate UI
+  // projection and is never passed to quota requests or quota calculations.
   const assignmentFilters = useMemo<AssignmentFilterCriteria>(() => ({
     search: queueSearch,
     nation: filterNation,
@@ -377,8 +379,8 @@ export function Assignments() {
   }), [filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
 
   const queueUnits = useMemo(
-    () => openItems.filter((unit) => matchesAssignmentFilters(unit, assignmentFilters)),
-    [openItems, assignmentFilters],
+    () => filterQueuePersonType(openItems.filter((unit) => matchesAssignmentFilters(unit, assignmentFilters)), filterPersonType),
+    [openItems, assignmentFilters, filterPersonType],
   );
 
   const synchronizedHotels = useMemo(
@@ -445,7 +447,7 @@ export function Assignments() {
   const selectedAssignedUnit = selectedBookingContext ? findAssignedUnitForBooking(selectedBookingContext.booking.bookingId, assignedUnits) : null;
 
   const showDisposition=(ids:string[],interval?:import('../types').AccommodationInterval)=>{
-    setSelected(null);setView('dispatch');setQueueSearch('');setFilterNation('');setFilterDiscipline('');setFilterGender('');
+    setSelected(null);setView('dispatch');setQueueSearch('');setFilterNation('');setFilterDiscipline('');setFilterGender('');setFilterPersonType('');
     setFilterStatus('pending');setFilterRoomCategory('');setFilterImportReview(false);setReveal({ids,interval});
   };
   useEffect(()=>{
@@ -721,6 +723,8 @@ export function Assignments() {
               onFilterNation={setFilterNation}
               filterDiscipline={filterDiscipline}
               onFilterDiscipline={setFilterDiscipline}
+              filterPersonType={filterPersonType}
+              onFilterPersonType={setFilterPersonType}
               filterGender={filterGender}
               onFilterGender={setFilterGender}
               filterStatus={filterStatus}
@@ -1072,6 +1076,8 @@ function QueueSidebar({
   onFilterNation,
   filterDiscipline,
   onFilterDiscipline,
+  filterPersonType,
+  onFilterPersonType,
   filterGender,
   onFilterGender,
   filterStatus,
@@ -1110,6 +1116,8 @@ function QueueSidebar({
   onFilterNation: (value: string) => void;
   filterDiscipline: string;
   onFilterDiscipline: (value: string) => void;
+  filterPersonType: QueuePersonType;
+  onFilterPersonType: (value: QueuePersonType) => void;
   filterGender: string;
   onFilterGender: (value: string) => void;
   filterStatus: QueueStatus;
@@ -1159,6 +1167,11 @@ function QueueSidebar({
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
         </div>
 
+        <div className="mt-3">
+          <FilterButtonGroup label="Personentyp" value={filterPersonType || 'all'}
+            options={[{id:'all',label:'Alle'},{id:'athletes',label:'Athleten'},{id:'officials',label:'Officials'}]}
+            onChange={value=>onFilterPersonType(value==='all' ? '' : value as QueuePersonType)}/>
+        </div>
         <div className="mt-3 grid grid-cols-2 gap-3">
           <FilterButtonGroup
             label="Zimmerwunsch"

@@ -1,3 +1,4 @@
+import { queueFunctionLabel } from '../../services/queuePersonType';
 import type { ReactNode } from 'react';
 import { competitionDisplayName } from '../../services/competitionPresentation';
 
@@ -37,7 +38,7 @@ export function OccupantCard({ person, status, fallbackArrival, fallbackDepartur
   const context = [
     !hideNation && (person.nationCode || '—'),
     !hideDiscipline && (competitionDisplayName(person.discipline) || '—'),
-    !hideRole && (person.function || 'Athlet'),
+    !hideRole && queueFunctionLabel(person),
   ].filter((value): value is string => Boolean(value));
   const contextLabel = context.join(' · ');
   const arrival = person.arrivalDate || fallbackArrival;
