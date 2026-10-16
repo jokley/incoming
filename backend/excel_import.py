@@ -9,6 +9,7 @@ import pandas as pd
 from openpyxl.utils.exceptions import InvalidFileException
 from sqlalchemy import func
 
+from accommodation_rates import apply_preview_rates, resolve_rate
 from quota_history import approval_event_matches, applicable_approval_groups, historical_approval_groups, preview_approval_person, quota_person
 from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
 from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSession, ImportSessionEvent, ImportSessionVersion, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
@@ -1538,6 +1539,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         mapping = active_competition_mapping(event)
     people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None, event.id if event else None)
     room_result = parse_room_list(room_df, people_result['people'])
+    apply_preview_rates(people_result['people'])
     apply_single_room_quota_exemptions(people_result['people'], event_id=event.id if event else None)
     quota_checks = []
     quota_warnings = build_quota_warnings(people_result['people'], room_result['rooms'], quota_checks)
@@ -1691,6 +1693,7 @@ def recalculate_fis_import_preview(preview):
         _, mapping = revalidate_confirmation_event(preview.get('eventId'), people, validate_codes=False)
     for person in people:
         resolve_saved_quota_memberships(person, mapping)
+    apply_preview_rates(people, preview.get('accommodationRateOverrides'))
     apply_single_room_quota_exemptions(
         people, preview.get('singleRoomQuotaExemptOverrides', {}), preview.get('eventId'),
         preview.get('carriedSingleRoomQuotaExemptKeys', []),
@@ -1744,7 +1747,13 @@ def recalculate_fis_import_preview(preview):
     return preview
 
 
-def _apply_person_record(athlete, person, now):
+def _apply_person_record(athlete, person, now, *, rate_override=None):
+    # Snapshot-derived values never overwrite live operational decisions.
+    # Only an explicit reviewed override writes tariff metadata.
+    if rate_override:
+        rate = resolve_rate(athlete, rate_override)
+        athlete.accommodation_rate_category = rate['accommodationRateCategory']
+        athlete.accommodation_rate_source = rate['accommodationRateSource']
     athlete.function = person.get('function')
     athlete.competitor_id = person.get('competitorId')
     athlete.accred_id = person.get('accredId')
@@ -2002,7 +2011,11 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
         else:
             updated += 1
 
-        _apply_person_record(athlete, person, now)
+        rate_override = (preview.get('accommodationRateOverrides') or {}).get(person.get('matchKey'))
+        if rate_override and athlete.id is not None:
+            # Refresh under the row lock before checking a manual review's base.
+            athlete = Athlete.query.filter_by(id=athlete.id).with_for_update().populate_existing().one()
+        _apply_person_record(athlete, person, now, rate_override=rate_override)
         from world_champions import audit_status
         new_reason = person.get('singleRoomQuotaExemptReason')
         new_source = person.get('singleRoomExemptionSource')

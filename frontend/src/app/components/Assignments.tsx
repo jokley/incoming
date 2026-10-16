@@ -1,3 +1,4 @@
+import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
 import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount } from '../services/assignmentRoomUsage';
@@ -2232,6 +2233,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
       </DetailSection>
+      <QuotaPersonGroups row={rows.find(row=>row.nationCode===card.nationCode && row.discipline===card.discipline && row.gender===card.gender)}/>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">

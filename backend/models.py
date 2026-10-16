@@ -2,6 +2,7 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import MetaData
 from datetime import datetime
 import json
+from accommodation_rates import rate_projection
 from competitions import quota_disciplines
 
 NAMING_CONVENTION = {
@@ -529,11 +530,15 @@ class Athlete(db.Model):
             "single_room_quota_exempt_reason IN ('WORLD_CHAMPION', 'OTHER')",
             name='single_room_quota_exempt_reason',
         ),
+        db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
+        db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL')", name='accommodation_rate_source'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
     # Ownership marker for independently managed, disposable data sets.
     created_by = db.Column(db.String(50), nullable=True, index=True)
+    accommodation_rate_category = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
+    accommodation_rate_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
     competitor_id = db.Column(db.String(50))
     accred_id = db.Column(db.String(50))
@@ -625,6 +630,7 @@ class Athlete(db.Model):
         from quota_history import approved_quota_disciplines, approved_quota_contexts
         return {
             'id': str(self.id),
+            **rate_projection(self),
             'function': self.function,
             'competitorId': self.competitor_id,
             'accredId': self.accred_id,

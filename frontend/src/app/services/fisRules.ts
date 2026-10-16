@@ -1,6 +1,8 @@
 export type ComplianceStatus = 'ok' | 'over' | 'missing';
 
 export interface OfficialQuotaUsage {
+  functionGroups?: Array<{function:string|null;count:number;people:Array<{personId:string;name:string;isAssigned:boolean;accommodationRateCategory:'STANDARD'|'SPECIAL';accommodationRateSource:'DEFAULT'|'MANUAL'}>}>;
+  specialRateCount?: number;
   nationCode: string;
   discipline: string;
   gender: string;

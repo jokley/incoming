@@ -1,3 +1,5 @@
+import { AccommodationRateChip, AccommodationRateField } from './AccommodationRate';
+import type { AccommodationRateCategory } from '../types';
 import { personAccommodation } from '../services/personAccommodation';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -36,11 +38,11 @@ import type { OperationsLocationState } from '../operationsContext';
 import type { Athlete } from '../types';
 import { personFunctionOptions, matchesPersonFunction } from '../services/personFunctions';
 
-type FilterKey = 'nation' | 'sport' | 'gender' | 'function' | 'status' | 'notes';
+type FilterKey = 'nation' | 'sport' | 'gender' | 'function' | 'status' | 'notes' | 'rate';
 type Filters = Record<FilterKey, string> & { competitions: string[] };
 type CountItem = { value: string; label: string; count: number };
 
-const emptyFilters: Filters = { nation: '', sport: '', competitions: [], gender: '', function: '', status: '', notes: '' };
+const emptyFilters: Filters = { nation: '', sport: '', competitions: [], gender: '', function: '', status: '', notes: '', rate: '' };
 const date = (value?: string | null) => value ? new Date(value).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
 const genderLabel = (value?: string) => {
   const normalized = value?.trim().toUpperCase();
@@ -118,7 +120,7 @@ function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 
 function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { onUpdate: (athlete: Athlete) => void; athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
-  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '' });
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -127,6 +129,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
       arrivalDate: athlete?.arrivalDate || '',
       departureDate: athlete?.departureDate || '',
       note: athlete?.internalNote || '',
+      rate: athlete?.accommodationRateCategory || 'STANDARD',
       exemptReason: athlete?.singleRoomQuotaExemptReason || '',
     });
     setSaveError(null);
@@ -136,7 +139,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
     if (!athlete) return;
     setSaving(true); setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null });
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}) });
       onUpdate(updated);
       onClose();
     } catch (error) {
@@ -199,6 +202,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
               catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
               finally { setSaving(false); }
             }}><Crown className={`mr-2 inline h-5 w-5 ${athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : 'Weltmeister bestätigen'}</OpsButton>}
+            <AccommodationRateField value={stay.rate} disabled={!permissions.canEdit || saving} onChange={rate=>setStay(current=>({...current,rate}))}/>
             <ReadonlyField label="Hotel" value={athlete ? personAccommodation(athlete).hotelLabel : undefined} />
             <ReadonlyField label="Zimmertyp" value={athlete ? personAccommodation(athlete).roomLabel : undefined} />
             <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{hasSingleRoomSurcharge(athlete) ? <StatusChip tone="warning">Mehrpreis</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
@@ -330,6 +334,7 @@ export function Athletes() {
       && (!filters.sport || athlete.competitions?.some(competition => competition.sport === filters.sport))
       && matchesCompetitionSelection(athlete, filters.competitions)
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
+      && (!filters.rate || (athlete.accommodationRateCategory || 'STANDARD')===filters.rate)
       && matchesPersonFunction(athlete, filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
       && statusMatches
@@ -358,6 +363,7 @@ export function Athletes() {
           <FilterGroup title="Sport" filterKey="sport" items={groups.sport} selected={filters.sport} onSelect={setFilter} />
           <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || item.sports.includes(filters.sport))} selected={filters.competitions} onToggle={group => setFilters(current => ({ ...current, competitions: toggleCompetitionGroup(group, current.competitions) }))} />
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
+          <FilterGroup title="Unterkunftstarif" filterKey="rate" items={[{value:"STANDARD",label:"Standard",count:athletes.filter(p=>p.accommodationRateCategory!=="SPECIAL").length},{value:"SPECIAL",label:"Sondertarif",count:athletes.filter(p=>p.accommodationRateCategory==="SPECIAL").length}]} selected={filters.rate} onSelect={setFilter}/>
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
           <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
           <FilterGroup title="Hinweise" filterKey="notes" items={groups.notes} selected={filters.notes} onSelect={setFilter} />
@@ -383,7 +389,7 @@ export function Athletes() {
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
-                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
+                <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><AccommodationRateChip category={athlete.accommodationRateCategory}/><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
                 <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
