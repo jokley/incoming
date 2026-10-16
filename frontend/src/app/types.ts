@@ -1,3 +1,5 @@
+export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
+export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL'; }
 export interface RoomType {
   id: string;
   name: string;
@@ -119,7 +121,7 @@ export interface AccommodationCoverage {
   coverageStatus: 'UNASSIGNED' | 'PARTIALLY_ASSIGNED' | 'FULLY_ASSIGNED' | 'CONFLICT';
 }
 
-export interface Athlete {
+export interface Athlete extends AccommodationRateFields {
   accommodationCoverage?: AccommodationCoverage;
   id: string;
   function?: string;
@@ -249,7 +251,7 @@ export interface RoomBooking {
   occupants: RoomBookingOccupant[];
 }
 
-export interface RoomBookingUnitOccupant {
+export interface RoomBookingUnitOccupant extends AccommodationRateFields {
   accommodationCoverage?: AccommodationCoverage;
   athleteId: string;
   name: string;
@@ -448,7 +450,7 @@ export interface FisImportIssue {
   details?: Record<string, unknown>;
 }
 
-export interface FisImportPreviewPerson {
+export interface FisImportPreviewPerson extends AccommodationRateFields {
   quotaDisciplines?: string[];
   athleteTopLevelDisciplines?: string[];
   topLevelDisciplines?: string[];

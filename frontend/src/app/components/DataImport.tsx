@@ -1,3 +1,4 @@
+import { AccommodationRateField } from './AccommodationRate';
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { type ReactNode, useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router';
@@ -74,6 +75,13 @@ export function DataImport() {
     finally { setSavingTask(false); }
   };
 
+  const setPreviewRate = async (personKey:string, category:'STANDARD'|'SPECIAL') => {
+    if(!selected)return;
+    setSavingTask(true);setError(null);
+    try {const updated=await api.stageAccommodationRate(selected.id,personKey,category);setSelected(updated);setPreview(updated.preview??null);await refreshSessions();}
+    catch(e){setError(e instanceof Error ? e.message : 'Tarif konnte nicht gespeichert werden.');}
+    finally {setSavingTask(false);}
+  };
   const setPreviewExemption = async (personKey: string, reason: string, refreshDialog = false) => {
     if (!selected) return;
     setSavingTask(true); setError(null);
@@ -118,10 +126,10 @@ export function DataImport() {
     const name=`${p.firstname} ${p.lastname}`;
     const personKey=String((p as FisImportPreviewPersonWithKey).matchKey??'');
     const exemption=p.function?.toLowerCase() === 'athlete' ? <button type="button" aria-label={`Weltmeisterstatus ${name}`} aria-pressed={p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!selected || savingTask || p.singleRoomQuotaExemptReason === 'OTHER' || ['APPROVED','IMPORTED'].includes(selected.status)} onClick={() => void setPreviewExemption(personKey,p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '' : 'WORLD_CHAMPION',true)} className="inline-flex items-center gap-1 rounded-md border px-2 py-1"><Crown className={`h-4 w-4 ${p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : '—'}</button> : p.singleRoomQuotaExemptReason === 'OTHER' ? 'Historische EZ-Ausnahme' : '—';
-    return [name, p.nationCode, previewEventGroupLabel(p.quotaDisciplines), p.function || '—', exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
+    return [name, p.nationCode, previewEventGroupLabel(p.quotaDisciplines), p.function || '—', <AccommodationRateField compact label={`Unterkunftstarif ${name}`} value={p.accommodationRateCategory} disabled={!selected || savingTask || ['APPROVED','IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)} onChange={category=>void setPreviewRate(personKey,category)}/>, exemption, entitlement, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
-    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—','—',importStatuses(['Entfernt'])]);
+    peopleRows.push([String(record.athlete??'—'),String(record.nation??'—'),competitionDisplayName(String(record.discipline ?? '')) || '—','—','—','—','—',importStatuses(['Entfernt'])]);
   });
   const roomRows = preview?.rooms.map(r => {
     const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
@@ -293,7 +301,7 @@ function PreviewCard({preview,peopleRows,roomRows,onOpen}:{preview:FisImportPrev
   const changes=preview?.dispositionAnalysis.changes??[];
   const peopleHints=aggregateChanges(changes.filter(change=>change.preview==='persons'));
   const roomHints=aggregateChanges(changes.filter(change=>change.preview==='rooms'));
-  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-3"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','EZ-Sonderstatus','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/><button type="button" onClick={() => onOpen({title:'Quota & EZ',rows:quotaRows(preview),headers:quotaHeaders})} className="flex min-h-40 flex-col rounded-xl border-2 border-[var(--ops-border)] bg-[var(--ops-surface)] p-4 text-left"><strong className="text-base">Quota & EZ</strong><span className="mt-2">{preview?.quotaChecks?.length ?? 0} Kontexte</span><span>{preview?.quotaChecks?.filter(q => q.singleRoomsPending > 0).length ?? 0} mit Handlungsbedarf</span><span className="mt-2">{preview ? <StatusChip tone={preview.quotaChecks?.some(q => q.singleRoomsPending > 0) ? 'warning' : 'success'}>{preview.quotaChecks?.some(q => q.singleRoomsPending > 0) ? `${preview.quotaChecks.reduce((sum,q) => sum + q.singleRoomsPending,0)} zusätzliche EZ offen` : 'Kein EZ-Handlungsbedarf'}</StatusChip> : <StatusChip tone="neutral">Noch keine Vorschau</StatusChip>}</span><span className="mt-auto pt-3 text-right text-xs font-bold text-[var(--ops-primary)]">Quota öffnen →</span></button></div></ContentCard>;
+  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle="Was hat sich seit der letzten Meldeliste geändert?"/><div className="mt-4 grid items-stretch gap-3 sm:grid-cols-3"><PreviewWorkspaceCard icon={<Users className="h-5 w-5"/>} label="Personen" count={peopleRows.length} unit="Datensätze" hints={peopleHints} onClick={()=>onOpen({title:'Personen der Importvorschau',subtitle:`${peopleRows.length} Personen`,issues:entryErrors,rows:peopleRows,headers:['Name','Nation','Disziplin','Funktion','Unterkunftstarif','EZ-Sonderstatus','Einzelzimmerstatus','Importstatus']})}/><PreviewWorkspaceCard icon={<BedDouble className="h-5 w-5"/>} label="Zimmerzuordnungen" count={roomRows.length} unit="Zuordnungen" hints={roomHints} onClick={()=>onOpen({title:'Zimmer der Importvorschau',subtitle:`${roomRows.length} Zimmerzuordnungen`,issues:roomErrors,rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']})}/><button type="button" onClick={() => onOpen({title:'Quota & EZ',rows:quotaRows(preview),headers:quotaHeaders})} className="flex min-h-40 flex-col rounded-xl border-2 border-[var(--ops-border)] bg-[var(--ops-surface)] p-4 text-left"><strong className="text-base">Quota & EZ</strong><span className="mt-2">{preview?.quotaChecks?.length ?? 0} Kontexte</span><span>{preview?.quotaChecks?.filter(q => q.singleRoomsPending > 0).length ?? 0} mit Handlungsbedarf</span><span className="mt-2">{preview ? <StatusChip tone={preview.quotaChecks?.some(q => q.singleRoomsPending > 0) ? 'warning' : 'success'}>{preview.quotaChecks?.some(q => q.singleRoomsPending > 0) ? `${preview.quotaChecks.reduce((sum,q) => sum + q.singleRoomsPending,0)} zusätzliche EZ offen` : 'Kein EZ-Handlungsbedarf'}</StatusChip> : <StatusChip tone="neutral">Noch keine Vorschau</StatusChip>}</span><span className="mt-auto pt-3 text-right text-xs font-bold text-[var(--ops-primary)]">Quota öffnen →</span></button></div></ContentCard>;
 }
 const quotaHeaders = ['Event Group','Gender','Athleten','Officials Basis','Officials gemeldet','EZ Anspruch','EZ angefordert','Handlungsbedarf'];
 function quotaRows(preview: FisImportPreview | null): ReactNode[][] {

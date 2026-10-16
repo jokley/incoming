@@ -515,7 +515,7 @@ class ApiService {
 
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
-  async updateAthlete(id: string, data: { arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
+  async updateAthlete(id: string, data: { accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
     return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
@@ -919,6 +919,9 @@ class ApiService {
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
+  async stageAccommodationRate(sessionId: string, personKey: string, accommodationRateCategory: 'STANDARD' | 'SPECIAL'): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/accommodation-rates/${encodeURIComponent(personKey)}`, {method:'PATCH', body:JSON.stringify({accommodationRateCategory})});
+  }
   async stageSingleRoomQuotaExemption(sessionId: string, personKey: string, reason: SingleRoomQuotaExemptReason): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/single-room-exemptions/${encodeURIComponent(personKey)}`, { method: 'PATCH', body: JSON.stringify({ reason }) });
   }

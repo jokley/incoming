@@ -1,3 +1,4 @@
+import { AccommodationRateField } from '../AccommodationRate';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { SegmentActionMenu } from './SegmentActionMenu';
 import { useState } from 'react';
@@ -34,6 +35,12 @@ export function PersonAccommodationPanel({people,canEdit,onChanged,onShowDisposi
       const view=accommodationView(coverage);
       return <div key={person.athleteId} className="space-y-2 rounded-lg border border-[var(--ops-border)] p-3 text-xs">
         <div className="flex flex-wrap justify-between gap-2"><b>{person.name}</b><span>{view.label}</span></div>
+        <div className="max-w-sm"><AccommodationRateField value={person.accommodationRateCategory} disabled={!canEdit || busy} compact onChange={async accommodationRateCategory=>{
+          setBusy(true);setError('');
+          try {await api.updateAthlete(person.athleteId,{accommodationRateCategory});await onChanged(person.athleteId);}
+          catch(e){setError(e instanceof Error ? e.message : 'Tarif konnte nicht gespeichert werden.');}
+          finally {setBusy(false);}
+        }}/></div>
         <p>{dateLabel(coverage.overallInterval.checkInDate)}–{dateLabel(coverage.overallInterval.checkOutDate)}</p>
         {view.conflicts.length>0 && <Alert severity="warning">Prüfen: Zuweisungen oder Aufenthaltsdaten sind widersprüchlich. Teilen ist bis zur Klärung gesperrt.</Alert>}
         {view.segments.map(segment=><div key={segment.bookingId} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2">
