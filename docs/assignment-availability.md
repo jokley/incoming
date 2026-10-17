@@ -11,7 +11,7 @@ Its existing whole-interval inventory contract and half-open booking boundaries
 remain unchanged. Named-room conflicts, room compatibility, capacity, existing
 occupants and single-use blocking are checked before enabling targets. Joining an
 existing single-use room is rejected on the server as well; assembling a new
-atomic pair retains its existing approved-extra default behavior.
+physical DZ pair defaults to false without changing person approval flags.
 
 Physical occupant counts are unchanged. Operational availability treats
 `countsAsSingle` as blocking the room's remaining capacity. Whole-timeline hotel
