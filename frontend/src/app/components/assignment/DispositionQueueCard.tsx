@@ -1,3 +1,4 @@
+import {queueRoomRequest} from '../../services/assignmentPresentation';
 import { queueFunctionLabel } from '../../services/queuePersonType';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { DispositionDragContext } from './DispositionDragContext';
@@ -19,6 +20,8 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
   const externalEligibility=externalStayEligibility(unit.occupants);
   const enabled=canEditAssignments && unit.canAssign && !pending;
   const ids=unit.occupants.map(p=>p.athleteId);
+  const requests=unit.occupants.map(person=>queueRoomRequest(person,unit));
+  const sharedRequest=unit.occupants.length>1 && requests.every(request=>request===requests[0]) ? requests[0] : null;
   const drag=(event:React.DragEvent,people:string[])=>{
     if(!enabled){event.preventDefault();return;}
     event.stopPropagation();event.dataTransfer.setData('text/plain',unit.unitId);event.dataTransfer.effectAllowed='move';
@@ -44,11 +47,12 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
     className={`rounded-xl border p-3 text-xs ${highlighted || selected ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]'} ${pending ? 'opacity-60' : ''}`}>
     <div className="flex items-center justify-between gap-2">
       <b className="text-sm tabular-nums">{periodLabel(unit.openPeriod)}</b>
+      {sharedRequest && <span aria-label={`Zimmerwunsch für beide: ${sharedRequest}`} className="ml-auto text-[11px] font-semibold text-[var(--ops-text-muted)]">{sharedRequest}</span>}
       <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.canAssign ? 'Offen' : 'Prüfen'}</span>
     </div>
     <div className="mt-2 space-y-1">
       {unit.occupants.map(person=><div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
-        <div className="min-w-0"><span className="block break-words font-bold">{person.name}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
+        <div className="min-w-0"><span className="flex items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span>{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
         {enabled && action([person.athleteId],unit.occupants.length===1 ? 'Person' : person.firstname)}
       </div>)}
     </div>

@@ -1,3 +1,4 @@
+import {stableRoomSlots} from '../services/assignmentPresentation';
 import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
@@ -695,6 +696,12 @@ export function Assignments() {
   return (
     <>
     <DispositionDragContext.Provider value={{
+      onAssignSlot:slot=>{
+        if(!permissions.canManageAssignments || !focusedNeed)return;
+        const validations=validationByUnit[getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds)];
+        if(validations?.some(v=>v.slotId===slot.slotId && v.status!=='blocked'))
+          void assignUnitToSlot(focusedNeed.unitId,slot,focusedNeed.athleteIds);
+      },
       queueTargets,hotelId:activeHotelId ?? undefined,fits:filterMode==='synchronized' ? hotelFits : undefined,
       validations:validationByUnit[focusedNeed ? getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds) : ''],
       interval:focusedNeed ? (unitById.get(focusedNeed.unitId) as DispositionItem|undefined)?.openPeriod : undefined,
@@ -1733,7 +1740,7 @@ function HotelDetailView({
   onSelectBooking: (bookingId: string) => void;
   pendingAction: PendingAssignmentAction | null;
 }) {
-  const {validations,interval,occupantCount}=useContext(DispositionDragContext);
+  const {validations,interval,occupantCount,onAssignSlot}=useContext(DispositionDragContext);
   const grouped = useMemo(() => {
     const map = new Map<string, AssignmentSlot[]>();
     for (const slot of hotel.slots) {
@@ -1744,7 +1751,7 @@ function HotelDetailView({
     return Array.from(map.entries()).map(([key, slots]) => ({
       roomTypeId: key.split('|')[0],
       roomTypeName: key.split('|')[1],
-      slots,
+      slots:stableRoomSlots(slots),
     }));
   }, [hotel.slots]);
 
@@ -1798,9 +1805,7 @@ function HotelDetailView({
         <div className="space-y-2.5">
           {grouped.map((group) => {
             const summary = summarizeRoomType(group.slots);
-            const roomTypeKey = `${hotel.hotelId}_${group.roomTypeId}`;
             const isOpen = openRoomTypes[group.roomTypeId] ?? true;
-            const canDrop = !!draggingUnitId && group.slots.some(slot=>validations?.some(v=>v.slotId===slot.slotId && v.status!=='blocked'));
 
             return (
               <div id={`room-group-${group.roomTypeId}`} key={group.roomTypeId} className="scroll-mt-4 overflow-hidden rounded-2xl border border-[var(--ops-border)]">
@@ -1828,8 +1833,13 @@ function HotelDetailView({
                 {isOpen && contingentComments(hotel,group.roomTypeId).length>0 && <div className="grid gap-3 border-t border-[var(--ops-divider)] px-3 py-2 sm:grid-cols-2">{contingentComments(hotel,group.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
                 {isOpen && (
                   <div className="grid auto-rows-fr grid-cols-1 gap-2 bg-[var(--ops-surface-elevated)] p-2 2xl:grid-cols-2">
-                    {flattenBookingsFromSlots(group.slots).map((entry, index) => (
-                      (() => {
+                    {group.slots.map((slot,index)=>{
+                      const slotValidation=validations?.find(v=>v.slotId===slot.slotId);
+                      const canDrop=!!draggingUnitId && slotValidation?.status!=='blocked' && !!slotValidation;
+                      const roomTargetKey=slot.slotId;
+                      return <div key={slot.slotId} data-room-slot={slot.slotId} data-room-number={slot.roomNumber || slot.slotId} className="flex min-h-40 min-w-0 flex-col gap-2">
+                    {slot.bookings.map(booking => {
+                      const entry={slot,booking};
                         const canAddPartner =
                           !!draggingUnitId && validations?.some(v=>v.slotId===`booking:${entry.booking.bookingId}` && v.status!=='blocked') && !entry.booking.countsAsSingle &&
                           (entry.booking.capacity || 0) >= entry.booking.occupants.length + (occupantCount ?? 1) &&
@@ -1901,50 +1911,47 @@ function HotelDetailView({
                         </div>
                       </button>
                         );
-                      })()
-                    ))}
+                    })}
 
-                    {summary.remainingRooms > 0 || draggingUnitId ? (
+                    {slot.bookings.length===0 || canDrop ? (
                       <div
                         role="button" tabIndex={0}
-                        aria-disabled={!canDrop} title={!canDrop ? (validations?.find(v=>group.slots.some(s=>s.slotId===v.slotId))?.messages[0] ?? 'Unterkunftsbedarf auswählen / Prüfung läuft.') : undefined}
-                        onClick={()=>{if(canDrop)onDropRoomType(hotel.hotelId,group.roomTypeId);}}
-                        onKeyDown={event=>{if(canDrop && (event.key==='Enter' || event.key===' ')) {event.preventDefault();onDropRoomType(hotel.hotelId,group.roomTypeId);}}}
+                        aria-disabled={!canDrop} title={!canDrop ? (slotValidation?.messages[0] ?? 'Unterkunftsbedarf auswählen / Prüfung läuft.') : undefined}
+                        onClick={()=>{if(canDrop)onAssignSlot?.(slot);}}
+                        onKeyDown={event=>{if(canDrop && (event.key==='Enter' || event.key===' ')) {event.preventDefault();onAssignSlot?.(slot);}}}
                         onDrop={(event) => {
                           if(!canDrop)return;
                           event.preventDefault();
                           markAssignmentDrop();
-                          onDropRoomType(hotel.hotelId, group.roomTypeId);
+                          onAssignSlot?.(slot);
                         }}
                         onDragOver={(event) => {
                           if(!canDrop)return;
                           event.preventDefault();
-                          onDragOverRoomType(roomTypeKey);
+                          onDragOverRoomType(roomTargetKey);
                         }}
                         onDragLeave={onDragLeaveRoomType}
-                        className={`${draggingUnitId && !canDrop ? 'opacity-50 cursor-not-allowed' : ''} flex min-h-20 flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-3 text-center transition-all ${
-                          dragOverRoomTypeKey === roomTypeKey
+                        className={`${draggingUnitId && !canDrop ? 'opacity-50 cursor-not-allowed' : ''} flex min-h-20 flex-1 flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-3 text-center transition-all ${
+                          dragOverRoomTypeKey === roomTargetKey
                             ? canDrop
                               ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
                               : 'border-red-500/60 bg-red-500/10 text-red-200'
                             : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] text-[var(--ops-assignment-text-body)]'
                         }`}
                       >
-                        <div className="text-base font-extrabold">
-                          {draggingUnitId && !canDrop ? (validations?.find(v=>group.slots.some(s=>s.slotId===v.slotId))?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : dragOverRoomTypeKey === roomTypeKey
+                        <div className="text-[11px] font-semibold">{slot.roomNumber || `Zimmer ${slot.slotIndex}`}</div>
+                        <div className="text-sm font-extrabold">
+                          {draggingUnitId && !canDrop ? (slotValidation?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : dragOverRoomTypeKey === roomTargetKey
                             ? 'Loslassen, um neue Zuweisung anzulegen'
-                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : `${summary.remainingRooms} freie Zimmer`}
+                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : 'Frei'}
                         </div>
-                        {dragOverRoomTypeKey !== roomTypeKey && (
+                        {dragOverRoomTypeKey !== roomTargetKey && (
                           <div className="mt-1 text-xs font-medium text-[var(--ops-assignment-text-muted)]">{draggingUnitId ? 'Hier ablegen oder zum Zuweisen klicken' : 'Offenen Aufenthalt hierher ziehen oder links zuweisen.'}</div>
                         )}
                       </div>
-                    ) : (
-                      <div className="flex items-center gap-2 rounded-xl border border-red-900/30 bg-red-950/20 px-4 py-2 text-xs text-red-500">
-                        <AlertCircle className="h-3.5 w-3.5" />
-                        Voll belegt
-                      </div>
-                    )}
+                    ) : null}
+                      </div>;
+                    })}
                   </div>
                 )}
               </div>
@@ -2898,10 +2905,6 @@ function summarizeRoomType(slots: AssignmentSlot[]) {
     percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
     capacityPerRoom: slots[0]?.capacity || 0,
   };
-}
-
-function flattenBookingsFromSlots(slots: AssignmentSlot[]) {
-  return slots.flatMap((slot) => slot.bookings.map((booking) => ({ booking, slot })));
 }
 
 function getHotelContingentRange(hotel: AssignmentGridHotel) {
