@@ -1,3 +1,5 @@
+import {EzQuotaControl} from './assignment/EzQuotaControl';
+import {ezQuotaReason} from '../services/ezQuotaPresentation';
 import {stableRoomSlots} from '../services/assignmentPresentation';
 import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
@@ -16,8 +18,7 @@ import { contingentComments, visibleAssignmentComment } from '../services/assign
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { Profiler, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
-import { Dialog, DialogContent, IconButton, Switch, Tooltip } from '@mui/material';
-import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
+import { Dialog, DialogContent } from '@mui/material';
 import {
   AlertCircle,
   AlertTriangle,
@@ -125,6 +126,7 @@ export function Assignments() {
   const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [manualQuotaValues,setManualQuotaValues]=useState<Record<string,boolean>>({});
   const [pendingAction, setPendingAction] = useState<PendingAssignmentAction | null>(null);
   const [quotaRefreshing, setQuotaRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -616,6 +618,7 @@ export function Assignments() {
       setSaving(true);
       setError(null);
       await api.updateAssignedUnit(bookingId, { countsAsSingle });
+      setManualQuotaValues(values=>({...values,[bookingId]:countsAsSingle}));
       await refreshOperationalState();
     } catch (err) {
       setError(extractErrorMessage(err, 'Quotenbewertung konnte nicht geändert werden'));
@@ -876,6 +879,8 @@ export function Assignments() {
           <DetailPanel
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
+              quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.slot.capacity,
+                allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext.booking.occupants.some(p=>p.athleteId===person.athleteId)),manualQuotaValues[selectedBookingContext.booking.bookingId]) : undefined}
               selectedAssignedUnit={selectedAssignedUnit}
               hotels={allHotels}
               onUnassignBooking={handleUnassignBooking}
@@ -2334,6 +2339,7 @@ function DetailSection({ icon, title, children }: { icon: ReactNode; title: stri
 }
 
 function DetailPanel({
+  quotaReason,
   selectedUnit,
   selectedBookingContext,
   selectedAssignedUnit,
@@ -2345,6 +2351,7 @@ function DetailPanel({
   onAcknowledgeImportChanges,
   onShowDecision,
 }: {
+  quotaReason?:string;
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
   selectedAssignedUnit: RoomBookingUnit | null;
@@ -2428,20 +2435,8 @@ function DetailPanel({
           </div>
         </DetailSection>
         <DetailSection icon={<Bed className="h-4 w-4" />} title="Quotenbewertung">
-          <div className="flex items-center justify-between gap-3 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
-            <div className="flex items-center gap-1">
-              <span className="text-sm font-semibold text-[var(--ops-text)]">Als Einzelzimmer werten</span>
-              <Tooltip title={<>Bestimmt ausschließlich die Quotenberechnung.<br/>Die tatsächliche Zimmerart bleibt unverändert.</>} arrow>
-                <IconButton size="small" aria-label="Information zur Quotenbewertung"><InfoOutlinedIcon fontSize="inherit" /></IconButton>
-              </Tooltip>
-            </div>
-            <Switch
-              checked={Boolean(booking.countsAsSingle)}
-              disabled={pendingAction?.bookingId === booking.bookingId}
-              onChange={(_, checked) => onMarkBookingAsSingle(booking.bookingId, checked)}
-              inputProps={{ 'aria-label': 'Als Einzelzimmer werten' }}
-            />
-          </div>
+          <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={pendingAction?.bookingId===booking.bookingId}
+            onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>
         </DetailSection>
         <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
           <button
