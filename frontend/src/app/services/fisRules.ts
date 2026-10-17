@@ -1,7 +1,12 @@
 export type ComplianceStatus = 'ok' | 'over' | 'missing';
 
 export interface OfficialQuotaUsage {
-  functionGroups?: Array<{function:string|null;count:number;people:Array<{personId:string;name:string;isAssigned:boolean;accommodationRateCategory:'STANDARD'|'SPECIAL';accommodationRateSource:'DEFAULT'|'MANUAL'}>}>;
+  functionGroups?: Array<{function:string|null;count:number;people:Array<{personId:string;name:string;isAssigned:boolean;accommodationRequirement?:'REQUIRED'|'NO_ROOM';accommodationRateCategory:'STANDARD'|'SPECIAL';accommodationRateSource:'DEFAULT'|'MANUAL'}>}>;
+  accommodationPeopleRequired?: number;
+  accommodationPeopleFullyAssigned?: number;
+  accommodationPeoplePartiallyAssigned?: number;
+  accommodationPeopleOpen?: number;
+  noRoomPeople?: number;
   specialRateCount?: number;
   nationCode: string;
   discipline: string;

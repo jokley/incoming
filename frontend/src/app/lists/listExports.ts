@@ -5,7 +5,7 @@ export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['nation', 'Nation'], ['discipline', 'Disziplin / Event'], ['role', 'Funktion'],
   ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
-  ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'], ['roommate', 'Zimmerpartner'],
+  ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'], ['roommate', 'Zimmerpartner'],
   ['athleteRemark', 'Bemerkung Athlet'], ['internalNote', 'Bemerkung Intern'],
 ];
 

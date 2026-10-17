@@ -1,7 +1,7 @@
 import type { AccommodationCoverage, AccommodationInterval, RoomBookingUnit } from '../types.ts';
 
 export const coverageLabels:Record<AccommodationCoverage['coverageStatus'],string> = {
-  UNASSIGNED:'Nicht zugewiesen',PARTIALLY_ASSIGNED:'Teilweise zugewiesen',
+  NO_ROOM:'Kein Zimmer benötigt',UNASSIGNED:'Nicht zugewiesen',PARTIALLY_ASSIGNED:'Teilweise zugewiesen',
   FULLY_ASSIGNED:'Zugewiesen',CONFLICT:'Prüfen',
 };
 export function accommodationView(coverage:AccommodationCoverage) {

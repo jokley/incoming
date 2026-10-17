@@ -8,7 +8,7 @@ const person=(extra:Partial<Athlete>={})=>({id:'1',firstname:'One',lastname:'Per
 test('SPECIAL shows Ja in the shared overview/export rows without single-room approval',()=>{
  const p=person({accommodationRateCategory:'SPECIAL'});const before=structuredClone(p);
  assert.equal(createListRows([p],[])[0].surcharge,'Ja');
- assert.deepEqual(accommodationSurcharge(p),{hasAccommodationSurcharge:true,surchargeReasons:['SPECIAL_RATE']});
+ assert.deepEqual(accommodationSurcharge(p),{applicable:true,hasAccommodationSurcharge:true,surchargeReasons:['SPECIAL_RATE']});
  assert.deepEqual(p,before);assert.equal(p.single_room_status,'NONE');
 });
 test('existing active APPROVED_EXTRA surcharge remains Ja and inactive approval remains Nein',()=>{
@@ -21,7 +21,7 @@ test('existing active APPROVED_EXTRA surcharge remains Ja and inactive approval 
 test('STANDARD without approval remains Nein, including absent metadata',()=>{
  assert.equal(createListRows([person({accommodationRateCategory:'STANDARD'})],[])[0].surcharge,'Nein');
  assert.equal(createListRows([person()],[])[0].surcharge,'Nein');
- assert.deepEqual(accommodationSurcharge(null),{hasAccommodationSurcharge:false,surchargeReasons:[]});
+ assert.deepEqual(accommodationSurcharge(null),{applicable:true,hasAccommodationSurcharge:false,surchargeReasons:[]});
 });
 test('both reasons remain separately represented without changing approval state',()=>{
  const p=person({accommodationRateCategory:'SPECIAL',single_room_status:'APPROVED_EXTRA',assignment:{countsAsSingle:true} as Athlete['assignment']});

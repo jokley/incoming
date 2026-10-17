@@ -45,6 +45,7 @@ def function_groups(people, assigned_ids=()):
         groups.setdefault(label, []).append({
             'personId': str(identity), 'name': person.get('name', ''),
             'isAssigned': identity in assigned_ids,
+            'accommodationRequirement': person.get('accommodationRequirement', 'REQUIRED'),
             'accommodationRateCategory': person.get('accommodationRateCategory', 'STANDARD'),
             'accommodationRateSource': person.get('accommodationRateSource', 'DEFAULT')})
     return [{'function': label, 'count': len(members),

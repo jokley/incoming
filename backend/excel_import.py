@@ -1,3 +1,4 @@
+from accommodation_requirements import apply_preview_requirements, set_requirement, accommodation_room_requests
 import json
 import re
 import uuid
@@ -264,7 +265,7 @@ def single_room_context_errors(people, rooms):
              'details': {'personKey': person.get('matchKey'),
                          'personName': f"{person.get('firstname', '')} {person.get('lastname', '')}".strip(),
                          'quotaDisciplines': person.get('quotaDisciplines', [])}}
-            for person in people if person.get('matchKey') in singles
+            for person in people if person.get('accommodationRequirement') != 'NO_ROOM' and person.get('matchKey') in singles
             and not person.get('singleRoomQuotaExemptReason') and not quota_keys(person, people)]
 
 
@@ -737,7 +738,7 @@ def build_quota_warnings(people, rooms, quota_checks=None):
     for person in roster:
         room = room_by_person.get(person.get('matchKey'))
         requested.append({**person, 'countsAsSingle': bool(
-            room and normalize_string(room.get('roomType')) == 'single')})
+            person.get('accommodationRequirement') != 'NO_ROOM' and room and normalize_string(room.get('roomType')) == 'single')})
         existing = _find_existing_athlete(person, athlete_maps)
         if existing:
             imported_by_existing_id[existing.id] = person
@@ -917,7 +918,7 @@ def preserved_single_room_approvals(people, rooms):
             continue
         room = room_by_person.get(person.get('matchKey'))
         existing = _find_existing_athlete(person, athlete_maps)
-        incoming_single = bool(room and normalize_string(room.get('roomType')) == 'single')
+        incoming_single = bool(person.get('accommodationRequirement') != 'NO_ROOM' and room and normalize_string(room.get('roomType')) == 'single')
         retained_single = bool(existing and existing.id in retained_ids
             and normalize_string(person.get('function')) != 'athlete')
         if not incoming_single and not retained_single:
@@ -975,6 +976,8 @@ def apply_active_single_room_decision(details, approved_person_keys, decision_id
     Only the three person-level decision fields are changed here; bookings,
     physical room types and ``counts_as_single`` remain independent.
     """
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
     selected = set(approved_person_keys)
     decision = db.session.get(ImportApproval, decision_id)
     athlete_maps = _build_existing_athlete_maps()
@@ -987,6 +990,10 @@ def apply_active_single_room_decision(details, approved_person_keys, decision_id
                    athlete_maps['by_fis_code'].get(str(person_key).strip().upper()))
         if not athlete:
             continue
+        if athlete.accommodation_requirement == 'NO_ROOM' or (incoming and incoming.get('accommodationRequirement') == 'NO_ROOM'):
+            if person_key in selected:
+                raise ImportValidationError('NO_ROOM_SINGLE_ROOM_APPROVAL_FORBIDDEN', 'Kein Zimmer benötigt. Keine aktive EZ-Genehmigung möglich.')
+            continue  # Keep historical approval evidence unchanged.
         if person_key in selected:
             if not applicable_approval_groups(decision, athlete, person_key):
                 raise ImportValidationError('APPROVAL_MEMBERSHIP_UNRESOLVED',
@@ -1028,7 +1035,7 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved
         person['singleRoomAllocation'] = None
         room = room_by_person.get(person.get('matchKey'))
         evidence = preserved.get(person.get('matchKey'))
-        requested.append({**person, 'countsAsSingle': bool(room and normalize_string(room.get('roomType')) == 'single'),
+        requested.append({**person, 'countsAsSingle': bool(person.get('accommodationRequirement') != 'NO_ROOM' and room and normalize_string(room.get('roomType')) == 'single'),
             'singleRoomStatus': 'APPROVED_EXTRA' if evidence else None,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence['groups'])] if evidence else []})
@@ -1039,6 +1046,10 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved
         allocation = allocate_single_rooms(requested, allowances, valid)
     by_identity = {p['identity']: p for p in allocation}
     for index, person in enumerate(people):
+        if person.get('accommodationRequirement') == 'NO_ROOM':
+            person['singleRoomAllocation'] = None
+            person['singleRoomEntitlement'] = None
+            continue
         room = room_by_person.get(person.get('matchKey'))
         record = by_identity.get(person_identity(person, index))
         if record is None and (not room or normalize_string(room.get('roomType')) != 'single'):
@@ -1539,6 +1550,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         mapping = active_competition_mapping(event)
     people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None, event.id if event else None)
     room_result = parse_room_list(room_df, people_result['people'])
+    requirement_issues = apply_preview_requirements(people_result['people'], room_result['rooms'])
     apply_preview_rates(people_result['people'])
     apply_single_room_quota_exemptions(people_result['people'], event_id=event.id if event else None)
     quota_checks = []
@@ -1554,7 +1566,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
         people_result['people'], room_result['rooms'], quota_warnings
     )
 
-    blocking_errors = (people_result['errors'] + room_result['errors']
+    blocking_errors = (requirement_issues + people_result['errors'] + room_result['errors']
         + quota_gender_errors(people_result['people'])
         + single_room_context_errors(people_result['people'], room_result['rooms']))
     unknown = next((issue for issue in blocking_errors
@@ -1606,10 +1618,10 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
                 'wouldUpdate': sum(1 for person in people_result['people'] if person['operation'] == 'update'),
             },
             'rooms': {
-                'total': len(room_result['rooms']),
+                'total': len(accommodation_room_requests(people_result['people'], room_result['rooms'])),
                 'wouldReplaceFisRooms': FisRoomAssignment.query.count(),
-                'singles': sum(normalize_string(room.get('roomType')) == 'single' for room in room_result['rooms']),
-                'shared': sum(normalize_string(room.get('roomType')) == 'double shared' for room in room_result['rooms']),
+                'singles': sum(normalize_string(room.get('roomType')) == 'single' for room in accommodation_room_requests(people_result['people'], room_result['rooms'])),
+                'shared': sum(normalize_string(room.get('roomType')) == 'double shared' for room in accommodation_room_requests(people_result['people'], room_result['rooms'])),
             },
             'validation': {
                 'errorCount': len(blocking_errors),
@@ -1693,6 +1705,7 @@ def recalculate_fis_import_preview(preview):
         _, mapping = revalidate_confirmation_event(preview.get('eventId'), people, validate_codes=False)
     for person in people:
         resolve_saved_quota_memberships(person, mapping)
+    requirement_issues = apply_preview_requirements(people, rooms, preview.get('accommodationRequirementOverrides'))
     apply_preview_rates(people, preview.get('accommodationRateOverrides'))
     apply_single_room_quota_exemptions(
         people, preview.get('singleRoomQuotaExemptOverrides', {}), preview.get('eventId'),
@@ -1725,9 +1738,9 @@ def recalculate_fis_import_preview(preview):
     preview['quotaChecks'] = quota_checks
     preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people)
     preview['errors'] = ([e for e in preview.get('errors', [])
-        if not e.get('code', '').startswith(('ENTRY_QUOTA_GENDER_', 'ENTRY_WSC_MEMBERSHIP', 'ENTRY_WSC_SOURCE_', 'ENTRY_SINGLE_ROOM_CONTEXT_'))]
+        if not e.get('code', '').startswith(('ENTRY_QUOTA_GENDER_', 'ENTRY_WSC_MEMBERSHIP', 'ENTRY_WSC_SOURCE_', 'ENTRY_SINGLE_ROOM_CONTEXT_', 'ACCOMMODATION_REQUIREMENT_'))]
         + quota_gender_errors(people) + wsc_membership_errors(people, preview.get('eventId'))
-        + missing_evidence + single_room_context_errors(people, rooms))
+        + missing_evidence + requirement_issues + single_room_context_errors(people, rooms))
     membership_warnings = [
         {'code': 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED',
          'message': 'Keine exakte Competition-Membership für die Quotenprüfung vorhanden',
@@ -1742,8 +1755,10 @@ def recalculate_fis_import_preview(preview):
     preview['isValid'] = not preview['errors']
     if 'summary' in preview:
         preview['summary']['validation'] = {'errorCount': len(preview['errors']), 'warningCount': len(preview['warnings'])}
-        preview['summary']['rooms']['singles'] = sum(normalize_string(room.get('roomType')) == 'single' for room in rooms)
-        preview['summary']['rooms']['shared'] = sum(normalize_string(room.get('roomType')) == 'double shared' for room in rooms)
+        demand_rooms = accommodation_room_requests(people, rooms)
+        preview['summary']['rooms']['total'] = len(demand_rooms)
+        preview['summary']['rooms']['singles'] = sum(normalize_string(room.get('roomType')) == 'single' for room in demand_rooms)
+        preview['summary']['rooms']['shared'] = sum(normalize_string(room.get('roomType')) == 'double shared' for room in demand_rooms)
     return preview
 
 
@@ -1897,6 +1912,9 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     itself make a token valid after expiry, restart, or transfer to another
     worker.  Callers own error rollback around this transaction boundary.
     """
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    db.session.expire_all()
     preview = validate_fis_import_token(preview_token)
 
     now = datetime.utcnow()
@@ -1976,7 +1994,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     for person in preview['people']:
         room = room_by_person.get(person.get('matchKey'))
         evidence = confirmed_preserved.get(person.get('matchKey'))
-        request_records.append({**person, 'countsAsSingle': bool(room and normalize_string(room.get('roomType')) == 'single'),
+        request_records.append({**person, 'countsAsSingle': bool(person.get('accommodationRequirement') != 'NO_ROOM' and room and normalize_string(room.get('roomType')) == 'single'),
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence['groups'])] if evidence else [],
             'singleRoomStatus': 'APPROVED_EXTRA' if evidence else None})
@@ -2016,6 +2034,14 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             # Refresh under the row lock before checking a manual review's base.
             athlete = Athlete.query.filter_by(id=athlete.id).with_for_update().populate_existing().one()
         _apply_person_record(athlete, person, now, rate_override=rate_override)
+        old_requirement = (athlete.accommodation_requirement, athlete.accommodation_requirement_source)
+        set_requirement(athlete, person['accommodationRequirement'], person['accommodationRequirementSource'])
+        if person.get('importAccommodationRequirement'):
+            athlete.accommodation_requirement_import_value = person['importAccommodationRequirement']
+        if version and old_requirement != (athlete.accommodation_requirement, athlete.accommodation_requirement_source):
+            db.session.add(ImportSessionEvent(session_id=version.session_id, version_id=version.id,
+                event_type='ACCOMMODATION_REQUIREMENT_IMPORT', title='Unterkunftsbedarf übernommen',
+                description=f"{person['matchKey']}: {old_requirement} → {(athlete.accommodation_requirement, athlete.accommodation_requirement_source)}", username=confirmer or 'FIS Import'))
         from world_champions import audit_status
         new_reason = person.get('singleRoomQuotaExemptReason')
         new_source = person.get('singleRoomExemptionSource')
@@ -2025,7 +2051,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 version.session_id if version else None)
         athlete.single_room_quota_exempt_reason = new_reason
         athlete.single_room_exemption_source = new_source
-        if athlete.single_room_quota_exempt_reason:
+        if athlete.single_room_quota_exempt_reason and athlete.accommodation_requirement != 'NO_ROOM':
             if athlete.single_room_decision:
                 decision = athlete.single_room_decision
                 db.session.add(ImportSessionEvent(
@@ -2046,7 +2072,9 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
         room = room_by_person.get(person.get('matchKey'))
         requests_single = bool((room and normalize_string(room.get('roomType')) == 'single')
             or person.get('singleRoomAllocation') is not None)
-        if requests_single and athlete.single_room_quota_exempt_reason:
+        if athlete.accommodation_requirement == 'NO_ROOM':
+            pass  # Historical approvals remain; operational demand is suppressed centrally.
+        elif requests_single and athlete.single_room_quota_exempt_reason:
             athlete.single_room_entitlement = None
             athlete.single_room_status = 'NONE'
             athlete.single_room_decision_id = None

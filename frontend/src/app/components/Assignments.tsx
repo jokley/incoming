@@ -403,14 +403,15 @@ export function Assignments() {
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
 
   const queueProgress = useMemo(() => {
-    const total = allUnitsCombined.length;
-    const done = assignedUnits.length;
+    const people = new Map(allUnitsCombined.flatMap(unit=>unit.occupants).filter(p=>p.accommodationRequirement!=='NO_ROOM').map(p=>[p.athleteId,p]));
+    const total = people.size;
+    const done = [...people.values()].filter(p=>p.accommodationCoverage?.coverageStatus==='FULLY_ASSIGNED').length;
     return {
       done,
       total,
       percent: total > 0 ? Math.round((done / total) * 100) : 0,
     };
-  }, [allUnitsCombined.length, assignedUnits.length]);
+  }, [allUnitsCombined]);
 
   const actionableQuotaCases = useMemo(
     () => actionableQuotaCaseCount(currentQuotaUsage),
@@ -954,7 +955,7 @@ function TopBar({
             <CapacityBar pct={progress.percent} />
           </div>
           <span className="font-mono text-[var(--ops-assignment-text-muted)]" title={`${progress.done} von ${progress.total} disponiert`}>
-            <strong className="text-[var(--ops-assignment-text-body)]">{progress.percent}%</strong>
+            <strong className="text-[var(--ops-assignment-text-body)]">{progress.total ? `${progress.percent}%` : 'Kein Unterkunftsbedarf'}</strong>
           </span>
         </div>
 
@@ -1997,6 +1998,8 @@ type QuotaCard = {
   quotaStatus: OfficialQuotaUsage['quotaStatus'];
   peopleTotal: number;
   peopleAssigned: number;
+  accommodationPeopleRequired: number;
+  accommodationPeopleFullyAssigned: number;
 };
 
 function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
@@ -2023,6 +2026,8 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
       quotaStatus: 'FULFILLED',
       peopleTotal: 0,
       peopleAssigned: 0,
+      accommodationPeopleRequired:0,
+      accommodationPeopleFullyAssigned:0,
     };
     current.athletes += row.athletesEntered;
     current.officialQuota += row.officialQuota;
@@ -2038,6 +2043,8 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
     current.approvedExceptions += row.approvedExceptions || 0;
     current.peopleTotal += row.peopleTotal || 0;
     current.peopleAssigned += row.peopleAssigned || 0;
+    current.accommodationPeopleRequired += row.accommodationPeopleRequired ?? row.peopleTotal ?? 0;
+    current.accommodationPeopleFullyAssigned += row.accommodationPeopleFullyAssigned ?? row.peopleAssigned ?? 0;
     if (row.quotaStatus === 'DECISION_REQUIRED' || (row.quotaStatus === 'EXCEPTION_APPROVED' && current.quotaStatus === 'FULFILLED')) current.quotaStatus = row.quotaStatus;
     cards.set(key, current);
   }
@@ -2107,7 +2114,7 @@ function QuotasPanel({
           const StateIcon = state.icon;
           const officialsOver = card.assignedOfficials > card.officialQuota;
           const singlesOver = evaluateQuotaUsageRow(card).hasViolation;
-          const dispatchPct = card.peopleTotal > 0 ? Math.round(card.peopleAssigned / card.peopleTotal * 100) : 0;
+          const dispatchPct = card.accommodationPeopleRequired > 0 ? Math.round(card.accommodationPeopleFullyAssigned / card.accommodationPeopleRequired * 100) : 0;
 
           return (
             <button key={card.key} onClick={() => onSelect(card.key)} className="group overflow-hidden rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:-translate-y-0.5 hover:border-[var(--ops-border-strong)] hover:shadow-[var(--ops-shadow-sm)] focus-visible:shadow-[var(--ops-focus-ring)]">
@@ -2125,13 +2132,13 @@ function QuotasPanel({
                   <KpiBlock label="Athleten" value={`${card.athletes}`} />
                   <KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} />
                   <KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
-                  <KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} />
+                  <KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} />
                 </div>
 
                 <div className="mt-4 space-y-3 rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface)] p-3.5">
                   <QuotaProgress label="Officials" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} />
                   <QuotaProgress label="Einzelzimmer" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
-                  <QuotaProgress label="Disposition" current={card.peopleAssigned} max={card.peopleTotal} />
+                  {card.accommodationPeopleRequired>0 && <QuotaProgress label="Disposition" current={card.accommodationPeopleFullyAssigned} max={card.accommodationPeopleRequired} />}
                 </div>
 
                 <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
@@ -2139,7 +2146,7 @@ function QuotasPanel({
                   <ApprovalInfo label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
                   <ApprovalInfo label="EZ mit Mehrkosten" value={String(evaluateQuotaUsageRow(card).overflow)} warning={singlesOver} />
                 </div>
-                <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{dispatchPct}% disponiert</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
+                <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{card.accommodationPeopleRequired ? `${dispatchPct}% disponiert` : 'Kein Unterkunftsbedarf'}</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
               </div>
             </button>
           );
@@ -2244,7 +2251,7 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     </header>
     <div className="flex-1 space-y-4 overflow-auto p-6">
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={`${card.peopleAssigned} / ${card.peopleTotal}`} /></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} /></div>
       </DetailSection>
       <QuotaPersonGroups row={rows.find(row=>row.nationCode===card.nationCode && row.discipline===card.discipline && row.gender===card.gender)}/>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">

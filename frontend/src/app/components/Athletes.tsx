@@ -1,3 +1,5 @@
+import { AccommodationRequirementField } from './AccommodationRequirementField';
+import type { AccommodationRequirement } from '../types';
 import { AccommodationRateChip, AccommodationRateField } from './AccommodationRate';
 import type { AccommodationRateCategory } from '../types';
 import { personAccommodation } from '../services/personAccommodation';
@@ -120,7 +122,7 @@ function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 
 function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { onUpdate: (athlete: Athlete) => void; athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
-  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory });
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -129,6 +131,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
       arrivalDate: athlete?.arrivalDate || '',
       departureDate: athlete?.departureDate || '',
       note: athlete?.internalNote || '',
+      requirement: athlete?.accommodationRequirement || 'REQUIRED', requirementTouched:false, releaseRequirement:false,
       rate: athlete?.accommodationRateCategory || 'STANDARD',
       exemptReason: athlete?.singleRoomQuotaExemptReason || '',
     });
@@ -139,7 +142,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
     if (!athlete) return;
     setSaving(true); setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}) });
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, ...(stay.requirementTouched ? {accommodationRequirement:stay.releaseRequirement ? null : stay.requirement} : {}), ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}) });
       onUpdate(updated);
       onClose();
     } catch (error) {
@@ -202,10 +205,12 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
               catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
               finally { setSaving(false); }
             }}><Crown className={`mr-2 inline h-5 w-5 ${athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : 'Weltmeister bestätigen'}</OpsButton>}
+            <AccommodationRequirementField person={{accommodationRequirement:stay.requirement,accommodationRequirementSource:athlete?.accommodationRequirementSource}} disabled={!permissions.canEdit || saving} onChange={requirement=>setStay(current=>({...current,requirement,requirementTouched:true,releaseRequirement:false}))} onRelease={()=>setStay(current=>({...current,requirementTouched:true,releaseRequirement:true}))}/>
+            {stay.releaseRequirement && <p className="text-xs">Beim Speichern wird der Quellwert übernommen.</p>}
             <AccommodationRateField value={stay.rate} disabled={!permissions.canEdit || saving} onChange={rate=>setStay(current=>({...current,rate}))}/>
             <ReadonlyField label="Hotel" value={athlete ? personAccommodation(athlete).hotelLabel : undefined} />
             <ReadonlyField label="Zimmertyp" value={athlete ? personAccommodation(athlete).roomLabel : undefined} />
-            <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{accommodationSurcharge(athlete).hasAccommodationSurcharge ? <StatusChip tone="warning">Ja</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
+            <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{!accommodationSurcharge(athlete).applicable ? <Typography variant="body2" color="text.secondary">—</Typography> : accommodationSurcharge(athlete).hasAccommodationSurcharge ? <StatusChip tone="warning">Ja</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
             <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
             <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
           </FieldGrid>
@@ -312,7 +317,8 @@ export function Athletes() {
     function: personFunctionOptions(athletes),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
-      { value: 'open', label: 'Offen', count: athletes.filter(athlete => personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
+      { value: 'open', label: 'Offen', count: athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
+      { value: 'no-room', label: 'Kein Zimmer benötigt', count: athletes.filter(athlete=>athlete.accommodationRequirement==='NO_ROOM').length },
       { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
       { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
@@ -324,8 +330,8 @@ export function Athletes() {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
-    const statusMatches = !filters.status || (filters.status === 'open' ? personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
-    const singleRoomMatches = !requestedSingleRoomStatus || athlete.single_room_status === requestedSingleRoomStatus;
+    const statusMatches = !filters.status || (filters.status === 'open' ? athlete.accommodationRequirement!=='NO_ROOM' && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
+    const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || athlete.accommodationRequirement!=='NO_ROOM'));
     const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);

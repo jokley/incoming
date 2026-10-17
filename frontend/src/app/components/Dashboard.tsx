@@ -210,9 +210,10 @@ export function Dashboard() {
     const assignedPersonIds = new Set(assignments.flatMap(assignment =>
       assignment.occupants.map(occupant => occupant.athlete.id)
     ));
-    const assignedPeople = athletes.filter(athlete => athlete.assignment?.hasAssignment || assignedPersonIds.has(athlete.id)).length;
-    const peopleWithoutRoom = Math.max(athletes.length - assignedPeople, 0);
-    const pendingSingleRooms = athletes.filter(athlete => athlete.single_room_status === 'PENDING_APPROVAL').length;
+    const requiredPeople = athletes.filter(athlete=>athlete.accommodationRequirement!=='NO_ROOM');
+    const assignedPeople = requiredPeople.filter(athlete=>athlete.accommodationCoverage ? athlete.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' : athlete.assignment?.hasAssignment || assignedPersonIds.has(athlete.id)).length;
+    const peopleWithoutRoom = Math.max(requiredPeople.length - assignedPeople, 0);
+    const pendingSingleRooms = athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && athlete.single_room_status === 'PENDING_APPROVAL').length;
     const pendingImportReviews = athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length;
     const invalidMasterData = athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length;
     const surchargeRisks = athletes.filter(athlete => athlete.lateCheckout || Boolean(athlete.specialMeal) || Boolean(athlete.additionalItems)).length;
