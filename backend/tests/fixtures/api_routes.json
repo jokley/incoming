@@ -64,6 +64,9 @@
   "/api/analytics/room-availability": [
     "GET"
   ],
+  "/api/assignments/availability": [
+    "POST"
+  ],
   "/api/assignments/bookings": [
     "POST"
   ],

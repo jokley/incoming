@@ -77,7 +77,7 @@ class ApiRouteSafetyTest(unittest.TestCase):
 
     def test_viewer_cannot_mutate_or_read_admin_and_audit_routes(self):
         for path, methods in ROUTES.items():
-            if path == '/health':
+            if path in {'/health','/api/assignments/availability'}:
                 continue
             for method in methods:
                 restricted_read = path.startswith(('/api/admin/', '/api/audit-events'))
@@ -86,6 +86,12 @@ class ApiRouteSafetyTest(unittest.TestCase):
                 with self.subTest(path=path, method=method):
                     self.assertEqual(self.client.open(concrete(path), method=method,
                         headers=self.headers('incoming-viewer')).status_code, 403)
+
+    def test_viewer_can_read_availability_projection(self):
+        with patch.dict(app.view_functions, get_assignment_availability=lambda: {'readOnly': True}), patch('app.lock_accommodation_writes') as lock:
+            response=self.client.post('/api/assignments/availability',json={},headers=self.headers('incoming-viewer'))
+            self.assertEqual(response.status_code,200)
+            lock.assert_not_called()
 
     def test_editor_cannot_access_administration(self):
         for path, methods in ROUTES.items():

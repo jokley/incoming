@@ -210,6 +210,8 @@ def _canonical_api_path():
 
 def _required_permission():
     path = g.api_path
+    if path == '/api/assignments/availability':
+        return 'data.read'
     if path == '/api/auth/me':
         return None
     if path.startswith('/api/audit-events'):
@@ -470,7 +472,7 @@ def authenticate_api_request():
     permission = _required_permission()
     if permission and not g.current_user.has_permission(permission):
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
-    if request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and (
+    if g.api_path != '/api/assignments/availability' and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and (
             g.api_path.startswith('/api/assignments/') or g.api_path.startswith('/api/room-assignments')):
         lock_accommodation_writes()
     # Keep the fachliche description of objects that may be deleted by the
@@ -667,6 +669,8 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 @app.after_request
 def audit_successful_mutation(response):
     user = current_user()
+    if getattr(g, 'api_path', None) == '/api/assignments/availability':
+        return response
     if (user is None or request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}
             or not getattr(g, 'api_path', None) or response.status_code >= 400):
         return response
@@ -1422,7 +1426,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     }
 
 
-def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None):
+def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None, allow_single_join=False):
     athlete_ids = data.get('athleteIds', [])
     if not isinstance(athlete_ids, list) or len(athlete_ids) < 1 or len(athlete_ids) > 4:
         return None, None, _booking_error('INVALID_OCCUPANTS', 'athleteIds must include between 1 and 4 athlete IDs')
@@ -1443,6 +1447,11 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
 
     if not external and len(unique_athlete_ids) > room_type.max_persons:
         return None, None, _booking_error('CAPACITY_EXCEEDED', f'Room type max occupancy is {room_type.max_persons}')
+
+    if (existing_booking and not external and existing_booking.counts_as_single
+            and data.get('countsAsSingle', True) and not allow_single_join
+            and not set(unique_athlete_ids).issubset({o.athlete_id for o in existing_booking.occupants})):
+        return None, None, _booking_error('ROOM_SINGLE_USE', 'Zimmer ist durch EZ-Nutzung gesperrt.')
 
     athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
     if len(athletes) != len(unique_athlete_ids):
@@ -1487,41 +1496,21 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
             if external else 'Person already has accommodation during this period')
 
     if not external:
-        inv_rooms = db.session.query(func.coalesce(func.sum(HotelRoomInventory.room_count), 0)).filter(
-            HotelRoomInventory.hotel_id == hotel_id,
-            HotelRoomInventory.room_type_id == room_type_id,
-            HotelRoomInventory.available_from <= check_in_date,
-            HotelRoomInventory.available_until >= check_out_date,
-        ).scalar()
-
-        if not inv_rooms or inv_rooms <= 0:
-            return None, None, _booking_error('NO_KONTINGENT', 'No kontingent available for this hotel/room type in the given date range', {
-                'hotelId': str(hotel_id),
-                'roomTypeId': str(room_type_id),
-                'checkInDate': check_in_date.isoformat(),
-                'checkOutDate': check_out_date.isoformat(),
-            })
-
-        query = RoomBooking.query.filter(
-            RoomBooking.hotel_id == hotel_id,
-            RoomBooking.room_type_id == room_type_id,
-            RoomBooking.check_in_date.isnot(None),
-            RoomBooking.check_out_date.isnot(None),
-            RoomBooking.check_in_date < check_out_date,
-            RoomBooking.check_out_date > check_in_date,
-        )
+        from assignment_availability import inventory_guard
+        inventories = HotelRoomInventory.query.filter_by(hotel_id=hotel_id, room_type_id=room_type_id).all()
+        query = RoomBooking.query.filter_by(hotel_id=hotel_id, room_type_id=room_type_id).filter(
+            RoomBooking.check_in_date < check_out_date, RoomBooking.check_out_date > check_in_date)
         if existing_booking:
             query = query.filter(RoomBooking.id != existing_booking.id)
-        used_rooms = physical_room_usage(query.all())
-        if used_rooms >= inv_rooms:
-            return None, None, _booking_error('KONTINGENT_EXCEEDED', 'No remaining kontingent for this hotel/room type in the given date range', {
-                'hotelId': str(hotel_id),
-                'roomTypeId': str(room_type_id),
-                'checkInDate': check_in_date.isoformat(),
-                'checkOutDate': check_out_date.isoformat(),
-                'inventoryRooms': int(inv_rooms),
-                'usedRooms': int(used_rooms),
-            })
+        other_bookings = query.all()
+        failure = inventory_guard(inventories, other_bookings, check_in_date, check_out_date)
+        if failure:
+            return None, None, _booking_error(*failure)
+        if data.get('roomNumber') and any(
+            (_planned_room_key(b.room_number) or b.room_number) == (_planned_room_key(data['roomNumber']) or data['roomNumber'])
+            and _dates_overlap(b.check_in_date,b.check_out_date,check_in_date,check_out_date)
+            for b in other_bookings):
+            return None, None, _booking_error('ROOM_BOOKING_OVERLAP', 'Zimmer ist im benötigten Zeitraum nicht verfügbar.')
 
     return {
         'hotel_id': hotel_id,
@@ -2981,6 +2970,20 @@ def get_official_quotas():
     except QuotaGenderValidationError as error:
         return quota_gender_review_response(error)
     return _assignment_jsonify(rows)
+
+
+@app.route('/api/assignments/availability', methods=['POST'])
+def get_assignment_availability():
+    from assignment_availability import project, load_context
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload, dict) or not isinstance(payload.get('needs', []), list) or not isinstance(payload.get('populationIds', []), list):
+        return jsonify(error='INVALID_NEEDS', message='Offene Zeiträume prüfen.'), 400
+    try:
+        planning, loaded = load_context()
+        return _assignment_jsonify(project(planning,
+            payload.get('needs', []), set(map(str, payload.get('populationIds', []))), loaded=loaded))
+    except (KeyError, ValueError, TypeError):
+        return jsonify(error='INVALID_NEEDS', message='Offene Zeiträume prüfen.'), 400
 
 
 @app.route('/api/assignments/planning-view', methods=['GET'])
