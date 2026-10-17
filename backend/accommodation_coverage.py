@@ -24,9 +24,19 @@ def _interval(start, end):
             'checkOutDate': end.isoformat() if end else None}
 
 
-def person_accommodation_coverage(arrival, departure, bookings):
+def person_accommodation_coverage(arrival, departure, bookings, requirement='REQUIRED'):
     """Calculate one person's coverage from all their bookings, without writes."""
     start, end = _date(arrival), _date(departure)
+    if requirement == 'NO_ROOM':
+        records = list(bookings)
+        if not records:
+            return {'overallInterval': _interval(start, end), 'segments': [], 'coveredIntervals': [],
+                    'openIntervals': [], 'conflicts': [], 'coverageStatus': 'NO_ROOM',
+                    'accommodationRequirement': 'NO_ROOM'}
+        diagnostic = person_accommodation_coverage(arrival, departure, records)
+        diagnostic.update(coverageStatus='CONFLICT', openIntervals=[], accommodationRequirement='NO_ROOM')
+        diagnostic['conflicts'].append({'code': 'NO_ROOM_HAS_BOOKINGS', 'bookingIds': [str(b.id) for b in records]})
+        return diagnostic
     overall_valid = bool(start and end and start < end)
     conflicts, segments, candidates, dated = [], [], [], []
 

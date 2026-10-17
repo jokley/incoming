@@ -1,3 +1,4 @@
+from accommodation_requirements import require_assignable
 """Explicit person-segment operations; no implicit replacement of other stays."""
 from datetime import datetime
 from flask import Blueprint, jsonify, request, g
@@ -21,7 +22,7 @@ def bookings_for(person_id):
 
 
 def coverage_for(person):
-    return person_accommodation_coverage(person.arrival_date, person.departure_date, bookings_for(person.id))
+    return person_accommodation_coverage(person.arrival_date, person.departure_date, bookings_for(person.id), person.accommodation_requirement)
 
 
 def _require(condition, code, message):
@@ -63,8 +64,9 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
                 db.session.commit()
             return jsonify(result)
 
+        require_assignable(person)
         other_bookings = [b for b in bookings_for(person.id) if not existing or b.id != existing.id]
-        other_coverage = person_accommodation_coverage(person.arrival_date, person.departure_date, other_bookings)
+        other_coverage = person_accommodation_coverage(person.arrival_date, person.departure_date, other_bookings, person.accommodation_requirement)
         _require(other_coverage['coverageStatus'] != 'CONFLICT', 'ACCOMMODATION_REVIEW_REQUIRED',
                  'Bestehende Aufenthaltskonflikte müssen zuerst geklärt werden.')
         try:
@@ -151,6 +153,9 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if commit:
             db.session.commit()
         return jsonify(result), 201 if request.method == 'POST' else 200
+    except SplitError as error:
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), error.status
     except InvalidSegment as error:
         db.session.rollback()
         return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), 400
@@ -196,6 +201,7 @@ def add_shared_segment():
         # Exact frozen selection, no implicit intersection or replacement.
         people = [Athlete.query.get_or_404(identity) for identity in ids]
         for person in people:
+            require_assignable(person)
             coverage = coverage_for(person)
             _require(coverage['coverageStatus'] != 'CONFLICT' and (external or interval in coverage['openIntervals']),
                      'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')

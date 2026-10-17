@@ -1,3 +1,4 @@
+import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
@@ -26,6 +27,8 @@ export interface ListRow {
   specialMeal: string;
   lateCheckout: string;
   surcharge: string;
+  accommodationRequirement?: string;
+  accommodationStatus?: string;
   singleRoomSpecialStatus: string;
   quotaEvaluation: 'EZ' | 'DZ' | '—';
   roommate: string;
@@ -48,7 +51,7 @@ export interface ListFilters {
   role: string;
   hotel: string;
   status: '' | WorkCategory;
-  hint: '' | 'internal' | 'athlete' | 'import' | 'room-change' | 'single-room' | 'surcharge' | 'without-room';
+  hint: '' | 'internal' | 'athlete' | 'import' | 'room-change' | 'single-room' | 'surcharge' | 'without-room' | 'no-room';
   movement: '' | 'arrival' | 'departure';
   period: '' | 'today' | 'tomorrow' | 'week';
   assignedOnly: boolean;
@@ -173,9 +176,11 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       id: athlete.id,
       hotelId: booking?.hotel.id || '',
       bookingId: booking?.id || '',
-      hotel: value(booking?.hotel.name),
+      hotel: athlete.accommodationRequirement==='NO_ROOM' && !booking ? '—' : value(booking?.hotel.name),
       contingent: booking ? `${booking.hotel.name} → ${inventory?.roomType.name || (booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name)}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}` : '—',
-      room: booking ? displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber) : '—',
+      accommodationRequirement: athlete.accommodationRequirement || 'REQUIRED',
+      accommodationStatus: personAccommodation(athlete).label,
+      room: athlete.accommodationRequirement==='NO_ROOM' && !booking ? 'No room' : booking ? displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber) : '—',
       roomType: value(booking?.hotel.accommodationType==='EXTERNAL' ? 'Extern' : booking?.roomType?.name || athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
@@ -187,7 +192,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       lastMeal: value(athlete.lastMeal),
       specialMeal: value(athlete.specialMeal),
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
-      surcharge: accommodationSurcharge(athlete).hasAccommodationSurcharge ? 'Ja' : 'Nein',
+      surcharge: !accommodationSurcharge(athlete).applicable ? '—' : accommodationSurcharge(athlete).hasAccommodationSurcharge ? 'Ja' : 'Nein',
       singleRoomSpecialStatus: singleRoomSpecialStatusLabel(
         athlete.single_room_status, athlete.singleRoomQuotaExemptReason),
       quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
@@ -198,7 +203,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       workCategory: athleteWorkCategory(athlete),
       importChanged: Boolean(athlete.importChangeTypes?.length || athlete.hasPendingRoomlistReview),
       roomChanged: Boolean(athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')),
-      singleRoomPending: athlete.single_room_status === 'PENDING_APPROVAL',
+      singleRoomPending: athlete.accommodationRequirement !== 'NO_ROOM' && athlete.single_room_status === 'PENDING_APPROVAL',
     };
   });
 }
@@ -220,7 +225,8 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
     if (filters.hint === 'room-change' && !row.roomChanged) return false;
     if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.singleRoomPending) return false;
     if (filters.hint === 'surcharge' && row.surcharge !== 'Ja') return false;
-    if (filters.hint === 'without-room' && row.assigned) return false;
+    if (filters.hint === 'without-room' && (row.assigned || row.accommodationRequirement==='NO_ROOM')) return false;
+    if (filters.hint === 'no-room' && row.accommodationRequirement!=='NO_ROOM') return false;
     if (filters.movement) {
       const date = filters.movement === 'arrival' ? row.arrival : row.departure;
       const base = new Date(); base.setUTCHours(0, 0, 0, 0);

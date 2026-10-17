@@ -3,6 +3,7 @@ from sqlalchemy import MetaData
 from datetime import datetime
 import json
 from accommodation_rates import rate_projection
+from accommodation_requirements import requirement_projection
 from competitions import quota_disciplines
 
 NAMING_CONVENTION = {
@@ -530,6 +531,9 @@ class Athlete(db.Model):
             "single_room_quota_exempt_reason IN ('WORLD_CHAMPION', 'OTHER')",
             name='single_room_quota_exempt_reason',
         ),
+        db.CheckConstraint("accommodation_requirement_import_value IS NULL OR accommodation_requirement_import_value IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement_import_value'),
+        db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement'),
+        db.CheckConstraint("accommodation_requirement_source IN ('DEFAULT', 'IMPORT', 'MANUAL')", name='accommodation_requirement_source'),
         db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
         db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL')", name='accommodation_rate_source'),
     )
@@ -537,6 +541,9 @@ class Athlete(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     # Ownership marker for independently managed, disposable data sets.
     created_by = db.Column(db.String(50), nullable=True, index=True)
+    accommodation_requirement_import_value = db.Column(db.String(10))
+    accommodation_requirement = db.Column(db.String(10), nullable=False, default='REQUIRED', server_default='REQUIRED')
+    accommodation_requirement_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
     accommodation_rate_category = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
     accommodation_rate_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
@@ -631,6 +638,8 @@ class Athlete(db.Model):
         return {
             'id': str(self.id),
             **rate_projection(self),
+            **requirement_projection(self),
+            'importAccommodationRequirement': self.accommodation_requirement_import_value,
             'function': self.function,
             'competitorId': self.competitor_id,
             'accredId': self.accred_id,

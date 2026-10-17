@@ -72,7 +72,7 @@ def get_athletes():
         data['sourceRecordIds'] = [str(value) for value in sorted(record_ids)]
         data['accommodationCoverage'] = person_accommodation_coverage(
             a.arrival_date, a.departure_date,
-            [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])])
+            [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])], a.accommodation_requirement)
         competitions = {competition.id: competition for record in records for competition in record.competitions}
         data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
         data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
@@ -139,6 +139,8 @@ def get_athletes():
         # not master-data integrity failures. CONFLICT is intentionally reserved
         # for explicit integrity validation and must never be inferred from them.
         data['workflowStatus'] = (
+            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement == 'NO_ROOM' else
+            'NO_ROOM' if a.accommodation_requirement == 'NO_ROOM' else
             'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
             'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
             'OPEN_ASSIGNMENT' if not data['assignment']['hasAssignment'] else
@@ -159,7 +161,11 @@ def get_athlete(athlete_id):
             db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     data = athlete.to_dict()
     data['accommodationCoverage'] = person_accommodation_coverage(
-        athlete.arrival_date, athlete.departure_date, bookings)
+        athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
+    coverage = data['accommodationCoverage']['coverageStatus']
+    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement == 'NO_ROOM' and coverage == 'CONFLICT' else
+        'NO_ROOM' if athlete.accommodation_requirement == 'NO_ROOM' else
+        'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
     return jsonify(data)
 
 

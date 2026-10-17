@@ -1,5 +1,5 @@
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types';
-import { physicalSingleRoomUsageFromBookings } from './quotaEvaluation';
+import { physicalSingleRoomUsageFromBookings } from './quotaEvaluation.ts';
 
 export type RoomPlan = { beds: number; rooms: number; singleRooms: number; doubleRooms: number };
 
@@ -41,7 +41,7 @@ export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; 
     const plans = data.events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date).map(eventRoomPlan);
     const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
     const supply = calculateRoomPlan(bedSupply), plannedBeds = plans.reduce((sum, plan) => sum + plan.beds, 0), plannedRooms = plans.reduce((sum, plan) => sum + plan.rooms, 0);
-    const livePlan = calculateRoomPlan(data.athletes.filter(athlete => (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }]).some(stay => onDay(stay.arrivalDate, stay.departureDate, date))).length);
+    const livePlan = calculateRoomPlan(data.athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }]).some(stay => onDay(stay.arrivalDate, stay.departureDate, date))).length);
     const activeBookings = data.bookings.filter(booking => (!booking.checkInDate || dayKey(booking.checkInDate) <= date) && (!booking.checkOutDate || dayKey(booking.checkOutDate) > date));
     const assignedRooms = activeBookings.length, assignedBeds = activeBookings.reduce((sum, booking) => sum + booking.occupants.length, 0), assignedEz = physicalSingleRoomUsageFromBookings(activeBookings), assignedDz = Math.max(0, assignedBeds - assignedEz);
     const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0), plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0), freeRooms = Math.max(supply.rooms - assignedRooms, 0), freeEz = freeRooms / 2, freeDz = freeRooms - freeEz;

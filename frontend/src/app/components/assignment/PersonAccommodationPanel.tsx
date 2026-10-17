@@ -41,6 +41,7 @@ export function PersonAccommodationPanel({people,canEdit,onChanged,onShowDisposi
           catch(e){setError(e instanceof Error ? e.message : 'Tarif konnte nicht gespeichert werden.');}
           finally {setBusy(false);}
         }}/></div>
+        {person.accommodationRequirement==='NO_ROOM' && <p>Kein Zimmer benötigt</p>}
         <p>{dateLabel(coverage.overallInterval.checkInDate)}–{dateLabel(coverage.overallInterval.checkOutDate)}</p>
         {view.conflicts.length>0 && <Alert severity="warning">Prüfen: Zuweisungen oder Aufenthaltsdaten sind widersprüchlich. Teilen ist bis zur Klärung gesperrt.</Alert>}
         {view.segments.map(segment=><div key={segment.bookingId} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2">
@@ -53,7 +54,7 @@ export function PersonAccommodationPanel({people,canEdit,onChanged,onShowDisposi
         {view.openIntervals.map(interval=><div key={`${interval.checkInDate}:${interval.checkOutDate}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2"><span>○ {dateLabel(interval.checkInDate)}–{dateLabel(interval.checkOutDate)} · Offen</span>{onShowDisposition && <button type="button" disabled={busy || !view.canAdd} onClick={()=>onShowDisposition(person.athleteId,interval)} className="font-semibold text-[var(--ops-primary)] disabled:opacity-40">In Disposition anzeigen</button>}</div>)}
       </div>;
     })}
-    {canEdit && onExternal && people.length>0 && <span className="inline-block" title={!externalEligibility.canCreate ? allExternalReason : undefined}><Button size="small" variant="outlined" disabled={busy || !externalEligibility.canCreate || people.some(p=>coverageFor(p)?.coverageStatus==='CONFLICT')} onClick={()=>onExternal(people)}>Externen Aufenthalt</Button></span>}
+    {canEdit && onExternal && people.length>0 && people.every(person=>person.accommodationRequirement!=='NO_ROOM' && person.accommodationCoverage?.coverageStatus!=='NO_ROOM') && <span className="inline-block" title={!externalEligibility.canCreate ? allExternalReason : undefined}><Button size="small" variant="outlined" disabled={busy || !externalEligibility.canCreate || people.some(p=>coverageFor(p)?.coverageStatus==='CONFLICT')} onClick={()=>onExternal(people)}>Externen Aufenthalt</Button></span>}
 
   </section>;
 }

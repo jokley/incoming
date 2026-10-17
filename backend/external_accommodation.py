@@ -1,3 +1,4 @@
+from accommodation_requirements import require_assignable
 """Plan external ADDs using the same canonical coverage service as persisted stays."""
 import hashlib
 import json
@@ -16,6 +17,7 @@ def ensure_external_create_allowed(person_ids, editing_booking_id=None):
     Historical duplicates remain untouched and can be edited/removed explicitly.
     """
     for identity in person_ids:
+        require_assignable(db.session.get(Athlete, identity))
         bookings = person_bookings(identity)
         if editing_booking_id and any(b.id == editing_booking_id and b.hotel.accommodation_type == 'EXTERNAL' for b in bookings):
             continue
@@ -49,7 +51,7 @@ def external_plan(data):
         person = db.session.get(Athlete, identity)
         require(person is not None, 'PERSON_NOT_FOUND', 'Person wurde entfernt. Bitte Ansicht aktualisieren.', 409)
         bookings = sorted(person_bookings(identity), key=lambda b:b.id)
-        before = person_accommodation_coverage(person.arrival_date, person.departure_date, bookings)
+        before = person_accommodation_coverage(person.arrival_date, person.departure_date, bookings, person.accommodation_requirement)
         require(before['coverageStatus'] != 'CONFLICT', 'STALE_EXTERNAL_STAY', 'Aufenthalt prüfen. Bitte Ansicht aktualisieren.', 409)
         if not replace_standard:
             require(frozen in before['openIntervals'], 'STALE_EXTERNAL_STAY', 'Offener Aufenthalt hat sich geändert. Bitte Ansicht aktualisieren.', 409)
@@ -71,7 +73,7 @@ def external_plan(data):
             for occupant in booking.occupants:
                 other = occupant.athlete
                 current = person_bookings(other.id)
-                require(person_accommodation_coverage(other.arrival_date, other.departure_date, current)['coverageStatus'] != 'CONFLICT',
+                require(person_accommodation_coverage(other.arrival_date, other.departure_date, current, other.accommodation_requirement)['coverageStatus'] != 'CONFLICT',
                         'STALE_EXTERNAL_STAY', 'Geteilten Aufenthalt prüfen. Bitte Ansicht aktualisieren.', 409)
                 state.append([other.id, other.arrival_date, other.departure_date, [b.to_dict() for b in sorted(current, key=lambda b:b.id)]])
             replacements[booking.id] = {'bookingId':str(booking.id),'athleteIds':[str(o.athlete_id) for o in booking.occupants if o.athlete_id in ids],
@@ -82,7 +84,7 @@ def external_plan(data):
                 retained.append(_copy(booking, -booking.id*3-1, end, booking.check_out_date))
         projected = SimpleNamespace(id=-1, hotel_id=hotel.id, hotel=hotel, room_type_id=None, room_type=None,
             room_number=None, check_in_date=start, check_out_date=end, counts_as_single=flag)
-        coverage = person_accommodation_coverage(person.arrival_date, person.departure_date, [*retained, projected])
+        coverage = person_accommodation_coverage(person.arrival_date, person.departure_date, [*retained, projected], person.accommodation_requirement)
         require(coverage['coverageStatus'] != 'CONFLICT', 'ACCOMMODATION_CONFLICT', 'Aufenthalt prüfen.')
         people.append({'personId': str(person.id), 'name': f'{person.firstname} {person.lastname}'.strip(),
                        'accommodationCoverage': coverage})

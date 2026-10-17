@@ -1,3 +1,5 @@
+export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM';
+export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
 export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL'; }
 export interface RoomType {
@@ -118,10 +120,11 @@ export interface AccommodationCoverage {
   coveredIntervals: AccommodationInterval[];
   openIntervals: AccommodationInterval[];
   conflicts: Array<{code:string;bookingIds:string[]}>;
-  coverageStatus: 'UNASSIGNED' | 'PARTIALLY_ASSIGNED' | 'FULLY_ASSIGNED' | 'CONFLICT';
+  accommodationRequirement?: AccommodationRequirement;
+  coverageStatus: 'UNASSIGNED' | 'PARTIALLY_ASSIGNED' | 'FULLY_ASSIGNED' | 'CONFLICT' | 'NO_ROOM';
 }
 
-export interface Athlete extends AccommodationRateFields {
+export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
   accommodationCoverage?: AccommodationCoverage;
   id: string;
   function?: string;
@@ -190,7 +193,7 @@ export interface Athlete extends AccommodationRateFields {
   missingFromLatestRoomlistImport?: boolean;
   hasPendingRoomlistReview?: boolean;
   changeTouchesAssignment?: boolean;
-  workflowStatus?: 'NEW_PERSON' | 'OPEN_ASSIGNMENT' | 'REVIEW_ASSIGNMENT' | 'CURRENT' | 'CONFLICT';
+  workflowStatus?: 'NEW_PERSON' | 'OPEN_ASSIGNMENT' | 'REVIEW_ASSIGNMENT' | 'CURRENT' | 'CONFLICT' | 'NO_ROOM';
   assignment?: {
     hasAssignment: boolean;
     hotelName?: string | null;
@@ -251,7 +254,7 @@ export interface RoomBooking {
   occupants: RoomBookingOccupant[];
 }
 
-export interface RoomBookingUnitOccupant extends AccommodationRateFields {
+export interface RoomBookingUnitOccupant extends AccommodationRateFields, AccommodationRequirementFields {
   accommodationCoverage?: AccommodationCoverage;
   athleteId: string;
   name: string;
@@ -450,7 +453,9 @@ export interface FisImportIssue {
   details?: Record<string, unknown>;
 }
 
-export interface FisImportPreviewPerson extends AccommodationRateFields {
+export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  importAccommodationRequirement?: AccommodationRequirement | null;
+  accommodationRequirementReviewRequired?: boolean;
   quotaDisciplines?: string[];
   athleteTopLevelDisciplines?: string[];
   topLevelDisciplines?: string[];

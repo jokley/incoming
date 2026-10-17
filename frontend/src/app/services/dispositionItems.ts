@@ -7,7 +7,8 @@ export const dispositionItemId=(ids:string[],period:AccommodationInterval)=>`nee
 /** Presentation adapter only. Every period is copied from backend coverage. */
 export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHotel[]):DispositionItem[] {
   const people=new Map<string,{person:RoomBookingUnitOccupant;unit:RoomBookingUnit}>();
-  units.forEach(unit=>unit.occupants.forEach(person=>people.set(person.athleteId,{person,unit})));
+  units.forEach(unit=>unit.occupants.filter(person=>person.accommodationRequirement!=='NO_ROOM' && person.accommodationCoverage?.coverageStatus!=='NO_ROOM').forEach(person=>people.set(person.athleteId,{person,unit})));
+  units=units.map(unit=>({...unit,occupants:unit.occupants.filter(person=>people.has(person.athleteId))})).filter(unit=>unit.occupants.length>0);
   const used=new Set<string>(),items:DispositionItem[]=[];
   const add=(ids:string[],period:AccommodationInterval,canAssign=true)=>{
     const records=ids.map(id=>people.get(id)!);
@@ -22,6 +23,7 @@ export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHo
     ids.forEach(id=>used.add(dispositionItemId([id],period)));
   };
   const common=(ids:string[],start?:string|null)=>{
+    if(ids.some(id=>!people.has(id)))return;
     const first=people.get(ids[0])?.person.accommodationCoverage;
     if(!first || ids.length!==2 || ids.some(id=>people.get(id)?.person.accommodationCoverage?.coverageStatus==='CONFLICT'))return;
     first.openIntervals.forEach(period=>{

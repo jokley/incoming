@@ -40,7 +40,7 @@ def snapshot_token(booking):
                      sorted((o.athlete_id, o.role, str(o.created_at)) for o in b.occupants)])
     inventories = HotelRoomInventory.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all()
     state = [booking.id, rows, [[p.id, p.arrival_date, p.departure_date, p.updated_at,
-                    p.single_room_status, p.single_room_decision_id] for p in people],
+                    p.single_room_status, p.single_room_decision_id, p.accommodation_requirement, p.accommodation_requirement_source] for p in people],
              [[i.id, i.room_count, i.available_from, i.available_until] for i in sorted(inventories, key=lambda i: i.id)],
              booking.room_type.max_persons if booking.room_type else None, booking.hotel.accommodation_type]
     return hashlib.sha256(json.dumps(state, default=str, ensure_ascii=False).encode()).hexdigest()
@@ -98,12 +98,12 @@ def split_plan(booking, ids, split_date):
     for membership in occupants:
         person = membership.athlete
         current = person_bookings(person.id)
-        before = person_accommodation_coverage(person.arrival_date, person.departure_date, current)
+        before = person_accommodation_coverage(person.arrival_date, person.departure_date, current, person.accommodation_requirement)
         require(before['coverageStatus'] != 'CONFLICT', 'ACCOMMODATION_REVIEW_REQUIRED', 'Aufenthalt prüfen. Teilen ist bei Konflikten nicht möglich.')
         projected = [b for b in current if b.id != booking.id] + [prefix]
         if person.id in remaining:
             projected.append(suffix)
-        coverage = person_accommodation_coverage(person.arrival_date, person.departure_date, projected)
+        coverage = person_accommodation_coverage(person.arrival_date, person.departure_date, projected, person.accommodation_requirement)
         require(coverage['coverageStatus'] != 'CONFLICT', 'ACCOMMODATION_REVIEW_REQUIRED', 'Aufenthalt prüfen.')
         people.append({'personId': str(person.id), 'name': f'{person.firstname} {person.lastname}'.strip(),
                        'selected': person.id in selected, 'affectedOpenIntervals': [i for i in coverage['openIntervals'] if i['checkInDate'] <= cut.isoformat() < i['checkOutDate']] if person.id in selected else [], 'accommodationCoverage': coverage})
@@ -143,7 +143,7 @@ def apply_split(booking, plan):
     people = []
     for o in booking.occupants:
         p = o.athlete
-        coverage = person_accommodation_coverage(p.arrival_date, p.departure_date, person_bookings(p.id))
+        coverage = person_accommodation_coverage(p.arrival_date, p.departure_date, person_bookings(p.id), p.accommodation_requirement)
         people.append({'personId': str(p.id), 'name': f'{p.firstname} {p.lastname}'.strip(),
             'selected': str(p.id) in plan['athleteIds'],
             'affectedOpenIntervals': [i for i in coverage['openIntervals'] if i['checkInDate'] <= plan['splitDate'] < i['checkOutDate']] if str(p.id) in plan['athleteIds'] else [],

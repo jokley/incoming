@@ -7,7 +7,7 @@ export function QuotaPersonGroups({row}:{row?:OfficialQuotaUsage}) {
     <p className="mb-3 text-sm font-semibold">Sondertarif: {row?.specialRateCount ?? 0}</p>
     {row?.functionGroups?.map(group=><details key={group.function??''} className="border-t border-[var(--ops-divider)] py-2">
       <summary className="cursor-pointer text-sm font-semibold">{group.function || 'Funktion nicht angegeben'} <span className="float-right">{group.count}</span></summary>
-      <ul className="mt-2 space-y-2 text-xs">{group.people.map(person=><li key={person.personId} className="flex flex-wrap items-center justify-between gap-2"><span>{person.name}</span><span className="flex items-center gap-2"><AccommodationRateChip category={person.accommodationRateCategory}/><span>{person.isAssigned?'Zugewiesen':'Offen'}</span></span></li>)}</ul>
+      <ul className="mt-2 space-y-2 text-xs">{group.people.map(person=><li key={person.personId} className="flex flex-wrap items-center justify-between gap-2"><span>{person.name}</span><span className="flex items-center gap-2"><AccommodationRateChip category={person.accommodationRateCategory}/><span>{person.accommodationRequirement==='NO_ROOM' ? 'Kein Zimmer benötigt' : person.isAssigned?'Zugewiesen':'Offen'}</span></span></li>)}</ul>
     </details>)}
   </section>;
 }
