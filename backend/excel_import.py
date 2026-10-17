@@ -199,8 +199,16 @@ def load_first_sheet(path, display_name=None):
         ) from exc
     if not workbook:
         raise InvalidExcelFileError(f'Excel file is empty: {source_name}')
-    _, df = next(iter(workbook.items()))
-    return normalize_columns(df)
+    sheet_name, df = next(iter(workbook.items()))
+    df = normalize_columns(df)
+    df.attrs['fisSheetName'] = sheet_name
+    return df
+
+
+def is_empty_fis_room_list(df):
+    """Exact FIS Data-sheet sentinel, not a room request or a filename guess."""
+    return (df.attrs.get('fisSheetName') == 'Data' and df.empty and len(df.columns) == 1
+            and normalize_string(df.columns[0]) == 'no data available')
 
 
 def detect_fis_file_type(path, display_name=None):
@@ -211,6 +219,8 @@ def detect_fis_file_type(path, display_name=None):
         return 'entries'
 
     df = load_first_sheet(path, display_name=display_name)
+    if is_empty_fis_room_list(df):
+        return 'roomlist'
     columns = set(df.columns)
     if {'Competitorid/Staff ID', 'Accredid', 'Fiscode'}.intersection(columns):
         return 'entries'
@@ -497,6 +507,11 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
 
 
 def parse_room_list(df, imported_people):
+    if is_empty_fis_room_list(df):
+        return {'rooms': [], 'errors': [], 'dayColumns': [], 'warnings': [{
+            'code': 'ROOM_LIST_NO_DATA', 'severity': 'info',
+            'message': 'Room List enthält keine Unterkunftsdaten.',
+            'details': {'source': 'no data available'}}]}
     errors = []
     warnings = []
     missing_columns = validate_required_columns(df, ROOM_REQUIRED_COLUMNS)
@@ -1174,7 +1189,7 @@ def _assignment_context(athlete, read_context=None):
     return None
 
 
-def build_disposition_analysis(people, rooms, quota_warnings, *, read_context=None):
+def build_disposition_analysis(people, rooms, quota_warnings, *, read_context=None, room_list_has_no_data=False):
     """Compare staged import data to live planning; this function is read-only."""
     categories = {
         key: {'count': 0, 'records': []}
@@ -1223,6 +1238,8 @@ def build_disposition_analysis(people, rooms, quota_warnings, *, read_context=No
         room = room_by_key.get(person.get('matchKey'))
         new_room_type = _display_room_type(room.get('roomType') if room else person.get('roomType'))
         old_room_type = _display_room_type(existing.room_type)
+        if room_list_has_no_data and not person.get('roomType'):
+            new_room_type = old_room_type
         if old_room_type != new_room_type:
             categories['roomRequirementChanged']['records'].append({**base, 'old': old_room_type, 'new': new_room_type,
                                                                       'impact': 'Bestehende Disposition betroffen'})
@@ -1246,6 +1263,8 @@ def build_disposition_analysis(people, rooms, quota_warnings, *, read_context=No
     # A changed pairing is itself a disposition impact, even if the person's
     # master data and travel dates are unchanged.
     for athlete_id, person in imported_by_id.items():
+        if room_list_has_no_data:
+            continue
         athlete = db.session.get(Athlete, athlete_id)
         context = _assignment_context(athlete, read_context)
         if not context or not context.get('partners'):
@@ -1293,7 +1312,7 @@ def build_disposition_analysis(people, rooms, quota_warnings, *, read_context=No
         desired_partner = next((candidate for candidate in people if candidate.get('matchKey') == desired_partner_key), None)
         old_partner_names = [_person_name(partner) for partner in old_partners]
         desired_name = f"{desired_partner.get('firstname', '')} {desired_partner.get('lastname', '')}".strip() if desired_partner else None
-        if old_partners and (not desired_name or desired_name not in old_partner_names):
+        if not room_list_has_no_data and old_partners and (not desired_name or desired_name not in old_partner_names):
             categories['roommateAffected']['records'].append({
                 'entityId': room.get('sourceRowKey') if room else context.get('assignmentId'),
                 'assignmentId': context.get('assignmentId'),
@@ -1451,7 +1470,7 @@ def _room_comparison_changes(people, rooms, removed_records, include_matches=Fal
     return (changes, matched_rooms_by_assignment) if include_matches else changes
 
 
-def build_import_changes(disposition_analysis, people, rooms, errors, *, read_context=None):
+def build_import_changes(disposition_analysis, people, rooms, errors, *, read_context=None, room_list_has_no_data=False):
     """Normalize comparison results into the UI's sole semantic change model."""
     categories = disposition_analysis['categories']
     room_by_person = {
@@ -1462,7 +1481,7 @@ def build_import_changes(disposition_analysis, people, rooms, errors, *, read_co
     # Resolve the stable live assignment first.  Stay and partner statuses must
     # then use this same comparison result instead of independently selecting a
     # room by whichever spreadsheet row happened to be processed last.
-    room_comparison_changes, matched_rooms_by_assignment = _room_comparison_changes(
+    room_comparison_changes, matched_rooms_by_assignment = ([], {}) if room_list_has_no_data else _room_comparison_changes(
         people, rooms, categories['removedAthletes']['records'], include_matches=True, read_context=read_context)
 
     change_index = {}
@@ -1568,7 +1587,8 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
     apply_single_room_entitlement_preview(
         people_result['people'], room_result['rooms'], quota_checks, preserved)
     disposition_analysis = build_disposition_analysis(
-        people_result['people'], room_result['rooms'], quota_warnings, read_context=read_context
+        people_result['people'], room_result['rooms'], quota_warnings, read_context=read_context,
+        room_list_has_no_data=is_empty_fis_room_list(room_df)
     )
 
     blocking_errors = (requirement_issues + people_result['errors'] + room_result['errors']
@@ -1586,13 +1606,15 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
                 if any(p.get('affirmativeWscColumns') for p in people_result['people']) else None,
         )
     disposition_analysis['changes'] = build_import_changes(
-        disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors, read_context=read_context
+        disposition_analysis, people_result['people'], room_result['rooms'], blocking_errors, read_context=read_context,
+        room_list_has_no_data=is_empty_fis_room_list(room_df)
     )
     preview = {
         'createdAt': datetime.utcnow(),
         'eventId': event.id if event else None,
         'people': people_result['people'],
         'rooms': room_result['rooms'],
+        'roomListHasNoData': is_empty_fis_room_list(room_df),
         'entriesColumns': list(entries_df.columns),
         'roomColumns': list(room_df.columns),
         'dayColumns': room_result['dayColumns'],
@@ -1614,6 +1636,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
 
     return {
         'previewToken': preview_token,
+        'roomListHasNoData': preview['roomListHasNoData'],
         'eventId': str(event.id) if event else None,
         'isValid': len(blocking_errors) == 0,
         'summary': {
@@ -1758,9 +1781,11 @@ def recalculate_fis_import_preview(preview, *, read_context=None):
     preview['warnings'] = [warning for warning in preview.get('warnings', [])
         if not warning.get('code', '').startswith('QUOTA_')
         and warning.get('code') not in {'INFO_OFFICIALS_OVER_BASIS', 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED', 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED'}] + membership_warnings + quota_warnings
-    preview['dispositionAnalysis'] = build_disposition_analysis(people, rooms, quota_warnings, read_context=read_context)
+    preview['dispositionAnalysis'] = build_disposition_analysis(people, rooms, quota_warnings, read_context=read_context,
+        room_list_has_no_data=preview.get('roomListHasNoData', False))
     preview['dispositionAnalysis']['changes'] = build_import_changes(
-        preview['dispositionAnalysis'], people, rooms, preview.get('errors', []), read_context=read_context)
+        preview['dispositionAnalysis'], people, rooms, preview.get('errors', []), read_context=read_context,
+        room_list_has_no_data=preview.get('roomListHasNoData', False))
     preview['isValid'] = not preview['errors']
     if 'summary' in preview:
         preview['summary']['validation'] = {'errorCount': len(preview['errors']), 'warningCount': len(preview['warnings'])}
@@ -1771,7 +1796,7 @@ def recalculate_fis_import_preview(preview, *, read_context=None):
     return preview
 
 
-def _apply_person_record(athlete, person, now, *, rate_override=None):
+def _apply_person_record(athlete, person, now, *, rate_override=None, preserve_missing_roomlist=False):
     # Snapshot-derived values never overwrite live operational decisions.
     # Only an explicit reviewed override writes tariff metadata.
     if rate_override:
@@ -1807,8 +1832,10 @@ def _apply_person_record(athlete, person, now, *, rate_override=None):
     athlete.departure_airport_name = person.get('departureAirportName')
     athlete.departure_flight_no = person.get('departureFlightno')
     athlete.departure_need_transportation = person.get('departureNeedTransportation', False)
-    athlete.room_type = person.get('roomType')
-    athlete.shared_with_name = person.get('sharedWithName')
+    if not preserve_missing_roomlist or person.get('roomType'):
+        athlete.room_type = person.get('roomType')
+    if not preserve_missing_roomlist or person.get('sharedWithName'):
+        athlete.shared_with_name = person.get('sharedWithName')
     athlete.late_checkout = person.get('lateCheckout', False)
     athlete.first_meal = person.get('firstMeal')
     athlete.last_meal = person.get('lastMeal')
@@ -2049,7 +2076,9 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 # repeated in this snapshot. Keep the existing row-lock/base check.
                 db.session.flush()
                 athlete = Athlete.query.filter_by(id=athlete.id).with_for_update().populate_existing().one()
-            _apply_person_record(athlete, person, now, rate_override=rate_override)
+            missing_roomlist = bool(preview.get('roomListHasNoData') and existing_before is not None)
+            _apply_person_record(athlete, person, now, rate_override=rate_override,
+                                 preserve_missing_roomlist=missing_roomlist)
             old_requirement = (athlete.accommodation_requirement, athlete.accommodation_requirement_source)
             set_requirement(athlete, person['accommodationRequirement'], person['accommodationRequirementSource'])
             if person.get('importAccommodationRequirement'):
@@ -2088,8 +2117,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             room = room_by_person.get(person.get('matchKey'))
             requests_single = bool((room and normalize_string(room.get('roomType')) == 'single')
                 or person.get('singleRoomAllocation') is not None)
-            if athlete.accommodation_requirement == 'NO_ROOM':
-                pass  # Historical approvals remain; operational demand is suppressed centrally.
+            if missing_roomlist or athlete.accommodation_requirement == 'NO_ROOM':
+                pass  # Missing request evidence and NO_ROOM must not revoke historical decisions.
             elif requests_single and athlete.single_room_quota_exempt_reason:
                 athlete.single_room_entitlement = None
                 athlete.single_room_status = 'NONE'

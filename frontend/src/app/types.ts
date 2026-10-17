@@ -491,6 +491,7 @@ export interface FisImportPreviewRoom {
 }
 
 export interface FisImportPreview {
+  roomListHasNoData?: boolean;
   previewToken: string;
   eventId?: string | null;
   isValid: boolean;
