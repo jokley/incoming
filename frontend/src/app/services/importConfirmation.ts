@@ -30,3 +30,11 @@ export function importConfirmationMessage(body: unknown): string {
   const result = requireImportConfirmation(body);
   return `Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`;
 }
+
+/** Independent canonical reads after a successful confirmation; one call each. */
+export async function reloadImportSession<T>(
+  sessionId: string,
+  source: { getImportSession: (id: string) => Promise<T>; getImportSessions: () => Promise<T[]> },
+): Promise<[T, T[]]> {
+  return Promise.all([source.getImportSession(sessionId), source.getImportSessions()]);
+}

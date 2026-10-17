@@ -183,12 +183,14 @@ def approved_quota_contexts(person):
             for nation, group, gender in sorted(applicable_approval_groups(person.single_room_decision, person))]
 
 
-def preview_approval_person(person):
+def preview_approval_person(person, *, competitions_by_id=None):
     """Current DB-resolved preview evidence, never a static catalogue lookup."""
     from types import SimpleNamespace
     from models import Competition
     ids = normalize_competition_ids(person.get('competitionIds') or [])
-    competitions = Competition.query.filter(Competition.id.in_(ids)).all() if ids else []
+    competitions = ([competitions_by_id[key] for key in ids if key in competitions_by_id]
+                    if competitions_by_id is not None else
+                    Competition.query.filter(Competition.id.in_(ids)).all() if ids else [])
     return SimpleNamespace(nation_code=person.get('nationCode'), gender=person.get('gender'),
         function=person.get('function'),
         for_gender=person.get('forGender'), fis_code=person.get('fisCode'),
