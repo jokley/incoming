@@ -157,6 +157,30 @@ class BackupServiceTest(unittest.TestCase):
         self.assertTrue(any(sql.startswith('CREATE DATABASE') for sql in commands))
         self.assertTrue(any(sql.startswith('DROP DATABASE') for sql in commands))
 
+    def test_failed_migration_never_activates_staging_and_keeps_safety_backup(self):
+        failed = Result()
+        failed.returncode = 1
+        failed.stderr = "ModuleNotFoundError: No module named 'accommodation_rates'"
+
+        def run(command, **kwargs):
+            return failed if 'alembic' in command else Result()
+
+        with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
+                patch('backup_service.create_backup', return_value={'filename': 'safety.dump.gz'}) as safety, \
+                patch('backup_service.validate_dump'), \
+                patch('backup_service._postgres_command', return_value=Result()), \
+                patch('backup_service.subprocess.run', side_effect=run), \
+                patch('backup_service._drop_database') as cleanup, \
+                patch('backup_service._activate_staged_database') as activate:
+            dump = Path(directory, 'manual', 'incoming.dump.gz')
+            dump.parent.mkdir(); dump.write_bytes(b'PGDMP-valid')
+            with self.assertRaisesRegex(RuntimeError, 'accommodation_rates'):
+                backup_service.restore_backup({'category': 'manual', 'filename': dump.name})
+            safety.assert_called_once_with('pre-restore')
+            activate.assert_not_called()
+            cleanup.assert_called_once()
+            self.assertTrue(cleanup.call_args.args[1].startswith('incoming_restore_'))
+
     def test_activation_compensates_when_staging_rename_fails(self):
         settings = {'database': 'incoming', 'host': 'postgres', 'port': '5432',
                     'user': 'incoming', 'password': 'secret'}
