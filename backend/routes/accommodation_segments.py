@@ -104,6 +104,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         else:
             if new_booking_default is not None:
                 payload_data['countsAsSingle'] = new_booking_default
+            elif 'countsAsSingle' in data:
+                payload_data['countsAsSingle'] = data['countsAsSingle']
             payload_data = _initialize_new_booking_counts_as_single(payload_data)
         if (shared and start == existing.check_in_date and end == existing.check_out_date
                 and str(payload_data['hotelId']) == str(existing.hotel_id)
@@ -208,7 +210,7 @@ def add_shared_segment():
             _require(coverage['coverageStatus'] != 'CONFLICT' and (external or interval in coverage['openIntervals']),
                      'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')
         from app import _initialize_new_booking_counts_as_single
-        default_flag = _initialize_new_booking_counts_as_single({'athleteIds': ids})['countsAsSingle']
+        default_flag = _initialize_new_booking_counts_as_single({**data, 'athleteIds': ids}, people=people)['countsAsSingle']
         join_id = data.get('joinBookingId')
         for person in people:
             response = _mutate_segment(person.id, data_override={**data, 'joinBookingId': join_id}, commit=False, new_booking_default=default_flag, assembling_pair=not data.get('joinBookingId'))

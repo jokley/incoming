@@ -1524,16 +1524,21 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     }, room_type, None
 
 
-def _initialize_new_booking_counts_as_single(data):
-    """Apply the approved-extra default only when a new booking omits the flag."""
+def _initialize_new_booking_counts_as_single(data, *, people=None):
+    """Default only NEW bookings; explicit flags and saved overrides always win."""
     if 'countsAsSingle' in data:
         return data
-    athlete_ids = [int(athlete_id) for athlete_id in data.get('athleteIds', [])]
+    from accommodation_defaults import default_counts_as_single
+    athlete_ids = {int(athlete_id) for athlete_id in data.get('athleteIds', [])}
+    if people is None:
+        people = Athlete.query.filter(Athlete.id.in_(athlete_ids)).all()
+    hotel = db.session.get(Hotel, int(data['hotelId'])) if data.get('hotelId') else None
+    room_type = db.session.get(RoomType, int(data['roomTypeId'])) if data.get('roomTypeId') else None
+    capacity = room_type.max_persons if room_type and not (hotel and hotel.accommodation_type == 'EXTERNAL') else None
     initialized = dict(data)
-    initialized['countsAsSingle'] = Athlete.query.filter(
-        Athlete.id.in_(athlete_ids),
-        Athlete.single_room_status == 'APPROVED_EXTRA',
-    ).first() is not None
+    initialized['countsAsSingle'] = default_counts_as_single(capacity, len(athlete_ids),
+        single_request=any(_room_type_label(person.room_type) == 'single' for person in people),
+        approved_extra=any(person.single_room_status == 'APPROVED_EXTRA' for person in people))
     return initialized
 
 
@@ -3093,7 +3098,7 @@ def update_assigned_unit(booking_id):
         'athleteIds': [str(occ.athlete_id) for occ in (booking.occupants or []) if occ.athlete_id],
         'hotelId': data.get('hotelId') or str(booking.hotel_id),
         'roomTypeId': data.get('roomTypeId') or str(booking.room_type_id),
-        'roomNumber': data.get('roomNumber'),
+        'roomNumber': data.get('roomNumber', booking.room_number),
         'checkInDate': data.get('checkInDate') or (booking.check_in_date.isoformat() if booking.check_in_date else None),
         'checkOutDate': data.get('checkOutDate') or (booking.check_out_date.isoformat() if booking.check_out_date else None),
         'countsAsSingle': data.get('countsAsSingle', booking.counts_as_single),

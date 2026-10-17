@@ -257,9 +257,9 @@ def test_pair_commit_failure_rolls_back_both_occupants(state):
 
 
 @pytest.mark.parametrize('approved_index',[0,1])
-def test_pair_preserves_existing_approved_extra_default_independent_of_order(state,approved_index):
+def test_double_pair_defaults_false_without_changing_approval_independent_of_order(state,approved_index):
     state[1][approved_index].single_room_status='APPROVED_EXTRA';db.session.commit()
     response=pair(state,14,27)
     assert response.status_code==201,response.get_json()
-    assert response.get_json()['booking']['countsAsSingle'] is True
+    assert response.get_json()['booking']['countsAsSingle'] is False
     assert [p.single_room_status for p in state[1][:2]].count('APPROVED_EXTRA')==1

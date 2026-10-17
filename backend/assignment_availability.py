@@ -3,6 +3,7 @@ from datetime import date
 from types import SimpleNamespace
 from accommodation_coverage import booking_intervals_overlap
 from accommodation_mutations import physical_room_usage
+from accommodation_defaults import default_counts_as_single
 
 
 def inventory_guard(inventories, bookings, start, end):
@@ -31,6 +32,7 @@ def load_context():
     occupants = [{'athleteId':str(person.id),
         'accommodationRequirement':person.accommodation_requirement,
         'single_room_status':person.single_room_status,
+        'roomType':person.room_type,
         'accommodationCoverage':person_accommodation_coverage(person.arrival_date,
             person.departure_date,by_person.get(person.id,[]),person.accommodation_requirement)} for person in people]
     sections = []
@@ -190,7 +192,12 @@ def project(planning, needs, population_ids, loaded=None):
             for slot in sorted(options, key=lambda s: (s['capacity'], s['slotId'])):
                 extra = extra_by_type.setdefault(slot['roomTypeId'], [])
                 if eligibility(hotel, slot, ids, start, end, valid, extra) is None:
-                    extra.append(SimpleNamespace(id=-len(extra)-1, room_number=slot['roomNumber'], check_in_date=start, check_out_date=end, capacity=slot['capacity'], occupant_count=len(ids), counts_as_single=any(people[i].get('single_room_status')=='APPROVED_EXTRA' for i in ids)))
+                    single_use = default_counts_as_single(slot['capacity'], len(ids),
+                        single_request=any(_room_type_label(people[i].get('roomType')) == 'single' for i in ids),
+                        approved_extra=any(people[i].get('single_room_status') == 'APPROVED_EXTRA' for i in ids))
+                    extra.append(SimpleNamespace(id=-len(extra)-1, room_number=slot['roomNumber'],
+                        check_in_date=start, check_out_date=end, capacity=slot['capacity'],
+                        occupant_count=len(ids), counts_as_single=single_use))
                     accommodated.update((identity, key) for identity in ids)
                     break
         required = {(identity, key) for key, ids, *_ in validated for identity in ids
