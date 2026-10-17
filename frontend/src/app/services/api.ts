@@ -640,6 +640,11 @@ class ApiService {
     return this.request<AssignmentPlanningView>('/assignments/planning-view?includeValidations=false');
   }
 
+  async getAssignmentAvailability(needs:{key:string;athleteIds:string[];checkInDate:string;checkOutDate:string}[], populationIds:string[]=[]) {
+    return this.request<{targets:Record<string,import('../types').AssignmentValidationResult[]>;hotels:Record<string,import('./assignmentSuitability').HotelFit>}>(
+      '/assignments/availability',{method:'POST',body:JSON.stringify({needs,populationIds})});
+  }
+
   async getAssignmentValidations(validationKey: string, interval?:import('../types').AccommodationInterval, athleteIds?:string[]): Promise<AssignmentValidationView> {
     return this.request<AssignmentValidationView>(
       `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}${interval ? `?checkInDate=${interval.checkInDate}&checkOutDate=${interval.checkOutDate}${athleteIds?.length ? `&athleteIds=${athleteIds.join(',')}` : ''}` : ''}`,

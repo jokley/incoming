@@ -36,7 +36,7 @@ def mutate_segment(person_id, booking_id=None):
     return _mutate_segment(person_id, booking_id)
 
 
-def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=True, new_booking_default=None):
+def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=True, new_booking_default=None, assembling_pair=False):
     # Import lazily: app owns the existing validator/defaults and audit behavior.
     from app import (_validate_booking_payload, _initialize_new_booking_counts_as_single,
                      _save_booking_from_payload, _acknowledge_import_changes,
@@ -82,6 +82,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         target = RoomBooking.query.get_or_404(int(data['joinBookingId'])) if data.get('joinBookingId') else None
         _require(not target or not existing, 'INVALID_JOIN', 'Beitreten ist nur beim Hinzufügen möglich.')
         if target:
+            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair or not target.counts_as_single,
+                     'ROOM_SINGLE_USE', 'Zimmer ist durch EZ-Nutzung gesperrt.')
             _require(not any(o.athlete_id == person.id for o in target.occupants),
                      'ALREADY_ATTACHED', 'Person ist diesem Zimmer bereits zugewiesen.')
             _require(target.check_in_date == start and target.check_out_date == end,
@@ -118,7 +120,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         # consumes capacity for the other occupants, but is excluded for this person.
         payload, _, error = _validate_booking_payload(payload_data,
             existing_booking=target or (existing if not shared else None),
-            person_booking_exclusion_id=existing.id if existing else None)
+            person_booking_exclusion_id=existing.id if existing else None, allow_single_join=assembling_pair)
         if error:
             db.session.rollback()
             return error
@@ -209,7 +211,7 @@ def add_shared_segment():
         default_flag = _initialize_new_booking_counts_as_single({'athleteIds': ids})['countsAsSingle']
         join_id = data.get('joinBookingId')
         for person in people:
-            response = _mutate_segment(person.id, data_override={**data, 'joinBookingId': join_id}, commit=False, new_booking_default=default_flag)
+            response = _mutate_segment(person.id, data_override={**data, 'joinBookingId': join_id}, commit=False, new_booking_default=default_flag, assembling_pair=not data.get('joinBookingId'))
             body, status = response if isinstance(response, tuple) else (response, 200)
             if status >= 400:
                 db.session.rollback()
