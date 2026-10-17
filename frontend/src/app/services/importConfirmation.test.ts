@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { requireSuccessfulApiResponse, requireImportConfirmation, importConfirmationMessage } from './importConfirmation.ts';
+import { requireSuccessfulApiResponse, requireImportConfirmation, importConfirmationMessage, reloadImportSession } from './importConfirmation.ts';
 
 test('HTTP 400/500 exposes the backend error and never renders success counters', async () => {
   for (const status of [400,500]) {
@@ -32,4 +32,20 @@ test('malformed success responses fail explicitly before accessing counters', ()
     assert.throws(()=>importConfirmationMessage(result),error=>error instanceof Error && !error.message.includes('peopleCreated'));
   }
   assert.throws(()=>requireImportConfirmation({error:'Actual failure'}),/Actual failure/);
+});
+
+
+test('confirmation reload starts independent reads concurrently, exactly once', async () => {
+  const calls: string[] = [];
+  let finishDetail!: (value: { id: string }) => void;
+  let finishList!: (value: { id: string }[]) => void;
+  const pending = reloadImportSession<{ id: string }>('42', {
+    getImportSession: id => { calls.push(`detail:${id}`); return new Promise(resolve => { finishDetail = resolve; }); },
+    getImportSessions: () => { calls.push('list'); return new Promise(resolve => { finishList = resolve; }); },
+  });
+  assert.deepEqual(calls, ['detail:42', 'list']);
+  finishList([{ id: '42' }]);
+  finishDetail({ id: '42' });
+  assert.deepEqual(await pending, [{ id: '42' }, [{ id: '42' }]]);
+  assert.equal(calls.length, 2);
 });

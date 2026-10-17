@@ -2037,11 +2037,18 @@ def confirm_previewed_fis_import():
 
 @app.route('/api/import/sessions', methods=['GET'])
 def list_import_sessions():
-    sessions = ImportSession.query.order_by(ImportSession.created_at.desc()).all()
-    return jsonify([_current_session_payload(session) for session in sessions])
+    from sqlalchemy.orm import selectinload
+    from imports.read_context import ImportReadContext
+    sessions = ImportSession.query.options(
+        selectinload(ImportSession.current_version), selectinload(ImportSession.versions),
+        selectinload(ImportSession.approvals), selectinload(ImportSession.history),
+    ).order_by(ImportSession.created_at.desc()).all()
+    read_context = ImportReadContext() if any(s.current_version and s.status not in
+        {'REPLACED', 'ARCHIVED', 'CANCELLED'} for s in sessions) else None
+    return jsonify([_current_session_payload(session, read_context=read_context) for session in sessions])
 
 
-def _current_session_preview(session):
+def _current_session_preview(session, *, read_context=None):
     """Transient current resolution; stored versions and approvals stay untouched."""
     preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
     if preview:
@@ -2059,7 +2066,7 @@ def _current_session_preview(session):
                     for code in person.get('affirmativeWscColumns', person.get('competitionImportCodes', [])))):
                 raise ImportValidationError('IMPORT_EVENT_REQUIRED',
                     'Gespeicherte WSC-Preview benötigt ein aktives Import-Event mit exakten Competition-Zuordnungen.')
-            recalculate_fis_import_preview(preview)
+            recalculate_fis_import_preview(preview, read_context=read_context)
         except ImportValidationError as exc:
             preview.setdefault('errors', []).append({'code': exc.code, 'message': str(exc), 'details': exc.details})
             preview['isValid'] = False
@@ -2075,10 +2082,10 @@ def _current_session_preview(session):
     return preview
 
 
-def _current_session_payload(session, include_preview=False):
+def _current_session_payload(session, include_preview=False, *, read_context=None):
     payload = session.to_dict(include_preview=include_preview)
     if session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
-        preview = _current_session_preview(session)
+        preview = _current_session_preview(session, read_context=read_context)
         payload['errors'] = len(preview.get('errors', []))
         payload['warnings'] = len(preview.get('warnings', []))
         if preview.get('errors') and session.status != 'IMPORTED':

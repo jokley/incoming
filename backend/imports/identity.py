@@ -12,8 +12,9 @@ def build_name_key(lastname, firstname, nationcode=''):
     ])
 
 
-def _build_existing_athlete_maps():
-    athletes = Athlete.query.all()
+def _build_existing_athlete_maps(athletes=None):
+    if athletes is None:
+        athletes = Athlete.query.all()
     maps = {
         'by_fis_code': {},
         'by_competitor_id': {},

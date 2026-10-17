@@ -58,9 +58,9 @@ def resolve_requirement(existing, values, override=None):
     return current, proposed, contradictory or proposed is None
 
 
-def apply_preview_requirements(people, rooms=(), overrides=None):
+def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context=None):
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
-    maps = _build_existing_athlete_maps()
+    maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
     issues = []
     for person in people:
         existing = _find_existing_athlete(person, maps)
@@ -70,7 +70,8 @@ def apply_preview_requirements(people, rooms=(), overrides=None):
         person.update(effective)
         person['importAccommodationRequirement'] = proposed
         person['accommodationRequirementReviewRequired'] = review
-        if person['accommodationRequirement'] == 'NO_ROOM' and has_bookings(existing):
+        if person['accommodationRequirement'] == 'NO_ROOM' and (
+                bool(existing.room_booking_memberships) if read_context is not None and existing else has_bookings(existing)):
             issues.append({'code': 'ACCOMMODATION_REQUIREMENT_BOOKINGS', 'message': BOOKING_MESSAGE,
                            'details': {'personKey': person.get('matchKey')}})
         elif source_requirement(values)[1] and effective['accommodationRequirementSource'] != 'MANUAL':

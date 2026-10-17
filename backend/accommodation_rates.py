@@ -25,9 +25,9 @@ def resolve_rate(person, override=None):
     return current
 
 
-def apply_preview_rates(people, overrides=None):
+def apply_preview_rates(people, overrides=None, *, read_context=None):
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
-    maps = _build_existing_athlete_maps()
+    maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
     for person in people:
         existing = _find_existing_athlete(person, maps)
         person.update(resolve_rate(existing, (overrides or {}).get(person.get('matchKey'))))
