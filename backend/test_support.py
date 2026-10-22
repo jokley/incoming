@@ -72,3 +72,15 @@ def prepare_import_championship(competitions=()):
                 official_name=competition.name))
     db.session.commit()
     return championship
+
+
+def import_review_payload(session):
+    """Explicit full-snapshot test review; production always receives operator consent."""
+    import json
+    from imports.workflow import refresh_plan
+    from models import db
+    refresh_plan(session)
+    db.session.commit()
+    plan=json.loads(session.current_version.preview_json)['_workflow']['plan']
+    return {'planDigest':plan['digest'],'snapshotScope':'FULL_NATION','versionId':session.current_version_id,
+            'confirmDestructiveChanges':plan['requiresDestructiveConfirmation']}

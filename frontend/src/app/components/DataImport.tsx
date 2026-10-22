@@ -1,3 +1,5 @@
+import { ImportChangePlan } from './ImportChangePlan';
+import { canConfirmReview, importReviewRequest } from '../services/importReview';
 import { AccommodationRequirementField } from './AccommodationRequirementField';
 import { AccommodationRateField } from './AccommodationRate';
 import type { SingleRoomQuotaExemptReason } from '../types';
@@ -43,7 +45,8 @@ export function DataImport() {
   const [activeTask, setActiveTask] = useState<OperationsTask | null>(null);
   const [shownDecisionId, setShownDecisionId] = useState<string | null>(searchParams.get('decisionId'));
   const [savingTask, setSavingTask] = useState(false);
-  const [duplicateNotice, setDuplicateNotice] = useState(false);
+  const [scopeConfirmed,setScopeConfirmed]=useState(false), [destructiveConfirmed,setDestructiveConfirmed]=useState(false);
+  useEffect(()=>{setScopeConfirmed(false);setDestructiveConfirmed(false);},[preview?.changePlan?.digest]);
   const [events, setEvents] = useState<ChampionshipEvent[]>([]), [eventId, setEventId] = useState('');
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
@@ -57,10 +60,11 @@ export function DataImport() {
     setFiles([...new Map(accepted.map(f => [f.name.toLowerCase(), f])).values()]); setPreview(null); setSuccess(null); setError(null);
   };
   const cancel = () => { setFiles([]); if (!selected) setPreview(null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id, eventId); if (result.alreadyImported) { setSuccess(result.message ?? 'Diese Meldeliste wurde bereits importiert.'); setDuplicateNotice(true); setFiles([]); return; } setPreview(result); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
-  const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { await api.cancelImportSession(selected.id); setSelected(null); setPreview(null); setFiles([]); setSuccess('Importsession wurde abgebrochen und vollständig bereinigt.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
-  const approve = async () => { if (!selected) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id)); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id); setSuccess(importConfirmationMessage(result)); const [updated, loaded] = await reloadImportSession(selected.id, api); setSelected(updated); setPreview(updated.preview ?? null); setSessions(loaded); } catch (e) { setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, !selected, selected?.id, eventId); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { setSelected({...result.session, preview: result}); setFiles([]); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+  const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); setSelected(restored.status==='IMPORTED'?restored:null); setPreview(restored.status==='IMPORTED'?restored.preview??null:null); setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
+  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,scopeConfirmed,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, importReviewRequest(preview?.changePlan,scopeConfirmed,destructiveConfirmed,preview?.planStale))); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const [updated, loaded] = await reloadImportSession(selected.id, api); setSelected(updated); setPreview(updated.preview ?? null); setSessions(loaded); } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+  const recheck = async () => {if(!selected)return;setConfirming(true);setError(null);try{const updated=await api.recheckImportSession(selected.id);setSelected(updated);setPreview(updated.preview??null);await refreshSessions();}catch(e){setError(e instanceof Error?e.message:'Erneute Prüfung fehlgeschlagen');}finally{setConfirming(false);}};
   const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[]}) => {
     if (!selected || !activeTask) return;
     setSavingTask(true); setError(null);
@@ -165,10 +169,12 @@ export function DataImport() {
               <StatusChip tone={selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{IMPORT_SESSION_STATUS[selected.status]}</StatusChip>
             </div>
             <div className="space-y-4 p-5">
-              <Workflow session={selected} actionStep={primaryActionStep(selected, files)} upload={<SessionUploadWorkspace session={selected} files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm}/>} secondaryAction={!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)?<OpsButton onClick={abortSession} disabled={confirming} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Workflow abbrechen</OpsButton>:null} />
+              <Workflow session={selected} actionStep={primaryActionStep(selected, files)} upload={<SessionUploadWorkspace session={selected} files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm} reviewConfirmed={canConfirmReview(preview?.changePlan,scopeConfirmed,destructiveConfirmed,preview?.planStale)}/>} secondaryAction={!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)?<OpsButton onClick={abortSession} disabled={confirming} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Workflow abbrechen</OpsButton>:null} />
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
+              {success && selected.status!=='IMPORTED' && <InfoPanel tone="info" title="Prüfstand">{success}</InfoPanel>}
               <NextAction session={selected} success={success}/>
               <CompletedDecisions session={selected} onOpen={setActiveTask}/>
+              <ImportChangePlan plan={preview?.changePlan} stale={preview?.planStale} editable={selected.status!=='IMPORTED' && selected.status!=='APPROVED'} scopeConfirmed={scopeConfirmed} destructiveConfirmed={destructiveConfirmed} onScope={setScopeConfirmed} onDestructive={setDestructiveConfirmed} onRecheck={recheck} busy={confirming || loading}/>
               <PreviewCard preview={preview} peopleRows={peopleRows} roomRows={roomRows} onOpen={setDetail}/>
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
@@ -181,7 +187,7 @@ export function DataImport() {
     <DetailDialog detail={currentPreviewDetail(detail, {people:peopleRows, rooms:roomRows, quota:quotaRows(preview)})} onClose={() => setDetail(null)} />
     <OperationsDecisionDialog task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />
-    <Snackbar open={duplicateNotice} autoHideDuration={7000} onClose={()=>setDuplicateNotice(false)} anchorOrigin={{vertical:'top',horizontal:'center'}}><Alert severity="info" variant="filled" onClose={()=>setDuplicateNotice(false)}><strong>Diese Meldeliste wurde bereits importiert.</strong><br/>Es wurde keine neue Version erzeugt.</Alert></Snackbar>
+
   </div>;
 }
 
@@ -258,14 +264,14 @@ function primaryActionStep(session:ImportSession, files:File[]):WorkflowStep['id
   return 'approval';
 }
 
-function SessionPrimaryAction({session,preview,files,loading,confirming,onPreview,onOpenTask,onApprove,onImport}:{session:ImportSession;preview:FisImportPreview|null;files:File[];loading:boolean;confirming:boolean;onPreview:()=>void;onOpenTask:(task:OperationsTask)=>void;onApprove:()=>void;onImport:()=>void}) {
+function SessionPrimaryAction({session,preview,files,loading,confirming,onPreview,onOpenTask,onApprove,onImport,reviewConfirmed}:{reviewConfirmed:boolean;session:ImportSession;preview:FisImportPreview|null;files:File[];loading:boolean;confirming:boolean;onPreview:()=>void;onOpenTask:(task:OperationsTask)=>void;onApprove:()=>void;onImport:()=>void}) {
   const pending=session.approvals.map(approval=>buildOperationsTask(session,approval)).filter(task=>task.approval.decision==='PENDING');
   const needsFiles=['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status);
   const canApprove=Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
   if(pending.length) return <OpsButton onClick={()=>onOpenTask(pending[0])}>Entscheidung öffnen</OpsButton>;
-  if(session.status==='APPROVED') return <OpsButton onClick={onImport} disabled={confirming} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4"/>Importieren</OpsButton>;
+  if(session.status==='APPROVED') return <OpsButton onClick={onImport} disabled={confirming || preview?.planStale} className="border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)]"><CheckCircle className="mr-2 inline h-4 w-4"/>Importieren</OpsButton>;
   if(files.length>=2 || session.status==='IMPORTED' || needsFiles) return <OpsButton onClick={onPreview} disabled={files.length<2||loading}>{loading?<Loader2 className="mr-2 inline h-4 w-4 animate-spin"/>:<FileCheck2 className="mr-2 inline h-4 w-4"/>}Dateien prüfen</OpsButton>;
-  return <OpsButton onClick={onApprove} disabled={!canApprove}>Freigeben</OpsButton>;
+  return <OpsButton onClick={onApprove} disabled={!canApprove || !reviewConfirmed}>Freigeben</OpsButton>;
 }
 
 function NextAction({session,success}:{session:ImportSession;success:string|null}) {

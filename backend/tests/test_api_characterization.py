@@ -1,4 +1,6 @@
 """Small HTTP contracts complementing planning/quota/person workflow tests."""
+from test_support import import_review_payload
+
 import io
 import json
 import os
@@ -296,14 +298,19 @@ class ApiCharacterizationTest(unittest.TestCase):
             db.session.add(decision)
             db.session.commit()
             decision_id = decision.id
-        approved = self.client.post(f'/api/import/sessions/{session_id}/approve', headers=self.editor)
+            review_body = import_review_payload(session)
+        approved = self.client.post(f'/api/import/sessions/{session_id}/approve', headers=self.editor, json=review_body)
         self.assertEqual(approved.status_code, 200, approved.get_data(as_text=True))
         self.assertEqual(approved.get_json()['status'], 'APPROVED')
         path = '/api/import/fis/confirm/' if direct else f'/api/import/sessions/{session_id}/import'
         with patch('app.confirm_fis_import', wraps=confirm_fis_import) as confirm:
             confirmed = self.client.post(path,
                 json={'previewToken': token}, headers=self.editor)
-            confirm.assert_called_once_with(token, {person_key: decision_id}, confirmer='editor')
+            confirm.assert_called_once()
+            self.assertEqual(confirm.call_args.args, (token, {person_key: decision_id}))
+            self.assertEqual(confirm.call_args.kwargs['confirmer'], 'editor')
+            self.assertEqual(confirm.call_args.kwargs['change_plan']['snapshotScope'], 'FULL_NATION')
+            self.assertEqual(str(confirm.call_args.kwargs['persisted_preview']['eventId']), str(payload['eventId']))
         self.assertEqual(confirmed.status_code, 200, confirmed.get_data(as_text=True))
         expected_keys = {'success', 'summary', 'run'} | (set() if direct else {'session'})
         self.assertEqual(set(confirmed.get_json()), expected_keys)
@@ -311,7 +318,8 @@ class ApiCharacterizationTest(unittest.TestCase):
         self.assertEqual(confirmed.get_json()['summary'], {
             'peopleCreated': len(payload['people']), 'peopleUpdated': 0,
             'peopleRemoved': 0, 'duplicatesRemoved': 0, 'fisRoomsImported': 0,
-            'fisRoomsReplaced': 0, 'dispositionsChanged': 0})
+            'fisRoomsReplaced': 0, 'dispositionsChanged': 0, 'peopleUnchanged':0,
+            'bookingsAffected':0,'bookingsRemoved':0,'occupantsRemoved':0,'membershipsRemoved':0,'approvalsPreserved':1})
         self.assertEqual(confirmed.get_json()['run']['importType'], 'fis_confirm')
         with app.app_context():
             count = Athlete.query.count()
@@ -325,8 +333,9 @@ class ApiCharacterizationTest(unittest.TestCase):
             self.assertEqual(AuditEvent.query.filter_by(path=path).count(), 1)
             self.assertEqual(RoomBooking.query.count(), 0)
         self.assertNotIn(token, PREVIEW_STORE)
-        self.assert_json(self.client.post('/api/import/fis/confirm', json={'previewToken': token}),
-            400, {'error': 'INVALID_IMPORT', 'message': 'Preview token not found or expired'})
+        repeated=self.client.post('/api/import/fis/confirm', json={'previewToken': token})
+        self.assertEqual(repeated.status_code,200,repeated.json)
+        self.assertTrue(repeated.json['idempotent'])
         with app.app_context():
             self.assertEqual(Athlete.query.count(), count)
 
@@ -401,20 +410,19 @@ class ApiCharacterizationTest(unittest.TestCase):
             session.status, session.approved_at = 'APPROVED', datetime.utcnow()
             db.session.commit()
         PREVIEW_STORE['session-token']['createdAt'] -= timedelta(seconds=PREVIEW_TTL_SECONDS + 1)
-        self.assert_json(self.client.post('/api/import/fis/confirm', json={'previewToken': 'session-token'}),
-            400, {'error': 'INVALID_IMPORT', 'message': 'Preview token not found or expired'})
+        # A durable legacy version is not executable until explicitly re-reviewed.
+        direct=self.client.post('/api/import/fis/confirm',json={'previewToken':'session-token'})
+        self.assertEqual(direct.status_code,409,direct.json)
+        self.assertEqual(direct.json['error'],'IMPORT_REVIEW_REQUIRED')
         with app.app_context():
-            self.assertEqual(db.session.get(ImportSession, session_id).status, 'APPROVED')
-            self.assertEqual(ImportRun.query.count(), 0)
-            self.assertEqual(ImportSessionEvent.query.count(), 0)
-
-        # The existing normal-route expiry contract remains distinct: it records
-        # a failed import attempt on the session and returns its established body.
-        self.assert_json(self.client.post(f'/api/import/sessions/{session_id}/import'), 400,
-            {'error': 'Preview token not found or expired'})
+            version_id=db.session.get(ImportSession,session_id).current_version_id
+        normal=self.client.post(f'/api/import/sessions/{session_id}/import',json={'versionId':version_id})
+        self.assertEqual(normal.status_code,409,normal.json)
+        self.assertEqual(normal.json['error'],'IMPORT_REVIEW_REQUIRED')
         with app.app_context():
-            self.assertEqual(db.session.get(ImportSession, session_id).status, 'ERROR')
-            self.assertEqual(ImportRun.query.count(), 0)
+            self.assertEqual(db.session.get(ImportSession,session_id).status,'APPROVED')
+            self.assertEqual(ImportRun.query.count(),0)
+            self.assertEqual(ImportSessionEvent.query.count(),0)
 
     def test_single_room_approval_validation_and_session_import_gate(self):
         with app.app_context():

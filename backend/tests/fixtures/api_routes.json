@@ -424,5 +424,8 @@
   "/room-types/<int:room_type_id>/": [
     "DELETE",
     "PUT"
+  ],
+  "/api/import/sessions/<int:session_id>/recheck": [
+    "POST"
   ]
 }

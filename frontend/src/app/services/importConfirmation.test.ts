@@ -24,7 +24,7 @@ test('successful import retains its summary and the existing success message', (
   requireSuccessfulApiResponse(new Response('',{status:200}),result);
   assert.equal(requireImportConfirmation(result),result);
   assert.equal(result.summary.fisRoomsImported,4);
-  assert.equal(importConfirmationMessage(result),'Import erfolgreich: 2 neu, 3 aktualisiert. Bestehende Dispositionen wurden nicht verändert.');
+  assert.equal(importConfirmationMessage(result),'Import erfolgreich: 2 neu, 3 aktualisiert, 0 entfernt. 0 Dispositionen geändert.');
 });
 
 test('malformed success responses fail explicitly before accessing counters', () => {

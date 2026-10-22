@@ -897,7 +897,7 @@ class ApiService {
     return this.request(`/admin/world-champions${value.id ? '/' + value.id : ''}`, { method: value.id ? 'PUT' : 'POST', body: JSON.stringify(value) });
   }
 
-  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; message?: string }> {
+  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; message?: string }> {
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
     if (createSession) formData.append('createSession', 'true');
@@ -940,9 +940,10 @@ class ApiService {
       body: JSON.stringify(payload),
     });
   }
-  async approveImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST' }); }
-  async importSession(id: string): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST' })); }
-  async cancelImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST' }); }
+  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION';confirmDestructiveChanges:boolean}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
+  async recheckImportSession(id:string):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST'}); }
+  async importSession(id: string, versionId?:string|null): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST',body:JSON.stringify({versionId}) })); }
+  async cancelImportSession(id: string, versionId?:string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST',body:JSON.stringify({versionId}) }); }
   async addImportSessionNote(id: string, description: string, waitingForNation = false): Promise<ImportSession> { return this.request(`/import/sessions/${id}/history`, { method: 'POST', body: JSON.stringify({ description, waitingForNation }) }); }
 
   async confirmFisImport(previewToken: string): Promise<FisImportConfirmResult> {

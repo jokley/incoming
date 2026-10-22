@@ -208,7 +208,7 @@ def test_saved_preview_refresh_and_invalid_gender_confirmation_gate(database):
     assert preview['quotaChecks'][0]['gender'] == 'W'
     assert preview['athleteQuotaChecks'][0]['topLevelDiscipline'] == 'Freestyle'
     p['gender'] = ''; PREVIEW_STORE['invalid-mixed'] = preview
-    with pytest.raises(ValueError, match='blocking validation errors'):
+    with pytest.raises(ValueError, match='blocking validation errors|blockierende Fehler'):
         confirm_fis_import('invalid-mixed')
     db.session.rollback()
     assert Athlete.query.count() == 0
