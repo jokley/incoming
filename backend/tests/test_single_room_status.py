@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from test_support import configure_test_app, postgres_test_url
+from test_support import configure_test_app, postgres_test_url, prepare_import_championship
 
 database_url = postgres_test_url()
 os.environ['DATABASE_URL'] = database_url
@@ -34,6 +34,7 @@ class SingleRoomStatusTest(unittest.TestCase):
                 display_name='Display', sport='Sport', gender='F', quota_discipline='Big Air')
             db.session.add(competition)
             db.session.commit()
+            prepare_import_championship([competition])
 
     @staticmethod
     def person(key, function='Official'):
@@ -61,6 +62,9 @@ class SingleRoomStatusTest(unittest.TestCase):
                 competition=Competition.query.filter_by(import_code='WSC_BA_W_6183').one(),
                 import_code='WSC_BA_W_6183', fis_codex='6183', official_name='Display'))
             db.session.add(event)
+            db.session.flush()
+            session.event_id=event.id
+            app.config['OPERATIONAL_EVENT_ID']=event.id
             db.session.commit()
 
             people = [self.person('NONE', 'Athlete'), self.person('A_QUOTA'),
@@ -141,12 +145,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             self.assertEqual(warnings[0]['details']['approvedExtraCount'], 1)
             self.assertEqual(warnings[0]['details']['openExcessCount'], 0)
 
-            event = Event(name='Preservation Test', active=True)
-            event.competition_mappings.append(EventCompetition(
-                competition=Competition.query.filter_by(import_code='WSC_BA_W_6183').one(),
-                import_code='WSC_BA_W_6183', fis_codex='6183', official_name='Display'))
-            db.session.add(event)
-            db.session.commit()
+            event = db.session.get(Event, patrick.event_id)
             PREVIEW_STORE['preservation-test'] = {
                 'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': people, 'rooms': rooms,
@@ -259,10 +258,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
             competition.quota_discipline = 'Snowboard Halfpipe'
             # Current review uses exact saved memberships in an active event.
-            event = Event(name='Completed decision review', active=True)
-            db.session.add(EventCompetition(event=event, competition=competition,
-                import_code=competition.import_code, fis_codex=competition.code, official_name=competition.name))
-            db.session.flush()
+            event = db.session.get(Event, session.event_id)
             preview['eventId'] = event.id
             version.preview_json = json.dumps(preview)
             patrick.competitions = [competition]
@@ -455,7 +451,7 @@ class SingleRoomStatusTest(unittest.TestCase):
                 f'/api/import/sessions/{session.id}/single-room-exemptions/O',
                 headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
                 json={'reason': 'WORLD_CHAMPION'})
-            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.status_code, 409)
             self.assertEqual(response.get_json()['error'], 'EVENT_INACTIVE')
             db.session.expire_all()
             self.assertEqual(db.session.get(ImportSessionVersion, version.id).preview_json, original)

@@ -13,7 +13,9 @@ from scenario_generator import (
 )
 from excel_import import create_fis_import_preview
 from flask import Flask
-from models import db
+from models import db, Competition
+from competitions import COMPETITIONS
+from test_support import prepare_import_championship
 
 
 class ScenarioGeneratorTest(unittest.TestCase):
@@ -46,6 +48,8 @@ class ScenarioGeneratorTest(unittest.TestCase):
         db.init_app(app)
         with app.app_context(), tempfile.TemporaryDirectory() as directory:
             db.create_all()
+            db.session.add_all([Competition(**c._asdict()) for c in COMPETITIONS]);db.session.commit()
+            prepare_import_championship(Competition.query.all())
             self.addCleanup(db.engine.dispose)
             for scenario in SCENARIOS:
                 generated = generate_scenario(scenario.number, Path(directory))['root']

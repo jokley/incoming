@@ -77,6 +77,68 @@ app.register_blueprint(accommodation_segments)
 from event_ownership_runtime import OperationalEventError
 
 
+from imports.event_context import import_event_id, validate_session_event, revalidate_confirmation_event
+
+
+@app.errorhandler(ImportValidationError)
+def import_context_error(error):
+    db.session.rollback()
+    return jsonify(error.to_dict()), 409
+
+
+def validate_import_request_context():
+    """Bind only import routes; never a server-global active event.
+
+    Explicit request event must match the owning session. Legacy clients may use
+    the configured single event, or derive it from a validated owning session.
+    """
+    if request.method == 'OPTIONS' or not request.path.startswith('/api/import/'):
+        return
+    data = request.get_json(silent=True) or {} if request.is_json else {}
+    values = [v for v in (request.args.get('eventId'), request.form.get('eventId'), data.get('eventId')) if v is not None]
+    if request.path.rstrip('/') == '/api/import/fis/preview' and not request.form.get('sessionId'):
+        # Endpoint retains its existing EVENT_REQUIRED / 400 / 404 validation.
+        if len(values) > 1 and len({str(v) for v in values}) != 1:
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Widersprüchliche Request-Event-IDs.')
+        return
+    selected = normalize_event_id(values[0]) if values else None
+    if any(normalize_event_id(v) != selected for v in values):
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Widersprüchliche Request-Event-IDs.')
+    args = request.view_args or {}
+    session_id = args.get('session_id') or request.form.get('sessionId')
+    session = db.session.get(ImportSession, normalize_event_id(session_id)) if session_id else None
+    if session_id and session is None:
+        return jsonify(error='IMPORT_SESSION_NOT_FOUND'), 404
+    if args.get('approval_id') is not None:
+        approval = db.session.get(ImportApproval, args['approval_id'])
+        if approval is None:
+            return jsonify(error='IMPORT_APPROVAL_NOT_FOUND'), 404
+        if session and approval.session_id != session.id:
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Genehmigung gehört zu einer anderen Session.')
+        session = session or approval.session
+    token = data.get('previewToken')
+    if token:
+        raw = PREVIEW_STORE.get(token)
+        if raw is not None and raw.get('eventId') is not None and not raw.get('errors'):
+            token_event = normalize_event_id(raw.get('eventId'))
+            if selected is not None and token_event != selected:
+                raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Token und Request gehören zu verschiedenen Events.')
+            selected = token_event
+    if session:
+        selected = selected if selected is not None else app.config.get('OPERATIONAL_EVENT_ID') or session.event_id
+        validate_session_event(session, event_id=selected)
+        _import_session_raw_preview(session)
+        for version in session.versions:
+            validate_session_event(session, json.loads(version.preview_json or '{}'), selected)
+    if selected is None:
+        if request.path.rstrip('/') == '/api/import/sessions':
+            selected = import_event_id()
+        else:
+            return
+    revalidate_confirmation_event(selected, [], validate_codes=False)
+    g.import_event_id = selected
+
+
 @app.errorhandler(OperationalEventError)
 def operational_event_error(error):
     db.session.rollback()
@@ -509,6 +571,9 @@ def authenticate_api_request():
         except (ValueError, TypeError):
             g.audit_snapshot = None
     return None
+
+
+app.before_request(validate_import_request_context)
 
 
 def _audit_entity():
@@ -1796,6 +1861,7 @@ def preview_fis_import():
     if not event_context.active:
         return jsonify({'error': 'EVENT_INACTIVE', 'event_id': event_id,
                         'message': f'Event {event_context.name} ist inaktiv.'}), 422
+    g.import_event_id = event_context.id
     uploaded_files = []
     if request.files.get('entriesList'):
         uploaded_files.append(('entriesList', request.files.get('entriesList')))
@@ -1868,11 +1934,13 @@ def preview_fis_import():
             nation = nations[0]
             user = current_user()
             session = ImportSession.query.get(int(session_id)) if session_id else None
+            if session:
+                validate_session_event(session, event_id=event_context.id)
             if session and session.nation != nation:
                 return jsonify({'error': 'Eine Version kann nur zur Session derselben Nation hinzugefügt werden.'}), 409
             if not session:
                 # There is exactly one durable workflow per nation, including completed workflows.
-                session = ImportSession.query.filter_by(nation=nation).first()
+                session = ImportSession.query.filter_by(event_id=event_context.id, nation=nation).first()
             if session and session.current_version:
                 previous_preview = json.loads(session.current_version.preview_json or '{}')
                 keys = {p.get('matchKey') for p in result['people']}
@@ -2012,12 +2080,13 @@ def confirm_previewed_fis_import():
     try:
         # Preserve token errors before resolving workflow eligibility. A cached
         # token alone is not authority to import a nation snapshot.
-        validate_fis_import_token(preview_token)
+        raw_preview = validate_fis_import_token(preview_token)
         session = ImportSession.query.join(
             ImportSessionVersion, ImportSession.current_version_id == ImportSessionVersion.id,
         ).filter(ImportSessionVersion.preview_token == preview_token).first()
         if session is None:
             return jsonify({'error': 'Preview token is not linked to a current import session version'}), 409
+        validate_session_event(session, raw_preview, import_event_id())
         response = app.make_response(import_approved_session(session.id))
         if response.status_code == 200:
             # Keep the direct endpoint's established response shape while the
@@ -2042,19 +2111,29 @@ def confirm_previewed_fis_import():
 def list_import_sessions():
     from sqlalchemy.orm import selectinload
     from imports.read_context import ImportReadContext
-    sessions = ImportSession.query.options(
+    sessions = ImportSession.query.filter_by(event_id=import_event_id()).options(
         selectinload(ImportSession.current_version), selectinload(ImportSession.versions),
         selectinload(ImportSession.approvals), selectinload(ImportSession.history),
     ).order_by(ImportSession.created_at.desc()).all()
-    read_context = ImportReadContext() if any(s.current_version and s.status not in
+    read_context = ImportReadContext(import_event_id()) if any(s.current_version and s.status not in
         {'REPLACED', 'ARCHIVED', 'CANCELLED'} for s in sessions) else None
     return jsonify([_current_session_payload(session, read_context=read_context) for session in sessions])
+
+
+def _import_session_raw_preview(session):
+    raw = PREVIEW_STORE.get(session.current_version.preview_token) if session.current_version else None
+    if raw is not None:
+        validate_session_event(session, raw)
+    return raw
 
 
 def _current_session_preview(session, *, read_context=None):
     """Transient current resolution; stored versions and approvals stay untouched."""
     preview = json.loads(session.current_version.preview_json or '{}') if session.current_version else {}
     if preview:
+        validate_session_event(session, preview)
+        if read_context is not None and read_context.event_id != session.event_id:
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Fremder ReadContext für Importsession.')
         preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
         if session.status == 'IMPORTED':
             # Reviewed tariffs have already been applied; read the current live
@@ -2115,15 +2194,17 @@ def stage_accommodation_requirement(session_id, person_key):
     if 'accommodationRequirement' not in data or (data['accommodationRequirement'] is not None and (not isinstance(data['accommodationRequirement'], str) or data['accommodationRequirement'] not in {'REQUIRED', 'NO_ROOM'})):
         return jsonify(error='accommodationRequirement must be REQUIRED, NO_ROOM or null'), 400
     preview = json.loads(session.current_version.preview_json or '{}')
+    validate_session_event(session, preview)
+    _import_session_raw_preview(session)
     target = next((p for p in preview.get('people', []) if p.get('matchKey') == person_key), None)
     if target is None:
         return jsonify(error='Person is not part of the current import version'), 404
-    existing = _find_existing_athlete(target, _build_existing_athlete_maps())
+    existing = _find_existing_athlete(target, _build_existing_athlete_maps(event_id=session.event_id))
     old = {key: target.get(key) for key in ('accommodationRequirement', 'accommodationRequirementSource')}
     preview.setdefault('accommodationRequirementOverrides', {})[person_key] = {
         'requirement': data['accommodationRequirement'], 'base': requirement_projection(existing)}
     preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
-    raw = PREVIEW_STORE.get(session.current_version.preview_token)
+    raw = _import_session_raw_preview(session)
     staged_raw = deepcopy(raw) if raw else None
     try:
         recalculate_fis_import_preview(preview)
@@ -2175,11 +2256,13 @@ def stage_accommodation_rate(session_id, person_key):
     except ValueError as exc:
         return jsonify({'error': str(exc)}), 400
     preview = json.loads(session.current_version.preview_json or '{}')
+    validate_session_event(session, preview)
+    _import_session_raw_preview(session)
     target = next((p for p in preview.get('people', []) if p.get('matchKey') == person_key), None)
     if target is None:
         return jsonify({'error': 'Person is not part of the current import version'}), 404
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
-    existing = _find_existing_athlete(target, _build_existing_athlete_maps())
+    existing = _find_existing_athlete(target, _build_existing_athlete_maps(event_id=session.event_id))
     old_category = target.get('accommodationRateCategory', 'STANDARD')
     override = {'category': category, 'base': rate_projection(existing)}
     preview.setdefault('accommodationRateOverrides', {})[person_key] = override
@@ -2193,7 +2276,7 @@ def stage_accommodation_rate(session_id, person_key):
         event_type='ACCOMMODATION_RATE_MANUAL', title='Unterkunftstarif manuell geändert',
         description=f"{person_key}: {old_category} → {category}", username=current_user().username))
     db.session.commit()
-    raw = PREVIEW_STORE.get(session.current_version.preview_token)
+    raw = _import_session_raw_preview(session)
     if raw is not None:
         raw['accommodationRateOverrides'] = preview['accommodationRateOverrides']
         raw_target = next((p for p in raw['people'] if p.get('matchKey') == person_key), None)
@@ -2222,6 +2305,8 @@ def stage_single_room_quota_exemption(session_id, person_key):
     if reason not in {None, 'WORLD_CHAMPION'}:
         return jsonify({'error': 'reason must be WORLD_CHAMPION or null'}), 400
     preview = json.loads(session.current_version.preview_json or '{}')
+    validate_session_event(session, preview)
+    _import_session_raw_preview(session)
     if person_key not in {person.get('matchKey') for person in preview.get('people', [])}:
         return jsonify({'error': 'Person is not part of the current import version'}), 404
     from excel_import import apply_single_room_quota_exemptions
@@ -2240,7 +2325,7 @@ def stage_single_room_quota_exemption(session_id, person_key):
     preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
     overrides = preview.setdefault('singleRoomQuotaExemptOverrides', {})
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
-    existing = _find_existing_athlete(target, _build_existing_athlete_maps())
+    existing = _find_existing_athlete(target, _build_existing_athlete_maps(event_id=session.event_id))
     preview.setdefault('singleRoomQuotaExemptOverrideRevisions', {})[person_key] = persisted_manual_revision(existing)
     overrides[person_key] = reason
     preview['carriedSingleRoomQuotaExemptKeys'] = [key for key in preview.get('carriedSingleRoomQuotaExemptKeys', []) if key != person_key]
@@ -2249,7 +2334,7 @@ def stage_single_room_quota_exemption(session_id, person_key):
     except ImportValidationError as exc:
         return jsonify(exc.to_dict()), 400
     session.current_version.preview_json = json.dumps(preview, ensure_ascii=False)
-    raw_preview = PREVIEW_STORE.get(session.current_version.preview_token)
+    raw_preview = _import_session_raw_preview(session)
     if raw_preview is not None:
         raw_preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
         raw_preview.setdefault('singleRoomQuotaExemptOverrides', {})[person_key] = reason
@@ -2302,7 +2387,7 @@ def get_import_approval(approval_id):
     session = approval.session
     version = next((item for item in session.versions if item.id == approval.version_id), None)
     candidates = (json.loads(approval.quota_details_json or '{}').get('singleRoomCandidates') or [])
-    linked = Athlete.query.filter_by(single_room_decision_id=approval.id).all()
+    linked = Athlete.query.filter_by(event_id=session.event_id, single_room_decision_id=approval.id).all()
     people = [{
         'id': athlete.id, 'name': f'{athlete.firstname} {athlete.lastname}'.strip(),
         'nation': athlete.nation_code, 'singleRoomStatus': athlete.single_room_status or 'NONE',
@@ -2576,9 +2661,11 @@ def cancel_import_session(session_id):
         return jsonify({'error': 'Eine abgeschlossene Session kann nicht abgebrochen werden.'}), 409
     approval_ids = [approval.id for approval in session.approvals if approval.id]
     if approval_ids:
-        Athlete.query.filter(Athlete.single_room_decision_id.in_(approval_ids)).update(
+        if Athlete.query.filter(Athlete.single_room_decision_id.in_(approval_ids)).first():
+            return jsonify(error='IMPORT_CANCEL_HAS_OPERATIONAL_DECISIONS', message='Session mit operativen Entscheidungen darf nicht bereinigt werden.'), 409
+        Athlete.query.filter(Athlete.event_id == session.event_id, Athlete.single_room_decision_id.in_(approval_ids)).update(
             {Athlete.single_room_decision_id: None}, synchronize_session=False)
-        ImportSessionEvent.query.filter(ImportSessionEvent.approval_id.in_(approval_ids)).update(
+        ImportSessionEvent.query.filter(ImportSessionEvent.session_id == session.id, ImportSessionEvent.approval_id.in_(approval_ids)).update(
             {ImportSessionEvent.approval_id: None}, synchronize_session=False)
     ImportSessionEvent.query.filter_by(session_id=session.id).update(
         {ImportSessionEvent.version_id: None}, synchronize_session=False)

@@ -69,15 +69,14 @@ def person(**overrides):
         'matchKey': 'one', **overrides}
 
 
-def test_identifier_precedence_and_no_fallback_on_mismatch():
-    fis, competitor, name = object(), object(), object()
-    maps = {'by_fis_code': {'ABC': fis}, 'by_competitor_id': {'42': competitor},
-        'by_name_key': {legacy.build_name_key('Muller', 'Ada', 'SUI'): name}}
-    assert legacy._find_existing_athlete(person(fisCode=' abc ', competitorId='42'), maps) is fis
-    assert legacy._find_existing_athlete(person(fisCode='unknown', competitorId='42'), maps) is None
-    assert legacy._find_existing_athlete(person(competitorId=42), maps) is competitor
-    assert legacy._find_existing_athlete(person(competitorId='unknown'), maps) is None
-    assert legacy._find_existing_athlete(person(), maps) is name
+def test_identifier_conflicts_and_alternative_id_fallback():
+    from imports.identity import _build_existing_athlete_maps
+    first = SimpleNamespace(id=1,event_id=7,fis_code=None,competitor_id='42',lastname='Muller',firstname='Ada',nation_code='SUI')
+    second = SimpleNamespace(id=2,event_id=7,fis_code='ABC',competitor_id='43',lastname='Other',firstname='Other',nation_code='SUI')
+    maps = _build_existing_athlete_maps([first,second],event_id=7)
+    assert legacy._find_existing_athlete(person(fisCode='123',competitorId='42'),maps) is first
+    with pytest.raises(legacy.ImportValidationError,match='verschiedene'):
+        legacy._find_existing_athlete(person(fisCode='ABC',competitorId='42'),maps)
 
 
 def make_app():
@@ -87,7 +86,7 @@ def make_app():
     return app
 
 
-def test_existing_map_first_fis_last_competitor_and_normalized_name_collision():
+def test_existing_map_retains_collision_candidates():
     app = make_app()
     with app.app_context():
         db.create_all()
@@ -95,28 +94,29 @@ def test_existing_map_first_fis_last_competitor_and_normalized_name_collision():
         last = Athlete(lastname='Muller', firstname='ADA', nation_code='sui', fis_code='ABC', competitor_id='42')
         db.session.add_all([first, last]); db.session.commit()
         maps = legacy._build_existing_athlete_maps()
-        assert maps['by_fis_code']['ABC'] is first
-        assert maps['by_competitor_id']['42'] is last
-        assert maps['by_name_key']['muller|ada|sui'] is last
+        assert maps['by_fis_code']['ABC'] == [last]
+        assert maps['by_competitor_id']['42'] == [first,last]
+        assert maps['by_name_key']['muller|ada|sui'] == [first,last]
 
 
-def test_room_index_last_collision_and_nationless_matching_even_with_wrong_nation():
+def test_room_index_rejects_collisions_and_wrong_nation():
     first = person(competitorId='42')
     last = person(lastname='Muller', nationCode='USA', matchKey='two', competitorId='42')
     indexed = legacy._index_people([first, last])
-    assert indexed['by_name_no_nation']['muller|ada|'] is last
-    assert indexed['by_competitor_id']['42'] is last
-    assert legacy._index_people([first, person(matchKey='three')])['by_name']['muller|ada|sui']['matchKey'] == 'three'
+    assert indexed['by_name_no_nation']['muller|ada|'] is None
+    assert indexed['by_competitor_id']['42'] is None
+    assert legacy._index_people([first, person(matchKey='three')])['by_name']['muller|ada|sui'] is None
     frame = pd.DataFrame([{'Lastname': 'Muller', 'Firstname': 'Ada', 'Nationcode': 'CAN',
         'Arrival_date': '04.03.2027', 'Departure_date': '05.03.2027', 'Room_type': 'Single'}])
     result = legacy.parse_room_list(frame, [first, last])
     assert result['errors'] == []
-    assert result['rooms'][0]['person1Key'] == 'two'
+    assert result['rooms'] == []
+    assert result['warnings'][0]['code'] == 'ROOM_PERSON_NOT_FOUND'
 
 
-def test_structured_error_and_event_id_legacy_coercion():
-    assert legacy.normalize_event_id(True) == 1
-    assert legacy.normalize_event_id(1.9) == 1
+def test_structured_error_and_strict_event_id():
+    for value in (True,1.9):
+        with pytest.raises(legacy.ImportValidationError):legacy.normalize_event_id(value)
     error = legacy.ImportValidationError('CODE', 'message', event_id=7, import_code='WSC_TEST')
     assert error.to_dict() == {'error': 'CODE', 'message': 'message', 'event_id': '7', 'import_code': 'WSC_TEST'}
     assert legacy.ImportValidationError('CODE', 'message').to_dict() == {'error': 'CODE', 'message': 'message'}

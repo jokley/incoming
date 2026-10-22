@@ -5,6 +5,7 @@ from datetime import datetime, date
 
 from flask import Flask
 import pytest
+from test_support import prepare_import_championship
 
 from competitions import COMPETITIONS, quota_disciplines, resolve_quota_memberships
 from quota_catalogue import reconcile_quota_catalogue
@@ -25,6 +26,7 @@ def database():
     db.init_app(app)
     with app.app_context():
         db.create_all()
+        prepare_import_championship()
         yield
         PREVIEW_STORE.clear()
         db.session.remove()
@@ -249,6 +251,7 @@ def test_confirmation_rejects_approval_after_remapping_without_rewriting_history
 
 def test_eventless_preview_resolves_saved_ids_from_database_and_flags_missing_evidence(database):
     c = comp(import_code='WSC_BA_M_6182'); db.session.add(c); db.session.commit()
+    prepare_import_championship([c])
     p = person('A', ('WSC_BA_M_6182',)); p['competitionIds'] = [str(c.id)]
     p['competitionMemberships'] = [{'competitionId': str(c.id), 'importCode': c.import_code, 'quotaDiscipline': 'STALE'}]
     preview = {'people': [p], 'rooms': [], 'warnings': [], 'errors': []}
@@ -256,7 +259,7 @@ def test_eventless_preview_resolves_saved_ids_from_database_and_flags_missing_ev
     assert p['quotaDisciplines'] == ['TestGroup']
     assert p['competitionIds'] == [str(c.id)]
     assert p['competitionMemberships'][0]['quotaDiscipline'] == 'TestGroup'
-    unknown = person('B', ('WSC_BA_M_6182',))
+    unknown = person('B', ())
     recalculate_fis_import_preview({'people': [unknown], 'rooms': [], 'warnings': [], 'errors': []})
     assert unknown['quotaDisciplines'] == []
     no_evidence = {'people': [unknown], 'rooms': [], 'warnings': [], 'errors': []}

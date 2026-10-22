@@ -1,3 +1,4 @@
+from test_support import prepare_import_championship
 """Overall athlete limits are independent of detailed accommodation quotas."""
 from copy import deepcopy
 from unittest.mock import patch
@@ -139,7 +140,7 @@ def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
         db.session.add(Competition(**COMPETITION_BY_IMPORT_CODE['WSC_PGS_M_6170']._asdict()))
         db.session.commit()
         with patch.object(excel_import, 'load_first_sheet', side_effect=[entries, rooms]):
-            result = excel_import.create_fis_import_preview('entries', 'rooms')
+            result = excel_import.create_fis_import_preview('entries', 'rooms', prepare_import_championship(Competition.query.all()))
         try:
             assert result['isValid'] is True
             assert result['warnings'] == []

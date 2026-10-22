@@ -22,8 +22,10 @@ from imports.normalization import (DAY_COLUMN_PATTERN, DATETIME_FORMATS,
     parse_datetime, _col_key, normalize_columns, detect_day_columns,
     validate_required_columns)
 from imports.identity import (build_name_key, _build_existing_athlete_maps,
-    _find_existing_athlete, _index_people)
+    _find_existing_athlete, _index_people, validate_people_identities)
 from imports.read_context import ImportReadContext
+from imports.event_context import import_event_id, validate_session_event
+from imports.normalization import canonical_fis_code
 from imports.event_context import (ImportValidationError, normalize_event_id,
     active_competition_mapping, revalidate_confirmation_event)
 
@@ -192,7 +194,8 @@ def apply_import_level_discipline(people, entries_path, roomlist_path):
 def load_first_sheet(path, display_name=None):
     source_name = display_name or path.split('\\')[-1].split('/')[-1]
     try:
-        workbook = pd.read_excel(path, sheet_name=None)
+        # Preserve text identifiers (notably leading zeros) instead of pandas numeric inference.
+        workbook = pd.read_excel(path, sheet_name=None, dtype=object)
     except (zipfile.BadZipFile, KeyError, InvalidFileException, ValueError) as exc:
         raise InvalidExcelFileError(
             f'Invalid Excel file: {source_name}. Please upload a valid .xlsx/.xls file exported by Excel.'
@@ -408,7 +411,12 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             continue
 
         competitor_id = normalize_whitespace(row.get('Competitorid/Staff ID')) or None
-        fis_code = normalize_whitespace(row.get('Fiscode')) or None
+        try:
+            fis_code = canonical_fis_code(row.get('Fiscode')) or None
+        except ValueError as exc:
+            errors.append({'code': 'ENTRY_INVALID_FIS_CODE', 'message': str(exc),
+                'details': {'row': row_number, 'value': normalize_whitespace(row.get('Fiscode'))}})
+            continue
         unique_key = fis_code or competitor_id or build_name_key(lastname, firstname, nation_code)
         if unique_key in seen_keys:
             errors.append({
@@ -446,6 +454,7 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             'competitorId': competitor_id,
             'accredId': normalize_whitespace(row.get('Accredid')) or None,
             'fisCode': fis_code,
+            'sourceFisCode': normalize_whitespace(row.get('Fiscode')) or None,
             'lastname': lastname,
             'firstname': firstname,
             'nationCode': nation_code,
@@ -492,6 +501,9 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             'stance': normalize_whitespace(row.get('Stance')) or None,
         }
         existing = _find_existing_athlete(person, athlete_maps)
+        if existing and any(p.get('existingAthleteId') == existing.id for p in people):
+            raise ImportValidationError('IMPORT_IDENTITY_CONFLICT', 'Mehrere Importzeilen passen zur selben Person.', event_id=event_id)
+        person['eventId'] = event_id if event_id is not None else athlete_maps.get('event_id')
         person['existingAthleteId'] = existing.id if existing else None
         person['operation'] = 'update' if existing else 'create'
         person['matchKey'] = unique_key
@@ -502,6 +514,7 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
                 'details': {'personKey': unique_key, 'row': row_number}})
         people.append(person)
 
+    validate_people_identities(people, athlete_maps)
     errors.extend(wsc_membership_errors(people, event_id))
     return {'people': people, 'errors': errors, 'warnings': warnings}
 
@@ -538,7 +551,7 @@ def parse_room_list(df, imported_people):
             continue
 
         person1 = indexed_people['by_name'].get(build_name_key(lastname, firstname, nation_code))
-        if not person1:
+        if not person1 and not nation_code:
             person1 = indexed_people['by_name_no_nation'].get(build_name_key(lastname, firstname, ''))
         if not person1:
             warnings.append({
@@ -761,7 +774,9 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
 
     # Project persisted bookings through the incoming authoritative roster.
     # Removed people disappear; retained people use their incoming quota group.
-    for membership in RoomBookingOccupant.query.options(
+    for membership in RoomBookingOccupant.query.join(RoomBooking).filter(
+            RoomBooking.event_id == (read_context.event_id if read_context else import_event_id()),
+            RoomBookingOccupant.athlete_id.in_(imported_by_existing_id)).options(
             db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type)).all():
         person = imported_by_existing_id.get(membership.athlete_id)
         if not person or normalize_string(person.get('function')) == 'athlete':
@@ -903,7 +918,7 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
 
 def apply_single_room_quota_exemptions(people, overrides=None, event_id=None, carried_keys=(), override_revisions=None, *, read_context=None):
     from world_champions import recognize
-    athlete_maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
+    athlete_maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps(event_id=event_id)
     for person in people:
         recognize(person, _find_existing_athlete(person, athlete_maps), overrides or {}, event_id, carried_keys, override_revisions)
     return people
@@ -926,7 +941,8 @@ def preserved_single_room_approvals(people, rooms, *, read_context=None):
     preserved = {}
     retained_ids = {row[0] for row in db.session.query(RoomBookingOccupant.athlete_id).join(
         RoomBooking, RoomBooking.id == RoomBookingOccupant.room_booking_id).filter(
-        RoomBooking.counts_as_single.is_(True)).distinct()}
+        RoomBooking.counts_as_single.is_(True),
+        RoomBooking.event_id == (read_context.event_id if read_context else import_event_id())).distinct()}
     current_roster = [preview_approval_person(p, competitions_by_id=read_context.competitions_by_id if read_context is not None else None) for p in people]
     for person in people:
         person['unresolvedHistoricalApprovalIds'] = []
@@ -996,14 +1012,16 @@ def apply_active_single_room_decision(details, approved_person_keys, decision_id
     lock_accommodation_writes()
     selected = set(approved_person_keys)
     decision = db.session.get(ImportApproval, decision_id)
-    athlete_maps = _build_existing_athlete_maps()
+    if not decision:
+        raise ImportValidationError('APPROVAL_NOT_FOUND', 'Genehmigung nicht gefunden.')
+    athlete_maps = _build_existing_athlete_maps(event_id=decision.session.event_id)
     changed = []
     for candidate in details.get('singleRoomCandidates', []):
         person_key = candidate.get('personKey')
         incoming = next((person for person in people
                          if person.get('matchKey') == person_key), None)
         athlete = (_find_existing_athlete(incoming, athlete_maps) if incoming else
-                   athlete_maps['by_fis_code'].get(str(person_key).strip().upper()))
+                   _find_existing_athlete({'fisCode': person_key}, athlete_maps))
         if not athlete:
             continue
         if athlete.accommodation_requirement == 'NO_ROOM' or (incoming and incoming.get('accommodationRequirement') == 'NO_ROOM'):
@@ -1019,7 +1037,7 @@ def apply_active_single_room_decision(details, approved_person_keys, decision_id
             athlete.single_room_decision_id = decision_id
         elif athlete.single_room_status == 'APPROVED_EXTRA' and athlete.single_room_decision_id == superseded_decision_id:
             resolved = has_quota_membership(quota_person(athlete),
-                [quota_person(p) for p in Athlete.query.filter_by(nation_code=athlete.nation_code).all()])
+                [quota_person(p) for p in Athlete.query.filter_by(event_id=athlete.event_id, nation_code=athlete.nation_code).all()])
             athlete.single_room_status = 'IN_QUOTA' if resolved else 'PENDING_APPROVAL'
             athlete.single_room_entitlement = 'IN_QUOTA' if resolved else None
             athlete.single_room_decision_id = None
@@ -1153,11 +1171,12 @@ def _assignment_context(athlete, read_context=None):
     identity_rows = [athlete]
     if read_context is not None:
         identity_rows = read_context.identity_rows(athlete)
-    elif athlete.fis_code:
-        identity_rows = Athlete.query.filter(
-            func.upper(func.trim(Athlete.fis_code)) == athlete.fis_code.strip().upper()
-        ).all()
+    # Do not follow global FIS aliases across Events or legacy duplicates.
+    elif athlete.event_id is None:
+        raise ImportValidationError('IMPORT_EVENT_REQUIRED', 'Buchungsbezug ohne Event.')
     membership = next((membership for row in identity_rows for membership in row.room_booking_memberships), None)
+    if membership and membership.room_booking.event_id != athlete.event_id:
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Eventfremder Buchungsbezug.')
     if membership:
         booking = membership.room_booking
         identity_ids = {row.id for row in identity_rows}
@@ -1176,6 +1195,8 @@ def _assignment_context(athlete, read_context=None):
         fis_assignment = next((assignment for row in identity_rows for assignment in row.fis_room_assignments_as_person2), None)
     if fis_assignment:
         partner = fis_assignment.person2 if fis_assignment.person1_id == athlete.id else fis_assignment.person1
+        if partner and partner.event_id != athlete.event_id:
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Eventfremder Legacy-Zimmerpartner.')
         return {
             'hotel': fis_assignment.hotel.name if fis_assignment.hotel else None,
             'hotelId': str(fis_assignment.hotel_id) if fis_assignment.hotel_id else None,
@@ -1250,7 +1271,7 @@ def build_disposition_analysis(people, rooms, quota_warnings, *, read_context=No
 
     nations = {person.get('nationCode') for person in people if person.get('nationCode')}
     disciplines = {person.get('industryName') for person in people if person.get('industryName')}
-    scoped_existing = Athlete.query.filter(Athlete.nation_code.in_(nations)).all() if nations else []
+    scoped_existing = [a for a in read_context.athletes if a.nation_code in nations] if read_context else Athlete.query.filter(Athlete.event_id == import_event_id(), Athlete.nation_code.in_(nations)).all()
     if disciplines:
         scoped_existing = [person for person in scoped_existing if person.discipline in disciplines]
     for existing in scoped_existing:
@@ -1361,9 +1382,7 @@ def _room_comparison_changes(people, rooms, removed_records, include_matches=Fal
     athlete_maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
 
     def athlete_token(athlete):
-        canonical = (athlete_maps['by_fis_code'].get(athlete.fis_code.strip().upper(), athlete)
-                     if athlete.fis_code else athlete)
-        return f'id:{canonical.id}'
+        return f'id:{athlete.id}'
 
     existing_by_key = {}
     existing_by_id = {}
@@ -1376,7 +1395,7 @@ def _room_comparison_changes(people, rooms, removed_records, include_matches=Fal
         athlete_id = record.get('personId')
         if athlete_id:
             athlete = db.session.get(Athlete, int(athlete_id))
-            if athlete:
+            if athlete and athlete.event_id == athlete_maps['event_id']:
                 existing_by_id[athlete.id] = athlete
 
     staged_by_identity = {}
@@ -1566,7 +1585,8 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
     cleanup_preview_store()
     entries_df = load_first_sheet(entries_path)
     room_df = load_first_sheet(roomlist_path)
-    read_context = ImportReadContext()
+    event, _ = revalidate_confirmation_event(import_event_id(event.id if event else None), [], validate_codes=False)
+    read_context = ImportReadContext(event.id)
     athlete_maps = read_context.athlete_maps
 
     mapping = None
@@ -1647,7 +1667,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None):
             },
             'rooms': {
                 'total': len(accommodation_room_requests(people_result['people'], room_result['rooms'])),
-                'wouldReplaceFisRooms': FisRoomAssignment.query.count(),
+                'wouldReplaceFisRooms': FisRoomAssignment.query.join(Athlete, FisRoomAssignment.person1_id == Athlete.id).filter(Athlete.event_id == event.id).count(),
                 'singles': sum(normalize_string(room.get('roomType')) == 'single' for room in accommodation_room_requests(people_result['people'], room_result['rooms'])),
                 'shared': sum(normalize_string(room.get('roomType')) == 'double shared' for room in accommodation_room_requests(people_result['people'], room_result['rooms'])),
             },
@@ -1723,8 +1743,17 @@ def recalculate_fis_import_preview(preview, *, read_context=None):
     JSON-compatible preview persisted on an ImportSessionVersion.
     """
     if read_context is None:
-        read_context = ImportReadContext()
+        read_context = ImportReadContext(import_event_id(preview.get('eventId')))
+    if read_context.event_id != import_event_id(preview.get('eventId')):
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'ReadContext und Preview gehören zu verschiedenen Events.')
+    preview['eventId'] = read_context.event_id
+    for person in preview.get('people', []):
+        if person.get('eventId') is not None and import_event_id(person['eventId']) != read_context.event_id:
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Person und Preview gehören zu verschiedenen Events.')
+        person['eventId'] = read_context.event_id
+        person['fisCode'] = canonical_fis_code(person.get('fisCode')) or None
     people, rooms = preview.get('people', []), preview.get('rooms', [])
+    validate_people_identities(people, read_context.athlete_maps)
     missing_evidence = []
     if any(str(column).upper().startswith('WSC_') for column in preview.get('entriesColumns', [])):
         missing_evidence = [{'code': 'ENTRY_WSC_SOURCE_EVIDENCE_MISSING',
@@ -1744,7 +1773,12 @@ def recalculate_fis_import_preview(preview, *, read_context=None):
         preview.get('carriedSingleRoomQuotaExemptKeys', []),
         preview.get('singleRoomQuotaExemptOverrideRevisions', {}), read_context=read_context)
     roster = [preview_approval_person(p, competitions_by_id=read_context.competitions_by_id if read_context is not None else None) for p in people]
-    decisions = [db.session.get(ImportApproval, key) for key in preview.get('_currentApprovalIds', [])]
+    decision_ids = set(preview.get('_currentApprovalIds', []))
+    decisions = ImportApproval.query.join(ImportSession).filter(
+        ImportSession.event_id == read_context.event_id, ImportApproval.id.in_(decision_ids)).options(
+            db.joinedload(ImportApproval.session).selectinload(ImportSession.versions)).all() if decision_ids else []
+    if {d.id for d in decisions} != decision_ids:
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Genehmigungen fehlen oder gehören zu einem anderen Event.')
     for person, current in zip(people, roster):
         person.pop('_reviewApproval', None)
         for decision in decisions:
@@ -1804,9 +1838,9 @@ def _apply_person_record(athlete, person, now, *, rate_override=None, preserve_m
         athlete.accommodation_rate_category = rate['accommodationRateCategory']
         athlete.accommodation_rate_source = rate['accommodationRateSource']
     athlete.function = person.get('function')
-    athlete.competitor_id = person.get('competitorId')
+    athlete.competitor_id = person.get('competitorId') or athlete.competitor_id
     athlete.accred_id = person.get('accredId')
-    athlete.fis_code = person.get('fisCode')
+    athlete.fis_code = person.get('fisCode') or athlete.fis_code
     athlete.lastname = person.get('lastname')
     athlete.firstname = person.get('firstname')
     athlete.nation_code = person.get('nationCode')
@@ -1886,40 +1920,13 @@ def _typed_import_changes(changed_keys):
 
 
 def _remove_athletes(athletes):
-    """Delete people and every operational reference without orphaning bookings."""
-    removed_names = {f'{athlete.lastname}, {athlete.firstname}'.strip().casefold() for athlete in athletes}
-    ids = [athlete.id for athlete in athletes]
-    if not ids:
-        return 0
-    booking_ids = {row.room_booking_id for row in RoomBookingOccupant.query.filter(RoomBookingOccupant.athlete_id.in_(ids)).all()}
-    RoomBookingOccupant.query.filter(RoomBookingOccupant.athlete_id.in_(ids)).delete(synchronize_session=False)
-    RoomAssignment.query.filter((RoomAssignment.athlete_id.in_(ids)) | (RoomAssignment.shared_with_athlete_id.in_(ids))).delete(synchronize_session=False)
-    FisRoomAssignment.query.filter((FisRoomAssignment.person1_id.in_(ids)) | (FisRoomAssignment.person2_id.in_(ids))).delete(synchronize_session=False)
-    for booking_id in booking_ids:
-        if not RoomBookingOccupant.query.filter_by(room_booking_id=booking_id).first():
-            RoomBooking.query.filter_by(id=booking_id).delete(synchronize_session=False)
-    for partner in Athlete.query.filter(~Athlete.id.in_(ids)).all():
-        if (partner.shared_with_name or '').strip().casefold() in removed_names:
-            partner.shared_with_name = None
-    Athlete.query.filter(Athlete.id.in_(ids)).delete(synchronize_session=False)
-    return len(ids)
+    raise ImportValidationError('IMPORT_DESTRUCTIVE_CHANGE_REVIEW_REQUIRED',
+        'Personenlöschung erfordert den abgesicherten Snapshot-Änderungsplan (PR 3).')
 
 
 def _remove_duplicates():
-    """Collapse legacy duplicate identities after each authoritative import."""
-    groups = {}
-    for athlete in Athlete.query.order_by(Athlete.id).all():
-        identifiers = [('fis', athlete.fis_code), ('accred', athlete.accred_id), ('competitor', athlete.competitor_id)]
-        # FIS exports use numeric zero for an unassigned accreditation. It is
-        # source metadata, not a shared identity for unrelated staff members.
-        identifiers = [(kind, value) for kind, value in identifiers
-                       if not (kind == 'accred' and value and
-                               value.strip() in {'0', '0.0'})]
-        key = next(((kind, value.strip().casefold()) for kind, value in identifiers if value and value.strip()), None)
-        if key:
-            groups.setdefault(key, []).append(athlete)
-    duplicates = [duplicate for records in groups.values() for duplicate in records[1:]]
-    return _remove_athletes(duplicates)
+    raise ImportValidationError('IMPORT_IDENTITY_CONFLICT',
+        'Automatische Dublettenlöschung ist deaktiviert; Identitäten ausdrücklich prüfen.')
 
 
 def validate_fis_import_token(preview_token):
@@ -1936,10 +1943,9 @@ def validate_fis_import_token(preview_token):
 def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None, *, confirmer=None):
     """Apply one validated preview as an authoritative full nation snapshot.
 
-    This is the destructive persistence boundary of the import lifecycle, not
-    a second preview: imported people and competition memberships are replaced,
-    approval/exemption state is resolved, and people absent from each imported
-    nation are removed together with dependent operational references.  Existing
+    This persistence boundary updates event-scoped people and memberships.
+    Missing people block confirmation until PR3 provides a reviewed snapshot
+    change plan; no automatic deletion or duplicate merging is performed.  Existing
     room bookings for retained people are intentionally preserved; physical room
     type, person approval state, and ``counts_as_single`` remain independent.
 
@@ -1958,7 +1964,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     db.session.add(run)
     db.session.flush()
 
-    read_context = ImportReadContext()
+    read_context = ImportReadContext(import_event_id(preview.get('eventId')))
     athlete_maps = read_context.athlete_maps
     event, competitions_by_import_code = revalidate_confirmation_event(
         preview.get('eventId'), preview.get('people', []))
@@ -1966,15 +1972,27 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     version = ImportSessionVersion.query.join(ImportSession,
         ImportSession.current_version_id == ImportSessionVersion.id).filter(
             ImportSessionVersion.preview_token == preview_token).first()
+    if version:
+        validate_session_event(version.session, preview, read_context.event_id)
     preview['_currentApprovalIds'] = [a.id for a in version.session.current_approvals] if version else []
     recalculate_fis_import_preview(preview, read_context=read_context)
     validate_fis_import_token(preview_token)
     if version:
+        validate_session_event(version.session, preview, read_context.event_id)
         requirements = quota_requirement_errors(preview, version.session.current_approvals, read_context=read_context)
         if requirements:
             raise ImportValidationError('QUOTA_REQUIREMENTS_UNREVIEWED',
                 'Aktuelle Quotenverletzungen sind nicht durch anwendbare Entscheidungen abgedeckt.',
                 details={'requirements': requirements})
+
+    # PR3 will introduce an explicitly reviewed destructive snapshot change plan.
+    imported_nations = {p.get('nationCode') for p in preview['people'] if p.get('nationCode')}
+    matched_ids = {a.id for p in preview['people'] if (a := _find_existing_athlete(p, athlete_maps))}
+    missing = [a for a in read_context.athletes if a.nation_code in imported_nations and a.id not in matched_ids]
+    if missing:
+        raise ImportValidationError('IMPORT_DESTRUCTIVE_CHANGE_REVIEW_REQUIRED',
+            'Fehlende Personen benötigen einen ausdrücklich geprüften Snapshot-Scope (PR 3).',
+            event_id=read_context.event_id, details={'personIds': [a.id for a in missing]})
 
     persisted_people = {}
     created = 0
@@ -1994,6 +2012,12 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
         **{key: value['decisionId'] for key, value in preserved.items()},
         **approved_extra_single_room_decisions,
     }
+    requested_ids = {value for value in approved_extra_single_room_decisions.values() if value is not None}
+    scoped_decisions = {d.id: d for d in ImportApproval.query.join(ImportSession).filter(
+        ImportSession.event_id == read_context.event_id, ImportApproval.id.in_(requested_ids)).options(
+            db.joinedload(ImportApproval.session).selectinload(ImportSession.versions)).all()} if requested_ids else {}
+    if set(scoped_decisions) != requested_ids:
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Genehmigung fehlt oder gehört zu einem anderen Event.')
     resolved_decisions = {}
     current_roster = [preview_approval_person(p, competitions_by_id=read_context.competitions_by_id if read_context is not None else None) for p in preview.get('people', [])]
     unresolved_decisions = []
@@ -2002,7 +2026,9 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
         if key not in approved_extra_single_room_decisions:
             continue
         decision_id = approved_extra_single_room_decisions[key]
-        decision = db.session.get(ImportApproval, decision_id) if decision_id is not None else None
+        decision = scoped_decisions.get(decision_id)
+        if decision_id is not None and (not decision or not approval_event_matches(decision, read_context.event_id)):
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Genehmigung gehört zu einem anderen Event.')
         applicable = quota_keys(person, preview.get('people', [])) & applicable_approval_groups(decision, preview_approval_person(person, competitions_by_id=read_context.competitions_by_id if read_context is not None else None), key, current_roster)
         if applicable:
             resolved_decisions[key] = decision_id
@@ -2076,7 +2102,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 # Persist earlier records before populate_existing can refresh an identity
                 # repeated in this snapshot. Keep the existing row-lock/base check.
                 db.session.flush()
-                athlete = Athlete.query.filter_by(id=athlete.id).with_for_update().populate_existing().one()
+                athlete = Athlete.query.filter_by(id=athlete.id, event_id=read_context.event_id).with_for_update().populate_existing().one()
             missing_roomlist = bool(preview.get('roomListHasNoData') and existing_before is not None)
             _apply_person_record(athlete, person, now, rate_override=rate_override,
                                  preserve_missing_roomlist=missing_roomlist)
@@ -2109,10 +2135,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 athlete.single_room_status = 'NONE'
                 athlete.single_room_entitlement = None
                 athlete.single_room_decision_id = None
-            athlete.competitions = [
-                competitions_by_import_code[code]
-                for code in person.get('competitionImportCodes', [])
-            ]
+            athlete.competitions = list({competitions_by_import_code[code].id: competitions_by_import_code[code]
+                for code in person.get('competitionImportCodes', [])}.values())
             # _apply_person_record retains the source's legacy discipline label.
             # Exact memberships live only in AthleteCompetition, never in this label.
             room = room_by_person.get(person.get('matchKey'))
@@ -2170,19 +2194,20 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             identity_after = (athlete.fis_code, athlete.competitor_id, athlete.lastname,
                               athlete.firstname, athlete.nation_code)
             if identity_before != identity_after:
-                # Keep collision precedence exactly as a fresh full index, but
-                # unchanged identities need no rebuild and never reread the DB.
-                athlete_maps = _build_existing_athlete_maps(read_context.athletes)
+                # Rebuild only for changed identities, without rereading other events.
+                athlete_maps = _build_existing_athlete_maps(read_context.athletes, event_id=read_context.event_id)
 
     db.session.flush()
 
-    # A nation list is authoritative: people no longer present disappear from
-    # operations together with their assignments and partner references.
+    # Recheck the scoped set after flush; never delete missing people implicitly.
     imported_nations = {person['nationCode'] for person in preview['people'] if person.get('nationCode')}
     imported_ids = {athlete.id for athlete in persisted_people.values()}
-    missing = Athlete.query.filter(Athlete.nation_code.in_(imported_nations), ~Athlete.id.in_(imported_ids)).all()
-    removed = _remove_athletes(missing)
-    deduplicated = _remove_duplicates()
+    missing = Athlete.query.filter(Athlete.event_id == read_context.event_id, Athlete.nation_code.in_(imported_nations), ~Athlete.id.in_(imported_ids)).all()
+    if missing:
+        raise ImportValidationError('IMPORT_DESTRUCTIVE_CHANGE_REVIEW_REQUIRED',
+            'Fehlende Personen benötigen einen ausdrücklich geprüften Snapshot-Scope (PR 3).',
+            event_id=read_context.event_id, details={'personIds': [a.id for a in missing]})
+    removed = deduplicated = 0
 
     run.finished_at = datetime.utcnow()
     db.session.commit()

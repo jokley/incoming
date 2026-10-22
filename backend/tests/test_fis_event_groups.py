@@ -1,3 +1,4 @@
+from test_support import prepare_import_championship
 """Business Change 1C: exact groups and personal athlete-derived allowance contexts."""
 from copy import deepcopy
 from datetime import datetime
@@ -225,7 +226,7 @@ def test_initial_import_exposes_invalid_personal_gender_as_blocking_validation(d
     rooms = pd.DataFrame(columns=sorted(ROOM_REQUIRED_COLUMNS))
     frames = iter([entries, rooms])
     monkeypatch.setattr('excel_import.load_first_sheet', lambda path: next(frames))
-    preview = create_fis_import_preview('entries', 'rooms')
+    preview = create_fis_import_preview('entries', 'rooms', prepare_import_championship(Competition.query.all()))
     assert not preview['isValid']
     assert any(e['code'] == 'ENTRY_QUOTA_GENDER_INVALID' for e in preview['errors'])
     assert PREVIEW_STORE[preview['previewToken']]['quotaChecks'] == []
@@ -296,7 +297,7 @@ def test_mapped_official_without_athletes_is_explicit_preview_review(database):
     c = Competition(**COMPETITION_BY_IMPORT_CODE['WSC_SXT_A_8185']._asdict())
     db.session.add(c); db.session.commit()
     p = person(role='Official', gender='M'); p['competitionIds'] = [str(c.id)]
-    preview = {'people': [p], 'rooms': [], 'errors': [], 'warnings': []}
+    preview = {'eventId': prepare_import_championship([c]).id, 'people': [p], 'rooms': [], 'errors': [], 'warnings': []}
     recalculate_fis_import_preview(preview)
     assert preview['quotaChecks'] == []
     assert any(w['code'] == 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED' for w in preview['warnings'])

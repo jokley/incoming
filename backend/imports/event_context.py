@@ -21,6 +21,8 @@ class ImportValidationError(ValueError):
 def normalize_event_id(value):
     """Return the integer PK representation used by PostgreSQL event queries."""
     try:
+        if isinstance(value, bool) or not str(value).isascii() or not str(value).isdigit() or int(value) <= 0:
+            raise ValueError()
         return int(value)
     except (TypeError, ValueError):
         raise ImportValidationError(
@@ -54,3 +56,28 @@ def revalidate_confirmation_event(event_id, people, *, validate_codes=True):
                 )
 
     return event, competitions_by_import_code
+
+
+def import_event_id(value=None):
+    """Explicit selection wins. Compatibility is allowed only when absent."""
+    from flask import g, has_request_context
+    if value is None and has_request_context():
+        value = getattr(g, 'import_event_id', None)
+    if value is None:
+        from event_ownership_runtime import configured_event_id
+        value = configured_event_id()
+    return normalize_event_id(value)
+
+
+def validate_session_event(session, preview=None, event_id=None):
+    if session.current_version is not None and session.current_version.session_id != session.id:
+        raise ImportValidationError('IMPORT_SESSION_VERSION_MISMATCH', 'Aktuelle Version gehört zu einer anderen Importsession.')
+    expected = import_event_id(event_id if event_id is not None else session.event_id)
+    if session.event_id != expected or (preview is not None and preview.get('eventId') is not None
+            and normalize_event_id(preview['eventId']) != expected):
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH',
+            'ImportSession, Preview und ausgewähltes Event müssen übereinstimmen.', event_id=expected)
+    if preview is not None:
+        # Eventless historic snapshots inherit their validated owning session.
+        preview['eventId'] = expected
+    return expected

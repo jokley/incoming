@@ -4,6 +4,7 @@ Detailed 2027 labels are frozen evidence of the old catalogue, never operative
 membership. Intersect their exact codes with the person's current memberships;
 ambiguous/unresolvable records remain review work rather than guessed groups.
 """
+from imports.normalization import canonical_fis_code
 from competitions import COMPETITIONS, normalize_competition_ids
 from quota_service import normalize_gender, quota_keys
 
@@ -53,8 +54,20 @@ def quota_person(person):
 def person_keys(person):
     """Stable import identities, including the exact name-key fallback."""
     from imports.identity import build_name_key
-    return {str(value) for value in (person.fis_code, person.competitor_id,
+    fis = canonical_fis_code(person.fis_code)
+    return {str(value) for value in (person.fis_code, fis,
+        fis + '.0' if fis and fis.isdigit() else None, person.competitor_id,
         build_name_key(person.lastname, person.firstname, person.nation_code)) if value}
+
+
+def _evidence_keys(person, person_key):
+    if person_key is None:
+        return person_keys(person)
+    keys = {str(person_key)}
+    fis = canonical_fis_code(person.fis_code)
+    if fis and fis.isdigit() and str(person_key) in {fis, fis + '.0'}:
+        keys.update((fis, fis + '.0'))
+    return keys
 
 
 def historical_approval_groups(details, person, person_key=None, roster=None):
@@ -62,7 +75,7 @@ def historical_approval_groups(details, person, person_key=None, roster=None):
     gender = normalize_gender(details.get('gender'))
     if details.get('nationCode') != person.nation_code or gender not in {'M', 'W'}:
         return set()
-    keys = {str(person_key)} if person_key is not None else person_keys(person)
+    keys = _evidence_keys(person, person_key)
     candidates = [c for c in details.get('singleRoomCandidates', []) if str(c.get('personKey')) in keys]
     if len(candidates) > 1:
         return set()
@@ -99,7 +112,7 @@ def historical_approval_groups(details, person, person_key=None, roster=None):
             roster = [person]
         else:
             from models import Athlete
-            roster = Athlete.query.filter_by(nation_code=person.nation_code).all()
+            roster = Athlete.query.filter_by(event_id=person.event_id, nation_code=person.nation_code).all()
     current_keys = quota_keys(quota_person(person), [quota_person(p) for p in roster])
     return {(person.nation_code or '', c.quota_discipline, gender)
             for c in supported if c.quota_discipline} & current_keys
@@ -122,7 +135,7 @@ def historical_approval_evidence(approval):
         # reviewed. Missing decision evidence must remain unresolved here.
         return details
     version = db.session.get(ImportSessionVersion, approval.version_id)
-    if not version:
+    if not version or version.session_id != session.id:
         return details
     people = json.loads(version.preview_json or '{}').get('people', [])
     result = deepcopy(details)
@@ -148,17 +161,19 @@ def applicable_approval_groups(approval, person, person_key=None, roster=None):
     import json
     if not approval or approval.decision != 'APPROVED':
         return set()
+    if not approval_event_matches(approval, getattr(person, 'event_id', None)):
+        return set()
     selected = {str(value) for value in json.loads(approval.approved_person_keys_json or '[]')}
     if person_key is not None and str(person_key) not in person_keys(person):
         return set()
-    keys = {str(person_key)} if person_key is not None else person_keys(person)
+    keys = _evidence_keys(person, person_key)
     matched = selected & keys
     if len(matched) != 1:
         return set()
     if len(selected) > 1:
         if roster is None:
             from models import Athlete
-            roster = Athlete.query.filter_by(nation_code=person.nation_code).all()
+            roster = Athlete.query.filter_by(event_id=person.event_id, nation_code=person.nation_code).all()
         details = historical_approval_evidence(approval)
         for key in selected:
             people = [p for p in roster if key in person_keys(p)]
@@ -187,11 +202,12 @@ def preview_approval_person(person, *, competitions_by_id=None):
     """Current DB-resolved preview evidence, never a static catalogue lookup."""
     from types import SimpleNamespace
     from models import Competition
+    from flask import has_app_context, current_app
     ids = normalize_competition_ids(person.get('competitionIds') or [])
     competitions = ([competitions_by_id[key] for key in ids if key in competitions_by_id]
                     if competitions_by_id is not None else
                     Competition.query.filter(Competition.id.in_(ids)).all() if ids else [])
-    return SimpleNamespace(nation_code=person.get('nationCode'), gender=person.get('gender'),
+    return SimpleNamespace(event_id=person.get('eventId') or (current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None), nation_code=person.get('nationCode'), gender=person.get('gender'),
         function=person.get('function'),
         for_gender=person.get('forGender'), fis_code=person.get('fisCode'),
         competitor_id=person.get('competitorId'), lastname=person.get('lastname'),
@@ -207,14 +223,17 @@ def approval_event_matches(approval, event_id):
     """
     import json
     from models import ImportSessionVersion, db
+    from models import ImportSession
     if event_id is None:
-        return True  # Retain eventless internal/legacy compatibility.
+        return False
+    session = db.session.get(ImportSession, getattr(approval, 'session_id', None))
+    if not session or str(session.event_id) != str(event_id):
+        return False
     details = json.loads(approval.quota_details_json or '{}')
     saved_event = details.get('eventId')
-    if saved_event is None:
-        version_id = getattr(approval, 'version_id', None)
-        version = db.session.get(ImportSessionVersion, version_id) if version_id else None
-        if not version or version.session_id != getattr(approval, 'session_id', None):
-            return False
-        saved_event = json.loads(version.preview_json or '{}').get('eventId')
-    return saved_event is not None and str(saved_event) == str(event_id)
+    version_id = getattr(approval, 'version_id', None)
+    version = db.session.get(ImportSessionVersion, version_id) if version_id else None
+    if version_id and (not version or version.session_id != session.id):
+        return False
+    version_event = json.loads(version.preview_json or '{}').get('eventId') if version else None
+    return all(value is None or str(value) == str(event_id) for value in (saved_event, version_event))

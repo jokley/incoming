@@ -184,3 +184,25 @@ def detect_day_columns(df):
 def validate_required_columns(df, required_columns):
     present = set(df.columns)
     return sorted(required_columns - present)
+
+
+def canonical_fis_code(value):
+    """Only exact integer Excel renderings; strings retain leading zeroes.
+
+    No float parsing of arbitrary IDs. Unsafe numeric precision and non-integral
+    values are rejected instead of being repaired or matched to another person.
+    """
+    import math
+    if value is None or pd.isna(value) or value == '':
+        return ''
+    if isinstance(value, bool):
+        raise ValueError('Invalid FIS code: boolean')
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer() or abs(value) >= 2**53:
+            raise ValueError('Invalid or imprecise numeric FIS code')
+    raw = str(value).strip()
+    if re.fullmatch(r'[A-Za-z][A-Za-z0-9_-]*', raw):
+        return raw  # Preserve opaque legacy identifiers; never parse them as numbers.
+    if not re.fullmatch(r'[0-9]+(?:\.0)?', raw):
+        raise ValueError('Invalid FIS code: expected an exact non-negative integer')
+    return raw[:-2] if raw.endswith('.0') else raw

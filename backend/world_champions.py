@@ -6,10 +6,7 @@ from flask import has_request_context, request
 from models import AuditEvent, WorldChampion, db
 
 
-def canonical_fis_code(value):
-    """Excel integer rendering is identity-preserving, never fuzzy matching."""
-    value = str(value or '').strip()
-    return value[:-2] if re.fullmatch(r'[0-9]+\.0', value) else value
+from imports.normalization import canonical_fis_code
 
 
 def persisted_manual_revision(existing):

@@ -7,7 +7,7 @@ import pytest
 
 from test_real_workbook_import import database, preview, add_session
 import excel_import as imports
-from models import db, Competition, ImportApproval, Athlete, RoomBooking, ImportRun
+from models import db, Competition, ImportApproval, ImportSession, Athlete, RoomBooking, ImportRun
 from competitions import resolve_quota_memberships
 
 
@@ -170,6 +170,12 @@ def test_single_decision_coverage_is_distinct_and_does_not_credit_preserved_peop
     approvals = [ImportApproval(nation='USA', decision='APPROVED',
         quota_details_json=json.dumps(details), approved_person_keys_json=json.dumps([candidate['personKey']]))
         for candidate in candidates]
+    owner = ImportSession(event_id=event.id, nation='USA')
+    db.session.add(owner); db.session.flush()
+    for approval in approvals:
+        approval.session_id=owner.id;approval.approval_type='NATION_APPROVED';approval.description='Evidence';approval.username='test'
+        db.session.add(approval)
+    db.session.commit()
     frozen = approvals[0].quota_details_json
     assert imports.quota_requirement_errors(result, approvals[:1])
     assert not imports.quota_requirement_errors(result, approvals)

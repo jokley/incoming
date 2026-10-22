@@ -123,7 +123,8 @@ def test_saved_preview_losing_exact_evidence_is_blocked():
     with app.app_context():
         db.create_all()
         parsed = parse_entries_list(frame(), MAPS)
-        preview = dict(eventId=None, rooms=[], **parsed)
+        from test_support import prepare_import_championship
+        preview = dict(eventId=prepare_import_championship().id, rooms=[], **parsed)
         recalculate_fis_import_preview(preview)
         assert len([e for e in preview['errors'] if e['code']=='ENTRY_WSC_MEMBERSHIP_UNRESOLVED']) == 4
         assert all(not p['quotaDisciplines'] for p in preview['people'])

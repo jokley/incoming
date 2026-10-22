@@ -138,7 +138,7 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             self.assertEqual(Athlete.query.one().discipline, 'Snowboard')
             self.assertEqual(len(Athlete.query.one().competitions), 5)
 
-    def test_zero_accreditation_preserves_staff_but_real_duplicate_ids_still_collapse(self):
+    def test_zero_accreditation_and_duplicates_are_not_automatically_deleted(self):
         from excel_import import _remove_duplicates
         with app.app_context():
             staff = [Athlete(firstname=f'Staff {i}', lastname='Person', nation_code='AUS',
@@ -147,9 +147,10 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             genuine = [Athlete(firstname='Duplicate', lastname='Person', nation_code='AUS',
                        function='NSA Coach', accred_id='12345') for _ in range(2)]
             db.session.add_all([*staff,*genuine]); db.session.commit()
-            self.assertEqual(_remove_duplicates(), 1)
-            db.session.commit()
-            self.assertEqual(Athlete.query.count(), 5)
+            from imports.event_context import ImportValidationError
+            with self.assertRaises(ImportValidationError):_remove_duplicates()
+            db.session.rollback()
+            self.assertEqual(Athlete.query.count(), 6)
             self.assertEqual({a.competitor_id for a in Athlete.query.filter(Athlete.competitor_id.isnot(None)).all()},
                              {f'staff-{i}' for i in range(4)})
 
@@ -162,7 +163,7 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             self.assertEqual(athlete.discipline, 'Moguls')
             self.assertEqual([c.import_code for c in athlete.competitions], ['DM'])
 
-    def test_nation_snapshot_replaces_memberships_and_removes_absent_people_across_disciplines(self):
+    def test_missing_people_block_before_membership_changes(self):
         with app.app_context():
             event = self.event()
             keep, absent, other_group, untouched = [self.athlete(*args) for args in
@@ -177,17 +178,14 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             untouched_booking = booking.to_dict()
             person = self.person('KEEP', codes=['MO', 'DM'])
             self.preview('nation', event, [person])
-            result = confirm_fis_import('nation')
-            db.session.expire_all()
-            self.assertEqual(result['summary']['peopleRemoved'], 2)
-            self.assertEqual({a.fis_code for a in Athlete.query.all()}, {'KEEP', 'SWISS'})
-            self.assertEqual({c.import_code for c in Athlete.query.filter_by(fis_code='KEEP').one().competitions}, {'MO', 'DM'})
-            swiss = db.session.get(Athlete, untouched_id)
-            self.assertEqual((swiss.nation_code, swiss.discipline, swiss.athletes_last_seen_at), ('SUI', 'Moguls', None))
-            self.assertEqual([c.import_code for c in swiss.competitions], ['AE'])
-            self.assertEqual(db.session.get(RoomBooking, booking.id).to_dict(), untouched_booking)
+            from imports.event_context import ImportValidationError
+            with self.assertRaises(ImportValidationError):confirm_fis_import('nation')
+            db.session.rollback()
+            self.assertEqual(Athlete.query.count(),4)
+            self.assertEqual({c.import_code for c in keep.competitions},{'AE'})
+            self.assertEqual(db.session.get(RoomBooking,booking.id).to_dict(),untouched_booking)
 
-    def test_disposition_removed_reporting_is_discipline_narrowed_but_confirmation_is_nation_wide(self):
+    def test_confirmation_blocks_nation_scope_removal_until_reviewed_plan(self):
         with app.app_context():
             event = self.event()
             db.session.add_all([self.athlete('KEEP'), self.athlete('SAME'),
@@ -198,8 +196,10 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             removed = analysis['categories']['removedAthletes']['records']
             self.assertEqual([r['athlete'] for r in removed], ['SAME Person'])
             self.preview('scope', event, [person])
-            self.assertEqual(confirm_fis_import('scope')['summary']['peopleRemoved'], 2)
-            self.assertEqual([a.fis_code for a in Athlete.query.all()], ['KEEP'])
+            from imports.event_context import ImportValidationError
+            with self.assertRaises(ImportValidationError):confirm_fis_import('scope')
+            db.session.rollback()
+            self.assertEqual(Athlete.query.count(),3)
 
     def test_reimport_preserves_booking_identity_dates_occupants_type_and_explicit_false(self):
         with app.app_context():
@@ -232,7 +232,7 @@ class ImportSafetyBaselineTest(unittest.TestCase):
                 self.assertIs(retained.counts_as_single, False)
                 self.assertEqual(Athlete.query.filter_by(fis_code='KEEP').one().single_room_status, 'APPROVED_EXTRA')
 
-    def test_snapshot_removal_detaches_absent_occupants_and_deletes_only_empty_bookings(self):
+    def test_snapshot_removal_blocker_preserves_all_occupants_and_bookings(self):
         with app.app_context():
             event = self.event()
             keep, partner, solo = [self.athlete(key) for key in ('KEEP', 'PARTNER', 'SOLO')]
@@ -250,14 +250,12 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             shared_id, empty_id, keep_id = shared.id, empty.id, keep.id
             person = {**self.person('KEEP'), 'sharedWithName': 'Person, PARTNER'}
             self.preview('remove-bookings', event, [person])
-            self.assertEqual(confirm_fis_import('remove-bookings')['summary']['peopleRemoved'], 2)
-            db.session.remove()
-            retained = db.session.get(RoomBooking, shared_id)
-            self.assertEqual([o.athlete_id for o in retained.occupants], [keep_id])
-            self.assertIs(retained.counts_as_single, False)
-            self.assertIsNone(db.session.get(RoomBooking, empty_id))
-            self.assertEqual(RoomBookingOccupant.query.count(), 1)
-            self.assertIsNone(db.session.get(Athlete, keep_id).shared_with_name)
+            from imports.event_context import ImportValidationError
+            with self.assertRaises(ImportValidationError):confirm_fis_import('remove-bookings')
+            db.session.rollback()
+            self.assertEqual(RoomBooking.query.count(),2)
+            self.assertEqual(RoomBookingOccupant.query.count(),3)
+            self.assertEqual(Athlete.query.count(),3)
 
     def test_consecutive_snapshots_preserve_only_decision_group_then_break_continuity(self):
         with app.app_context():

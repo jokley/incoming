@@ -273,7 +273,7 @@ def test_staged_no_room_single_request_produces_no_ez_or_room_demand(database,mo
 def test_no_room_cannot_receive_new_active_single_room_approval(database):
     p=Athlete(firstname='One',lastname='Person',nation_code='AUS',fis_code='123',function='Athlete',accommodation_requirement='NO_ROOM',single_room_status='APPROVED_EXTRA')
     db.session.add(p);db.session.commit()
-    with pytest.raises(imports.ImportValidationError,match='Keine aktive EZ'):
+    with pytest.raises(imports.ImportValidationError,match='Genehmigung nicht gefunden'):
         imports.apply_active_single_room_decision({'singleRoomCandidates':[{'personKey':'123'}]},['123'],None)
     assert p.single_room_status=='APPROVED_EXTRA'  # old history is retained, no new decision applied
 

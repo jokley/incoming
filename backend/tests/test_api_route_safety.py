@@ -150,7 +150,10 @@ class ApiRouteSafetyTest(unittest.TestCase):
                             patch.dict(ROLE_PERMISSIONS, {'baseline-role': {permission}}):
                         response = self.client.open(path, method=method,
                             headers=self.headers('baseline-role'))
-                        self.assertEqual(response.status_code, 418 if permission == required else 403)
+                        if permission == required and path.startswith(('/api/import/sessions/', '/api/import/approvals/')):
+                            self.assertEqual(response.status_code, 404)  # Context guard precedes the mocked handler.
+                        else:
+                            self.assertEqual(response.status_code, 418 if permission == required else 403)
 
     def test_options_remains_unauthenticated(self):
         for path in ROUTES:
