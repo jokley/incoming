@@ -74,6 +74,15 @@ app.register_blueprint(world_champions)
 app.register_blueprint(accommodation_segments)
 
 
+from event_ownership_runtime import OperationalEventError
+
+
+@app.errorhandler(OperationalEventError)
+def operational_event_error(error):
+    db.session.rollback()
+    return jsonify(error='OPERATIONAL_EVENT_REQUIRED', message=str(error)), 409
+
+
 @app.errorhandler(RequirementConflict)
 def requirement_conflict_response(error):
     db.session.rollback()
@@ -1902,7 +1911,7 @@ def preview_fis_import():
                 return jsonify(result), 200
             is_new = session is None
             if is_new:
-                session = ImportSession(nation=nation, discipline=result.get('detectedDiscipline'),
+                session = ImportSession(event_id=event_context.id, nation=nation, discipline=result.get('detectedDiscipline'),
                     status='DRAFT')
                 db.session.add(session)
                 db.session.flush()

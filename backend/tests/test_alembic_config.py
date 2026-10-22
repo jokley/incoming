@@ -47,7 +47,7 @@ class AlembicConfigurationTest(unittest.TestCase):
         environment = os.environ.copy()
         environment['DATABASE_URL'] = 'postgresql://incoming_test:incoming_test@127.0.0.1:55432/incoming_test'
         result = subprocess.run(
-            [sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'upgrade', 'head', '--sql'],
+            [sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'upgrade', '20261016_02', '--sql'],
             cwd=BACKEND_DIR,
             env=environment,
             capture_output=True,

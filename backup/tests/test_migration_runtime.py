@@ -43,7 +43,7 @@ class MigrationRuntimeTest(unittest.TestCase):
             # Offline mode must never connect; this loopback URL is a dummy.
             env['DATABASE_URL'] = 'postgresql://test:test@127.0.0.1:1/offline_only'
             result = subprocess.run([sys.executable, '-I', '-m', 'alembic', '-c',
-                str(backend / 'alembic.ini'), 'upgrade', '20261014_01:head', '--sql'],
+                str(backend / 'alembic.ini'), 'upgrade', '20261014_01:20261016_02', '--sql'],
                 cwd=backend, env=env, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('accommodation_rate_category', result.stdout)
@@ -51,6 +51,14 @@ class MigrationRuntimeTest(unittest.TestCase):
             records = json.loads((backend / 'reference_data/engadin_2025_world_champions.json').read_text())
             self.assertTrue(records)
             self.assertTrue((backend / 'quota_catalogue.py').is_file())
+            self.assertTrue((backend / 'event_ownership.py').is_file())
+            self.assertTrue((backend / 'event_ownership_runtime.py').is_file())
+            guarded = subprocess.run([sys.executable, '-I', '-m', 'alembic', '-c',
+                str(backend / 'alembic.ini'), 'upgrade', '20261016_02:head', '--sql'],
+                cwd=backend, env=env, capture_output=True, text=True)
+            self.assertNotEqual(guarded.returncode, 0)
+            self.assertIn('offline SQL is unsafe', guarded.stderr)
+
 
 
 if __name__ == '__main__':
