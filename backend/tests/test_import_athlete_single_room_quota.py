@@ -1,5 +1,6 @@
 from flask import Flask
 import pytest
+from test_support import prepare_import_championship
 
 from excel_import import build_quota_warnings
 from models import Athlete, Hotel, RoomBooking, RoomBookingOccupant, RoomType, db
@@ -16,6 +17,7 @@ def database():
     db.init_app(app)
     with app.app_context():
         db.create_all()
+        prepare_import_championship()
         yield
         db.session.remove()
         db.drop_all()

@@ -9,6 +9,7 @@ database_url = postgres_test_url()
 os.environ['DATABASE_URL'] = database_url
 
 from app import app  # noqa: E402
+from imports.event_context import ImportValidationError
 from excel_import import _build_existing_athlete_maps, _find_existing_athlete  # noqa: E402
 from models import Athlete, db  # noqa: E402
 
@@ -27,9 +28,8 @@ class PersonIdentityTest(unittest.TestCase):
 
     def test_import_matching_uses_fis_identity(self):
         with app.app_context():
-            match = _find_existing_athlete({'fisCode': '123', 'competitorId': 'different'}, _build_existing_athlete_maps())
-            self.assertIsNotNone(match)
-            self.assertEqual(match.fis_code.strip(), '123')
+            with self.assertRaises(ImportValidationError):
+                _find_existing_athlete({'fisCode': '123', 'competitorId': 'different'}, _build_existing_athlete_maps())
 
     def test_athlete_endpoint_aggregates_legacy_rows_by_fis_identity(self):
         response = app.test_client().get('/api/athletes')

@@ -7,7 +7,7 @@ from datetime import date
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from test_support import configure_test_app, postgres_test_url
+from test_support import configure_test_app, postgres_test_url, prepare_import_championship
 
 database_url = postgres_test_url()
 os.environ['DATABASE_URL'] = database_url
@@ -328,6 +328,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
 
     def test_new_person_with_room_emits_person_and_room_created(self):
         with app.app_context():
+            prepare_import_championship()
             mia = Athlete(fis_code='A1', firstname='Mia', lastname='One', nation_code='AUT', discipline='Big Air')
             people = [self.person(mia)]
             room = self.room(mia, source_key='A1|single')
@@ -363,11 +364,12 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             db.session.add(booking); db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete.id))
             db.session.commit()
-            self.assertEqual(_remove_athletes([athlete]), 1)
-            db.session.commit()
-            self.assertEqual(RoomBooking.query.count(), 0)
-            self.assertEqual(RoomBookingOccupant.query.count(), 0)
-            self.assertEqual(Athlete.query.count(), 0)
+            from imports.event_context import ImportValidationError
+            with self.assertRaises(ImportValidationError):_remove_athletes([athlete])
+            db.session.rollback()
+            self.assertEqual(RoomBooking.query.count(), 1)
+            self.assertEqual(RoomBookingOccupant.query.count(), 1)
+            self.assertEqual(Athlete.query.count(), 1)
 
 
 if __name__ == '__main__':

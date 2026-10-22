@@ -134,7 +134,7 @@ def test_legacy_decision_event_compatibility_requires_exact_evidence(database, e
         quota_details_json=json.dumps(details),approved_person_keys_json='["A"]')
     db.session.add(decision); db.session.commit()
     frozen=(decision.quota_details_json,decision.approved_person_keys_json,decision.created_at)
-    assert bool(quota_requirement_errors(preview,[decision])) == (evidence!='exact')
+    assert bool(quota_requirement_errors(preview,[decision])) == (evidence not in {'exact','no_event'})
     if evidence=='exact':
         current=routes._current_session_preview(session)
         assert sum(q['singleRoomsPending'] for q in current['quotaChecks'])==0

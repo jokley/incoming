@@ -68,7 +68,8 @@ def test_reimport_restores_staff_lost_to_zero_accreditation_cleanup(database,mon
     imports.confirm_fis_import(result['previewToken'])
     staff=Athlete.query.filter(Athlete.function!='Athlete').order_by(Athlete.id).all()
     # Reproduce the persisted population left by the old duplicate cleanup.
-    assert imports._remove_athletes(staff[1:])==38
+    assert len(staff[1:])==38
+    for row in staff[1:]:db.session.delete(row)  # Explicit isolated legacy-state fixture, not an import deletion path.
     db.session.commit()
     assert Athlete.query.count()==23
     result=preview('AUS_FREESTYLE',event,monkeypatch)

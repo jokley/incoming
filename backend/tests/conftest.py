@@ -25,7 +25,8 @@ def legacy_championship_fixture(request):
         if not has_app_context():
             return
         owned = [obj for obj in session.new if isinstance(obj, (Athlete,RoomBooking,ImportSession,HotelRoomInventory,AccommodationEvent,ImportRun))]
-        if not owned:
+        pending_events = [obj for obj in session.new if isinstance(obj, Event)]
+        if not owned and len(pending_events) != 1:
             return
         app = current_app._get_current_object()
         changed_configs.setdefault(app, app.config.get('OPERATIONAL_EVENT_ID'))
