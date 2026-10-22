@@ -64,4 +64,5 @@ class RuntimeSettings:
             RUNTIME_ENV=self.environment,
             BACKUP_DIR=str(self.backup_dir),
             BACKUP_SERVICE_URL=self.backup_service_url,
+            OPERATIONAL_EVENT_ID=os.environ.get("OPERATIONAL_EVENT_ID"),
         )

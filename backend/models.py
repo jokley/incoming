@@ -67,6 +67,7 @@ class AuditEvent(db.Model):
 class ImportRun(db.Model):
     """Tracks the latest import timestamps for change detection"""
     __tablename__ = 'import_run'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=True, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     import_type = db.Column(db.String(50), nullable=False)  # athletes | roomlist
@@ -96,9 +97,11 @@ SINGLE_ROOM_STATUSES = ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL'
 class ImportSession(db.Model):
     """Long-lived workflow for one nation; uploads are immutable versions."""
     __tablename__ = 'import_session'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
-    nation = db.Column(db.String(10), nullable=False, unique=True, index=True)
+    nation = db.Column(db.String(10), nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint('event_id', 'nation', name='uq_import_session_event_nation'),)
     discipline = db.Column(db.String(100))
     status = db.Column(db.String(30), nullable=False, default='DRAFT', index=True)
     # Break the session/version DDL cycle on PostgreSQL. SQLAlchemy keeps this
@@ -314,6 +317,7 @@ class Hotel(db.Model):
 class HotelRoomInventory(db.Model):
     """Verfügbare Zimmer pro Hotel, Zimmertyp und Zeitraum"""
     __tablename__ = 'hotel_room_inventory'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     hotel_id = db.Column(db.Integer, db.ForeignKey('hotel.id'), nullable=False)
@@ -346,6 +350,7 @@ class HotelRoomInventory(db.Model):
 class AccommodationEvent(db.Model):
     """Events/Disziplinen mit Bedarf an Zimmern"""
     __tablename__ = 'event'
+    championship_event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     discipline = db.Column(db.String(100), nullable=False)  # Big Air, Moguls, etc.
@@ -521,6 +526,7 @@ class EventCompetition(db.Model):
 class Athlete(db.Model):
     """Athleten und Staff"""
     __tablename__ = 'athlete'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
     __table_args__ = (
         db.CheckConstraint(
             "single_room_status IN ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')",
@@ -779,6 +785,7 @@ class RoomAssignment(db.Model):
 
 class RoomBooking(db.Model):
     __tablename__ = 'room_booking'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     # Bookings created by a simulation are removed by ownership, never by age
@@ -830,3 +837,9 @@ class RoomBookingOccupant(db.Model):
             'athlete': self.athlete.to_dict(),
             'role': self.role
         }
+
+
+# Compatibility ownership assignment and same-event membership validation.
+from sqlalchemy import event as _sa_event
+from event_ownership_runtime import apply_event_ownership
+_sa_event.listen(db.session, 'before_flush', apply_event_ownership)

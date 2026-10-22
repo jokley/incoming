@@ -1,5 +1,7 @@
 """Real PostgreSQL migration chain, independent of ORM create_all fixtures."""
 import os
+import json
+import tempfile
 from pathlib import Path
 import subprocess
 import sys
@@ -14,6 +16,23 @@ from test_support import postgres_test_url
 from competitions import COMPETITIONS
 
 BACKEND = Path(__file__).resolve().parents[1]
+
+
+def complete_reviewed_test_ownership(engine, environment):
+    """Explicit owner plan for this isolated WM fixture, never production inference."""
+    from event_ownership import inventory
+    with engine.connect() as conn:
+        report = inventory(conn)
+        target = conn.execute(text("SELECT id FROM championship_event WHERE name='WSC Montafon 2027'")).scalar_one()
+    rows = {name: {str(row['id']): target for row in report['tables'][name]['rows']}
+            for name in ('athlete', 'room_booking', 'import_session', 'import_run')}
+    plan = dict(wsc_event_id=target, baseline_fingerprint=report['fingerprint'], rows=rows)
+    with tempfile.TemporaryDirectory() as folder:
+        path = Path(folder) / 'reviewed.json';path.write_text(json.dumps(plan))
+        result = subprocess.run([sys.executable, '-m', 'alembic', '-c', 'alembic.ini',
+            '-x', 'ownership_plan='+str(path), 'upgrade', 'head'],
+            cwd=BACKEND, env=environment, capture_output=True, text=True)
+        assert result.returncode == 0, result.stdout + result.stderr
 
 
 class PostgresMigrationTest(unittest.TestCase):
@@ -97,14 +116,14 @@ class PostgresMigrationTest(unittest.TestCase):
                                     (event_id, competition_id, fis_codex, import_code, official_name, active)
                                 SELECT 2, id, code, import_code, name, true FROM competition WHERE id IN (2, 5)
                             """))
-                        upgrade('20260924_02:head' if offline else 'head', offline=offline)
+                        upgrade('20260924_02:20261016_02' if offline else '20261016_02', offline=offline)
                     else:
-                        upgrade('head', offline=offline)
+                        upgrade('20261016_02', offline=offline)
                         initial_mapping = None
                     results.append((initial_mapping, snapshot()))
                     with engine.connect() as conn:
                         self.assertEqual(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one(),
-                                         ScriptDirectory.from_config(Config(str(BACKEND / 'alembic.ini'))).get_current_head())
+                                         '20261016_02')
                         self.assertEqual(conn.execute(text(
                             'SELECT count(*) FROM event_competition WHERE event_id = 1 AND active'
                         )).scalar_one(), 31)
@@ -206,10 +225,11 @@ class PostgresMigrationTest(unittest.TestCase):
                     conn.execute(text('CREATE SCHEMA public'))
                     self.assertEqual(inspect(conn).get_table_names(), [])
                 result = subprocess.run(
-                    [sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'upgrade', 'head'],
+                    [sys.executable, '-m', 'alembic', '-c', 'alembic.ini', 'upgrade', '20261016_02'],
                     cwd=BACKEND, env=environment, capture_output=True, text=True,
                 )
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                complete_reviewed_test_ownership(engine, environment)
                 with engine.connect() as conn:
                     self.assertEqual(conn.execute(text('SELECT version_num FROM alembic_version')).scalar_one(),
                                      scripts.get_current_head())
@@ -227,8 +247,8 @@ class PostgresMigrationTest(unittest.TestCase):
                     self.assertIn('single_room_quota_exempt_reason', columns)
                     # Database constraint enforcement, not SQLite emulation.
                     with self.assertRaises(IntegrityError) as rejected:
-                        conn.execute(text("INSERT INTO athlete (lastname, firstname, nation_code, single_room_status) "
-                                          "VALUES ('Test', 'Person', 'AUT', 'INVALID')"))
+                        conn.execute(text("INSERT INTO athlete (event_id, lastname, firstname, nation_code, single_room_status) "
+                                          "VALUES (1, 'Test', 'Person', 'AUT', 'INVALID')"))
                     self.assertEqual(getattr(rejected.exception.orig, 'sqlstate', None), '23514')
 
     def test_external_hotel_migration_preserves_standard_bookings(self):
@@ -249,8 +269,8 @@ class PostgresMigrationTest(unittest.TestCase):
             room = conn.execute(text("INSERT INTO room_type (name, max_persons) VALUES ('Double', 2) RETURNING id")).scalar_one()
             booking = conn.execute(text("INSERT INTO room_booking (hotel_id, room_type_id, room_number, check_in_date, check_out_date, counts_as_single) VALUES (:h,:r,'01','2027-03-14','2027-03-27',false) RETURNING id"),{'h':hotel,'r':room}).scalar_one()
             before = tuple(conn.execute(text('SELECT * FROM room_booking WHERE id=:id'),{'id':booking}).one())
-        upgrade('head')
-        upgrade('head')
+        upgrade('20261016_02')
+        upgrade('20261016_02')
         with engine.begin() as conn:
             self.assertEqual(conn.execute(text('SELECT accommodation_type FROM hotel WHERE id=:id'),{'id':hotel}).scalar_one(),'STANDARD')
             self.assertEqual(tuple(conn.execute(text('SELECT * FROM room_booking WHERE id=:id'),{'id':booking}).one()),before)

@@ -125,7 +125,7 @@ def partition_booking(booking, cut, remaining):
             'INVALID_SPLIT_DATE', 'Teilungsdatum muss innerhalb der Zuweisung liegen.')
     continuation = None
     if remaining:
-        continuation = RoomBooking(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id,
+        continuation = RoomBooking(event_id=booking.event_id, hotel_id=booking.hotel_id, room_type_id=booking.room_type_id,
             room_number=booking.room_number, check_in_date=cut, check_out_date=booking.check_out_date,
             counts_as_single=booking.counts_as_single, created_by=booking.created_by, created_at=booking.created_at)
         continuation.occupants = [RoomBookingOccupant(athlete_id=o.athlete_id, role=o.role, created_at=o.created_at) for o in remaining]

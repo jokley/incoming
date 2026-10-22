@@ -8,7 +8,7 @@ COPY backup/backup_service.py .
 COPY backend/alembic.ini /opt/backend/alembic.ini
 COPY backend/migrations /opt/backend/migrations
 # Alembic env imports model metadata, including its projection dependencies.
-COPY backend/config.py backend/models.py backend/accommodation_rates.py backend/accommodation_requirements.py backend/competitions.py backend/quota_catalogue.py /opt/backend/
+COPY backend/config.py backend/models.py backend/accommodation_rates.py backend/accommodation_requirements.py backend/competitions.py backend/quota_catalogue.py backend/event_ownership.py backend/event_ownership_runtime.py /opt/backend/
 # Referenced by the World Champion migration when restoring older dumps.
 COPY backend/reference_data /opt/backend/reference_data
 

@@ -1954,7 +1954,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     preview = validate_fis_import_token(preview_token)
 
     now = datetime.utcnow()
-    run = ImportRun(import_type='fis_confirm', started_at=now)
+    run = ImportRun(event_id=preview.get('eventId'), import_type='fis_confirm', started_at=now)
     db.session.add(run)
     db.session.flush()
 
@@ -2059,6 +2059,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                                athlete.firstname, athlete.nation_code) if athlete else None
             if athlete is None:
                 athlete = Athlete(
+                    event_id=preview['eventId'],
                     lastname=person['lastname'],
                     firstname=person['firstname'],
                     nation_code=person['nationCode'],
