@@ -78,6 +78,8 @@ from event_ownership_runtime import OperationalEventError
 
 
 from imports.event_context import import_event_id, validate_session_event, revalidate_confirmation_event
+from imports.workflow import refresh_plan, require_review, completed_result, load_version_preview, lock_import_snapshot, present_plan
+from imports.change_plan import encoded, verify_plan
 
 
 @app.errorhandler(ImportValidationError)
@@ -742,6 +744,9 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 
 @app.after_request
 def audit_successful_mutation(response):
+    if getattr(g,'atomic_import_audit',False):
+        response.headers['X-Request-ID']=getattr(g,'request_id','')
+        return response
     user = current_user()
     if getattr(g, 'api_path', None) == '/api/assignments/availability':
         return response
@@ -1845,6 +1850,7 @@ def _save_uploaded_excel(file_storage):
 @app.route('/api/import/fis/preview', methods=['POST'])
 @app.route('/api/import/fis/preview/', methods=['POST'])
 def preview_fis_import():
+    lock_accommodation_writes()
     raw_event_id = request.form.get('eventId')
     if not raw_event_id:
         return jsonify({'error': 'EVENT_REQUIRED', 'message': 'Bitte ein Event für den Import auswählen.'}), 400
@@ -1925,10 +1931,16 @@ def preview_fis_import():
             Path(entries_path).read_bytes() + b'\0' + Path(room_path).read_bytes()
             + b'\0event:' + str(event_context.id).encode('ascii')
         ).hexdigest()
-        result = create_fis_import_preview(entries_path, room_path, event_context)
+        from imports.read_context import ImportReadContext
+        read_context=ImportReadContext(event_context.id)
+        result = create_fis_import_preview(entries_path, room_path, event_context,read_context=read_context)
         session_id = request.form.get('sessionId')
         if request.form.get('createSession') == 'true' or session_id:
             nations = sorted({person.get('nationCode') for person in result['people'] if person.get('nationCode')})
+            if not nations and session_id:
+                owner=db.session.get(ImportSession,normalize_event_id(session_id))
+                validate_session_event(owner,event_id=event_context.id)
+                nations=[owner.nation]
             if len(nations) != 1:
                 return jsonify({'error': 'Eine Import Session muss genau eine Nation enthalten.', 'nations': nations}), 400
             nation = nations[0]
@@ -1970,13 +1982,9 @@ def preview_fis_import():
                 and (issue.get('details') or {}).get('preservedApprovedPeople')
             ]
             status = 'DRAFT' if result['errors'] else ('WAITING_FOR_NATION' if quota_issues else 'PROFESSIONALLY_REVIEWED')
-            if session and any(version.source_hash == source_hash for version in session.versions):
-                result.update({
-                    'alreadyImported': True,
-                    'message': 'Diese Meldeliste wurde bereits importiert.',
-                    'session': session.to_dict(include_preview=True),
-                })
-                return jsonify(result), 200
+            if session and any(version.source_hash==source_hash for version in session.versions):
+                result['knownFiles']=True
+                result['message']='Bekannte Dateien wurden erneut gegen den aktuellen Stand geprüft.'
             is_new = session is None
             if is_new:
                 session = ImportSession(event_id=event_context.id, nation=nation, discipline=result.get('detectedDiscipline'),
@@ -2049,6 +2057,9 @@ def preview_fis_import():
                 db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='QUOTA_PASSED',
                     title='Quote erfüllt', description='Alle Kombinationen aus Nation, Disziplin und Gender sind erfüllt.',
                     username=user.username))
+            reviewed=refresh_plan(session,result,read_context=read_context,recalculate=False)
+            present_plan(result,reviewed['changePlan'])
+            result['planStale']=False
             db.session.commit()
             result['session'] = session.to_dict(include_preview=True)
         return jsonify(result), 200
@@ -2121,9 +2132,9 @@ def list_import_sessions():
 
 
 def _import_session_raw_preview(session):
-    raw = PREVIEW_STORE.get(session.current_version.preview_token) if session.current_version else None
-    if raw is not None:
-        validate_session_event(session, raw)
+    # Observe old cache entries for mismatches, but never require them to execute.
+    raw=PREVIEW_STORE.get(session.current_version.preview_token) if session.current_version else None
+    if raw is not None:validate_session_event(session,raw)
     return raw
 
 
@@ -2173,6 +2184,13 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
         if preview.get('errors') and session.status != 'IMPORTED':
             payload['status'] = 'DRAFT'
         if include_preview:
+            plan=(preview.get('_workflow') or {}).get('plan')
+            if plan:present_plan(preview,plan)
+            else:preview['changePlan']=None
+            preview['planStale']=False
+            if plan and session.status!='IMPORTED':
+                try:verify_plan(preview,plan)
+                except ImportValidationError:preview['planStale']=True
             payload['preview'] = preview
     return payload
 
@@ -2240,6 +2258,7 @@ def stage_accommodation_requirement(session_id, person_key):
     db.session.expire(session, ['approvals'])
     session.status = ('DRAFT' if preview.get('errors') else 'WAITING_FOR_NATION'
         if any(a.decision == 'PENDING' for a in session.current_approvals) else 'PROFESSIONALLY_REVIEWED')
+    refresh_plan(session)
     db.session.commit()
     if staged_raw:
         PREVIEW_STORE[session.current_version.preview_token] = staged_raw
@@ -2275,6 +2294,7 @@ def stage_accommodation_rate(session_id, person_key):
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id,
         event_type='ACCOMMODATION_RATE_MANUAL', title='Unterkunftstarif manuell geändert',
         description=f"{person_key}: {old_category} → {category}", username=current_user().username))
+    refresh_plan(session)
     db.session.commit()
     raw = _import_session_raw_preview(session)
     if raw is not None:
@@ -2287,6 +2307,7 @@ def stage_accommodation_rate(session_id, person_key):
 
 @app.route('/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>', methods=['PATCH'])
 def stage_single_room_quota_exemption(session_id, person_key):
+    lock_accommodation_writes()
     """Stage an exemption in review state without changing the live person.
 
     The stored JSON projection and the typed confirmation cache are updated
@@ -2376,6 +2397,7 @@ def stage_single_room_quota_exemption(session_id, person_key):
     session.status = ('WAITING_FOR_NATION'
                       if quota_issues or other_open_approval
                       else 'PROFESSIONALLY_REVIEWED')
+    refresh_plan(session)
     db.session.commit()
     return jsonify(_current_session_payload(session, include_preview=True))
 
@@ -2547,6 +2569,7 @@ def decide_import_approval(session_id, approval_id):
         reconcile_single_room_tasks(session)
         if was_completed and not any(a.decision == 'PENDING' for a in session.current_approvals):
             session.status = previous_status
+    refresh_plan(session)
     db.session.commit()
     return jsonify(_current_session_payload(session, include_preview=True))
 
@@ -2579,7 +2602,12 @@ def reconcile_single_room_tasks(session):
 
 @app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
 def approve_import_session(session_id):
-    session = ImportSession.query.get_or_404(session_id)
+    lock_accommodation_writes()
+    db.session.expire_all()
+    session = ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    if session.current_version and (json.loads(session.current_version.preview_json or '{}').get('_workflow') or {}).get('plan'):
+        try:require_review(session)
+        except ImportValidationError as exc:return jsonify({**exc.to_dict(),'validationErrors':[{'code':exc.code,'message':str(exc)}]}),409
     preview = _current_session_preview(session)
     if preview.get('errors'):
         return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.',
@@ -2591,6 +2619,17 @@ def approve_import_session(session_id):
         return jsonify({'error': 'Alle erforderlichen Entscheidungen müssen getroffen werden.'}), 409
     if session.status in {'IMPORTED', 'REPLACED', 'ARCHIVED'}:
         return jsonify({'error': 'Diese Session kann nicht mehr freigegeben werden.'}), 409
+    try:stored,workflow,plan=require_review(session)
+    except ImportValidationError as exc:return jsonify({**exc.to_dict(),'validationErrors':[{'code':exc.code,'message':str(exc)}]}),409
+    data=request.get_json(silent=True) or {}
+    if data.get('planDigest')!=plan['digest'] or data.get('snapshotScope')!='FULL_NATION':
+        return jsonify(error='IMPORT_SCOPE_CONFIRMATION_REQUIRED',message='Vollständigen Nationen-Snapshot und aktuellen Änderungsplan bestätigen.'),409
+    if plan['requiresDestructiveConfirmation'] and data.get('confirmDestructiveChanges') is not True:
+        return jsonify(error='IMPORT_DELETION_CONFIRMATION_REQUIRED',message='Entfernungen einschließlich Buchungsfolgen ausdrücklich bestätigen.'),409
+    workflow.update(state='APPROVED',approvedDigest=plan['digest'],confirmedScope='FULL_NATION',
+        destructiveConfirmed=data.get('confirmDestructiveChanges') is True)
+    stored['_workflow']=workflow
+    session.current_version.preview_json=encoded(stored)
     session.status, session.approved_at = 'APPROVED', datetime.utcnow()
     session.approved_by = current_user().username
     db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='APPROVED',
@@ -2602,45 +2641,56 @@ def approve_import_session(session_id):
 
 @app.route('/api/import/sessions/<int:session_id>/import', methods=['POST'])
 def import_approved_session(session_id):
-    session = ImportSession.query.get_or_404(session_id)
-    if session.status != 'APPROVED' or not session.approved_at:
-        return jsonify({'error': 'Die Session muss vor dem Import explizit freigegeben werden.'}), 409
-    preview = _current_session_preview(session)
-    if preview.get('errors'):
-        return jsonify({'error': 'Blockierende Fehler müssen zuerst behoben werden.',
-                        'validationErrors': preview['errors']}), 409
-    requirements = quota_requirement_errors(preview, session.current_approvals)
-    if requirements:
-        return jsonify({'error': 'QUOTA_REQUIREMENTS_UNREVIEWED', 'validationErrors': requirements}), 409
+    lock_accommodation_writes()
+    lock_import_snapshot()
+    db.session.expire_all()
+    session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    data=request.get_json(silent=True) or {}
+    if not session.current_version:return jsonify(error='IMPORT_REVIEW_REQUIRED',message='Keine aktuelle Prüfversion.'),409
+    if data.get('versionId') is not None and str(data['versionId'])!=str(session.current_version_id):
+        return jsonify(error='STALE_PREVIEW',message='Es gibt eine neuere Importversion.'),409
+    if session.status in {'APPROVED','IMPORTED'} and data.get('versionId') is None and data.get('previewToken')!=session.current_version.preview_token:
+        return jsonify(error='IMPORT_VERSION_REQUIRED',message='Die ausdrücklich geprüfte Importversion muss angegeben werden.'),409
+    done=completed_result(session)
+    if session.status=='IMPORTED' and done:
+        g.atomic_import_audit=True
+        return jsonify({**done,'session':session.to_dict(),'idempotent':True})
+    if session.status!='APPROVED' or not session.approved_at:
+        return jsonify(error='Die Session muss vor dem Import explizit freigegeben werden.'),409
     try:
-        if not session.current_version:
-            return jsonify({'error': 'Die Session besitzt keine aktuelle Version.'}), 409
-        approved_extra_decisions = {
-            key: approval.id for approval in session.current_approvals
-            if approval.decision == 'APPROVED' and approval.approval_type in {
-                'NATION_APPROVED', 'ORGANIZER_APPROVED', 'PRESERVED_APPROVED_EXTRA'}
-            for key in json.loads(approval.approved_person_keys_json or '[]')
-        }
-        result = confirm_fis_import(session.current_version.preview_token, approved_extra_decisions, confirmer=current_user().username)
-        now = datetime.utcnow()
-        session.status, session.imported_at = 'IMPORTED', now
-        db.session.add(ImportSessionEvent(session_id=session.id, event_type='IMPORTED',
-            version_id=session.current_version.id,
+        preview,workflow,plan=require_review(session,approved=True)
+        requirements=quota_requirement_errors(preview,session.current_approvals)
+        if preview.get('errors') or requirements:
+            raise ImportValidationError('QUOTA_REQUIREMENTS_UNREVIEWED','Aktuelle Validierung benötigt eine neue Prüfung.',details={'requirements':requirements})
+        decisions={key:a.id for a in session.current_approvals if a.decision=='APPROVED' and a.approval_type in {
+            'NATION_APPROVED','ORGANIZER_APPROVED','PRESERVED_APPROVED_EXTRA'} for key in json.loads(a.approved_person_keys_json or '[]')}
+        token=session.current_version.preview_token
+        result=confirm_fis_import(token,decisions,confirmer=current_user().username,persisted_preview=preview,change_plan=plan)
+        session.status,session.imported_at='IMPORTED',datetime.utcnow()
+        workflow.update(state='IMPORTED',result=result)
+        preview['_workflow']=workflow
+        session.current_version.preview_json=encoded(preview)
+        db.session.add(ImportSessionEvent(session_id=session.id,version_id=session.current_version_id,event_type='IMPORTED',
             title=f'Version {session.current_version.version} importiert',
-            description='Operative Dispositionen wurden nicht verändert.', username=current_user().username))
+            description=encoded({'summary':result['summary'],'planDigest':plan['digest'],
+                'removedPeople':plan['people']['remove'],'approvalEvidence':plan['approvalEvidence']}),username=current_user().username))
+        user=current_user()
+        db.session.add(AuditEvent(username=user.username,display_name=getattr(user,'display_name',None),
+            email=getattr(user,'email',None),groups_json=json.dumps(list(getattr(user,'groups',[]))),
+            action='import',entity_type='import',entity_id=str(session.id),request_id=getattr(g,'request_id',str(uuid.uuid4())),
+            method='POST',path=request.path,activity='Import durchgeführt',category='Import',entity_label=session.nation,
+            details_json=encoded(result['summary']),entity_refs_json=encoded({'importSessionId':str(session.id),'eventId':str(session.event_id)})))
         db.session.commit()
-        result['session'] = session.to_dict()
-        return jsonify(result)
+        g.atomic_import_audit=True
+        PREVIEW_STORE.pop(token,None)
+        return jsonify({**result,'session':session.to_dict()})
     except ImportValidationError as exc:
         db.session.rollback()
-        session.status, session.error_message = 'ERROR', str(exc)
-        db.session.commit()
-        return jsonify(exc.to_dict()), 422
-    except Exception as exc:
+        return jsonify(exc.to_dict()),409
+    except Exception:
         db.session.rollback()
-        session.status, session.error_message = 'ERROR', str(exc)
-        db.session.commit()
-        return jsonify({'error': str(exc)}), 400
+        app.logger.exception('Atomic FIS import failed')
+        return jsonify(error='IMPORT_FAILED',message='Import vollständig zurückgerollt.'),400
 
 
 @app.route('/api/import/sessions/<int:session_id>/archive', methods=['POST'])
@@ -2655,31 +2705,64 @@ def archive_import_session(session_id):
 
 @app.route('/api/import/sessions/<int:session_id>/cancel', methods=['POST'])
 def cancel_import_session(session_id):
-    """End an unfinished workflow and remove all transient review state."""
-    session = ImportSession.query.get_or_404(session_id)
-    if session.status in {'IMPORTED', 'REPLACED', 'ARCHIVED'}:
-        return jsonify({'error': 'Eine abgeschlossene Session kann nicht abgebrochen werden.'}), 409
-    approval_ids = [approval.id for approval in session.approvals if approval.id]
-    if approval_ids:
-        if Athlete.query.filter(Athlete.single_room_decision_id.in_(approval_ids)).first():
-            return jsonify(error='IMPORT_CANCEL_HAS_OPERATIONAL_DECISIONS', message='Session mit operativen Entscheidungen darf nicht bereinigt werden.'), 409
-        Athlete.query.filter(Athlete.event_id == session.event_id, Athlete.single_room_decision_id.in_(approval_ids)).update(
-            {Athlete.single_room_decision_id: None}, synchronize_session=False)
-        ImportSessionEvent.query.filter(ImportSessionEvent.session_id == session.id, ImportSessionEvent.approval_id.in_(approval_ids)).update(
-            {ImportSessionEvent.approval_id: None}, synchronize_session=False)
-    ImportSessionEvent.query.filter_by(session_id=session.id).update(
-        {ImportSessionEvent.version_id: None}, synchronize_session=False)
-    session.current_version = None
-    session.approvals.clear()
-    session.versions.clear()
-    session.status = 'CANCELLED'
-    session.approved_at = session.approved_by = None
-    session.error_message = None
-    db.session.add(ImportSessionEvent(session_id=session.id, event_type='CANCELLED',
-        title='Importsession abgebrochen', description='Temporäre Prüfstände und offene Versionen wurden bereinigt.',
-        username=current_user().username))
+    lock_accommodation_writes()
+    db.session.expire_all()
+    session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    current=session.current_version
+    if not current or session.status in {'IMPORTED','REPLACED','ARCHIVED'}:
+        return jsonify(error='Eine abgeschlossene Session kann nicht abgebrochen werden.'),409
+    data=request.get_json(silent=True) or {}
+    if str(data.get('versionId'))!=str(current.id):
+        return jsonify(error='STALE_PREVIEW',message='Die abzubrechende Prüfversion muss ausdrücklich angegeben werden.'),409
+    preview=load_version_preview(current)
+    preview.setdefault('_workflow',{})['state']='CANCELLED'
+    current.preview_json=encoded(preview)
+    imported_version_ids={h.version_id for h in session.history if h.event_type=='IMPORTED'}
+    previous=[v for v in session.versions if v.id!=current.id and
+        ((json.loads(v.preview_json or '{}').get('_workflow') or {}).get('state')=='IMPORTED'
+         or v.id in imported_version_ids)]
+    db.session.add(ImportSessionEvent(session_id=session.id,version_id=current.id,event_type='CANCELLED',
+        title='Aktuelle Prüfversion abgebrochen',description='Frühere Versionen, Genehmigungen und operative Daten bleiben erhalten.',username=current_user().username))
+    if previous:
+        session.current_version=max(previous,key=lambda v:v.version)
+        session.status='IMPORTED'
+    else:
+        session.status='CANCELLED'
+    session.approved_at=session.approved_by=None
+    session.error_message=None
     db.session.commit()
+    PREVIEW_STORE.pop(current.preview_token,None)
     return jsonify(session.to_dict(include_preview=True))
+
+
+@app.route('/api/import/sessions/<int:session_id>/recheck',methods=['POST'])
+def recheck_import_session(session_id):
+    lock_accommodation_writes()
+    db.session.expire_all()
+    session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    if not session.current_version:return jsonify(error='IMPORT_REVIEW_REQUIRED'),409
+    preview=load_version_preview(session.current_version)
+    if session.status in {'IMPORTED','ARCHIVED','REPLACED','CANCELLED'}:
+        prior=session.current_version
+        preview.pop('accommodationRateOverrides',None)
+        preview.pop('accommodationRequirementOverrides',None)
+        preview['carriedSingleRoomQuotaExemptKeys']=list(preview.get('singleRoomQuotaExemptOverrides',{}))
+        preview.pop('_workflow',None)
+        token=uuid.uuid4().hex
+        preview['previewToken']=token
+        version=ImportSessionVersion(session_id=session.id,version=session.next_version_number(),preview_token=token,
+            preview_json=encoded(preview),source_hash=prior.source_hash,entries_filename=prior.entries_filename,
+            room_filename=prior.room_filename,uploaded_by=current_user().username)
+        db.session.add(version);db.session.flush();session.current_version=version
+    session.status='PROFESSIONALLY_REVIEWED'
+    preview=refresh_plan(session,preview)
+    # Existing quota applicability checks remain authoritative. Regenerate pending tasks.
+    reconcile_single_room_tasks(session)
+    refresh_plan(session)
+    db.session.add(ImportSessionEvent(session_id=session.id,version_id=session.current_version_id,event_type='RECHECKED',
+        title='Geparste Meldung erneut geprüft',description='Aktueller Datenstand, keine Personenänderung. Excel wird nicht erneut geparst.',username=current_user().username))
+    db.session.commit()
+    return jsonify(_current_session_payload(session,include_preview=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/history', methods=['POST'])

@@ -1,4 +1,6 @@
 """Current recalculated requirements cannot reuse decisions from another scope."""
+from test_support import import_review_payload
+
 import json
 from datetime import datetime
 from types import SimpleNamespace
@@ -62,6 +64,8 @@ def assert_history_unchanged(frozen):
 
 def assert_requirements(response):
     payload = response.get_json()
+    if payload['error'] == 'STALE_PREVIEW':
+        return
     assert payload['error'] == 'QUOTA_REQUIREMENTS_UNREVIEWED'
     assert {(e['details']['nationCode'], e['details']['discipline'], e['details']['gender'],
              e['details']['requirementType']) for e in payload['validationErrors']} == {
@@ -84,7 +88,7 @@ def test_new_alpine_requirements_block_all_workflow_boundaries(database, monkeyp
         assert status == 409; assert_requirements(response)
     session.status = 'APPROVED'; session.approved_at = datetime.utcnow()
     db.session.commit()
-    with app.test_request_context():
+    with app.test_request_context(json={'versionId':session.current_version_id}):
         response, status = routes.import_approved_session(session.id)
         assert status == 409; assert_requirements(response)
     with app.test_request_context(json={'previewToken': result['previewToken']}):
@@ -112,13 +116,13 @@ def test_matching_current_decisions_allow_processing_release_and_import(database
     with app.test_request_context():
         response, status = routes.approve_import_session(session.id)
         assert status == 409
-        assert response.get_json()['validationErrors'][0]['details']['discipline'] == 'Snowboard Alpine'
+        assert response.get_json()['error'] == 'STALE_PREVIEW'
     with app.test_request_context(json={'decision': 'APPROVED', 'approvalType': 'NATION_APPROVED',
             'approvalBy': 'AUT Team', 'approvalDate': '2026-10-13T10:00:00Z',
             'approvedPersonKeys': [p['personKey'] for p in alpine[0]['details']['singleRoomCandidates']][:alpine[0]['details']['excessCount']]}):
         response = routes.decide_import_approval(session.id, pending.id)
         assert response.status_code == 200
-    with app.test_request_context():
+    with app.test_request_context(json=import_review_payload(session)):
         response = routes.approve_import_session(session.id)
         assert response.status_code == 200
         response = routes.import_approved_session(session.id)

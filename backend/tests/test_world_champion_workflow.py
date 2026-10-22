@@ -1,4 +1,6 @@
 """Event recognition, persistent crown commands, and residual person decisions."""
+from test_support import import_review_payload
+
 import json
 from copy import deepcopy
 from types import SimpleNamespace
@@ -115,7 +117,7 @@ def test_partial_batch_and_final_resolution_use_canonical_projection(database, m
             assert (row.quota_details_json, row.approved_person_keys_json) == evidence
     assert session.status == 'EXCEPTION_APPROVED'
     assert ImportSessionEvent.query.filter_by(event_type='SINGLE_ROOM_PERSON_APPROVED').count() == 4
-    with current_app.test_request_context():
+    with current_app.test_request_context(json=import_review_payload(session)):
         assert routes.approve_import_session(session.id).status_code == 200
     approved = {key: a.id for a in session.current_approvals for key in json.loads(a.approved_person_keys_json or '[]')}
     confirm_fis_import('review-token', approved)
@@ -248,7 +250,7 @@ def test_staged_manual_removal_survives_replacement_upload(database, monkeypatch
     replacement = json.loads(json.dumps(preview, default=str))
     replacement['previewToken'] = 'replacement'
     PREVIEW_STORE['replacement'] = deepcopy(preview)
-    monkeypatch.setattr(routes, 'create_fis_import_preview', lambda *args: deepcopy(replacement))
+    monkeypatch.setattr(routes, 'create_fis_import_preview', lambda *args, **kwargs: deepcopy(replacement))
     with current_app.test_request_context(method='POST', data={'eventId':str(preview['eventId']),
             'sessionId':str(session.id), 'entriesList':(io.BytesIO(b'new entries'), 'entries.xlsx'),
             'roomListDetailed':(io.BytesIO(b'new rooms'), 'rooms.xlsx')}):

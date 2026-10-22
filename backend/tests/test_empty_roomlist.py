@@ -1,4 +1,6 @@
 """Real FIS Data-sheet sentinel is missing evidence, never a No room request."""
+from test_support import import_review_payload
+
 import json
 from io import BytesIO
 from pathlib import Path
@@ -39,10 +41,10 @@ def test_real_empty_roomlist_reaches_review_and_confirmation(database,tmp_path,n
         assert reviewed['preview']['isValid'] and reviewed['errors']==0
         assert reviewed['preview']['roomListHasNoData']
     flask.config.update(AUTH_DEV_USER='test-admin',AUTH_DEV_GROUPS='incoming-admin',AUTH_PROXY_SECRET='')
-    with flask.test_request_context('/api/import/sessions/1/approve', method='POST'):
+    with flask.test_request_context('/api/import/sessions/1/approve', method='POST',json=import_review_payload(session)):
         routes.authenticate_api_request()
         assert routes.approve_import_session(session.id).status_code==200
-    with flask.test_request_context('/api/import/sessions/1/approve', method='POST'):
+    with flask.test_request_context('/api/import/sessions/1/approve', method='POST',json={'versionId':session.current_version_id}):
         routes.authenticate_api_request()
         imported=routes.import_approved_session(session.id)
         assert imported.status_code==200

@@ -281,7 +281,10 @@ def test_real_jpn_http_workflow_both_events(events,monkeypatch):
                 'approvalBy':'Explicit JPN test decision','approvalDate':'2026-10-22T12:00:00Z',
                 'approvedPersonKeys':keys})
             assert decided.status_code==200,decided.json
-        approved=client.post(f'/api/import/sessions/{sid}/approve?eventId={event.id}')
+        current=client.get(f'/api/import/sessions/{sid}?eventId={event.id}').json['preview']
+        approved=client.post(f'/api/import/sessions/{sid}/approve?eventId={event.id}',json={
+            'snapshotScope':'FULL_NATION','planDigest':current['changePlan']['digest'],
+            'confirmDestructiveChanges':True})
         assert approved.status_code==200,approved.json
         imported=client.post('/api/import/fis/confirm',json={'eventId':event.id,'previewToken':result.json['previewToken']})
         assert imported.status_code==200,imported.json

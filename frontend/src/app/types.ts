@@ -490,7 +490,17 @@ export interface FisImportPreviewRoom {
   daySnapshot: Record<string, number>;
 }
 
+export interface ImportChangePlan {
+  digest: string; eventId: number; nation: string; importVersion: number; snapshotScope: 'FULL_NATION';
+  requiresDestructiveConfirmation: boolean;
+  people: Record<'create'|'update'|'unchanged'|'remove', Array<{personId:number|null;personKey?:string;name:string;fisCode?:string;competitorId?:string;competitionIds?:number[];competitions?:Array<{id:number;name:string;importCode:string}>;bookingIds?:number[];approvalId?:number;approvalApplicability?:string;changes?:Array<{field:string;old:unknown;new:unknown}>;before?:Record<string,string|null>}>>;
+  memberships: Record<'add'|'remove'|'unchanged',Array<{personId?:number;personKey?:string;competitionId:number}>>;
+  operations: {legacy?:Array<{id:number;action:string}>;fis?:Array<{id:number;action:string;survivorId?:number}>;clearPartnerFields?:number[];bookingIds:number[];deleteEmptyBookingIds:number[];partnerIds:number[];partners?:Array<{id:number;name:string}>;bookings:Array<{id:number;check_in_date:string;check_out_date:string;counts_as_single:boolean}>};
+}
+
 export interface FisImportPreview {
+  changePlan?: ImportChangePlan | null;
+  planStale?: boolean;
   roomListHasNoData?: boolean;
   previewToken: string;
   eventId?: string | null;
@@ -583,6 +593,7 @@ export interface FisImportConfirmResult {
   summary: {
     peopleCreated: number;
     peopleUpdated: number;
+    peopleUnchanged?:number; peopleRemoved?:number; dispositionsChanged?:number; bookingsRemoved?:number; occupantsRemoved?:number; membershipsRemoved?:number;
     fisRoomsImported: number;
   };
   run: {

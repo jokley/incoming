@@ -58,7 +58,7 @@ def test_missing_mapping_blocks_rows_and_confirmation():
     token = 'unresolved-source'
     PREVIEW_STORE[token] = dict(createdAt=datetime.utcnow(), eventId=7, **parsed)
     try:
-        with pytest.raises(ValueError, match='blocking validation errors'):
+        with pytest.raises(ValueError, match='blocking validation errors|blockierende Fehler'):
             confirm_fis_import(token)
     finally:
         PREVIEW_STORE.pop(token, None)
@@ -181,7 +181,7 @@ def test_preview_valid_event_mapping_recognizes_usa_groups(monkeypatch):
             for comp in Competition.query.all():
                 comp.quota_discipline = ''
             db.session.commit()
-            with pytest.raises(ValueError, match='blocking validation errors'):
+            with pytest.raises(ValueError, match='blocking validation errors|blockierende Fehler'):
                 imports.confirm_fis_import(result['previewToken'])
             assert imports.Athlete.query.count() == 0
             db.session.rollback()

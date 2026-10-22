@@ -28,7 +28,7 @@ export function requireImportConfirmation(body: unknown): FisImportConfirmResult
 
 export function importConfirmationMessage(body: unknown): string {
   const result = requireImportConfirmation(body);
-  return `Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert. Bestehende Dispositionen wurden nicht verändert.`;
+  return `Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert, ${result.summary.peopleRemoved ?? 0} entfernt. ${result.summary.dispositionsChanged ?? 0} Dispositionen geändert.`;
 }
 
 /** Independent canonical reads after a successful confirmation; one call each. */

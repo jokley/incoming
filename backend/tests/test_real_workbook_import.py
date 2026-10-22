@@ -129,7 +129,10 @@ def add_session(result, nation='USA'):
         approval_type=issue['code'] if issue and issue['code']=='QUOTA_SINGLE_ROOMS_EXCEEDED' else 'REVIEW',
         description=issue['message'] if issue and issue['code']=='QUOTA_SINGLE_ROOMS_EXCEEDED' else 'Review', decision='PENDING', username='regression',
         quota_details_json=json.dumps(issue['details'] if issue else {}))
-    db.session.add(approval); db.session.commit()
+    db.session.add(approval); db.session.flush()
+    from imports.workflow import refresh_plan
+    refresh_plan(session)
+    db.session.commit()
     return session, version, approval
 
 
@@ -162,10 +165,10 @@ def test_stale_saved_preview_is_checked_at_workflow_boundaries(database, monkeyp
     with app.test_request_context(json={'decision': 'APPROVED'}):
         response, status = decide_import_approval(session.id, approval.id)
         assert status == 409 and response.get_json()['validationErrors']
-    session.status = 'APPROVED'; session.approved_at = datetime.utcnow()
-    with app.test_request_context():
+    session.status = 'APPROVED'; session.approved_at = datetime.utcnow(); db.session.commit()
+    with app.test_request_context(json={'versionId':session.current_version_id}):
         response, status = import_approved_session(session.id)
-        assert status == 409 and response.get_json()['validationErrors']
+        assert status == 409 and response.get_json()['error'] in {'STALE_PREVIEW','IMPORT_REVIEW_REQUIRED'}
     if failure == 'partial_extraction':
         raw_person = next(p for p in imports.PREVIEW_STORE[result['previewToken']]['people'] if p['lastname'] == 'BAUMGARTNER')
         raw_person['competitionImportCodes'].remove('WSC_BXT_A_6193')

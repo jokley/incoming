@@ -118,7 +118,10 @@ class ImportSafetyBaselineTest(unittest.TestCase):
             db.session.add(version); db.session.flush()
             session.current_version = version
             db.session.commit()
-            response = self.client.post(f'/api/import/sessions/{session.id}/import', headers=self.editor)
+            from test_support import import_review_payload
+            reviewed=self.client.post(f'/api/import/sessions/{session.id}/approve',headers=self.editor,json=import_review_payload(session))
+            self.assertEqual(reviewed.status_code,200,reviewed.json)
+            response = self.client.post(f'/api/import/sessions/{session.id}/import', headers=self.editor,json={'versionId':version.id})
             self.assertEqual(response.status_code, 200, response.get_json())
             result = response.get_json()
             athlete = Athlete.query.one()
@@ -376,49 +379,31 @@ class ImportSafetyBaselineTest(unittest.TestCase):
                 self.assertIsNone(Athlete.query.filter_by(fis_code='P0').one().single_room_quota_exempt_reason)
                 self.assertIsNone(Athlete.query.filter_by(fis_code='P1').first())
 
-    def test_split_commit_failures_preserve_current_database_and_token_boundaries(self):
-        for failure_at in (1, 2):
-            with self.subTest(failure_at=failure_at), app.app_context():
-                db.drop_all()
-                db.create_all()
-                event = self.event()
-                self.preview('commit-boundary', event, [self.person('NEW', codes=['MO'])])
-                session = ImportSession(nation='AUT', status='APPROVED', approved_at=datetime.utcnow(), approved_by='fixture')
-                db.session.add(session)
-                db.session.flush()
-                version = ImportSessionVersion(session_id=session.id, version=1,
-                    preview_token='commit-boundary', preview_json='{"errors": []}', uploaded_by='fixture')
-                db.session.add(version)
-                db.session.flush()
-                session.current_version = version
-                db.session.commit()
-                session_id = session.id
-                real_commit = db.session.commit
-                calls = []
-                def injected_commit():
-                    calls.append(('NEW' in {a.fis_code for a in Athlete.query.all()},
-                                  'commit-boundary' in PREVIEW_STORE))
-                    if len(calls) == failure_at:
-                        raise RuntimeError('injected commit boundary')
-                    return real_commit()
-                with patch.object(db.session, 'commit', side_effect=injected_commit):
-                    response = self.client.post(f'/api/import/sessions/{session_id}/import', headers=self.editor)
-                self.assertEqual(response.status_code, 400)
-                self.assertEqual(response.get_json(), {'error': 'injected commit boundary'})
-                db.session.remove()  # Assertions read committed state through a fresh session.
-                saved = db.session.get(ImportSession, session_id)
-                self.assertEqual((saved.status, saved.error_message), ('ERROR', 'injected commit boundary'))
-                self.assertIsNotNone(saved.approved_at)
-                self.assertIsNone(saved.imported_at)
-                self.assertEqual(ImportSessionEvent.query.filter_by(event_type='IMPORTED').count(), 0)
-                self.assertEqual(Athlete.query.count(), 0 if failure_at == 1 else 1)
-                self.assertEqual(ImportRun.query.count(), 0 if failure_at == 1 else 1)
-                self.assertEqual('commit-boundary' in PREVIEW_STORE, failure_at == 1)
-                self.assertEqual(calls[0], (True, True))
-                if failure_at == 2:
-                    self.assertEqual(calls[1], (True, False))
-                    self.assertIsNotNone(ImportRun.query.one().finished_at)
-                # A retry is blocked by ERROR, including when the data already committed.
-                retry = self.client.post(f'/api/import/sessions/{session_id}/import', headers=self.editor)
-                self.assertEqual(retry.status_code, 409)
-                self.assertEqual(ImportRun.query.count(), 0 if failure_at == 1 else 1)
+    def test_commit_failure_rolls_back_all_import_state(self):
+        from test_support import import_review_payload
+        from imports.workflow import refresh_plan
+        with app.app_context():
+            event=self.event()
+            preview=self.preview('commit-boundary',event,[self.person('NEW',codes=['MO'])])
+            session=ImportSession(nation='AUT',status='PROFESSIONALLY_REVIEWED')
+            db.session.add(session);db.session.flush()
+            raw=PREVIEW_STORE['commit-boundary']
+            version=ImportSessionVersion(session_id=session.id,version=1,preview_token='commit-boundary',
+                preview_json=json.dumps(raw,default=str),uploaded_by='fixture')
+            db.session.add(version);db.session.flush();session.current_version=version
+            db.session.commit()
+            approved=self.client.post(f'/api/import/sessions/{session.id}/approve',headers=self.editor,json=import_review_payload(session))
+            self.assertEqual(approved.status_code,200,approved.json)
+            sid=session.id;version_id=version.id
+            with patch.object(db.session,'commit',side_effect=RuntimeError('injected final commit failure')):
+                response=self.client.post(f'/api/import/sessions/{sid}/import',headers=self.editor,json={'versionId':version_id})
+            self.assertEqual(response.status_code,400)
+            db.session.remove()
+            self.assertEqual(ImportSession.query.get(sid).status,'APPROVED')
+            self.assertEqual(Athlete.query.count(),0)
+            self.assertEqual(ImportRun.query.count(),0)
+            self.assertEqual(ImportSessionEvent.query.filter_by(event_type='IMPORTED').count(),0)
+            retry=self.client.post(f'/api/import/sessions/{sid}/import',headers=self.editor,json={'versionId':version_id})
+            self.assertEqual(retry.status_code,200,retry.json)
+            self.assertEqual(Athlete.query.count(),1)
+            self.assertEqual(ImportRun.query.count(),1)

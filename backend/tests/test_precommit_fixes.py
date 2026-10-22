@@ -1,4 +1,6 @@
 """Regressions limited to the six final pre-commit review issues."""
+from test_support import import_review_payload
+
 import io
 import json
 from copy import deepcopy
@@ -21,7 +23,7 @@ def replace_upload(routes, monkeypatch, session, preview):
     PREVIEW_STORE['replacement'] = incoming
     response = json.loads(json.dumps(incoming, default=str))
     response['previewToken'] = 'replacement'
-    monkeypatch.setattr(routes, 'create_fis_import_preview', lambda *args: deepcopy(response))
+    monkeypatch.setattr(routes, 'create_fis_import_preview', lambda *args, **kwargs: deepcopy(response))
     with current_app.test_request_context(method='POST', data={'eventId':str(preview['eventId']),
             'sessionId':str(session.id), 'entriesList':(io.BytesIO(b'replacement entries'), 'entries.xlsx'),
             'roomListDetailed':(io.BytesIO(b'replacement rooms'), 'rooms.xlsx')}):
@@ -96,12 +98,13 @@ def test_retained_singles_partial_approval_resolves_only_selected_people(databas
     assert sum(q['singleRoomsPending'] for q in current['quotaChecks'])==0
     assert not quota_requirement_errors(current,session.current_approvals)
     assert (first.quota_details_json,first.approved_person_keys_json)==frozen
-    with current_app.test_request_context():
+    with current_app.test_request_context(json=import_review_payload(session)):
         assert routes.approve_import_session(session.id).status_code==200
     before=[(b.id,b.counts_as_single) for b in RoomBooking.query.all()]
     confirm_fis_import('review-token',{'A':first.id,'B':second.id},confirmer='confirmer')
     assert [(b.id,b.counts_as_single) for b in RoomBooking.query.all()]==before
     assert Athlete.query.filter_by(single_room_status='APPROVED_EXTRA').count()==2
+    db.session.commit()  # Low-level apply no longer owns the transaction.
     # A persisted valid approval covers retained demand even with no incoming Single.
     recalculate_fis_import_preview(preview)
     assert sum(q['singleRoomsPending'] for q in preview['quotaChecks'])==0
@@ -149,8 +152,10 @@ def test_confirmation_audit_records_confirmer_not_uploader(database, monkeypatch
     session=session_for(preview)
     session.current_version.uploaded_by='different-uploader'; db.session.commit()
     monkeypatch.setattr(routes,'current_user',lambda:SimpleNamespace(username='actual-confirmer'))
-    with current_app.test_request_context():
-        assert routes.approve_import_session(session.id).status_code==200
+    with current_app.test_request_context(json=import_review_payload(session)):
+        released=routes.approve_import_session(session.id)
+        assert not isinstance(released,tuple), released[0].get_json() if isinstance(released,tuple) else ''
+        assert released.status_code==200
         result=routes.import_approved_session(session.id)
         assert result.status_code==200
     status_audits=AuditEvent.query.filter_by(entity_type='world-champion-status').all()

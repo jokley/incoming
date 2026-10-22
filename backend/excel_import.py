@@ -1581,12 +1581,12 @@ def cleanup_preview_store():
         PREVIEW_STORE.pop(token, None)
 
 
-def create_fis_import_preview(entries_path, roomlist_path, event=None):
+def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_context=None):
     cleanup_preview_store()
     entries_df = load_first_sheet(entries_path)
     room_df = load_first_sheet(roomlist_path)
     event, _ = revalidate_confirmation_event(import_event_id(event.id if event else None), [], validate_codes=False)
-    read_context = ImportReadContext(event.id)
+    read_context = read_context or ImportReadContext(event.id)
     athlete_maps = read_context.athlete_maps
 
     mapping = None
@@ -1932,7 +1932,13 @@ def _remove_duplicates():
 def validate_fis_import_token(preview_token):
     """Return the existing typed preview without applying any import writes."""
     cleanup_preview_store()
-    preview = PREVIEW_STORE.get(preview_token)
+    version=ImportSessionVersion.query.join(ImportSession, ImportSession.current_version_id==ImportSessionVersion.id).filter(
+        ImportSessionVersion.preview_token==preview_token).first()
+    if version:
+        from imports.workflow import load_version_preview
+        preview=load_version_preview(version)
+    else:
+        preview=PREVIEW_STORE.get(preview_token)
     if not preview:
         raise ValueError('Preview token not found or expired')
     if preview['errors']:
@@ -1940,24 +1946,18 @@ def validate_fis_import_token(preview_token):
     return preview
 
 
-def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None, *, confirmer=None):
-    """Apply one validated preview as an authoritative full nation snapshot.
+def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None, *, confirmer=None, persisted_preview=None, change_plan=None):
+    """Apply event-scoped parsed facts without committing.
 
-    This persistence boundary updates event-scoped people and memberships.
-    Missing people block confirmation until PR3 provides a reviewed snapshot
-    change plan; no automatic deletion or duplicate merging is performed.  Existing
-    room bookings for retained people are intentionally preserved; physical room
-    type, person approval state, and ``counts_as_single`` remain independent.
-
-    The token addresses the typed, process-local ``PREVIEW_STORE`` entry.  A
-    durable ImportSessionVersion records review/audit state but does not by
-    itself make a token valid after expiry, restart, or transfer to another
-    worker.  Callers own error rollback around this transaction boundary.
+    HTTP callers supply the exact durable, explicitly approved change plan under
+    the snapshot lock. Legacy internal callers may update/create only; removals
+    require a reviewed plan. Retained bookings keep their physical room type and
+    counts_as_single. The endpoint owns data, workflow, audit and final commit.
     """
     from accommodation_mutations import lock_accommodation_writes
     lock_accommodation_writes()
     db.session.expire_all()
-    preview = validate_fis_import_token(preview_token)
+    preview = persisted_preview if persisted_preview is not None else validate_fis_import_token(preview_token)
 
     now = datetime.utcnow()
     run = ImportRun(event_id=preview.get('eventId'), import_type='fis_confirm', started_at=now)
@@ -1976,7 +1976,8 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
         validate_session_event(version.session, preview, read_context.event_id)
     preview['_currentApprovalIds'] = [a.id for a in version.session.current_approvals] if version else []
     recalculate_fis_import_preview(preview, read_context=read_context)
-    validate_fis_import_token(preview_token)
+    if preview.get('errors'):
+        raise ImportValidationError('IMPORT_VALIDATION_FAILED', 'Preview enthält blockierende Fehler.')
     if version:
         validate_session_event(version.session, preview, read_context.event_id)
         requirements = quota_requirement_errors(preview, version.session.current_approvals, read_context=read_context)
@@ -1985,11 +1986,11 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 'Aktuelle Quotenverletzungen sind nicht durch anwendbare Entscheidungen abgedeckt.',
                 details={'requirements': requirements})
 
-    # PR3 will introduce an explicitly reviewed destructive snapshot change plan.
+    # Legacy internal callers cannot bypass explicit destructive review.
     imported_nations = {p.get('nationCode') for p in preview['people'] if p.get('nationCode')}
     matched_ids = {a.id for p in preview['people'] if (a := _find_existing_athlete(p, athlete_maps))}
     missing = [a for a in read_context.athletes if a.nation_code in imported_nations and a.id not in matched_ids]
-    if missing:
+    if missing and change_plan is None:
         raise ImportValidationError('IMPORT_DESTRUCTIVE_CHANGE_REVIEW_REQUIRED',
             'Fehlende Personen benötigen einen ausdrücklich geprüften Snapshot-Scope (PR 3).',
             event_id=read_context.event_id, details={'personIds': [a.id for a in missing]})
@@ -2080,6 +2081,10 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     with db.session.no_autoflush:
         for person in preview['people']:
             athlete = _find_existing_athlete(person, athlete_maps)
+            operational_decision=None
+            if athlete and athlete.single_room_decision_id and applicable_approval_groups(athlete.single_room_decision,
+                    preview_approval_person(person,competitions_by_id=read_context.competitions_by_id),person.get('matchKey'),current_roster):
+                operational_decision=(athlete.single_room_status,athlete.single_room_entitlement,athlete.single_room_decision_id)
             existing_before = _snapshot_roomlist_fields(athlete) if athlete else None
             identity_before = (athlete.fis_code, athlete.competitor_id, athlete.lastname,
                                athlete.firstname, athlete.nation_code) if athlete else None
@@ -2162,6 +2167,9 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 athlete.single_room_entitlement = None
                 athlete.single_room_status = 'NONE'
                 athlete.single_room_decision_id = None
+            if operational_decision and person.get('matchKey') not in approved_extra_single_room_decisions and not athlete.single_room_quota_exempt_reason:
+                # Retained, still-applicable operational decisions are not source fields.
+                athlete.single_room_status,athlete.single_room_entitlement,athlete.single_room_decision_id=operational_decision
             if existing_before is None:
                 # A newly created person is new assignment work, not a change to an
                 # existing disposition.  Keep the import reason, but deliberately do
@@ -2199,30 +2207,33 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
 
     db.session.flush()
 
-    # Recheck the scoped set after flush; never delete missing people implicitly.
-    imported_nations = {person['nationCode'] for person in preview['people'] if person.get('nationCode')}
-    imported_ids = {athlete.id for athlete in persisted_people.values()}
-    missing = Athlete.query.filter(Athlete.event_id == read_context.event_id, Athlete.nation_code.in_(imported_nations), ~Athlete.id.in_(imported_ids)).all()
-    if missing:
-        raise ImportValidationError('IMPORT_DESTRUCTIVE_CHANGE_REVIEW_REQUIRED',
-            'Fehlende Personen benötigen einen ausdrücklich geprüften Snapshot-Scope (PR 3).',
-            event_id=read_context.event_id, details={'personIds': [a.id for a in missing]})
-    removed = deduplicated = 0
-
+    from imports.change_plan import apply_removals
+    removed=0
+    if change_plan:
+        # The endpoint verified this exact server-owned plan under the transaction lock.
+        apply_removals(change_plan)
+        removed=len(change_plan['people']['remove'])
+    deduplicated=0
     run.finished_at = datetime.utcnow()
-    db.session.commit()
-    PREVIEW_STORE.pop(preview_token, None)
+    # The caller owns commit, workflow history and cache invalidation atomically.
+    operations=change_plan['operations'] if change_plan else {}
 
     return {
         'success': True,
         'summary': {
             'peopleCreated': created,
-            'peopleUpdated': updated,
+            'peopleUpdated': len(change_plan['people']['update']) if change_plan else updated,
+            'peopleUnchanged': len(change_plan['people']['unchanged']) if change_plan else 0,
             'peopleRemoved': removed,
             'duplicatesRemoved': deduplicated,
             'fisRoomsImported': 0,
             'fisRoomsReplaced': 0,
-            'dispositionsChanged': 0,
+            'dispositionsChanged': len(operations.get('bookingIds',[]))+len(operations.get('legacy',[]))+len(operations.get('fis',[])),
+            'bookingsAffected': len(operations.get('bookingIds',[])),
+            'bookingsRemoved': len(operations.get('deleteEmptyBookingIds',[])),
+            'occupantsRemoved': len(operations.get('removeOccupants',[])),
+            'membershipsRemoved': len(change_plan['memberships']['remove']) if change_plan else 0,
+            'approvalsPreserved': len(change_plan.get('approvalEvidence',[])) if change_plan else 0,
         },
         'run': run.to_dict(),
     }
