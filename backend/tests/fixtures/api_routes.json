@@ -261,6 +261,12 @@
   "/api/import/sessions/<int:session_id>": [
     "GET"
   ],
+  "/api/import/sessions/<int:session_id>/accommodation-rates/<path:person_key>": [
+    "PATCH"
+  ],
+  "/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>": [
+    "PATCH"
+  ],
   "/api/import/sessions/<int:session_id>/approvals/<int:approval_id>": [
     "PATCH"
   ],
@@ -277,6 +283,9 @@
     "POST"
   ],
   "/api/import/sessions/<int:session_id>/import": [
+    "POST"
+  ],
+  "/api/import/sessions/<int:session_id>/recheck": [
     "POST"
   ],
   "/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>": [
@@ -424,8 +433,5 @@
   "/room-types/<int:room_type_id>/": [
     "DELETE",
     "PUT"
-  ],
-  "/api/import/sessions/<int:session_id>/recheck": [
-    "POST"
   ]
 }

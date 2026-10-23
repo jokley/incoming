@@ -161,21 +161,30 @@ def test_confirmation_revalidates_after_run_flush_and_keeps_token(change, code):
 
 
 def test_preview_selects_only_active_mapping_and_preserves_unknown_error_structure():
-    event = SimpleNamespace(id=7, name='Selected', competition_mappings=[
-        SimpleNamespace(active=True, import_code='WSC_OK', competition=SimpleNamespace(quota_discipline='Big Air')),
-        SimpleNamespace(active=False, import_code='WSC_BAD', competition=object())])
-    entries = pd.DataFrame([{'Lastname': 'One', 'Firstname': 'Ada', 'Nationcode': 'SUI',
-        'Function': 'Athlete', 'WSC_BAD': 'NO'}])
-    rooms = pd.DataFrame(columns=list(legacy.ROOM_REQUIRED_COLUMNS))
-    with patch.object(legacy, 'load_first_sheet', side_effect=[entries, rooms]), \
-         patch.object(legacy, '_build_existing_athlete_maps', return_value={'by_fis_code': {}, 'by_competitor_id': {}, 'by_name_key': {}}), \
-         patch.object(legacy, 'build_quota_warnings', return_value=[]), \
-         patch.object(legacy, 'preserved_single_room_approvals', return_value={}), \
-         patch.object(legacy, 'build_disposition_analysis', return_value={}):
-        with pytest.raises(legacy.ImportValidationError) as caught:
-            legacy.create_fis_import_preview('entries', 'rooms', event)
-    assert caught.value.to_dict() == {'error': 'UNKNOWN_COMPETITION_CODE', 'event_id': '7',
-        'import_code': 'WSC_BAD', 'message': 'Unbekannter Competition-Code WSC_BAD für Event Selected'}
+    app = make_app()
+    with app.app_context():
+        db.create_all()
+        selected = Event(id=7, name='Selected')
+        competition = Competition(import_code='TEST', code='TEST', name='Test',
+            display_name='Test', sport='Snowboard', gender='M', quota_discipline='Big Air')
+        inactive = Competition(import_code='INACTIVE', code='INACTIVE', name='Inactive',
+            display_name='Inactive', sport='Snowboard', gender='M', quota_discipline='Big Air')
+        selected.competition_mappings = [EventCompetition(import_code='WSC_OK', fis_codex='1', official_name='OK', competition=competition, active=True),
+            EventCompetition(import_code='WSC_BAD', fis_codex='2', official_name='BAD', competition=inactive, active=False)]
+        db.session.add(selected); db.session.commit()
+        app.config['OPERATIONAL_EVENT_ID'] = selected.id
+        entries = pd.DataFrame([{'Lastname': 'One', 'Firstname': 'Ada', 'Nationcode': 'SUI',
+            'Function': 'Athlete', 'WSC_BAD': 'NO'}])
+        rooms = pd.DataFrame(columns=list(legacy.ROOM_REQUIRED_COLUMNS))
+        with patch.object(legacy, 'load_first_sheet', side_effect=[entries, rooms]), \
+             pytest.raises(legacy.ImportValidationError) as caught:
+            legacy.create_fis_import_preview('entries', 'rooms', selected)
+        result = caught.value.to_dict()
+        assert result['error'] == 'UNKNOWN_COMPETITION_CODE'
+        assert result['event_id'] == '7' and result['import_code'] == 'WSC_BAD'
+        assert 'WSC_BAD' in result['message'] and 'Selected' in result['message']
+        assert result == {'error': 'UNKNOWN_COMPETITION_CODE', 'event_id': '7',
+            'import_code': 'WSC_BAD', 'message': 'Unbekannter Competition-Code WSC_BAD für Event Selected'}
 
 
 def test_compatibility_exports_are_the_extracted_objects():

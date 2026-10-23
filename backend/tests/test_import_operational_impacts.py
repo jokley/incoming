@@ -119,7 +119,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
         with app.app_context():
             self.assertEqual(db.session.get(Athlete, athlete_id).single_room_quota_exempt_reason, 'WORLD_CHAMPION')
 
-    def test_live_quota_uses_import_entitlements_not_assigned_room_types(self):
+    def test_live_quota_uses_persisted_single_flags_not_physical_room_types(self):
         with app.app_context():
             roster = [Athlete(fis_code='A1', firstname='A', lastname='One', nation_code='AUT',
                 discipline='Big Air', gender='F', function='Athlete')]
@@ -155,8 +155,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             self.assertEqual(len(allocation), 2)
             self.assertEqual(live['singleRoomsCovered'], 1)
             self.assertEqual(live['singleRoomsPending'], 1)
-            self.assertEqual({key: value for key, value in live.items()
-                if key not in {'singleRoomAllocations', 'singleRoomsCovered', 'singleRoomsPending'}}, {
+            expected_core = {
                 'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'W',
                 'athletesEntered': 1, 'officialQuota': 3,
                 'singleRoomsAllowed': 1, 'assignedOfficials': 4,
@@ -167,10 +166,14 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 'approvedExceptions': 0, 'quotaStatus': 'DECISION_REQUIRED',
                 'peopleTotal': 5, 'peopleAssigned': 4,
                 'unresolvedHistoricalApprovalIds': [],
-            })
+            }
+            self.assertEqual({key: live[key] for key in expected_core}, expected_core)
+            self.assertEqual(live['specialRateCount'], 0)
+            self.assertEqual(sum(group['count'] for group in live['functionGroups']), 5)
+            self.assertEqual(live['accommodationPeopleRequired'], 5)
             # People, select-in competition memberships, bookings, approval state.
             query_count = int(response.headers['X-Assignment-Query-Count'])
-            self.assertLessEqual(query_count, 4)
+            self.assertLessEqual(query_count, 7)  # Includes owner validation and coverage inputs added since the original budget.
             db.session.add_all([Athlete(firstname='Additional', lastname=str(index),
                 nation_code='AUT', discipline='Big Air', gender='F', function='Athlete',
                 competitions=[competition])
@@ -180,7 +183,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                 expanded = app.test_client().get('/api/fis/official-quotas')
             self.assertEqual(expanded.get_json()[0]['peopleTotal'], 10)
             self.assertEqual(expanded.get_json()[0]['peopleAssigned'], 4)
-            self.assertEqual(int(expanded.headers['X-Assignment-Query-Count']), query_count)
+            self.assertLessEqual(int(expanded.headers['X-Assignment-Query-Count']), query_count)  # Warm owner lookup may save one SELECT.
 
     def test_changed_stay_reports_existing_booking_hotel_and_partner(self):
         with app.app_context():

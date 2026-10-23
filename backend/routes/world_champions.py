@@ -1,4 +1,5 @@
 """Uses the same app-wide administration permissions and auditing as Events."""
+from accommodation_scope import accommodation_event_id, event_get, event_query
 from flask import Blueprint, jsonify, request
 from sqlalchemy.exc import IntegrityError
 from models import Event, WorldChampion, db
@@ -20,6 +21,8 @@ def save(row, data):
         values['entitlementEnabled'] = values.get('titleType') == 'INDIVIDUAL'
     try:
         values['eventId'] = int(values['eventId'])
+        if values['eventId'] != accommodation_event_id():
+            raise ValueError('Target Event conflicts with the operational context')
         values['championshipYear'] = int(values['championshipYear'])
         if not db.session.get(Event, values['eventId']):
             raise ValueError('Target Event does not exist')
@@ -55,13 +58,13 @@ def save(row, data):
 @world_champions.route('/api/admin/world-champions', methods=['GET', 'POST'])
 def champions():
     if request.method == 'GET':
-        return jsonify([row.to_dict() for row in WorldChampion.query.order_by(WorldChampion.name, WorldChampion.id).all()])
+        return jsonify([row.to_dict() for row in event_query(WorldChampion).order_by(WorldChampion.name, WorldChampion.id).all()])
     return save(WorldChampion(), request.get_json() or {})
 
 
 @world_champions.route('/api/admin/world-champions/<int:champion_id>', methods=['GET', 'PUT'])
 def champion(champion_id):
-    row = WorldChampion.query.get_or_404(champion_id)
+    row = event_get(WorldChampion, champion_id, required=True)
     if request.method == 'GET':
         return jsonify(row.to_dict())
     return save(row, request.get_json() or {})

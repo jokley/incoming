@@ -11,6 +11,7 @@ from test_support import configure_test_app, postgres_test_url
 os.environ['DATABASE_URL'] = postgres_test_url()
 from app import app
 from auth import ROLE_PERMISSIONS
+from accommodation_scope import event_audit_refs
 from models import db, AuditEvent
 
 
@@ -24,6 +25,10 @@ class IdentityAuditReadRoutesTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            from models import Event
+            owner = Event(name='Explicit audit fixture', active=True)
+            db.session.add(owner); db.session.commit()
+            app.config['OPERATIONAL_EVENT_ID'] = owner.id
         self.client = app.test_client()
         self.headers = {'X-Auth-Proxy-Secret': 'read-secret', 'X-Authenticated-User': 'reader',
                         'X-Authenticated-Groups': 'incoming-editor'}
@@ -45,7 +50,7 @@ class IdentityAuditReadRoutesTest(unittest.TestCase):
                     changes_json='{"name":"Updated"}' if day == 1 else None,
                     activity='Changed' if day == 1 else None, category=None, entity_label=None,
                     details_json='["detail"]' if day == 1 else None,
-                    entity_refs_json='{"hotelId":"42"}' if day == 1 else '{}')
+                    entity_refs_json=event_audit_refs({'hotelId': '42'} if day == 1 else {}))
                 db.session.add(row)
                 db.session.flush()
                 expected.append({'id': str(row.id), 'createdAt': f'2027-03-{day:02d}T12:30:00Z',
@@ -56,7 +61,7 @@ class IdentityAuditReadRoutesTest(unittest.TestCase):
                     'changes': {'name': 'Updated'} if day == 1 else None,
                     'activity': 'Changed' if day == 1 else None, 'category': None, 'entityLabel': None,
                     'details': ['detail'] if day == 1 else [],
-                    'entityRefs': {'hotelId': '42'} if day == 1 else {}})
+                    'entityRefs': {'championshipEventId': str(app.config['OPERATIONAL_EVENT_ID']), '_scope': 'OPERATIONAL_EVENT', **({'hotelId': '42'} if day == 1 else {})}})
             db.session.commit()
         return [expected[1], expected[2], expected[0]]
 

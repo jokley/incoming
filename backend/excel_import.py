@@ -139,7 +139,7 @@ def infer_discipline_from_events(people):
     if not ranges:
         return None
 
-    events = AccommodationEvent.query.all()
+    events = AccommodationEvent.query.filter_by(championship_event_id=import_event_id()).all()
     if not events:
         return None
 

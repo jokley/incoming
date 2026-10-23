@@ -11,6 +11,12 @@ from excel_import import PREVIEW_STORE
 pytestmark=pytest.mark.explicit_event_ownership
 
 
+@pytest.fixture(autouse=True)
+def operational_test_context(events, monkeypatch):
+    # Production stays single-event. Tests select their deployment owner explicitly.
+    monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(events[0].id))
+
+
 def upload(event,codes=('9300953','9300954'),changed=None,session_id=None):
     people=[dict(Firstname='Person'+str(i),Lastname='Snapshot',Nationcode='JPN',Function='Athlete',Gender='M',
         Fiscode=c,**{'Competitorid/Staff ID':'s'+c},WSC_PGS_M_6170='YES',Room_type='Double shared',Arrival_date='03.03.2027',Departure_date='09.03.2027') for i,c in enumerate(codes)]
@@ -48,14 +54,15 @@ def booking(people,counts=False):
 
 def test_first_import_reimport_durable_and_two_events(events):
     for event in events:
-        first=upload(event);PREVIEW_STORE.clear();result=run(first,event)
-        assert result['summary']['peopleCreated']==2
-        ids=[p.id for p in Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id)]
-        again=upload(event);assert again['session']['version']==2
-        assert len(again['changePlan']['people']['unchanged'])==2
-        repeated=run(again,event)
-        assert repeated['summary']['peopleCreated']==0 and repeated['summary']['peopleUpdated']==0
-        assert [p.id for p in Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id)]==ids
+        with patch.dict(app.config, OPERATIONAL_EVENT_ID=str(event.id)):
+            first=upload(event);PREVIEW_STORE.clear();result=run(first,event)
+            assert result['summary']['peopleCreated']==2
+            ids=[p.id for p in Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id)]
+            again=upload(event);assert again['session']['version']==2
+            assert len(again['changePlan']['people']['unchanged'])==2
+            repeated=run(again,event)
+            assert repeated['summary']['peopleCreated']==0 and repeated['summary']['peopleUpdated']==0
+            assert [p.id for p in Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id)]==ids
     assert Athlete.query.count()==4
 
 
@@ -95,7 +102,8 @@ def test_string_configured_event_approval_has_no_operational_writes(events, monk
 
 def test_configured_operational_event_blocks_foreign_import_reads_and_writes(events, monkeypatch):
     a, b = events
-    pending = upload(b)
+    with patch.dict(app.config, OPERATIONAL_EVENT_ID=str(b.id)):
+        pending = upload(b)
     sid = pending['session']['id']
     monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(a.id))
     client = app.test_client()
@@ -114,7 +122,9 @@ def test_configured_operational_event_blocks_foreign_import_reads_and_writes(eve
 
 
 def test_explicit_deletion_retains_shared_booking_and_other_event(events):
-    a,b=events;run(upload(a),a);run(upload(b),b)
+    a,b=events;run(upload(a),a)
+    with patch.dict(app.config, OPERATIONAL_EVENT_ID=str(b.id)):
+        run(upload(b),b)
     people=Athlete.query.filter_by(event_id=a.id).order_by(Athlete.id).all();shared=booking(people);bid=shared.id
     removed=people[1];removed.accommodation_rate_category='SPECIAL';removed.accommodation_rate_source='MANUAL';db.session.commit()
     current=upload(a,('9300953',));plan=current['changePlan']

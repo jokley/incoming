@@ -457,7 +457,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()['occupants'][0]['athlete']['id'], athlete_id)
 
-    def test_quota_single_flag_is_not_derived_from_entitlement_or_occupancy(self):
+    def test_explicit_false_is_preserved_independent_of_entitlement_or_occupancy(self):
         with app.app_context():
             entitled = self.athlete('Lina', 'Frei')
             entitled.single_room_status = 'IN_QUOTA'
@@ -470,7 +470,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         client = app.test_client()
         created = client.post('/api/assignments/bookings', json={
-            'athleteIds': [entitled_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
+            'athleteIds': [entitled_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id, 'countsAsSingle': False,
             'roomNumber': 'Slot 01', 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
         })
         self.assertEqual(created.status_code, 201)
@@ -582,12 +582,13 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         ordinary_in_single = assign('ordinary_single', single_id, 'EZ 02')
         self.assertEqual(ordinary_in_single.status_code, 201)
-        self.assertFalse(ordinary_in_single.get_json()['countsAsSingle'])
+        self.assertTrue(ordinary_in_single.get_json()['countsAsSingle'])  # Physical EZ creation default; saved overrides remain authoritative.
 
     def test_non_entitled_single_occupant_is_not_marked_exclusive(self):
         with app.app_context():
             athlete = self.athlete('Noah', 'Keller')
             athlete.single_room_status = 'PENDING_APPROVAL'
+            athlete.room_type = 'Double shared'  # No EZ request and no approved extra.
             db.session.add(athlete)
             db.session.commit()
             athlete_id = str(athlete.id)

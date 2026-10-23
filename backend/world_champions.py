@@ -4,6 +4,7 @@ import uuid
 import re
 from flask import has_request_context, request
 from models import AuditEvent, WorldChampion, db
+from accommodation_scope import event_audit_refs
 
 
 from imports.normalization import canonical_fis_code
@@ -62,8 +63,8 @@ def audit_status(person_key, source, reason, username, references=None, event_id
         activity=automatic_title if source == 'AUTO_REFERENCE' else 'Weltmeisterstatus manuell geändert',
         entity_label=str(person_key), changes_json=json.dumps(evidence, ensure_ascii=False),
         details_json=json.dumps(details, ensure_ascii=False),
-        entity_refs_json=json.dumps({**({'personId': str(person_id)} if person_id is not None else {}),
-                                    **({'importSessionId': str(session_id)} if session_id is not None else {})})))
+        entity_refs_json=event_audit_refs({**({'personId': str(person_id)} if person_id is not None else {}),
+                                    **({'importSessionId': str(session_id)} if session_id is not None else {})}, event_id)))
 
 
 def reconcile_verified_titles(event_id, records):
