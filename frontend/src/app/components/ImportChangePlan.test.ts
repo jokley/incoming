@@ -3,6 +3,7 @@ import { test, before, after } from 'node:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer, type ViteDevServer } from 'vite';
+import { fileURLToPath } from 'node:url';
 import { canConfirmReview, importReviewRequest } from '../services/importReview.ts';
 import type { ImportChangePlan } from '../types';
 
@@ -11,7 +12,7 @@ const plan: ImportChangePlan = {digest:'reviewed',eventId:7,nation:'JPN',importV
   memberships:{add:[],remove:[{personId:42,competitionId:1}],unchanged:[]},operations:{bookingIds:[9],deleteEmptyBookingIds:[9],partnerIds:[8],bookings:[{id:9,check_in_date:'2027-03-03',check_out_date:'2027-03-09',counts_as_single:false}]}};
 let server: ViteDevServer;
 let Component: React.ElementType;
-before(async()=>{server=await createServer({configFile:false,root:new URL('../../..',import.meta.url).pathname,optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,watch:null},esbuild:{jsx:'automatic'}});Component=(await server.ssrLoadModule('/src/app/components/ImportChangePlan.tsx')).ImportChangePlan;});
+before(async()=>{server=await createServer({configFile:false,root:fileURLToPath(new URL('../../..',import.meta.url)),optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false,ws:false,watch:null},esbuild:{jsx:'automatic'}});Component=(await server.ssrLoadModule('/src/app/components/ImportChangePlan.tsx')).ImportChangePlan;});
 after(async()=>{await server?.close();});
 
 test('requires scope, destructive consent and a current plan',()=>{
@@ -25,7 +26,7 @@ test('requires scope, destructive consent and a current plan',()=>{
 
 test('shows removal identities, manual values, booking consequences and explicit consent',()=>{
   const html=renderToStaticMarkup(createElement(Component,{plan,editable:true,scopeConfirmed:false,destructiveConfirmed:false,onScope:()=>{},onDestructive:()=>{},onRecheck:()=>{},busy:false}));
-  for(const text of ['Änderungsplan','Removed Person','9300953','0042','SPECIAL','NO_ROOM','vollständige Meldung','Keine Teilmeldung','Buchungsfolgen','Nach Entfernung leer','Historische Genehmigungs-Evidence'])assert.ok(html.includes(text),text);
+  for(const text of ['Änderungsplan','Removed Person','9300953','0042','SPECIAL','NO_ROOM','Vollständige Nationenmeldung bestätigen','Die importierten Dateien enthalten sämtliche Personen dieser Nation für die Veranstaltung, einschließlich aller Disziplinen. Fehlende Personen können bei einem späteren vollständigen Reimport nach zusätzlicher Bestätigung entfernt werden.','Buchungsfolgen','Nach Entfernung leer','Historische Genehmigungs-Evidence'])assert.ok(html.includes(text),text);
   assert.equal((html.match(/type="checkbox"/g)||[]).length,2);
   assert.ok(!html.includes('checked=""'));
 });

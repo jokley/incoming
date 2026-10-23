@@ -4,12 +4,13 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer, type ViteDevServer } from 'vite';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 let server: ViteDevServer;
 let html: string;
 before(async () => {
-  server = await createServer({ configFile: false, cacheDir: new URL('../../../../node_modules/.vite-fis-guide', import.meta.url).pathname, root: new URL('../../..', import.meta.url).pathname,
-    optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, watch: null }, esbuild: { jsx: 'automatic' } });
+  server = await createServer({ configFile: false, cacheDir: fileURLToPath(new URL('../../../../node_modules/.vite-fis-guide', import.meta.url)), root: fileURLToPath(new URL('../../..', import.meta.url)),
+    optimizeDeps: { noDiscovery: true, include: [] }, server: { middlewareMode: true, hmr: false, ws: false, watch: null }, esbuild: { jsx: 'automatic' } });
   const { FisRulesPanel } = await server.ssrLoadModule('/src/app/components/FisRulesPanel.tsx');
   html = renderToStaticMarkup(createElement(FisRulesPanel));
 });

@@ -57,6 +57,9 @@ class RuntimeSettings:
         app.config.update(
             SQLALCHEMY_DATABASE_URI=self.database_url,
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            # Staged restores replace the database and terminate its old sockets.
+            # Reconnect before the next request checks out a stale pooled socket.
+            SQLALCHEMY_ENGINE_OPTIONS={'pool_pre_ping': True},
             AUTH_PROXY_SECRET=self.auth_proxy_secret,
             AUTH_DEV_USER=self.auth_dev_user,
             AUTH_DEV_GROUPS=self.auth_dev_groups,

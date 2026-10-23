@@ -108,6 +108,12 @@ Without Docker on Windows, use the portable PostgreSQL 17 workflow recorded in
 
 ### Local application without Docker (Windows PowerShell)
 
+For a legacy dump requiring explicit event ownership, use the isolated procedure
+and verified PowerShell commands in [local restore verification](LOCAL_RESTORE_VERIFICATION.md).
+The launcher supports `--env-file`, a separate `incoming_restorecheck_YYYYMMDD_HHMMSS`
+database, `BACKUP_PORT`, `OPERATIONAL_EVENT_ID`, and `EVENT_OWNERSHIP_PLAN`.
+The ordinary `.env.local` target below remains unchanged.
+
 Run from the repository root. Install dependencies once:
 
 ```powershell

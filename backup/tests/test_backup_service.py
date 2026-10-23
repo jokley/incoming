@@ -105,16 +105,20 @@ class BackupServiceTest(unittest.TestCase):
 
     def test_server_restore_uses_custom_dump_directly_without_decompression(self):
         commands = []
+        migration_environments = []
         integrity = Result()
         integrity.stdout = '20260815_01\n'
 
         def run(command, **kwargs):
             commands.append(command)
+            if 'alembic' in command:
+                migration_environments.append(kwargs['env'])
             return integrity
 
         with tempfile.TemporaryDirectory() as directory, self.environment(directory), \
                 patch('backup_service.create_backup', return_value={'filename': 'safety.dump.gz'}), \
-                patch('backup_service.subprocess.run', side_effect=run):
+                patch('backup_service.subprocess.run', side_effect=run), \
+                patch.dict(os.environ, EVENT_OWNERSHIP_PLAN='/reviewed/plan.json'):
             dump = Path(directory, 'manual', 'incoming-2026-08-16_152043.dump.gz')
             dump.parent.mkdir()
             dump.write_bytes(b'PGDMP-valid')
@@ -130,6 +134,8 @@ class BackupServiceTest(unittest.TestCase):
             self.assertEqual(migration[0], sys.executable)
             self.assertEqual(Path(migration[4]),
                              Path(backup_service.__file__).resolve().parents[1] / 'backend/alembic.ini')
+            self.assertEqual(migration_environments[0]['EVENT_OWNERSHIP_PLAN'], '/reviewed/plan.json')
+            self.assertIn('_restore_', migration_environments[0]['DATABASE_URL'])
 
     def test_failed_staged_restore_never_disconnects_or_modifies_production(self):
         failed = Result()

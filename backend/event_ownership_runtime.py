@@ -17,6 +17,17 @@ def configured_event_id():
     return int(raw)
 
 
+def validate_operational_import_event(value):
+    """Normalize request ownership and honor an explicit single-event deployment."""
+    from imports.event_context import normalize_event_id
+    selected = normalize_event_id(value)
+    configured = current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None
+    if configured is not None and str(configured).strip():
+        if selected != configured_event_id():
+            raise OperationalEventError('A second operational event is disabled until backend isolation is complete')
+    return selected
+
+
 
 def apply_event_ownership(session, flush_context, instances):
     from models import Athlete, RoomBooking, ImportSession, HotelRoomInventory, AccommodationEvent, ImportRun, RoomBookingOccupant
@@ -34,6 +45,8 @@ def apply_event_ownership(session, flush_context, instances):
                 allowed = (getattr(g, 'import_event_id', None) if isinstance(obj, (Athlete, ImportSession, ImportRun)) else None)
                 if allowed is None:
                     allowed = configured_event_id()
+                else:
+                    allowed = validate_operational_import_event(allowed)
                 if owner != allowed:
                     raise OperationalEventError('A second operational event is disabled until backend isolation is complete')
     # Do not permit mixed-event room memberships even through a direct ORM write.

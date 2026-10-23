@@ -74,7 +74,7 @@ app.register_blueprint(world_champions)
 app.register_blueprint(accommodation_segments)
 
 
-from event_ownership_runtime import OperationalEventError
+from event_ownership_runtime import OperationalEventError, validate_operational_import_event
 
 
 from imports.event_context import import_event_id, validate_session_event, revalidate_confirmation_event
@@ -106,6 +106,8 @@ def validate_import_request_context():
     selected = normalize_event_id(values[0]) if values else None
     if any(normalize_event_id(v) != selected for v in values):
         raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Widersprüchliche Request-Event-IDs.')
+    if selected is not None:
+        selected = validate_operational_import_event(selected)
     args = request.view_args or {}
     session_id = args.get('session_id') or request.form.get('sessionId')
     session = db.session.get(ImportSession, normalize_event_id(session_id)) if session_id else None
@@ -137,6 +139,7 @@ def validate_import_request_context():
             selected = import_event_id()
         else:
             return
+    selected = validate_operational_import_event(selected)
     revalidate_confirmation_event(selected, [], validate_codes=False)
     g.import_event_id = selected
 
@@ -1858,6 +1861,7 @@ def preview_fis_import():
         event_id = normalize_event_id(raw_event_id)
     except ImportValidationError as exc:
         return jsonify(exc.to_dict()), 400
+    event_id = validate_operational_import_event(event_id)
     event_context = Event.query.options(
         db.selectinload(Event.competition_mappings).joinedload(EventCompetition.competition)
     ).filter_by(id=event_id).first()

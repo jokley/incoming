@@ -1,5 +1,6 @@
 """Local-only routing must not inherit production connection settings."""
 import os
+import tempfile
 from pathlib import Path
 import sys
 import unittest
@@ -11,6 +12,33 @@ import backup_service
 
 
 class LocalStartupTest(unittest.TestCase):
+    def test_isolated_restore_routing_and_explicit_migration_context(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plan = Path(directory) / 'plan.json'
+            plan.write_text('{}')
+            database = 'incoming_restorecheck_20261023_070957'
+            env = dev_local.local_environment(dict(
+                DATABASE_URL=dev_local.LOCAL_TEST_URL.rsplit('/', 1)[0] + '/' + database,
+                BACKUP_PORT='8080', OPERATIONAL_EVENT_ID='1', EVENT_OWNERSHIP_PLAN=str(plan)), {})
+        self.assertEqual(env['POSTGRES_DB'], database)
+        self.assertEqual(env['BACKUP_SERVICE_URL'], 'http://127.0.0.1:8080')
+        self.assertEqual(env['OPERATIONAL_EVENT_ID'], '1')
+        self.assertEqual(env['EVENT_OWNERSHIP_PLAN'], str(plan))
+        self.assertIn(database, env['BACKUP_DIR'])
+
+    def test_inherited_ownership_context_is_not_used_implicitly(self):
+        env = dev_local.local_environment({}, dict(
+            EVENT_OWNERSHIP_PLAN='/production/plan.json', OPERATIONAL_EVENT_ID='99'))
+        self.assertNotIn('EVENT_OWNERSHIP_PLAN', env)
+        self.assertNotIn('OPERATIONAL_EVENT_ID', env)
+
+    def test_invalid_local_restore_configuration_is_rejected(self):
+        for values in ({'DATABASE_URL': dev_local.LOCAL_TEST_URL.rsplit('/', 1)[0] + '/incoming_restorecheck_prod'},
+                       {'BACKUP_PORT': '5432'}, {'OPERATIONAL_EVENT_ID': '0'},
+                       {'EVENT_OWNERSHIP_PLAN': 'missing-relative-plan.json'}):
+            with self.subTest(values=values), self.assertRaises(ValueError):
+                dev_local.local_environment(values, {})
+
     def test_rejects_nonlocal_targets_and_connection_options(self):
         unsafe = [
             dev_local.LOCAL_TEST_URL.replace('127.0.0.1', 'production.example'),

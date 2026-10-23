@@ -208,6 +208,34 @@ def test_api_compatibility_only_uses_explicit_configured_event(orm):
         db.session.rollback()
 
 
+@pytest.mark.parametrize('model_name', ['Athlete', 'ImportSession', 'ImportRun', 'RoomBooking'])
+def test_import_orm_guard_normalizes_context_and_keeps_foreign_event_blocked(orm, model_name):
+    from flask import g
+    import models
+    from event_ownership_runtime import OperationalEventError
+    model = getattr(models, model_name)
+    orm.config['OPERATIONAL_EVENT_ID'] = '7'
+    kwargs = ({'firstname': 'Test', 'lastname': 'Owner', 'nation_code': 'LAT'} if model_name == 'Athlete'
+              else {'nation': 'LAT'} if model_name == 'ImportSession'
+              else {'import_type': 'test'} if model_name == 'ImportRun'
+              else {'hotel': models.Hotel(name='Local test hotel')})
+    with orm.test_request_context('/api/import/test', method='POST'):
+        g.import_event_id = '7'
+        item = model(event_id=7, **kwargs)
+        models.db.session.add(item)
+        models.db.session.commit()
+        assert item.event_id == 7
+        g.import_event_id = '8'
+        if model_name == 'RoomBooking':
+            item.counts_as_single = True
+            item.event_id = 8
+        else:
+            item.event_id = 8
+        with pytest.raises(OperationalEventError, match='second operational'):
+            models.db.session.flush()
+        models.db.session.rollback()
+
+
 def test_read_only_cli_and_post_migration_verification(legacy):
     import os,subprocess,sys
     engine,cfg,target,other,folder,_=legacy

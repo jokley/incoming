@@ -59,6 +59,60 @@ def test_first_import_reimport_durable_and_two_events(events):
     assert Athlete.query.count()==4
 
 
+@pytest.mark.parametrize('explicit_event', [False, True])
+def test_string_configured_event_approval_has_no_operational_writes(events, monkeypatch, explicit_event):
+    from sqlalchemy import event as sql_event
+    from sqlalchemy.orm import Session
+    a, _ = events
+    monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(a.id))
+    pending = upload(a)
+    sid = pending['session']['id']
+    suffix = f'?eventId={a.id}' if explicit_event else ''
+    client = app.test_client()
+    current = client.get(f'/api/import/sessions/{sid}{suffix}')
+    assert current.status_code == 200, current.json
+    writes = []
+    def capture(session, *_):
+        writes.extend(type(obj).__name__ for obj in session.new.union(session.dirty).union(session.deleted)
+                      if isinstance(obj, (Athlete, RoomBooking, RoomBookingOccupant, ImportRun)))
+    sql_event.listen(Session, 'before_flush', capture, insert=True)
+    try:
+        approved = client.post(f'/api/import/sessions/{sid}/approve{suffix}', json=dict(
+            snapshotScope='FULL_NATION', planDigest=current.json['preview']['changePlan']['digest'],
+            confirmDestructiveChanges=False))
+    finally:
+        sql_event.remove(Session, 'before_flush', capture)
+    assert approved.status_code == 200, approved.json
+    assert writes == []
+    assert Athlete.query.count() == RoomBooking.query.count() == ImportRun.query.count() == 0
+    imported = client.post(f'/api/import/sessions/{sid}/import{suffix}',
+                           json={'versionId': pending['session']['currentVersionId']})
+    assert imported.status_code == 200, imported.json
+    assert imported.json['summary']['peopleCreated'] == 2
+    assert {p.event_id for p in Athlete.query.all()} == {a.id}
+    assert {r.event_id for r in ImportRun.query.all()} == {a.id}
+
+
+def test_configured_operational_event_blocks_foreign_import_reads_and_writes(events, monkeypatch):
+    a, b = events
+    pending = upload(b)
+    sid = pending['session']['id']
+    monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(a.id))
+    client = app.test_client()
+    for method, path, kwargs in [
+        ('get', f'/api/import/sessions/{sid}?eventId={b.id}', {}),
+        ('get', f'/api/import/sessions?eventId={b.id}', {}),
+        ('post', f'/api/import/sessions/{sid}/approve?eventId={b.id}', {'json': {}}),
+        ('post', f'/api/import/sessions/{sid}/import?eventId={b.id}', {'json': {}}),
+        ('post', '/api/import/fis/preview', {'data': {'eventId': str(b.id)}}),
+    ]:
+        denied = getattr(client, method)(path, **kwargs)
+        assert denied.status_code == 409, denied.json
+        assert denied.json['error'] == 'OPERATIONAL_EVENT_REQUIRED'
+    assert Athlete.query.count() == RoomBooking.query.count() == ImportRun.query.count() == 0
+    assert db.session.get(ImportSession, sid).status != 'APPROVED'
+
+
 def test_explicit_deletion_retains_shared_booking_and_other_event(events):
     a,b=events;run(upload(a),a);run(upload(b),b)
     people=Athlete.query.filter_by(event_id=a.id).order_by(Athlete.id).all();shared=booking(people);bid=shared.id
