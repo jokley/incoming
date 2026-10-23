@@ -2,6 +2,7 @@
 
 No slots or split provenance are stored. Shared prefixes retain occupant context.
 """
+from accommodation_scope import event_query, require_event_object
 import hashlib
 import json
 from datetime import date
@@ -21,16 +22,17 @@ def require(condition, code, message, status=400):
 
 
 def person_bookings(person_id):
-    return RoomBooking.query.join(RoomBookingOccupant).filter(RoomBookingOccupant.athlete_id == person_id).all()
+    return event_query(RoomBooking).join(RoomBookingOccupant).filter(RoomBookingOccupant.athlete_id == person_id).all()
 
 
 def snapshot_token(booking):
+    require_event_object(booking)
     people = sorted((o.athlete for o in booking.occupants), key=lambda p: p.id)
     relevant = {b.id: b for p in people for b in person_bookings(p.id)}
     # Include competing use of this physical room, not unrelated room assignments.
     from app import _planned_room_key
     room_key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
-    for b in RoomBooking.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
+    for b in event_query(RoomBooking).filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
         if room_key and room_key == (_planned_room_key(b.room_number) or (b.room_number or '').strip()):
             relevant[b.id] = b
     rows = []
@@ -38,7 +40,7 @@ def snapshot_token(booking):
         rows.append([b.id, b.hotel_id, b.room_type_id, b.room_number, b.check_in_date,
                      b.check_out_date, b.counts_as_single, b.created_by, b.created_at,
                      sorted((o.athlete_id, o.role, str(o.created_at)) for o in b.occupants)])
-    inventories = HotelRoomInventory.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all()
+    inventories = event_query(HotelRoomInventory).filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all()
     state = [booking.id, rows, [[p.id, p.arrival_date, p.departure_date, p.updated_at,
                     p.single_room_status, p.single_room_decision_id, p.accommodation_requirement, p.accommodation_requirement_source] for p in people],
              [[i.id, i.room_count, i.available_from, i.available_until] for i in sorted(inventories, key=lambda i: i.id)],
@@ -63,11 +65,12 @@ def _copy(booking, identity, start, end):
 
 def validate_partition_source(booking):
     """Common physical-room safety for explicit split and external replacement."""
+    require_event_object(booking)
     external = booking.hotel.accommodation_type == 'EXTERNAL'
     require(external or (booking.room_type and len(booking.occupants) <= booking.room_type.max_persons), 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
     from app import _planned_room_key
     key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
-    for other in RoomBooking.query.filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
+    for other in event_query(RoomBooking).filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
         same_room = not external and key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
         require(not (other.id != booking.id and same_room and booking_intervals_overlap(
             booking.check_in_date, booking.check_out_date, other.check_in_date, other.check_out_date)),
@@ -76,6 +79,7 @@ def validate_partition_source(booking):
 
 
 def split_plan(booking, ids, split_date):
+    require_event_object(booking)
     require(booking.hotel.accommodation_type != 'EXTERNAL', 'EXTERNAL_SPLIT_DISABLED',
             'Externe Aufenthalte über Bearbeiten ändern.')
     try:
@@ -121,6 +125,7 @@ def partition_booking(booking, cut, remaining):
 
     Flush only; both business flows own their single transaction boundary.
     """
+    require_event_object(booking)
     require(booking.check_in_date < cut < booking.check_out_date,
             'INVALID_SPLIT_DATE', 'Teilungsdatum muss innerhalb der Zuweisung liegen.')
     continuation = None
@@ -137,6 +142,7 @@ def partition_booking(booking, cut, remaining):
 
 def apply_split(booking, plan):
     """Only flush; the caller owns the sole commit/rollback boundary."""
+    require_event_object(booking)
     cut = date.fromisoformat(plan['splitDate'])
     remaining = [o for o in booking.occupants if str(o.athlete_id) not in plan['athleteIds']]
     partition_booking(booking, cut, remaining)

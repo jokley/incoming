@@ -1,3 +1,4 @@
+from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object
 from accommodation_requirements import requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
@@ -322,11 +323,20 @@ def reset_test_data():
     if scope not in RESET_TARGETS:
         return jsonify({'error': 'INVALID_SCOPE', 'message': 'Unbekannter Reset-Umfang'}), 400
     counts = {}
+    owner = accommodation_event_id()
+    if scope in {'activities', 'imports', 'all'}:
+        # Historical/global audit rows have no reliable event FK yet (PR5).
+        # Even an otherwise empty second championship can own old audit evidence.
+        if Event.query.filter(Event.id != owner).first():
+            raise OperationalEventError('Global history cleanup is disabled with multiple championships')
+        for model in (Athlete, RoomBooking, HotelRoomInventory, ImportSession, ImportRun):
+            if model.query.filter(model.event_id != owner).first():
+                raise OperationalEventError('Global history cleanup is disabled while another event contains operational data')
     try:
         if scope in {'activities', 'all'}:
             counts['Aktivitäten / Audit-Log'] = AuditEvent.query.delete(synchronize_session=False)
             counts['Workflowhistorie'] = ImportSessionEvent.query.delete(synchronize_session=False)
-            FisRoomAssignment.query.update(
+            event_query(FisRoomAssignment).update(
                 {FisRoomAssignment.import_run_id: None}, synchronize_session=False)
             counts['Systemereignisse'] = ImportRun.query.delete(synchronize_session=False)
         if scope in {'assignments', 'athletes', 'all'}:
@@ -338,7 +348,7 @@ def reset_test_data():
             if scope in {'athletes', 'all'}:
                 models += (('Athleten', Athlete),)
             for label, model in models:
-                counts[label] = model.query.delete(synchronize_session=False)
+                counts[label] = event_query(model).delete(synchronize_session=False)
         if scope in {'imports', 'all'}:
             # Break nullable cycle links before deleting children and parents.
             ImportSession.query.update(
@@ -348,9 +358,9 @@ def reset_test_data():
             # Establish the session/version cycle break in PostgreSQL before
             # any dependent bulk DELETE is issued.
             db.session.flush()
-            Athlete.query.update(
+            event_query(Athlete).update(
                 {Athlete.single_room_decision_id: None}, synchronize_session=False)
-            FisRoomAssignment.query.update(
+            event_query(FisRoomAssignment).update(
                 {FisRoomAssignment.import_run_id: None}, synchronize_session=False)
             counts['Import Historie'] = ImportSessionEvent.query.delete(synchronize_session=False)
             counts['Genehmigungen'] = ImportApproval.query.delete(synchronize_session=False)
@@ -367,31 +377,31 @@ def reset_test_data():
 
 def _delete_simulation_data():
     """Delete only explicitly owned rows and return auditable row counts."""
-    booking_ids = [row[0] for row in db.session.query(RoomBooking.id).filter_by(
+    booking_ids = [row[0] for row in db.session.query(RoomBooking.id).filter(ownership_clause(RoomBooking, accommodation_event_id())).filter_by(
         created_by=SIMULATION_OWNER).all()]
-    athlete_ids = [row[0] for row in db.session.query(Athlete.id).filter_by(
+    athlete_ids = [row[0] for row in db.session.query(Athlete.id).filter(ownership_clause(Athlete, accommodation_event_id())).filter_by(
         created_by=SIMULATION_OWNER).all()]
     counts = {'roomAssignments': 0, 'people': 0}
     if booking_ids:
-        counts['roomAssignmentOccupants'] = RoomBookingOccupant.query.filter(
+        counts['roomAssignmentOccupants'] = event_query(RoomBookingOccupant).filter(
             RoomBookingOccupant.room_booking_id.in_(booking_ids)).delete(synchronize_session=False)
-        counts['roomAssignments'] = RoomBooking.query.filter(
+        counts['roomAssignments'] = event_query(RoomBooking).filter(
             RoomBooking.id.in_(booking_ids)).delete(synchronize_session=False)
     if athlete_ids:
         # Defensive cleanup for simulation people manually assigned after a run.
-        extra_memberships = RoomBookingOccupant.query.filter(
+        extra_memberships = event_query(RoomBookingOccupant).filter(
             RoomBookingOccupant.athlete_id.in_(athlete_ids)).all()
         extra_booking_ids = {membership.room_booking_id for membership in extra_memberships}
         for membership in extra_memberships:
             db.session.delete(membership)
         db.session.flush()
         for booking_id in extra_booking_ids:
-            if not RoomBookingOccupant.query.filter_by(room_booking_id=booking_id).first():
-                booking = db.session.get(RoomBooking, booking_id)
+            if not event_query(RoomBookingOccupant).filter_by(room_booking_id=booking_id).first():
+                booking = event_get(RoomBooking, booking_id)
                 if booking:
                     db.session.delete(booking)
                     counts['roomAssignments'] += 1
-        counts['people'] = Athlete.query.filter(Athlete.id.in_(athlete_ids)).delete(
+        counts['people'] = event_query(Athlete).filter(Athlete.id.in_(athlete_ids)).delete(
             synchronize_session=False)
     return counts
 
@@ -416,11 +426,11 @@ def create_simulation():
         timings['Flush'] = (time.perf_counter() - step_started) * 1000
 
         step_started = time.perf_counter()
-        inventories = HotelRoomInventory.query.options(
+        inventories = event_query(HotelRoomInventory).options(
             db.joinedload(HotelRoomInventory.room_type)).order_by(
                 HotelRoomInventory.hotel_id, HotelRoomInventory.room_type_id,
                 HotelRoomInventory.available_from, HotelRoomInventory.id).all()
-        existing_bookings = RoomBooking.query.with_entities(
+        existing_bookings = event_query(RoomBooking).with_entities(
             RoomBooking.hotel_id, RoomBooking.room_type_id,
             RoomBooking.check_in_date, RoomBooking.check_out_date,
         ).filter(
@@ -559,16 +569,16 @@ def authenticate_api_request():
         numeric = [int(part) for part in parts if part.isdigit()]
         try:
             if g.api_path.startswith('/api/assignments/bookings/') and numeric:
-                booking = db.session.get(RoomBooking, numeric[0])
+                booking = event_get(RoomBooking, numeric[0])
                 g.audit_snapshot = booking.to_dict() if booking else None
             elif g.api_path.startswith('/api/room-assignments/') and numeric:
-                booking = db.session.get(RoomBooking, numeric[0])
+                booking = event_get(RoomBooking, numeric[0])
                 g.audit_snapshot = booking.to_dict() if booking else None
             elif g.api_path.startswith('/api/hotels/') and numeric:
-                hotel = db.session.get(Hotel, numeric[0])
+                hotel = event_get(Hotel, numeric[0])
                 g.audit_snapshot = hotel.to_dict() if hotel else None
             elif g.api_path.startswith('/api/athletes/') and numeric:
-                athlete = db.session.get(Athlete, numeric[0])
+                athlete = event_get(Athlete, numeric[0])
                 g.audit_snapshot = athlete.to_dict() if athlete else None
             elif g.api_path.startswith('/api/room-types/') and numeric:
                 room_type = db.session.get(RoomType, numeric[0])
@@ -651,7 +661,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
             category = 'Hotels'
             ref('roomId', response.get('id') or (request.path.rstrip('/').split('/')[-1] if request.path.rstrip('/').split('/')[-1].isdigit() else None))
             title = {'create': 'Zimmerkontingent erstellt', 'update': 'Zimmerkontingent geändert', 'delete': 'Zimmerkontingent entfernt'}.get(action, 'Zimmerkontingent geändert')
-            hotel = Hotel.query.get(int(hotel_id)) if hotel_id else None
+            hotel = event_get(Hotel, int(hotel_id)) if hotel_id else None
             label = hotel.name if hotel else label
             room_type_id = response.get('roomTypeId') or payload.get('roomTypeId')
             room_type = RoomType.query.get(int(room_type_id)) if room_type_id else None
@@ -809,6 +819,8 @@ def audit_successful_mutation(response):
 
 
 def ensure_reference_data():
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     room_types_seed = [
         ('DZ / DU', 2),
         ('EZ / DU', 1),
@@ -870,10 +882,10 @@ def ensure_reference_data():
             room_type_map[name] = room_type
             changed = True
 
-    hotel_map = {hotel.name: hotel for hotel in Hotel.query.all()}
+    hotel_map = {hotel.name: hotel for hotel in event_query(Hotel).all()}
     inventory_keys = {
         (inv.hotel_id, inv.room_type_id, inv.available_from, inv.available_until, inv.room_count)
-        for inv in HotelRoomInventory.query.all()
+        for inv in event_query(HotelRoomInventory).all()
     }
 
     for hotel_name, location, region, room_type_name, date_from, date_to, room_count, has_hp, has_sr in hotels_seed:
@@ -913,11 +925,11 @@ def ensure_reference_data():
 
     event_map = {
         (event.discipline, event.start_date, event.end_date): event
-        for event in AccommodationEvent.query.all()
+        for event in event_query(AccommodationEvent).all()
     }
     existing_demands = {
         (demand.event_id, demand.room_type_id, demand.room_count)
-        for demand in EventRoomDemand.query.all()
+        for demand in event_query(EventRoomDemand).all()
     }
 
     for discipline, start_date, end_date, demands in events_seed:
@@ -1011,14 +1023,14 @@ def _has_pending_roomlist_review(athlete):
 def _acknowledge_import_changes(athlete_ids):
     """Mark imported changes reviewed as part of an assignment save."""
     now = datetime.utcnow()
-    for athlete in Athlete.query.filter(Athlete.id.in_(set(athlete_ids))).all():
+    for athlete in event_query(Athlete).filter(Athlete.id.in_(set(athlete_ids))).all():
         if _has_pending_roomlist_review(athlete):
             athlete.roomlist_change_acknowledged_at = now
             athlete.roomlist_change_acknowledged_summary = athlete.roomlist_change_summary
 
 
 def _change_touches_assignment_for_athlete(athlete):
-    return bool(_has_pending_roomlist_review(athlete) and RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first())
+    return bool(_has_pending_roomlist_review(athlete) and event_query(RoomBookingOccupant).filter_by(athlete_id=athlete.id).first())
 
 
 def _collect_booking_athlete_ids(booking):
@@ -1187,7 +1199,7 @@ def _build_partial_unit_variant(unit, occupant):
 
 
 def _build_room_booking_units():
-    athletes = Athlete.query.order_by(
+    athletes = event_query(Athlete).order_by(
         Athlete.nation_code,
         Athlete.discipline,
         Athlete.gender,
@@ -1196,10 +1208,12 @@ def _build_room_booking_units():
         Athlete.firstname,
         Athlete.id,
     ).all()
-    bookings = RoomBooking.query.options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
+    bookings = event_query(RoomBooking).options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     booking_index = {}
     athlete_booking_index = {}
     for booking in bookings:
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(booking)
         booking_index[tuple(_collect_booking_athlete_ids(booking))] = booking
         for occupant in booking.occupants or []:
             athlete_booking_index.setdefault(occupant.athlete_id, []).append(booking)
@@ -1370,7 +1384,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     with _assignment_phase('assignment'):
         units, bookings = _build_room_booking_units()
     rooms_started = time.perf_counter()
-    hotels = Hotel.query.options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
+    hotels = event_query(Hotel).options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
 
     all_dates = []
     for unit in units:
@@ -1509,12 +1523,14 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
 
 
 def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None, allow_single_join=False):
+    if existing_booking is not None:
+        require_event_object(existing_booking)
     athlete_ids = data.get('athleteIds', [])
     if not isinstance(athlete_ids, list) or len(athlete_ids) < 1 or len(athlete_ids) > 4:
         return None, None, _booking_error('INVALID_OCCUPANTS', 'athleteIds must include between 1 and 4 athlete IDs')
 
     hotel_id = int(data['hotelId'])
-    hotel = Hotel.query.get_or_404(hotel_id)
+    hotel = event_get(Hotel, hotel_id, required=True)
     external = hotel.accommodation_type == 'EXTERNAL'
     room_type_id = int(data['roomTypeId']) if data.get('roomTypeId') else None
     room_type = RoomType.query.get_or_404(room_type_id) if room_type_id else None
@@ -1535,7 +1551,7 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
             and not set(unique_athlete_ids).issubset({o.athlete_id for o in existing_booking.occupants})):
         return None, None, _booking_error('ROOM_SINGLE_USE', 'Zimmer ist durch EZ-Nutzung gesperrt.')
 
-    athletes = Athlete.query.filter(Athlete.id.in_(unique_athlete_ids)).all()
+    athletes = event_query(Athlete).filter(Athlete.id.in_(unique_athlete_ids)).all()
     if len(athletes) != len(unique_athlete_ids):
         return None, None, _booking_error('ATHLETE_NOT_FOUND', 'One or more athletes not found')
 
@@ -1565,7 +1581,7 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         return None, None, _booking_error('INVALID_DATES', 'Check-in must be before check-out')
 
     # Exclude only the booking being edited/moved, never another segment.
-    person_bookings = RoomBooking.query.join(RoomBookingOccupant).filter(
+    person_bookings = event_query(RoomBooking).join(RoomBookingOccupant).filter(
         RoomBookingOccupant.athlete_id.in_(unique_athlete_ids),
         RoomBooking.check_in_date < check_out_date,
         RoomBooking.check_out_date > check_in_date)
@@ -1579,8 +1595,8 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
 
     if not external:
         from assignment_availability import inventory_guard
-        inventories = HotelRoomInventory.query.filter_by(hotel_id=hotel_id, room_type_id=room_type_id).all()
-        query = RoomBooking.query.filter_by(hotel_id=hotel_id, room_type_id=room_type_id).filter(
+        inventories = event_query(HotelRoomInventory).filter_by(hotel_id=hotel_id, room_type_id=room_type_id).all()
+        query = event_query(RoomBooking).filter_by(hotel_id=hotel_id, room_type_id=room_type_id).filter(
             RoomBooking.check_in_date < check_out_date, RoomBooking.check_out_date > check_in_date)
         if existing_booking:
             query = query.filter(RoomBooking.id != existing_booking.id)
@@ -1613,8 +1629,8 @@ def _initialize_new_booking_counts_as_single(data, *, people=None):
     from accommodation_defaults import default_counts_as_single
     athlete_ids = {int(athlete_id) for athlete_id in data.get('athleteIds', [])}
     if people is None:
-        people = Athlete.query.filter(Athlete.id.in_(athlete_ids)).all()
-    hotel = db.session.get(Hotel, int(data['hotelId'])) if data.get('hotelId') else None
+        people = event_query(Athlete).filter(Athlete.id.in_(athlete_ids)).all()
+    hotel = event_get(Hotel, int(data['hotelId'])) if data.get('hotelId') else None
     room_type = db.session.get(RoomType, int(data['roomTypeId'])) if data.get('roomTypeId') else None
     capacity = room_type.max_persons if room_type and not (hotel and hotel.accommodation_type == 'EXTERNAL') else None
     initialized = dict(data)
@@ -1625,8 +1641,11 @@ def _initialize_new_booking_counts_as_single(data, *, people=None):
 
 
 def _save_booking_from_payload(payload, existing_booking=None, commit=True):
+    if existing_booking is not None:
+        require_event_object(existing_booking)
     if existing_booking is None:
         booking = RoomBooking(
+            event_id=accommodation_event_id(),
             created_by=payload.get('created_by'),
             hotel_id=payload['hotel_id'],
             room_type_id=payload['room_type_id'],
@@ -1645,7 +1664,7 @@ def _save_booking_from_payload(payload, existing_booking=None, commit=True):
         booking.check_in_date = payload['check_in_date']
         booking.check_out_date = payload['check_out_date']
         booking.counts_as_single = payload.get('counts_as_single', False)
-        RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).delete()
+        event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id).delete()
 
     for athlete_id in payload['athlete_ids']:
         db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
@@ -1660,7 +1679,7 @@ def _save_booking_from_payload(payload, existing_booking=None, commit=True):
 
 def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None):
     for athlete_id in athlete_ids:
-        memberships = RoomBookingOccupant.query.filter_by(athlete_id=athlete_id).all()
+        memberships = event_query(RoomBookingOccupant).filter_by(athlete_id=athlete_id).all()
         for membership in memberships:
             booking = membership.room_booking
             if not booking:
@@ -1669,7 +1688,7 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
                 continue
             db.session.delete(membership)
             db.session.flush()
-            remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
+            remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id).count()
             if remaining == 0:
                 db.session.delete(booking)
     # The caller saves and commits the entire replacement operation atomically.
@@ -1677,7 +1696,7 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
 
 
 def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
-    athletes = Athlete.query
+    athletes = event_query(Athlete)
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     # Allocate across all eligible groups before applying display filters.
@@ -1699,7 +1718,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         membership_rows = db.session.query(
             RoomBookingOccupant.athlete_id,
             RoomBooking.counts_as_single,
-        ).join(
+        ).filter(ownership_clause(RoomBooking, accommodation_event_id())).filter(ownership_clause(RoomBookingOccupant, accommodation_event_id())).join(
             RoomBooking,
             RoomBooking.id == RoomBookingOccupant.room_booking_id,
         ).filter(
@@ -1795,7 +1814,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     if unresolved_approvals:
         app.logger.warning('Quota approvals require membership review: %s', sorted(set(unresolved_approvals)))
     all_person_bookings = {}
-    for booking in RoomBooking.query.options(db.selectinload(RoomBooking.occupants), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all():
+    for booking in event_query(RoomBooking).options(db.selectinload(RoomBooking.occupants), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all():
         for membership in booking.occupants:
             all_person_bookings.setdefault(membership.athlete_id, []).append(booking)
     coverage_by_id = {str(a.id): person_accommodation_coverage(a.arrival_date, a.departure_date, all_person_bookings.get(a.id, []), a.accommodation_requirement) for a in athletes}
@@ -2799,6 +2818,8 @@ def import_excel():
 
 def import_data_from_csv(csv_content):
     """Parse and import CSV data"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     lines = csv_content.strip().split('\n')
 
     # Find section boundaries
@@ -2844,6 +2865,8 @@ def import_data_from_csv(csv_content):
 
 def import_room_types(lines, section_info, end_line):
     """Import room types"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     RoomType.query.delete()
 
     for i in range(section_info['start'] + 1, end_line):
@@ -2872,6 +2895,8 @@ def import_room_types(lines, section_info, end_line):
 
 def import_hotels(lines, section_info, end_line):
     """Import hotels and room inventories"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     hotels_dict = {}
 
     for i in range(section_info['start'] + 1, end_line):
@@ -2895,7 +2920,7 @@ def import_hotels(lines, section_info, end_line):
 
             # Get or create hotel
             if hotel_name not in hotels_dict:
-                hotel = Hotel.query.filter_by(name=hotel_name).first()
+                hotel = event_query(Hotel).filter_by(name=hotel_name).first()
                 if not hotel:
                     hotel = Hotel(
                         name=hotel_name,
@@ -2938,6 +2963,8 @@ def import_hotels(lines, section_info, end_line):
 
 def import_events(lines, section_info, end_line):
     """Import events and room demands"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     events_dict = {}
 
     for i in range(section_info['start'] + 1, end_line):
@@ -2988,7 +3015,9 @@ def import_events(lines, section_info, end_line):
 
 def import_athletes(lines, section_info, end_line):
     """Import athletes"""
-    Athlete.query.delete()
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
+    event_query(Athlete).delete()
 
     for i in range(section_info['start'] + 1, end_line):
         if not lines[i].strip():
@@ -3108,7 +3137,7 @@ def _update_athlete_operations(athlete, data):
             athlete.single_room_entitlement = None
             athlete.single_room_decision_id = None
         elif previous_exempt_reason:
-            membership = RoomBookingOccupant.query.filter_by(athlete_id=athlete.id).first()
+            membership = event_query(RoomBookingOccupant).filter_by(athlete_id=athlete.id).first()
             if membership and membership.room_booking and membership.room_booking.counts_as_single:
                 rows = _build_official_quota_usage_rows(nation_code=athlete.nation_code)
                 allocation = next((item for row in rows for item in row['singleRoomAllocations']
@@ -3132,7 +3161,7 @@ def _update_athlete_operations(athlete, data):
 @app.route('/api/athletes/<int:athlete_id>', methods=['PUT', 'PATCH'])
 @app.route('/api/athletes/<int:athlete_id>/', methods=['PUT', 'PATCH'])
 def update_athlete(athlete_id):
-    athlete = Athlete.query.get_or_404(athlete_id)
+    athlete = event_get(Athlete, athlete_id, required=True)
     data = request.get_json(silent=True) or {}
     return _update_athlete_operations(athlete, data)
 
@@ -3210,7 +3239,7 @@ def get_assignment_planning_validations(validation_key):
                 'occupants': [index[identity][0] for identity in ids],
                 'allowedRoomTypeLabels': ['single', 'double'] if len(ids) == 1 else ['double']}
         by_slot = {}
-        for booking in RoomBooking.query.all():
+        for booking in event_query(RoomBooking).all():
             key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
             by_slot.setdefault(key, []).append(booking)
         return _assignment_jsonify({'validationKey': validation_key,
@@ -3244,7 +3273,7 @@ def create_room_booking():
     if 'countsAsSingle' in data:
         payload_data['countsAsSingle'] = data['countsAsSingle']
 
-    multiple = db.session.query(RoomBookingOccupant.athlete_id).filter(
+    multiple = db.session.query(RoomBookingOccupant.athlete_id).filter(ownership_clause(RoomBookingOccupant, accommodation_event_id())).filter(
         RoomBookingOccupant.athlete_id.in_([int(value) for value in payload_data['athleteIds']])
     ).group_by(RoomBookingOccupant.athlete_id).having(func.count(RoomBookingOccupant.id) > 1).first()
     if multiple:
@@ -3252,10 +3281,10 @@ def create_room_booking():
 
     existing_booking = None
     if data.get('assignedBookingId'):
-        existing_booking = RoomBooking.query.get_or_404(int(data['assignedBookingId']))
+        existing_booking = event_get(RoomBooking, int(data['assignedBookingId']), required=True)
     else:
         athlete_id_tuple = tuple(sorted(int(athlete_id) for athlete_id in payload_data['athleteIds']))
-        for booking in RoomBooking.query.options(db.joinedload(RoomBooking.occupants)).all():
+        for booking in event_query(RoomBooking).options(db.joinedload(RoomBooking.occupants)).all():
             if tuple(_collect_booking_athlete_ids(booking)) == athlete_id_tuple:
                 existing_booking = booking
                 break
@@ -3275,7 +3304,7 @@ def create_room_booking():
 @app.route('/api/assignments/bookings/<int:booking_id>/', methods=['PUT'])
 @_measure_assignment_logic
 def update_assigned_unit(booking_id):
-    booking = RoomBooking.query.get_or_404(booking_id)
+    booking = event_get(RoomBooking, booking_id, required=True)
     data = request.json or {}
     payload_data = {
         'athleteIds': [str(occ.athlete_id) for occ in (booking.occupants or []) if occ.athlete_id],
@@ -3297,7 +3326,7 @@ def update_assigned_unit(booking_id):
 @app.route('/api/assignments/bookings/<int:booking_id>/unassign/', methods=['POST'])
 @_measure_assignment_logic
 def unassign_room_booking_unit(booking_id):
-    booking = RoomBooking.query.get_or_404(booking_id)
+    booking = event_get(RoomBooking, booking_id, required=True)
     _acknowledge_import_changes(_collect_booking_athlete_ids(booking))
     db.session.delete(booking)
     db.session.commit()
@@ -3308,15 +3337,15 @@ def unassign_room_booking_unit(booking_id):
 @app.route('/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign/', methods=['POST'])
 @_measure_assignment_logic
 def unassign_room_booking_occupant(booking_id, athlete_id):
-    booking = RoomBooking.query.get_or_404(booking_id)
-    membership = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id, athlete_id=athlete_id).first()
+    booking = event_get(RoomBooking, booking_id, required=True)
+    membership = event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id, athlete_id=athlete_id).first()
     if not membership:
         return _assignment_jsonify({'error': 'Not found', 'message': 'Occupant is not part of the booking'}), 404
 
     _acknowledge_import_changes([athlete_id])
     db.session.delete(membership)
     db.session.flush()
-    remaining = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id).count()
+    remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id).count()
     if remaining == 0:
         db.session.delete(booking)
     db.session.commit()
@@ -3360,7 +3389,7 @@ def create_room_assignment():
 @app.route('/room-assignments/<int:assignment_id>/', methods=['PUT'])
 @_measure_assignment_logic
 def update_room_assignment(assignment_id):
-    booking = RoomBooking.query.get_or_404(assignment_id)
+    booking = event_get(RoomBooking, assignment_id, required=True)
     data = request.json
     payload, _, error = _validate_booking_payload(data, existing_booking=booking)
     if error:
@@ -3375,7 +3404,7 @@ def update_room_assignment(assignment_id):
 @app.route('/room-assignments/<int:assignment_id>/', methods=['DELETE'])
 @_measure_assignment_logic
 def delete_room_assignment(assignment_id):
-    booking = RoomBooking.query.get_or_404(assignment_id)
+    booking = event_get(RoomBooking, assignment_id, required=True)
     db.session.delete(booking)
     db.session.commit()
     return '', 204

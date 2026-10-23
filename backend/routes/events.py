@@ -1,4 +1,5 @@
 """Event HTTP routes; authentication and mutation auditing remain app-wide."""
+from accommodation_scope import event_query, event_get
 
 from datetime import datetime
 
@@ -14,7 +15,7 @@ events = Blueprint('events', __name__)
 # Events - CRUD
 @events.route('/api/events', methods=['GET'])
 def get_events():
-    events = AccommodationEvent.query.options(
+    events = event_query(AccommodationEvent).options(
         db.selectinload(AccommodationEvent.room_demands).joinedload(EventRoomDemand.room_type)
     ).all()
     return jsonify([e.to_dict() for e in events])
@@ -22,6 +23,8 @@ def get_events():
 
 @events.route('/api/events', methods=['POST'])
 def create_event():
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
     data = request.json
     event = AccommodationEvent(
         discipline=data['discipline'],
@@ -37,7 +40,9 @@ def create_event():
 
 @events.route('/api/events/<int:event_id>', methods=['PUT'])
 def update_event(event_id):
-    event = AccommodationEvent.query.get_or_404(event_id)
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    event = event_get(AccommodationEvent, event_id, required=True)
     data = request.json
 
     if 'discipline' in data:
@@ -57,7 +62,9 @@ def update_event(event_id):
 
 @events.route('/api/events/<int:event_id>', methods=['DELETE'])
 def delete_event(event_id):
-    event = AccommodationEvent.query.get_or_404(event_id)
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    event = event_get(AccommodationEvent, event_id, required=True)
     db.session.delete(event)
     db.session.commit()
     return '', 204

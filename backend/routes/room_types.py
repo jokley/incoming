@@ -2,7 +2,8 @@
 
 from flask import Blueprint, jsonify, request
 
-from models import db, HotelRoomInventory, RoomType
+from models import db, HotelRoomInventory, RoomType, RoomBooking, RoomAssignment, EventRoomDemand
+from accommodation_scope import accommodation_event_id
 
 
 room_types = Blueprint('room_types', __name__)
@@ -38,11 +39,18 @@ def create_room_type():
 @room_types.route('/room-types/<int:room_type_id>', methods=['PUT'])
 @room_types.route('/room-types/<int:room_type_id>/', methods=['PUT'])
 def update_room_type(room_type_id):
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
     room_type = RoomType.query.get_or_404(room_type_id)
     data = request.json
 
     if 'name' in data:
         room_type.name = data['name']
+    if 'maxPersons' in data and data['maxPersons'] != room_type.max_persons:
+        owner = accommodation_event_id()
+        if (HotelRoomInventory.query.filter(HotelRoomInventory.room_type_id == room_type_id, HotelRoomInventory.event_id != owner).first()
+                or RoomBooking.query.filter(RoomBooking.room_type_id == room_type_id, RoomBooking.event_id != owner).first()):
+            return jsonify(error='GLOBAL_MASTER_IN_USE', message='Zimmerkapazität wird von einem anderen Event verwendet.'), 409
     if 'maxPersons' in data:
         room_type.max_persons = data['maxPersons']
 
@@ -55,8 +63,15 @@ def update_room_type(room_type_id):
 @room_types.route('/room-types/<int:room_type_id>', methods=['DELETE'])
 @room_types.route('/room-types/<int:room_type_id>/', methods=['DELETE'])
 def delete_room_type(room_type_id):
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
     room_type = RoomType.query.get_or_404(room_type_id)
-    usage_count = HotelRoomInventory.query.filter_by(room_type_id=room_type_id).count()
+    if any(model.query.filter_by(room_type_id=room_type_id).first() for model in (RoomBooking, RoomAssignment, EventRoomDemand)):
+        return jsonify(error='ROOM_TYPE_IN_USE', message='Zimmertyp wird von Buchungen oder Bedarfsplanung verwendet.'), 409
+    owner = accommodation_event_id()
+    if HotelRoomInventory.query.filter(HotelRoomInventory.room_type_id == room_type_id, HotelRoomInventory.event_id != owner).first():
+        return jsonify(error='ROOM_TYPE_IN_USE', message='Zimmertyp wird von einem anderen Event verwendet.'), 409
+    usage_count = HotelRoomInventory.query.filter_by(room_type_id=room_type_id, event_id=owner).count()
     if usage_count:
         return jsonify({
             'error': 'ROOM_TYPE_IN_USE',

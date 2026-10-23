@@ -35,6 +35,9 @@ class ApiCharacterizationTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            owner = Event(name='Explicit API fixture event', active=True)
+            db.session.add(owner); db.session.commit()
+            app.config['OPERATIONAL_EVENT_ID'] = owner.id
         self.client = app.test_client()
         self.editor = {'X-Authenticated-User': 'editor',
                        'X-Authenticated-Groups': 'incoming-editor'}
@@ -116,6 +119,9 @@ class ApiCharacterizationTest(unittest.TestCase):
                     db.session.remove()
                     db.drop_all()
                     db.create_all()
+                    owner = Event(name='Explicit API fixture event', active=True)
+                    db.session.add(owner); db.session.commit()
+                    app.config['OPERATIONAL_EVENT_ID'] = owner.id
                 observations = []
 
                 def mutate(method, path, body=None, status=200):

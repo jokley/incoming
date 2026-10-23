@@ -1,4 +1,5 @@
 """Person HTTP routes; updates, authentication and mutation auditing remain in app."""
+from accommodation_scope import event_query, event_get
 
 from datetime import datetime
 
@@ -16,7 +17,7 @@ athletes = Blueprint('athletes', __name__)
 @athletes.route('/athletes', methods=['GET'])
 @athletes.route('/athletes/', methods=['GET'])
 def get_athletes():
-    athletes = Athlete.query.options(db.selectinload(Athlete.competitions)).all()
+    athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions)).all()
 
     latest_athletes_run = ImportRun.query.filter_by(import_type='athletes').order_by(ImportRun.started_at.desc()).first()
     latest_roomlist_run = ImportRun.query.filter_by(import_type='roomlist').order_by(ImportRun.started_at.desc()).first()
@@ -26,7 +27,7 @@ def get_athletes():
 
     # Assignment summaries belong to the athlete read model.  Eager-loading
     # keeps their query count constant as the number of people and rooms grows.
-    booking_rows = RoomBookingOccupant.query.options(
+    booking_rows = event_query(RoomBookingOccupant).options(
         db.joinedload(RoomBookingOccupant.athlete),
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.hotel),
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type),
@@ -155,8 +156,8 @@ def get_athletes():
 @athletes.route('/api/athletes/<int:athlete_id>', methods=['GET'])
 @athletes.route('/api/athletes/<int:athlete_id>/', methods=['GET'])
 def get_athlete(athlete_id):
-    athlete = Athlete.query.get_or_404(athlete_id)
-    bookings = RoomBooking.query.join(RoomBookingOccupant).filter(
+    athlete = event_get(Athlete, athlete_id, required=True)
+    bookings = event_query(RoomBooking).join(RoomBookingOccupant).filter(
         RoomBookingOccupant.athlete_id == athlete.id).options(
             db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     data = athlete.to_dict()
@@ -189,7 +190,7 @@ def create_athlete():
 @athletes.route('/api/athletes/<int:athlete_id>/acknowledge-roomlist-change', methods=['POST'])
 @athletes.route('/api/athletes/<int:athlete_id>/acknowledge-roomlist-change/', methods=['POST'])
 def acknowledge_athlete_roomlist_change(athlete_id):
-    athlete = Athlete.query.get_or_404(athlete_id)
+    athlete = event_get(Athlete, athlete_id, required=True)
     if athlete.roomlist_changed_at is None:
         return jsonify({'error': 'No roomlist change to acknowledge'}), 400
 

@@ -1,3 +1,4 @@
+from accommodation_scope import event_get
 from accommodation_requirements import require_assignable
 """Plan external ADDs using the same canonical coverage service as persisted stays."""
 import hashlib
@@ -17,12 +18,12 @@ def ensure_external_create_allowed(person_ids, editing_booking_id=None):
     Historical duplicates remain untouched and can be edited/removed explicitly.
     """
     for identity in person_ids:
-        require_assignable(db.session.get(Athlete, identity))
+        require_assignable(event_get(Athlete, identity))
         bookings = person_bookings(identity)
         if editing_booking_id and any(b.id == editing_booking_id and b.hotel.accommodation_type == 'EXTERNAL' for b in bookings):
             continue
         if any(b.hotel.accommodation_type == 'EXTERNAL' for b in bookings):
-            person = db.session.get(Athlete, identity)
+            person = event_get(Athlete, identity)
             name = f'{person.firstname} {person.lastname}'.strip() if person else str(identity)
             raise SplitError('EXTERNAL_ALREADY_EXISTS', f'{name}: Bereits externer Aufenthalt vorhanden.')
 
@@ -33,7 +34,7 @@ def external_plan(data):
             raise ValueError('Invalid person selection')
         ids = sorted(int(value) for value in data['athleteIds'])
         start, end = date.fromisoformat(data['checkInDate']), date.fromisoformat(data['checkOutDate'])
-        hotel = db.session.get(Hotel, int(data['hotelId']))
+        hotel = event_get(Hotel, int(data['hotelId']))
     except (KeyError, ValueError, TypeError):
         raise SplitError('INVALID_EXTERNAL_STAY', 'Personen, Unterkunft und gültige Daten auswählen.')
     require(1 <= len(ids) <= 2 and len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Eine Person oder zwei Zimmerpartner auswählen.')
@@ -48,7 +49,7 @@ def external_plan(data):
     replacements = {}
     people, state = [], [hotel.id, hotel.name, hotel.accommodation_type, ids, frozen, start, end, replace_standard]
     for identity in ids:
-        person = db.session.get(Athlete, identity)
+        person = event_get(Athlete, identity)
         require(person is not None, 'PERSON_NOT_FOUND', 'Person wurde entfernt. Bitte Ansicht aktualisieren.', 409)
         bookings = sorted(person_bookings(identity), key=lambda b:b.id)
         before = person_accommodation_coverage(person.arrival_date, person.departure_date, bookings, person.accommodation_requirement)
@@ -105,7 +106,7 @@ def release_standard_period(plan):
     The caller performs ADD and owns the only commit/rollback boundary.
     """
     for replacement in plan['replacedBookings']:
-        booking = db.session.get(RoomBooking, int(replacement['bookingId']))
+        booking = event_get(RoomBooking, int(replacement['bookingId']))
         start, end = date.fromisoformat(replacement['checkInDate']), date.fromisoformat(replacement['checkOutDate'])
         if booking.check_in_date < start:
             booking = partition_booking(booking, start, list(booking.occupants))

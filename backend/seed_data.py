@@ -2,6 +2,8 @@ from app import app, db, RoomType, Hotel, HotelRoomInventory, Event, EventRoomDe
 from datetime import datetime
 
 def seed_database():
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     with app.app_context():
         # Clear existing data
         db.drop_all()

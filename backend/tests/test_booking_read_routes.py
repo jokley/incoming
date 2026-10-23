@@ -27,6 +27,10 @@ class BookingReadRoutesTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            from models import Event
+            owner = Event(name='Explicit read-model test event', active=True)
+            db.session.add(owner); db.session.commit()
+            app.config['OPERATIONAL_EVENT_ID'] = owner.id
         self.client = app.test_client()
         self.viewer = {'X-Authenticated-User': 'reader',
                        'X-Authenticated-Groups': 'incoming-viewer'}
