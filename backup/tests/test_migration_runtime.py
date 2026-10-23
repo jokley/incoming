@@ -60,6 +60,37 @@ class MigrationRuntimeTest(unittest.TestCase):
             self.assertIn('offline SQL is unsafe', guarded.stderr)
 
 
+    def test_packaged_ownership_guard_supports_flush_and_serialization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = Path(directory) / 'backend'
+            package_backend(backend)
+            script = """
+import sys
+sys.path.insert(0, '.')
+from datetime import date
+from flask import Flask
+from models import db, Event, Hotel, RoomType, HotelRoomInventory
+app = Flask(__name__)
+app.config.update(SQLALCHEMY_DATABASE_URI='sqlite://', SQLALCHEMY_TRACK_MODIFICATIONS=False, OPERATIONAL_EVENT_ID='7')
+db.init_app(app)
+with app.app_context():
+    db.create_all()
+    db.session.add(Event(id=7, name='Isolated package test'))
+    hotel=Hotel(name='Package'); room=RoomType(name='DZ', max_persons=2)
+    db.session.add_all([hotel, room]); db.session.commit()
+    with app.test_request_context('/api/hotels/1/inventory', method='POST'):
+        inventory=HotelRoomInventory(event_id='7', hotel_id=hotel.id, room_type_id=room.id, room_count=4,
+            available_from=date(2027,3,3), available_until=date(2027,3,9))
+        db.session.add(inventory); db.session.commit()
+        assert inventory.to_dict()['roomCount']==4
+print('Packaged ownership runtime OK')
+"""
+            result = subprocess.run([sys.executable, '-I', '-c', script], cwd=backend,
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('Packaged ownership runtime OK', result.stdout)
+
+
 
 if __name__ == '__main__':
     unittest.main()

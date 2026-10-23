@@ -1,4 +1,5 @@
 """Analytics HTTP routes; authentication remains app-wide."""
+from accommodation_scope import event_query
 
 from datetime import datetime
 
@@ -33,7 +34,7 @@ def get_room_availability():
 
     for rt in room_types:
         # Calculate available rooms
-        query = HotelRoomInventory.query.filter_by(room_type_id=rt.id).join(Hotel).filter(Hotel.accommodation_type == 'STANDARD')
+        query = event_query(HotelRoomInventory).filter_by(room_type_id=rt.id).join(Hotel).filter(Hotel.accommodation_type == 'STANDARD')
         if start_date and end_date:
             query = query.filter(
                 HotelRoomInventory.available_from <= end_date,
@@ -50,7 +51,7 @@ def get_room_availability():
                 dz_available += beds // 2
 
         # Calculate demand
-        demand_query = EventRoomDemand.query.filter_by(room_type_id=rt.id)
+        demand_query = event_query(EventRoomDemand).filter_by(room_type_id=rt.id)
         if start_date and end_date:
             demand_query = demand_query.join(AccommodationEvent).filter(
                 AccommodationEvent.start_date <= end_date,
@@ -89,7 +90,7 @@ def get_room_availability():
 def get_occupancy_timeline():
     """Get room occupancy over time"""
     # Get all events with their demands
-    events = AccommodationEvent.query.all()
+    events = event_query(AccommodationEvent).all()
 
     timeline = []
     for event in events:

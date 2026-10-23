@@ -55,6 +55,8 @@ def parse_csv_file(file_path):
 
 def import_room_types(lines, app):
     """Import room types from CSV lines"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     with app.app_context():
         # Clear existing
         RoomType.query.delete()
@@ -89,6 +91,8 @@ def import_room_types(lines, app):
 
 def import_hotels(lines, app):
     """Import hotels and inventories from CSV lines"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     with app.app_context():
         hotels_dict = {}
 
@@ -164,6 +168,8 @@ def import_hotels(lines, app):
 
 def import_events(lines, app):
     """Import events and demands from CSV lines"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     with app.app_context():
         Event.query.delete()
         events_dict = {}
@@ -221,6 +227,8 @@ def import_events(lines, app):
 
 def import_athletes_from_csv(lines, app):
     """Import athletes from CSV - requires proper CSV parsing"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     import csv
     import io
 
@@ -280,6 +288,8 @@ def import_athletes_from_csv(lines, app):
 
 def run_import(app, csv_file_path):
     """Main import function"""
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     print("Starting CSV import...")
 
     sections = parse_csv_file(csv_file_path)

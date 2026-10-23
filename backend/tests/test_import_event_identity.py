@@ -268,6 +268,11 @@ def test_real_jpn_http_workflow_both_events(events,monkeypatch):
                 'eventId':str(event.id),'createSession':'true',**extra,
                 'entriesList':(io.BytesIO(Path(entries).read_bytes()),Path(entries).name),
                 'roomListDetailed':(io.BytesIO(Path(rooms).read_bytes()),Path(rooms).name)})
+        if event == b:
+            denied = upload()
+            assert denied.status_code == 409 and denied.json['error'] == 'OPERATIONAL_EVENT_REQUIRED'
+        # PR1/restore deployment guard: test each event as the sole configured owner.
+        monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(event.id))
         result=upload()
         assert result.status_code==200,result.json
         assert result.json['isValid'],result.json['errors']

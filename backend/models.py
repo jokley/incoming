@@ -334,6 +334,8 @@ class HotelRoomInventory(db.Model):
     room_type = db.relationship('RoomType', backref='hotel_inventories')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'hotelId': str(self.hotel_id),
@@ -364,6 +366,8 @@ class AccommodationEvent(db.Model):
     room_demands = db.relationship('EventRoomDemand', backref='event', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'discipline': self.discipline,
@@ -389,6 +393,8 @@ class EventRoomDemand(db.Model):
     room_type = db.relationship('RoomType', backref='event_demands')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'eventId': str(self.event_id),
@@ -733,6 +739,8 @@ class FisRoomAssignment(db.Model):
     hotel = db.relationship('Hotel', backref='fis_room_assignments')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'importRunId': str(self.import_run_id) if self.import_run_id else None,
@@ -771,6 +779,8 @@ class RoomAssignment(db.Model):
     room_type = db.relationship('RoomType', backref='room_assignments')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'athlete': self.athlete.to_dict(),
@@ -804,6 +814,8 @@ class RoomBooking(db.Model):
     occupants = db.relationship('RoomBookingOccupant', backref='room_booking', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name, 'accommodationType': self.hotel.accommodation_type},
@@ -831,6 +843,8 @@ class RoomBookingOccupant(db.Model):
     athlete = db.relationship('Athlete', backref='room_booking_memberships')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'roomBookingId': str(self.room_booking_id),

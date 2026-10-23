@@ -1,3 +1,4 @@
+from accommodation_scope import event_query, event_get
 from accommodation_requirements import require_assignable
 """Explicit person-segment operations; no implicit replacement of other stays."""
 from datetime import datetime
@@ -16,7 +17,7 @@ class InvalidSegment(ValueError):
 
 
 def bookings_for(person_id):
-    return RoomBooking.query.join(RoomBookingOccupant).filter(
+    return event_query(RoomBooking).join(RoomBookingOccupant).filter(
         RoomBookingOccupant.athlete_id == person_id).options(
             db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
 
@@ -43,9 +44,9 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
                      _planned_room_key, _dates_overlap)
     try:
         lock_accommodation_writes()
-        person = Athlete.query.get_or_404(person_id)
-        existing = RoomBooking.query.get_or_404(booking_id) if booking_id else None
-        membership = RoomBookingOccupant.query.filter_by(
+        person = event_get(Athlete, person_id, required=True)
+        existing = event_get(RoomBooking, booking_id, required=True) if booking_id else None
+        membership = event_query(RoomBookingOccupant).filter_by(
             athlete_id=person.id, room_booking_id=booking_id).first() if existing else None
         _require(not existing or membership, 'SEGMENT_NOT_FOUND', 'Diese Person gehört nicht zur gewählten Zuweisung.')
         if existing:
@@ -54,7 +55,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if request.method == 'DELETE':
             db.session.delete(membership)
             db.session.flush()
-            if not RoomBookingOccupant.query.filter_by(room_booking_id=existing.id).count():
+            if not event_query(RoomBookingOccupant).filter_by(room_booking_id=existing.id).count():
                 db.session.delete(existing)
             _acknowledge_import_changes([person.id])
             db.session.flush()
@@ -79,7 +80,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
                  person.arrival_date <= start < end <= person.departure_date,
                  'SEGMENT_OUTSIDE_PERSON_STAY', 'Zuweisung muss innerhalb des Gesamtaufenthalts liegen.')
 
-        target = RoomBooking.query.get_or_404(int(data['joinBookingId'])) if data.get('joinBookingId') else None
+        target = event_get(RoomBooking, int(data['joinBookingId']), required=True) if data.get('joinBookingId') else None
         _require(not target or not existing, 'INVALID_JOIN', 'Beitreten ist nur beim Hinzufügen möglich.')
         if target:
             _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair or not target.counts_as_single,
@@ -126,10 +127,10 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if error:
             db.session.rollback()
             return error
-        external = db.session.get(Hotel, payload['hotel_id']).accommodation_type == 'EXTERNAL'
+        external = event_get(Hotel, payload['hotel_id']).accommodation_type == 'EXTERNAL'
         _require(external or bool(payload['room_number']), 'ROOM_REQUIRED', 'Ein Zimmer auswählen.')
         excluded = {b.id for b in (target, existing if not shared else None) if b}
-        same_room = RoomBooking.query.filter_by(hotel_id=payload['hotel_id'], room_type_id=payload['room_type_id']).all()
+        same_room = event_query(RoomBooking).filter_by(hotel_id=payload['hotel_id'], room_type_id=payload['room_type_id']).all()
         for other in ([] if external else same_room):
             if other.id in excluded:
                 continue
@@ -148,7 +149,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
                 db.session.delete(membership)
                 db.session.flush()
             booking = _save_booking_from_payload(payload, existing_booking=existing if not shared else None, commit=False)
-            selected_membership = RoomBookingOccupant.query.filter_by(room_booking_id=booking.id, athlete_id=person.id).one()
+            selected_membership = event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id, athlete_id=person.id).one()
             selected_membership.role = role
         db.session.flush()
         db.session.expire(booking, ['occupants'])
@@ -184,7 +185,7 @@ def add_shared_segment():
         ids = [int(value) for value in ids]
         _require(len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Personen müssen unterschiedlich sein.')
         from external_accommodation import external_plan, release_standard_period
-        hotel = db.session.get(Hotel, int(data.get('hotelId', 0)))
+        hotel = event_get(Hotel, int(data.get('hotelId', 0)))
         external = bool(hotel and hotel.accommodation_type == 'EXTERNAL')
         if data.get('previewToken') and not external:
             raise SplitError('STALE_EXTERNAL_STAY', 'Externe Unterkunft hat sich geändert. Bitte Vorschau erneut prüfen.', 409)
@@ -199,11 +200,11 @@ def add_shared_segment():
             if data['previewToken'] != plan['previewToken']:
                 raise SplitError('STALE_EXTERNAL_STAY', 'Aufenthalt hat sich geändert. Bitte Vorschau erneut prüfen.', 409)
             if plan['replacedBookings']:
-                g.audit_snapshot = {'replacedBookings':[db.session.get(RoomBooking,int(row['bookingId'])).to_dict() for row in plan['replacedBookings']]}
+                g.audit_snapshot = {'replacedBookings':[event_get(RoomBooking, int(row['bookingId'])).to_dict() for row in plan['replacedBookings']]}
                 release_standard_period(plan)
         interval = {key: data.get(key) for key in ('checkInDate', 'checkOutDate')}
         # Exact frozen selection, no implicit intersection or replacement.
-        people = [Athlete.query.get_or_404(identity) for identity in ids]
+        people = [event_get(Athlete, identity, required=True) for identity in ids]
         for person in people:
             require_assignable(person)
             coverage = coverage_for(person)
@@ -220,7 +221,7 @@ def add_shared_segment():
                 return response
             result = body.get_json()
             join_id = result['booking']['id']
-        booking = db.session.get(RoomBooking, int(join_id))
+        booking = event_get(RoomBooking, int(join_id))
         db.session.expire(booking, ['occupants'])
         result = {'success': True, 'booking': booking.to_dict(),
                   'people': [{'personId': str(person.id), 'accommodationCoverage': coverage_for(person)} for person in people]}
@@ -246,7 +247,7 @@ def split_booking(booking_id):
     from accommodation_split import SplitError, split_plan, preview_token, apply_split
     try:
         lock_accommodation_writes()
-        booking = db.session.get(RoomBooking, booking_id)
+        booking = event_get(RoomBooking, booking_id)
         if not booking:
             raise SplitError('STALE_SPLIT', 'Zuweisung wurde entfernt. Bitte Ansicht aktualisieren.', 409)
         if request.method == 'GET':

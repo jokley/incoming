@@ -1,4 +1,5 @@
 """Read-only, request-local accommodation eligibility; never writes allocations."""
+from accommodation_scope import event_query
 from datetime import date
 from types import SimpleNamespace
 from accommodation_coverage import booking_intervals_overlap
@@ -21,12 +22,14 @@ def load_context():
     from app import _build_virtual_slots
     from models import Athlete, Hotel, HotelRoomInventory, RoomBooking, db
     from accommodation_coverage import person_accommodation_coverage
-    people = Athlete.query.all()
-    bookings = RoomBooking.query.options(db.joinedload(RoomBooking.occupants),
+    people = event_query(Athlete).all()
+    bookings = event_query(RoomBooking).options(db.joinedload(RoomBooking.occupants),
         db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
-    hotels = Hotel.query.options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
+    hotels = event_query(Hotel).options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
     by_person = {}
     for booking in bookings:
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(booking)
         for occupant in booking.occupants:
             by_person.setdefault(occupant.athlete_id, []).append(booking)
     occupants = [{'athleteId':str(person.id),
@@ -53,8 +56,8 @@ def project(planning, needs, population_ids, loaded=None):
     from app import _room_type_label, _planned_room_key
     from models import HotelRoomInventory, RoomBooking, db
     inventories, bookings = loaded if loaded is not None else (
-        HotelRoomInventory.query.all(),
-        RoomBooking.query.options(db.joinedload(RoomBooking.occupants)).all())
+        event_query(HotelRoomInventory).all(),
+        event_query(RoomBooking).options(db.joinedload(RoomBooking.occupants)).all())
     inv_index, booking_index = {}, {}
     for inv in inventories:
         inv_index.setdefault((str(inv.hotel_id), str(inv.room_type_id)), []).append(inv)

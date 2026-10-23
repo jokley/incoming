@@ -1,4 +1,5 @@
 """Booking read aliases; writes, planning and security retain their ownership."""
+from accommodation_scope import event_query
 
 from flask import Blueprint, jsonify
 
@@ -9,7 +10,7 @@ booking_reads = Blueprint('booking_reads', __name__)
 
 
 def _get_grouped_room_bookings_response():
-    bookings = RoomBooking.query.order_by(RoomBooking.hotel_id, RoomBooking.room_number, RoomBooking.id).all()
+    bookings = event_query(RoomBooking).order_by(RoomBooking.hotel_id, RoomBooking.room_number, RoomBooking.id).all()
     return jsonify([b.to_dict() for b in bookings])
 
 

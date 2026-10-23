@@ -261,7 +261,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
                 team_competition=False, quota_discipline='Snowboard Slopestyle')
             luca = self.athlete('Luca', 'MERIMEE MANTOVANI', nation='BRA', gender='M')
             luca.competitions = [big_air, slopestyle]
-            event = Event(name='WSC Montafon 2027', year=2027)
+            event = db.session.get(Event, int(app.config['OPERATIONAL_EVENT_ID']))
             mapping = EventCompetition(event=event, competition=big_air,
                 fis_codex='6182', import_code='WSC_BA_M_6182', official_name="Men's Big Air")
             db.session.add_all([big_air, slopestyle, luca, event, mapping])

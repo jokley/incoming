@@ -49,23 +49,18 @@ class SingleRoomStatusTest(unittest.TestCase):
 
     def test_import_persists_all_business_statuses_and_decision_reference(self):
         with app.app_context():
-            session = ImportSession(nation='AUT')
-            db.session.add(session)
-            db.session.flush()
-            decision = ImportApproval(
-                session_id=session.id, nation='AUT', approval_type='NATION_APPROVED',
-                description='Single Rooms', decision='APPROVED', username='test',
-            )
-            db.session.add(decision)
             event = Event(name='Status Test', active=True)
             event.competition_mappings.append(EventCompetition(
                 competition=Competition.query.filter_by(import_code='WSC_BA_W_6183').one(),
                 import_code='WSC_BA_W_6183', fis_codex='6183', official_name='Display'))
             db.session.add(event)
             db.session.flush()
-            session.event_id=event.id
             app.config['OPERATIONAL_EVENT_ID']=event.id
-            db.session.commit()
+            session = ImportSession(nation='AUT', event_id=event.id)
+            db.session.add(session); db.session.flush()
+            decision = ImportApproval(session_id=session.id, nation='AUT', approval_type='NATION_APPROVED',
+                description='Single Rooms', decision='APPROVED', username='test')
+            db.session.add(decision); db.session.commit()
 
             people = [self.person('NONE', 'Athlete'), self.person('A_QUOTA'),
                       self.person('APPROVED'), self.person('Z_PENDING')]

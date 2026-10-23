@@ -1,4 +1,5 @@
 """Hotel HTTP routes; authentication and mutation auditing remain app-wide."""
+from accommodation_scope import event_query, event_get, accommodation_event_id
 
 from datetime import datetime
 
@@ -6,7 +7,7 @@ from flask import Blueprint, jsonify, request
 from sqlalchemy import or_
 
 from models import (db, Athlete, Competition, Hotel, HotelRoomInventory,
-                    RoomAssignment, RoomBooking, RoomBookingOccupant, RoomType)
+                    RoomAssignment, RoomBooking, RoomBookingOccupant, RoomType, FisRoomAssignment)
 
 
 hotels = Blueprint('hotels', __name__)
@@ -22,7 +23,7 @@ def get_hotels():
     # and Analytics.  Load the complete projection in a fixed number of queries
     # instead of lazily issuing one inventory query per hotel (and potentially
     # one room-type query per inventory).
-    hotels = Hotel.query.options(
+    hotels = event_query(Hotel).options(
         db.selectinload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)
     ).all()
     return jsonify([h.to_dict() for h in hotels])
@@ -33,7 +34,7 @@ def get_hotels():
 @hotels.route('/hotels/<int:hotel_id>', methods=['GET'])
 @hotels.route('/hotels/<int:hotel_id>/', methods=['GET'])
 def get_hotel(hotel_id):
-    hotel = Hotel.query.get_or_404(hotel_id)
+    hotel = event_get(Hotel, hotel_id, required=True)
     return jsonify(hotel.to_dict())
 
 
@@ -67,14 +68,14 @@ def create_hotel():
 def update_hotel(hotel_id):
     from accommodation_mutations import lock_accommodation_writes
     lock_accommodation_writes()
-    hotel = Hotel.query.get_or_404(hotel_id)
+    hotel = event_get(Hotel, hotel_id, required=True)
     data = request.json
 
     if 'accommodationType' in data:
         kind = data['accommodationType']
         if kind not in ('STANDARD', 'EXTERNAL'):
             return jsonify(message='Ungültige Unterkunftsart.'), 400
-        if kind != hotel.accommodation_type and (hotel.room_bookings or hotel.room_inventories):
+        if kind != hotel.accommodation_type and (RoomBooking.query.filter_by(hotel_id=hotel.id).first() or HotelRoomInventory.query.filter_by(hotel_id=hotel.id).first()):
             return jsonify(message='Unterkunftsart kann bei bestehenden Buchungen oder Kontingenten nicht geändert werden.'), 409
         hotel.accommodation_type = kind
     if 'name' in data:
@@ -101,7 +102,16 @@ def update_hotel(hotel_id):
 @hotels.route('/hotels/<int:hotel_id>', methods=['DELETE'])
 @hotels.route('/hotels/<int:hotel_id>/', methods=['DELETE'])
 def delete_hotel(hotel_id):
-    hotel = Hotel.query.get_or_404(hotel_id)
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    hotel = event_get(Hotel, hotel_id, required=True)
+    owner = accommodation_event_id()
+    # Global masters cannot cascade-delete another event's exclusive resources.
+    if (HotelRoomInventory.query.filter(HotelRoomInventory.hotel_id == hotel_id, HotelRoomInventory.event_id != owner).first()
+            or RoomBooking.query.filter(RoomBooking.hotel_id == hotel_id, RoomBooking.event_id != owner).first()
+            or RoomAssignment.query.join(RoomAssignment.athlete).filter(RoomAssignment.hotel_id == hotel_id, Athlete.event_id != owner).first()
+            or FisRoomAssignment.query.join(FisRoomAssignment.person1).filter(FisRoomAssignment.hotel_id == hotel_id, Athlete.event_id != owner).first()):
+        return jsonify(error='GLOBAL_MASTER_IN_USE', message='Hotel wird von einem anderen Event verwendet.'), 409
     db.session.delete(hotel)
     db.session.commit()
     return '', 204
@@ -115,7 +125,7 @@ def delete_hotel(hotel_id):
 def add_hotel_inventory(hotel_id):
     from accommodation_mutations import lock_accommodation_writes
     lock_accommodation_writes()
-    hotel = Hotel.query.get_or_404(hotel_id)
+    hotel = event_get(Hotel, hotel_id, required=True)
     data = request.json
 
     if hotel.accommodation_type == 'EXTERNAL':
@@ -140,7 +150,9 @@ def add_hotel_inventory(hotel_id):
 @hotels.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['PUT'])
 @hotels.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['PUT'])
 def update_hotel_inventory(hotel_id, inventory_id):
-    inventory = HotelRoomInventory.query.filter_by(id=inventory_id, hotel_id=hotel_id).first_or_404()
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    inventory = event_query(HotelRoomInventory).filter_by(id=inventory_id, hotel_id=hotel_id).first_or_404()
     data = request.json
     inventory.room_type_id = int(data['roomTypeId'])
     inventory.available_from = datetime.fromisoformat(data['availableFrom']).date()
@@ -158,7 +170,9 @@ def update_hotel_inventory(hotel_id, inventory_id):
 @hotels.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>', methods=['DELETE'])
 @hotels.route('/hotels/<int:hotel_id>/inventory/<int:inventory_id>/', methods=['DELETE'])
 def delete_hotel_inventory(hotel_id, inventory_id):
-    inventory = HotelRoomInventory.query.filter_by(
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    inventory = event_query(HotelRoomInventory).filter_by(
         id=inventory_id,
         hotel_id=hotel_id
     ).first_or_404()
@@ -179,7 +193,7 @@ def get_hotels_capacity_overview():
     start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
     end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
 
-    inventory_query = HotelRoomInventory.query.join(RoomType).join(Hotel).filter(Hotel.accommodation_type == 'STANDARD')
+    inventory_query = event_query(HotelRoomInventory).join(RoomType).join(Hotel).filter(Hotel.accommodation_type == 'STANDARD')
     if hotel_id:
         inventory_query = inventory_query.filter(HotelRoomInventory.hotel_id == hotel_id)
     if room_type_id:
@@ -190,7 +204,7 @@ def get_hotels_capacity_overview():
             HotelRoomInventory.available_until >= start_date
         )
 
-    booking_query = RoomBookingOccupant.query.join(RoomBooking).join(Athlete).join(RoomType, RoomBooking.room_type_id == RoomType.id).join(Hotel, RoomBooking.hotel_id == Hotel.id).filter(Hotel.accommodation_type == 'STANDARD')
+    booking_query = event_query(RoomBookingOccupant).join(RoomBooking).join(Athlete).join(RoomType, RoomBooking.room_type_id == RoomType.id).join(Hotel, RoomBooking.hotel_id == Hotel.id).filter(Hotel.accommodation_type == 'STANDARD')
     if hotel_id:
         booking_query = booking_query.filter(RoomBooking.hotel_id == hotel_id)
     if room_type_id:
@@ -285,7 +299,7 @@ def get_hotel_reservations(hotel_id):
     start_date = datetime.strptime(start_date, '%Y-%m-%d').date() if start_date else None
     end_date = datetime.strptime(end_date, '%Y-%m-%d').date() if end_date else None
 
-    q = RoomAssignment.query.join(RoomAssignment.athlete).join(RoomType).filter(RoomAssignment.hotel_id == hotel_id)
+    q = event_query(RoomAssignment).join(RoomAssignment.athlete).join(RoomType).filter(RoomAssignment.hotel_id == hotel_id)
     if room_type_id:
         q = q.filter(RoomAssignment.room_type_id == room_type_id)
     if nation:

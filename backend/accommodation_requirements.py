@@ -15,8 +15,14 @@ def requirement_projection(person):
 
 
 def has_bookings(person):
-    from models import RoomBookingOccupant
-    return bool(person and person.id and RoomBookingOccupant.query.filter_by(athlete_id=person.id).first())
+    from models import RoomBookingOccupant, RoomBooking
+    if not person or not person.id:
+        return False
+    rows = RoomBookingOccupant.query.join(RoomBooking).filter(RoomBookingOccupant.athlete_id == person.id)
+    if rows.filter(RoomBooking.event_id != person.event_id).first():
+        from event_ownership_runtime import OperationalEventError
+        raise OperationalEventError('Mixed-event booking relationship requires review')
+    return bool(rows.filter(RoomBooking.event_id == person.event_id).first())
 
 
 def ensure_no_bookings(person):
