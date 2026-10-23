@@ -1,4 +1,4 @@
-from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object
+from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object, event_audit_refs
 from accommodation_requirements import requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
@@ -75,7 +75,7 @@ app.register_blueprint(world_champions)
 app.register_blueprint(accommodation_segments)
 
 
-from event_ownership_runtime import OperationalEventError, validate_operational_import_event
+from event_ownership_runtime import OperationalEventError, validate_operational_import_event, configured_event_id
 
 
 from imports.event_context import import_event_id, validate_session_event, revalidate_confirmation_event
@@ -808,7 +808,8 @@ def audit_successful_mutation(response):
             activity=business['activity'], category=business['category'],
             entity_label=business['entity_label'],
             details_json=json.dumps(business['details'], ensure_ascii=False),
-            entity_refs_json=json.dumps(business['entity_refs'], ensure_ascii=False),
+            entity_refs_json=(event_audit_refs(business['entity_refs'])
+                if app.config.get('OPERATIONAL_EVENT_ID') else json.dumps(business['entity_refs'], ensure_ascii=False)),
         ))
         db.session.commit()
     except Exception:
@@ -1770,8 +1771,9 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         ImportSession,
         (ImportSession.id == ImportApproval.session_id)
         & (ImportSession.current_version_id == ImportApproval.version_id),
-    ).filter(~ImportApproval.id.in_(
+    ).filter(ImportSession.event_id == accommodation_event_id()).filter(~ImportApproval.id.in_(
         db.session.query(ImportSessionEvent.approval_id).filter(
+            ImportSessionEvent.session_id.in_(db.select(ImportSession.id).where(ImportSession.event_id == accommodation_event_id())),
             ImportSessionEvent.event_type == 'QUOTA_DECISION_REVISED_FROM',
             ImportSessionEvent.approval_id.isnot(None),
         )
@@ -2143,15 +2145,15 @@ def confirm_previewed_fis_import():
 
 @app.route('/api/import/sessions', methods=['GET'])
 def list_import_sessions():
+    configured_event_id()  # Operational history cannot select an event without deployment configuration.
     from sqlalchemy.orm import selectinload
-    from imports.read_context import ImportReadContext
     sessions = ImportSession.query.filter_by(event_id=import_event_id()).options(
         selectinload(ImportSession.current_version), selectinload(ImportSession.versions),
         selectinload(ImportSession.approvals), selectinload(ImportSession.history),
     ).order_by(ImportSession.created_at.desc()).all()
-    read_context = ImportReadContext(import_event_id()) if any(s.current_version and s.status not in
-        {'REPLACED', 'ARCHIVED', 'CANCELLED'} for s in sessions) else None
-    return jsonify([_current_session_payload(session, read_context=read_context) for session in sessions])
+    # Dashboard/history lists show saved workflow evidence, never recalculate
+    # every nation's rules as a side effect of reading a summary.
+    return jsonify([_current_session_payload(session, resolve_preview=False) for session in sessions])
 
 
 def _import_session_raw_preview(session):
@@ -2198,9 +2200,9 @@ def _current_session_preview(session, *, read_context=None):
     return preview
 
 
-def _current_session_payload(session, include_preview=False, *, read_context=None):
+def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True):
     payload = session.to_dict(include_preview=include_preview)
-    if session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
+    if resolve_preview and session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
         preview = _current_session_preview(session, read_context=read_context)
         payload['errors'] = len(preview.get('errors', []))
         payload['warnings'] = len(preview.get('warnings', []))
@@ -2220,6 +2222,7 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
 
 @app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
 def get_import_session(session_id):
+    configured_event_id()
     return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True))
 
 
@@ -2428,6 +2431,7 @@ def stage_single_room_quota_exemption(session_id, person_key):
 @app.route('/api/import/approvals/<int:approval_id>', methods=['GET'])
 def get_import_approval(approval_id):
     """Return the canonical, read-only projection of one business decision."""
+    configured_event_id()
     approval = ImportApproval.query.get_or_404(approval_id)
     session = approval.session
     version = next((item for item in session.versions if item.id == approval.version_id), None)
@@ -2702,7 +2706,7 @@ def import_approved_session(session_id):
             email=getattr(user,'email',None),groups_json=json.dumps(list(getattr(user,'groups',[]))),
             action='import',entity_type='import',entity_id=str(session.id),request_id=getattr(g,'request_id',str(uuid.uuid4())),
             method='POST',path=request.path,activity='Import durchgeführt',category='Import',entity_label=session.nation,
-            details_json=encoded(result['summary']),entity_refs_json=encoded({'importSessionId':str(session.id),'eventId':str(session.event_id)})))
+            details_json=encoded(result['summary']),entity_refs_json=event_audit_refs({'importSessionId':str(session.id),'eventId':str(session.event_id)}, session.event_id)))
         db.session.commit()
         g.atomic_import_audit=True
         PREVIEW_STORE.pop(token,None)

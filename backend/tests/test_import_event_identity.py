@@ -152,7 +152,7 @@ def session(event, preview_event=None):
     return s
 
 
-def test_session_approval_and_preview_boundaries(events):
+def test_session_approval_and_preview_boundaries(events,monkeypatch):
     a,b=events
     sa,sb=session(a),session(b)
     approval=ImportApproval(session_id=sa.id,version_id=sa.current_version_id,nation='JPN',
@@ -160,12 +160,14 @@ def test_session_approval_and_preview_boundaries(events):
     db.session.add(approval);db.session.commit()
     assert approval_event_matches(approval,a.id)
     assert not approval_event_matches(approval,b.id)
+    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',str(b.id))
     client=app.test_client()
     assert client.get(f'/api/import/sessions/{sa.id}?eventId={b.id}').status_code==409
     assert client.get(f'/api/import/approvals/{approval.id}?eventId={b.id}').status_code==409
     assert client.patch(f'/api/import/sessions/{sb.id}/approvals/{approval.id}?eventId={b.id}',json={}).status_code==409
     assert {s['id'] for s in client.get(f'/api/import/sessions?eventId={b.id}').json}=={str(sb.id)}
     sa.current_version.preview_json=json.dumps({'eventId':b.id});db.session.commit()
+    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',str(a.id))
     assert client.get(f'/api/import/sessions/{sa.id}?eventId={a.id}').status_code==409
 
 

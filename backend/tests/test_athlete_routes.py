@@ -79,7 +79,7 @@ class AthleteRoutesTest(unittest.TestCase):
                         self.assertEqual(audit.entity_label, 'Ada Test')
                         self.assertEqual(audit.entity_id, str(self.athlete_id))
                         self.assertEqual(json.loads(audit.entity_refs_json),
-                                         {'personId': str(self.athlete_id)})
+                                         {'personId': str(self.athlete_id), 'championshipEventId': str(app.config['OPERATIONAL_EVENT_ID']), '_scope': 'OPERATIONAL_EVENT'})
                         self.assertIsNone(audit.changes_json)
                         self.assertEqual(response.headers['X-Request-ID'], audit.request_id)
 

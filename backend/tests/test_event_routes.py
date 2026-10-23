@@ -130,7 +130,7 @@ class EventRoutesTest(unittest.TestCase):
                 self.assertEqual(row.username, 'editor')
                 self.assertEqual(row.entity_type, 'events')
                 self.assertEqual(row.entity_id, event_id)
-                self.assertEqual(json.loads(row.entity_refs_json), {'eventId': event_id})
+                self.assertEqual(json.loads(row.entity_refs_json), {'eventId': event_id, 'championshipEventId': str(app.config['OPERATIONAL_EVENT_ID']), '_scope': 'OPERATIONAL_EVENT'})
             self.assertEqual(json.loads(rows[0].changes_json), payload)
             self.assertEqual(json.loads(rows[1].changes_json), {'personDemand': 20})
 

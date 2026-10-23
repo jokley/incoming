@@ -233,7 +233,8 @@ class ApiCharacterizationTest(unittest.TestCase):
             self.assert_json(self.client.get(path), 200, people)
         detail = self.client.get(f'/api/athletes/{person_id}').get_json()
         self.assertEqual(detail['id'], person_id)
-        self.assertNotIn('workflowStatus', detail)  # Detail is not the collection projection.
+        self.assertEqual(detail['workflowStatus'], 'OPEN_ASSIGNMENT')
+        self.assertEqual(detail['accommodationCoverage']['coverageStatus'], 'CONFLICT')  # Missing stay dates, not a quota rewrite.
         self.assert_json(self.client.get(f'/api/athletes/{person_id}/'), 200, detail)
         quota = self.client.get('/api/fis/official-quotas?nationCode=AUT&gender=F').get_json()
         # A descriptive legacy discipline supplies no quota membership.

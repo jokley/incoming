@@ -32,10 +32,10 @@ def accommodation_event_id():
 
 def ownership_clause(model, owner):
     from models import (Athlete, RoomBooking, RoomBookingOccupant, HotelRoomInventory,
-        AccommodationEvent, EventRoomDemand, RoomAssignment, FisRoomAssignment, ImportRun, ImportSession)
+        AccommodationEvent, EventRoomDemand, RoomAssignment, FisRoomAssignment, ImportRun, ImportSession, WorldChampion)
     if model is AccommodationEvent:
         return model.championship_event_id == owner
-    if model in (Athlete, RoomBooking, HotelRoomInventory, ImportRun, ImportSession):
+    if model in (Athlete, RoomBooking, HotelRoomInventory, ImportRun, ImportSession, WorldChampion):
         return model.event_id == owner
     if model is RoomBookingOccupant:
         return model.room_booking.has(RoomBooking.event_id == owner) & model.athlete.has(Athlete.event_id == owner)
@@ -105,3 +105,12 @@ def validate_serialized_ownership(obj):
             raise OperationalEventError('Foreign event demand')
     else:
         require_event_object(obj)
+
+
+def event_audit_refs(refs, owner=None):
+    """Canonical ownership envelope for new audit evidence, never legacy backfill."""
+    import json
+    from imports.event_context import normalize_event_id
+    owner = accommodation_event_id() if owner is None else normalize_event_id(owner)
+    return json.dumps({'championshipEventId': str(owner), '_scope': 'OPERATIONAL_EVENT',
+        **{k: v for k, v in refs.items() if k not in {'championshipEventId', '_scope'}}}, ensure_ascii=False)

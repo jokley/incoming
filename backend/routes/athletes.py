@@ -19,8 +19,8 @@ athletes = Blueprint('athletes', __name__)
 def get_athletes():
     athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions)).all()
 
-    latest_athletes_run = ImportRun.query.filter_by(import_type='athletes').order_by(ImportRun.started_at.desc()).first()
-    latest_roomlist_run = ImportRun.query.filter_by(import_type='roomlist').order_by(ImportRun.started_at.desc()).first()
+    latest_athletes_run = event_query(ImportRun).filter_by(import_type='athletes').order_by(ImportRun.started_at.desc()).first()
+    latest_roomlist_run = event_query(ImportRun).filter_by(import_type='roomlist').order_by(ImportRun.started_at.desc()).first()
 
     latest_athletes_at = latest_athletes_run.started_at if latest_athletes_run else None
     latest_roomlist_at = latest_roomlist_run.started_at if latest_roomlist_run else None

@@ -98,7 +98,8 @@ def set_requirement(person, value, source):
 def legacy_candidates():
     from models import Athlete
     result = []
-    for person in Athlete.query.order_by(Athlete.id).all():
+    from accommodation_scope import event_query
+    for person in event_query(Athlete).order_by(Athlete.id).all():
         if ' '.join((person.room_type or '').split()).casefold() != 'no room':
             continue
         state = requirement_projection(person)

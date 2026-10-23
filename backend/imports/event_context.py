@@ -1,5 +1,6 @@
 """Selected Event mapping context, separate from legacy discipline inference."""
-from models import Event
+from models import Event, EventCompetition
+from sqlalchemy.orm import selectinload
 
 
 class ImportValidationError(ValueError):
@@ -40,7 +41,9 @@ def active_competition_mapping(event):
 
 def revalidate_confirmation_event(event_id, people, *, validate_codes=True):
     event_id = normalize_event_id(event_id)
-    event = Event.query.get(event_id)
+    # A summary/read validation must not lazy-load each mapped Competition.
+    event = Event.query.options(selectinload(Event.competition_mappings)
+        .joinedload(EventCompetition.competition)).populate_existing().filter_by(id=event_id).first()
     if not event:
         raise ImportValidationError('EVENT_NOT_FOUND', 'Das ausgewählte Import-Event existiert nicht mehr.', event_id=event_id)
     if not event.active:
