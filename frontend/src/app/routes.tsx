@@ -21,7 +21,7 @@ const lazyAdminComponent = <T extends Record<string, unknown>, K extends keyof T
   return { Component: () => <AdminRoute><Page /></AdminRoute> };
 };
 
-export const router = createBrowserRouter([
+export const createAppRouter = () => createBrowserRouter([
   {
     path: "/",
     Component: Layout,

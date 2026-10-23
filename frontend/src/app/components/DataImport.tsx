@@ -1,3 +1,4 @@
+import { useActiveEvent, useActiveEventBlocker } from '../events/ActiveEventProvider';
 import { ImportChangePlan } from './ImportChangePlan';
 import { canConfirmReview, importReviewRequest } from '../services/importReview';
 import { AccommodationRequirementField } from './AccommodationRequirementField';
@@ -12,7 +13,7 @@ import { api } from '../services/api';
 import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
 import { importConfirmationMessage, reloadImportSession } from '../services/importConfirmation';
 import { competitionDisplayName, previewEventGroupLabel } from '../services/competitionPresentation';
-import type { ChampionshipEvent, FisImportIssue, FisImportPreview, ImportChange, PreviewImportChangeType } from '../types';
+import type { FisImportIssue, FisImportPreview, ImportChange, PreviewImportChangeType } from '../types';
 import { IMPORT_SESSION_STATUS, type ImportSession } from '../data/importSessions';
 import { ContentCard, EmptyState, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
@@ -47,12 +48,21 @@ export function DataImport() {
   const [savingTask, setSavingTask] = useState(false);
   const [scopeConfirmed,setScopeConfirmed]=useState(false), [destructiveConfirmed,setDestructiveConfirmed]=useState(false);
   useEffect(()=>{setScopeConfirmed(false);setDestructiveConfirmed(false);},[preview?.changePlan?.digest]);
-  const [events, setEvents] = useState<ChampionshipEvent[]>([]), [eventId, setEventId] = useState('');
+  const { eventId, selectedEvent } = useActiveEvent();
+  useActiveEventBlocker(Boolean(selected || preview || files.length || loading || confirming || savingTask), 'Bitte den laufenden Import-Review zuerst abschließen oder verlassen.');
 
   const refreshSessions = async () => setSessions(await api.getImportSessions());
   useEffect(() => { setShownDecisionId(searchParams.get('decisionId')); }, [searchParams]);
-  useEffect(() => { (async () => { try { const [loaded, activeEvents] = await Promise.all([api.getImportSessions(), api.getChampionshipEvents()]); setSessions(loaded); setEvents(activeEvents); setEventId(activeEvents[0]?.id ?? ''); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
-  const selectSession = async (session: ImportSession) => { const full = await api.getImportSession(session.id); setSelected(full); setPreview(full.preview ?? null); if (full.preview?.eventId) setEventId(full.preview.eventId); setFiles([]); setSuccess(null); };
+  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
+  const selectSession = async (session: ImportSession) => {
+    setLoading(true);
+    try {
+      const full = await api.getImportSession(session.id);
+      if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
+      setSelected(full); setPreview(full.preview ?? null); setFiles([]); setSuccess(null);
+    } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) setError(e instanceof Error ? e.message : 'Importsession konnte nicht geladen werden.'); }
+    finally { setLoading(false); }
+  };
   const createSession = () => { setSelected(null); setPreview(null); setSuccess(null); setError(null); };
   const handleFiles = (incoming: FileList | File[] | null | undefined) => {
     if (!incoming) return; const accepted = Array.from(incoming).filter(f => /\.xlsx?$/i.test(f.name));
@@ -162,7 +172,7 @@ export function DataImport() {
       <div className="flex min-h-0 flex-1 flex-col gap-5 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} isCreating={!selected} onCreate={createSession} onSelect={selectSession} />
         <ContentCard surface="raised" className="min-h-0 flex-1 overflow-hidden">
-          <div className="h-full overflow-y-auto"><div className="border-b border-[var(--ops-divider)] p-5"><TextField select size="small" label="Event" value={eventId} onChange={e=>{setEventId(e.target.value);setPreview(null);setFiles([]);}} disabled={loading||confirming} sx={{minWidth:280,maxWidth:420}}>{events.map(event=><MenuItem key={event.id} value={event.id}>{event.name}</MenuItem>)}</TextField></div>
+          <div className="h-full overflow-y-auto"><div className="border-b border-[var(--ops-divider)] p-5"><span className="text-sm text-[var(--ops-text-muted)]">Veranstaltung: <strong className="text-[var(--ops-text)]">{selectedEvent?.name}</strong></span></div>
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
               <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} - {competitionDisplayName(selected.discipline)}</h2><p className="text-xs text-[var(--ops-text-muted)]">IS-{selected.id} · {selected.uploadedAt} · {selected.uploadedBy} · Version {selected.currentVersion?.version ?? 0}</p></div>

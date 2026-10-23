@@ -98,7 +98,7 @@ def validate_import_request_context():
     if request.method == 'OPTIONS' or not request.path.startswith('/api/import/'):
         return
     data = request.get_json(silent=True) or {} if request.is_json else {}
-    values = [v for v in (request.args.get('eventId'), request.form.get('eventId'), data.get('eventId')) if v is not None]
+    values = [v for v in (request.args.get('eventId'), request.form.get('eventId'), data.get('eventId'), request.headers.get('X-Championship-Event-ID')) if v is not None]
     if request.path.rstrip('/') == '/api/import/fis/preview' and not request.form.get('sessionId'):
         # Endpoint retains its existing EVENT_REQUIRED / 400 / 404 validation.
         if len(values) > 1 and len({str(v) for v in values}) != 1:
@@ -548,6 +548,9 @@ def delete_simulation():
 
 @app.before_request
 def authenticate_api_request():
+    # Bind validation caches to this HTTP request even in nested test/app contexts.
+    g._validated_accommodation_owner = None
+    g.import_event_id = None
     g.api_path = _canonical_api_path()
     if g.api_path is None or request.method == 'OPTIONS':
         return None
@@ -558,6 +561,18 @@ def authenticate_api_request():
     permission = _required_permission()
     if permission and not g.current_user.has_permission(permission):
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
+    # Explicit UI context is validated after authentication/permissions and before
+    # object snapshots or mutations. Legacy clients retain the configured owner.
+    header_owner = request.headers.get('X-Championship-Event-ID')
+    if header_owner is not None:
+        owner = normalize_event_id(header_owner)
+        validate_operational_import_event(owner)
+        if owner != configured_event_id():
+            raise OperationalEventError('Request event conflicts with the operational championship')
+        record = db.session.get(Event, owner)
+        if record is None or not record.active:
+            raise OperationalEventError('Operational event is missing or inactive')
+        g._validated_accommodation_owner = owner
     if g.api_path != '/api/assignments/availability' and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and (
             g.api_path.startswith('/api/assignments/') or g.api_path.startswith('/api/room-assignments')):
         lock_accommodation_writes()
@@ -1875,7 +1890,7 @@ def _save_uploaded_excel(file_storage):
 @app.route('/api/import/fis/preview/', methods=['POST'])
 def preview_fis_import():
     lock_accommodation_writes()
-    raw_event_id = request.form.get('eventId')
+    raw_event_id = request.form.get('eventId') or request.headers.get('X-Championship-Event-ID')
     if not raw_event_id:
         return jsonify({'error': 'EVENT_REQUIRED', 'message': 'Bitte ein Event für den Import auswählen.'}), 400
     try:
