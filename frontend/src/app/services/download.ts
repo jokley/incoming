@@ -4,8 +4,9 @@
  * Keeping this lifecycle in one place is important for generated exports: object
  * URLs hold their Blob in memory until they are explicitly revoked.
  */
-export async function downloadResponse(response: Response, filename: string): Promise<void> {
+export async function downloadResponse(response: Response, filename: string, assertCurrent: () => void = () => {}): Promise<void> {
   const blob = await response.blob();
+  assertCurrent();
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
 

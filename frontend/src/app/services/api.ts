@@ -1,3 +1,5 @@
+import { EventRequestScope } from '../events/eventRequestScope';
+import type { EventCapabilities } from '../events/activeEventStore';
 import type { SingleRoomQuotaExemptReason } from '../types';
 import type {
   RoomType,
@@ -62,75 +64,76 @@ let mockAthletes = [...initialAthletes];
 let mockRoomBookings: RoomBooking[] = [];
 
 class ApiService {
+  readonly eventScope = new EventRequestScope();
+  async getActiveEventContext(): Promise<EventCapabilities> { return this.request('/active-event-context'); }
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
     const method = options?.method ?? 'GET';
     const measurement = isMeasuredAssignmentRequest(endpoint)
       ? startAssignmentMeasurement(endpoint, method)
       : null;
-    const response = await fetch(`${API_BASE_URL}${endpoint}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
-      ...options,
-    });
+    const multipart = typeof FormData !== 'undefined' && options?.body instanceof FormData;
+    const headers = new Headers(options?.headers);
+    if (!multipart && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    return this.eventScope.run(`${API_BASE_URL}${endpoint}`, { ...options, headers }, async (response, assertCurrent) => {
 
-    const headersAt = performance.now();
-    const contentType = response.headers.get('content-type') || '';
-    const bodyReadStartedAt = performance.now();
-    const bodyText = await response.text();
-    const bodyReadFinishedAt = performance.now();
+      const headersAt = performance.now();
+      const contentType = response.headers.get('content-type') || '';
+      const bodyReadStartedAt = performance.now();
+      const bodyText = await response.text();
+      assertCurrent();
+      const bodyReadFinishedAt = performance.now();
 
-    const looksLikeJson = (() => {
-      const trimmed = bodyText.trim();
-      return (
-        contentType.includes('application/json') ||
-        trimmed.startsWith('{') ||
-        trimmed.startsWith('[') ||
-        trimmed === 'null' ||
-        trimmed === 'true' ||
-        trimmed === 'false'
-      );
-    })();
+      const looksLikeJson = (() => {
+        const trimmed = bodyText.trim();
+        return (
+          contentType.includes('application/json') ||
+          trimmed.startsWith('{') ||
+          trimmed.startsWith('[') ||
+          trimmed === 'null' ||
+          trimmed === 'true' ||
+          trimmed === 'false'
+        );
+      })();
 
-    let body: unknown = bodyText;
-    const jsonParseStartedAt = performance.now();
-    if (bodyText && looksLikeJson) {
-      try {
-        body = JSON.parse(bodyText);
-      } catch {
-        body = bodyText;
+      let body: unknown = bodyText;
+      const jsonParseStartedAt = performance.now();
+      if (bodyText && looksLikeJson) {
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          body = bodyText;
+        }
       }
-    }
-    const jsonParseFinishedAt = performance.now();
-    if (measurement) {
-      finishAssignmentRequest(measurement.operationId, measurement.startedAt, response, {
-        timeToHeadersMs: headersAt - measurement.startedAt,
-        bodyReadMs: bodyReadFinishedAt - bodyReadStartedAt,
-        jsonParseMs: jsonParseFinishedAt - jsonParseStartedAt,
-        responseBytes: new Blob([bodyText]).size,
-      });
-    }
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        window.dispatchEvent(new CustomEvent('auth:unauthenticated'));
-        throw new Error('UNAUTHENTICATED');
+      const jsonParseFinishedAt = performance.now();
+      if (measurement) {
+        finishAssignmentRequest(measurement.operationId, measurement.startedAt, response, {
+          timeToHeadersMs: headersAt - measurement.startedAt,
+          bodyReadMs: bodyReadFinishedAt - bodyReadStartedAt,
+          jsonParseMs: jsonParseFinishedAt - jsonParseStartedAt,
+          responseBytes: new Blob([bodyText]).size,
+        });
       }
-      if (response.status === 403) {
-        throw new Error('FORBIDDEN');
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          window.dispatchEvent(new CustomEvent('auth:unauthenticated'));
+          throw new Error('UNAUTHENTICATED');
+        }
+        if (response.status === 403) {
+          throw new Error('FORBIDDEN');
+        }
+        requireSuccessfulApiResponse(response, body);
       }
-      requireSuccessfulApiResponse(response, body);
-    }
 
-    if (response.status === 204) {
-      return undefined as T;
-    }
+      if (response.status === 204) {
+        return undefined as T;
+      }
 
-    if (!bodyText) {
-      return undefined as T;
-    }
-    return body as T;
+      if (!bodyText) {
+        return undefined as T;
+      }
+      return body as T;
+    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : false);
   }
 
   async getCurrentUser(): Promise<AuthenticatedUser> {
@@ -149,16 +152,17 @@ class ApiService {
     return this.request('/admin/scenarios');
   }
 
-  async generateScenario(number: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/admin/scenarios/${number}/generate`, { method: 'POST' });
-    if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Szenario konnte nicht generiert werden.');
-    await downloadResponse(response, `wm-scenario-${number}.zip`);
+  private async download(endpoint: string, filename: string, options?: RequestInit): Promise<void> {
+    return this.eventScope.run(`${API_BASE_URL}${endpoint}`, options, async (response, assertCurrent) => {
+      if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Datei konnte nicht geladen werden.');
+      await downloadResponse(response, filename, assertCurrent);
+    });
   }
-
+  async generateScenario(number: string): Promise<void> {
+    return this.download(`/admin/scenarios/${number}/generate`, `wm-scenario-${number}.zip`, { method: 'POST' });
+  }
   async generateCompleteScenarios(): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/admin/scenarios/complete/generate`, { method: 'POST' });
-    if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Kompletter Testordner konnte nicht generiert werden.');
-    await downloadResponse(response, 'Kompletter_Testordner.zip');
+    return this.download('/admin/scenarios/complete/generate', 'Kompletter_Testordner.zip', { method: 'POST' });
   }
 
   async createSimulation(): Promise<SimulationSummary> {
@@ -174,9 +178,7 @@ class ApiService {
   async createDatabaseBackup(): Promise<{ status: string }> { return this.request('/admin/database/backup', { method: 'POST' }); }
   async importDatabaseBackup(file: File): Promise<DatabaseBackup> {
     const form = new FormData(); form.append('file', file);
-    const response = await fetch(`${API_BASE_URL}/admin/database/import`, { method: 'POST', body: form });
-    const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.message || 'Das Backup konnte nicht validiert werden.');
+    const payload = await this.request<DatabaseBackup>('/admin/database/import', { method: 'POST', body: form });
     return { ...payload, localFile: file };
   }
   async restoreDatabaseBackup(backup: DatabaseBackup): Promise<{ status: string }> {
@@ -187,9 +189,7 @@ class ApiService {
     return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(restoreRequest) });
   }
   async downloadDatabaseBackup(filename: string, category: string): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/admin/database/backups/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`);
-    if (!response.ok) throw new Error('Das Backup konnte nicht heruntergeladen werden.');
-    await downloadResponse(response, filename);
+    return this.download(`/admin/database/backups/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`, filename);
   }
 
   // ============================================================================
@@ -898,28 +898,14 @@ class ApiService {
   }
 
   async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; message?: string }> {
+    const selected = this.eventScope.eventId;
+    if (!selected || (eventId && eventId !== selected)) throw new Error('Importsession und aktiver Eventkontext müssen übereinstimmen.');
     const formData = new FormData();
     files.forEach((file) => formData.append('files', file));
     if (createSession) formData.append('createSession', 'true');
     if (sessionId) formData.append('sessionId', sessionId);
-    if (eventId) formData.append('eventId', eventId);
-
-    const response = await fetch(`${API_BASE_URL}/import/fis/preview`, {
-      method: 'POST',
-      body: formData,
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        window.dispatchEvent(new CustomEvent('auth:unauthenticated'));
-        throw new Error('UNAUTHENTICATED');
-      }
-      if (response.status === 403) throw new Error('FORBIDDEN');
-      const payload = await response.json().catch(() => null);
-      throw new Error(payload?.message || payload?.error || `Preview failed: ${response.statusText}`);
-    }
-
-    return response.json();
+    formData.append('eventId', selected);
+    return this.request('/import/fis/preview', { method: 'POST', body: formData });
   }
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }

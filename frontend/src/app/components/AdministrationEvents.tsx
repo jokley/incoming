@@ -1,3 +1,4 @@
+import { useActiveEvent } from '../events/ActiveEventProvider';
 import { useEffect, useMemo, useState } from 'react';
 import { Checkbox, FormControlLabel, MenuItem, Stack, Tab, Tabs, TextField } from '@mui/material';
 import { CalendarDays, Copy, Pencil, Plus } from 'lucide-react';
@@ -10,9 +11,10 @@ type EventDraft = Partial<ChampionshipEvent>;
 type MappingDraft = Pick<EventCompetitionMapping, 'officialName'|'fisCodex'|'importCode'|'active'>;
 
 export function AdministrationEvents() {
+  const { eventId } = useActiveEvent();
   const [events, setEvents] = useState<ChampionshipEvent[]>([]);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
-  const [selectedId, setSelectedId] = useState('');
+  const [selectedId, setSelectedId] = useState(eventId);  // Catalogue editor selection, not an operational event switch.
   const [selected, setSelected] = useState<ChampionshipEvent | null>(null);
   const [tab, setTab] = useState(0);
   const [eventDialog, setEventDialog] = useState<{open:boolean; value:ChampionshipEvent|null}>({open:false,value:null});

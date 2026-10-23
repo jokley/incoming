@@ -1,3 +1,4 @@
+import { useActiveEventBlocker } from '../../events/ActiveEventProvider';
 import React, { type ReactNode } from 'react';
 import { ConfirmDialog, EnterpriseDialog, EnterpriseDialogActions, type EnterpriseDialogSize } from './EnterpriseDialog';
 
@@ -18,6 +19,7 @@ interface CrudDialogProps {
 
 /** Shared create/edit shell used by operational master-data modules. */
 export function CrudDialog({ open, title, description = 'Pflichtfelder vollständig ausfüllen und Änderungen anschließend speichern.', status, children, dirty = false, saving = false, saveDisabled = false, saveLabel = 'Speichern', size = 'small', onClose, onSave }: CrudDialogProps) {
+  useActiveEventBlocker(open && (dirty || saving), 'Bitte ungespeicherte Änderungen oder die laufende Speicherung zuerst abschließen.');
   const [confirmClose, setConfirmClose] = React.useState(false);
   const requestClose = () => dirty ? setConfirmClose(true) : onClose();
 

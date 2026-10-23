@@ -1,4 +1,7 @@
 {
+  "/api/active-event-context": [
+    "GET"
+  ],
   "/api/admin/database/backup": [
     "POST"
   ],

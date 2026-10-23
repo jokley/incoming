@@ -1,3 +1,4 @@
+import { ActiveEventSelector } from '../events/ActiveEventSelector';
 import { Outlet, NavLink } from 'react-router';
 import { LayoutDashboard, Users, Hotel, UserCheck, Calendar, Upload, BarChart3, Layers, ShieldCheck, LogOut, Settings, List, Moon, Sun, type LucideIcon } from 'lucide-react';
 import { useAuth } from '../auth/AuthProvider';
@@ -38,8 +39,9 @@ export function Layout() {
         <div className="mx-auto w-full max-w-[1920px] px-3 sm:px-5 lg:px-6">
           <div className="flex min-h-16 items-center gap-4 py-2">
             <div className="flex min-w-0 flex-1 items-center gap-5">
-              <div className="shrink-0">
-                <h1 className="whitespace-nowrap text-lg font-bold text-blue-600 sm:text-xl">Freestyle WM 2027</h1>
+              <div className="min-w-0 max-w-60">
+                <h1 className="truncate text-sm font-bold text-blue-600">Freestyle WM 2027</h1>
+                <ActiveEventSelector />
               </div>
               <div className="hidden min-w-0 flex-1 items-center gap-1 overflow-x-auto lg:flex">
                 {visibleNavItems.map(({ to, end, label, icon: Icon }) => (

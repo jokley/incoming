@@ -31,6 +31,7 @@ test('optional assignment measurement preserves API requests', async (t) => {
   const { api } = await server.ssrLoadModule(
     '/src/app/services/api.ts',
   ) as typeof import('./api.ts');
+  api.eventScope.activate('7');
 
   await t.test('available randomUUID starts measurement as before', (t) => {
     const operationId = '11111111-1111-4111-8111-111111111111';
