@@ -20,6 +20,7 @@ def accommodation_event_id():
             if event is None or not event.active:
                 raise OperationalEventError('Operational event is missing or inactive')
             g._validated_accommodation_owner = owner
+            g._quota_event_record = event
         data = request.get_json(silent=True)
         values = [request.args.get('eventId'), request.args.get('championshipEventId')]
         if isinstance(data, dict):

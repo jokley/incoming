@@ -1,3 +1,5 @@
+import pytest
+pytestmark=pytest.mark.quota_rule_lifecycle
 """HTTP coverage for championship administration and event audit parity."""
 import json
 import os
@@ -48,9 +50,10 @@ class EventRoutesTest(unittest.TestCase):
         earlier = self.create_event('Earlier', year=2027)
         inactive = self.create_event('Inactive', year=2026, active=False)
         self.assertEqual(later, {'id': later['id'], 'name': 'Later', 'year': 2028,
-                                'fisEventId': '123', 'sectorCode': 'SB', 'active': True})
+                                'fisEventId': '123', 'sectorCode': 'SB', 'active': True,
+                                'isWorldChampionship':False,'quotaRules':{'status':'DRAFT','config':None,'digest':__import__('quota_rules').fingerprint({'config':None,'isWorldChampionship':False}),'revision':0,'fixedAt':None,'fixedBy':None}})
         self.assertEqual(self.client.get('/api/championship-events', headers=self.viewer).get_json(),
-                         [earlier, later])
+                         [{k:v for k,v in row.items() if k!='quotaRules'} for row in [earlier,later]])
         self.assertEqual(self.client.get('/api/admin/events').get_json(), [inactive, earlier, later])
         path = '/api/admin/events/' + later['id']
         self.assertEqual(self.client.get(path).get_json(), {**later, 'competitionMappings': []})
@@ -138,7 +141,7 @@ class EventRoutesTest(unittest.TestCase):
         routes = json.loads((Path(__file__).parent / 'fixtures/api_routes.json').read_text())
         event_paths = {p for p in routes if p.startswith(('/api/events', '/api/admin/events',
                                                         '/api/championship-events'))}
-        self.assertEqual(len(event_paths), 10)
+        self.assertEqual(len(event_paths), 12)
         registered = {r.rule for r in app.url_map.iter_rules()}
         for path in event_paths:
             self.assertIn(path, registered)

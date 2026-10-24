@@ -177,22 +177,18 @@ def test_foreign_read_context_rejected(events):
         imports.recalculate_fis_import_preview({'eventId':a.id,'people':[],'rooms':[]},read_context=ImportReadContext(b.id))
 
 
-def test_real_jpn_pair_twice_in_two_events(events):
+def test_real_jpn_legacy_confirm_cannot_bypass_athlete_review(events):
     entries=os.environ.get('JPN_ENTRIES_FILE');rooms=os.environ.get('JPN_ROOMS_FILE')
     if not entries or not rooms: pytest.skip('Supply real JPN workbooks via JPN_ENTRIES_FILE/JPN_ROOMS_FILE')
-    counts=[]
     for event in events:
         first=imports.create_fis_import_preview(entries,rooms,event)
         assert first['isValid'],first['errors']
-        imports.confirm_fis_import(first['previewToken'])
-        count=Athlete.query.filter_by(event_id=event.id).count();counts.append(count)
-        again=imports.create_fis_import_preview(entries,rooms,event)
-        assert again['summary']['people']['wouldCreate']==0
-        assert again['summary']['people']['wouldUpdate']==count
-        imports.confirm_fis_import(again['previewToken'])
-        assert Athlete.query.filter_by(event_id=event.id).count()==count
-    assert counts[0]==counts[1] and counts[0]>0
-    assert Athlete.query.count()==sum(counts)
+        assert first['athleteQuotaChecks'][0]['athleteQuotaExceeded']
+        with pytest.raises(ImportValidationError,match='Genehmigung vor Confirm'):
+            imports.confirm_fis_import(first['previewToken'])
+        db.session.rollback()
+        assert Athlete.query.filter_by(event_id=event.id).count()==0
+    # Positive two-event import/reimport remains covered by the real HTTP workflow below.
 
 
 def test_enrichment_persists_without_new_person(events,monkeypatch):
@@ -286,7 +282,7 @@ def test_real_jpn_http_workflow_both_events(events,monkeypatch):
             decided=client.patch(f"/api/import/sessions/{sid}/approvals/{approval['id']}?eventId={event.id}",json={
                 'decision':'APPROVED','approvalType':'NATION_APPROVED','approvalMethod':'EMAIL',
                 'approvalBy':'Explicit JPN test decision','approvalDate':'2026-10-22T12:00:00Z',
-                'approvedPersonKeys':keys})
+                'approvedPersonKeys':keys,**({'approvedExtent':details['uncoveredExtent']} if details.get('decisionKind')=='ATHLETE_QUOTA' else {})})
             assert decided.status_code==200,decided.json
         current=client.get(f'/api/import/sessions/{sid}?eventId={event.id}').json['preview']
         approved=client.post(f'/api/import/sessions/{sid}/approve?eventId={event.id}',json={

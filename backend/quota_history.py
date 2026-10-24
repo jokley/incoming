@@ -159,7 +159,7 @@ def historical_approval_evidence(approval):
 def applicable_approval_groups(approval, person, person_key=None, roster=None):
     """Selected historical person + immutable evidence + exact current membership."""
     import json
-    if not approval or approval.decision != 'APPROVED':
+    if not approval or approval.decision != 'APPROVED' or json.loads(approval.quota_details_json or '{}').get('decisionKind')=='ATHLETE_QUOTA':
         return set()
     if not approval_event_matches(approval, getattr(person, 'event_id', None)):
         return set()

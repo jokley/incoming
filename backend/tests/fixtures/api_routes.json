@@ -24,6 +24,13 @@
     "GET",
     "POST"
   ],
+  "/api/admin/events/<int:event_id>/quota-rules": [
+    "GET",
+    "PUT"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/fix": [
+    "POST"
+  ],
   "/api/admin/events/<int:event_id>": [
     "GET",
     "PUT"
@@ -122,6 +129,9 @@
   "/api/assignments/segments/preview": [
     "GET"
   ],
+  "/api/athlete-quotas": [
+    "GET"
+  ],
   "/api/athletes": [
     "GET",
     "POST"
@@ -174,6 +184,9 @@
   ],
   "/api/events/<int:event_id>/demand/<int:demand_id>": [
     "DELETE"
+  ],
+  "/api/fis/athlete-quotas": [
+    "GET"
   ],
   "/api/fis/official-quotas": [
     "GET"
@@ -298,6 +311,9 @@
     "GET"
   ],
   "/api/official-quotas/": [
+    "GET"
+  ],
+  "/api/quota-rules": [
     "GET"
   ],
   "/api/room-assignments": [

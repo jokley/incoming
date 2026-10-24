@@ -64,6 +64,12 @@ let mockAthletes = [...initialAthletes];
 let mockRoomBookings: RoomBooking[] = [];
 
 class ApiService {
+  async getAthleteQuotas():Promise<NonNullable<import('../types').FisImportPreview['athleteQuotaChecks']>> { return this.request('/fis/athlete-quotas'); }
+  async getQuotaRules():Promise<import('../types').EventQuotaRules> { return this.request('/quota-rules'); }
+  async getEventQuotaRules(id:string):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`); }
+  async saveEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`,{method:'PUT',body:JSON.stringify(data)}); }
+  async fixEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules/fix`,{method:'POST',body:JSON.stringify(data)}); }
+
   readonly eventScope = new EventRequestScope();
   async getActiveEventContext(): Promise<EventCapabilities> { return this.request('/active-event-context'); }
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -920,7 +926,7 @@ class ApiService {
     return this.request(`/import/sessions/${sessionId}/single-room-exemptions/${encodeURIComponent(personKey)}`, { method: 'PATCH', body: JSON.stringify({ reason }) });
   }
   async getImportDecision(id: string): Promise<ImportDecision> { return this.request(`/import/approvals/${id}`); }
-  async decideImportTask(sessionId: string, taskId: string, payload: { decision: Exclude<ImportApproval['decision'],'PENDING'>; comment: string; approvalType?: 'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod: 'EMAIL'|'PHONE'; approvalBy: string; approvalDate: string; contactSubject?: string; costCoverage?: string; deadlineAt?: string; approvedPersonKeys?: string[] }): Promise<ImportSession> {
+  async decideImportTask(sessionId: string, taskId: string, payload: { decision: Exclude<ImportApproval['decision'],'PENDING'>; comment: string; approvalType?: 'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod: 'EMAIL'|'PHONE'; approvalBy: string; approvalDate: string; contactSubject?: string; costCoverage?: string; deadlineAt?: string; approvedPersonKeys?: string[]; approvedExtent?:import('../types').QuotaExtent }): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/approvals/${taskId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),

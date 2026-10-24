@@ -430,8 +430,8 @@ class Competition(db.Model):
     @property
     def top_level_discipline(self):
         """Higher-level athlete admission discipline, derived from the mapping."""
-        from competitions import athlete_top_level_discipline
-        return athlete_top_level_discipline(self.quota_discipline)
+        from competitions import competition_athlete_family
+        return competition_athlete_family(self)
 
     def to_dict(self):
         return {
@@ -444,7 +444,7 @@ class Competition(db.Model):
 
 
 class Event(db.Model):
-    """Top-level championship context (accommodation scoping follows later)."""
+    """Existing championship owner with draft/fixed event quota policy."""
     __tablename__ = 'championship_event'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False, unique=True)
@@ -453,12 +453,19 @@ class Event(db.Model):
     fis_event_id = db.Column(db.String(50))
     sector_code = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    is_world_championship = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    quota_rules_json = db.Column(db.Text)
+    quota_rules_revision = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    quota_rules_fixed_at = db.Column(db.DateTime)
+    quota_rules_fixed_by = db.Column(db.String(100))
     competition_mappings = db.relationship('EventCompetition', back_populates='event', cascade='all, delete-orphan')
 
     def to_dict(self, include_mappings=False):
+        from quota_rules import rule_projection
         result = {'id': str(self.id), 'name': self.name, 'year': self.year,
                   'active': self.active, 'fisEventId': self.fis_event_id,
-                  'sectorCode': self.sector_code}
+                  'sectorCode': self.sector_code, 'isWorldChampionship': self.is_world_championship,
+                  'quotaRules': rule_projection(self)}
         if include_mappings:
             result['competitionMappings'] = [mapping.to_dict() for mapping in self.competition_mappings]
         return result
@@ -857,3 +864,20 @@ class RoomBookingOccupant(db.Model):
 from sqlalchemy import event as _sa_event
 from event_ownership_runtime import apply_event_ownership
 _sa_event.listen(db.session, 'before_flush', apply_event_ownership)
+
+
+from sqlalchemy.orm import Session as _Session
+
+
+@_sa_event.listens_for(_Session, 'before_flush')
+def protect_fixed_event_rules(session, flush_context, instances):
+    from sqlalchemy import inspect
+    for obj in session.dirty:
+        if not isinstance(obj, Event):
+            continue
+        state=inspect(obj)
+        fixed=state.attrs.quota_rules_fixed_at.history
+        was_fixed=bool(fixed.deleted and fixed.deleted[0]) or bool(obj.quota_rules_fixed_at and not fixed.has_changes())
+        if was_fixed and any(state.attrs[field].history.has_changes() for field in
+            ('quota_rules_json','quota_rules_revision','quota_rules_fixed_at','quota_rules_fixed_by','is_world_championship')):
+            raise ValueError('Fixed event quota rules cannot be changed')

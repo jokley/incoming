@@ -85,7 +85,9 @@ def delete_event_demand(event_id, demand_id):
 # dedicated to accommodation demand until that domain is scoped in a later sprint.
 @events.route('/api/championship-events', methods=['GET'])
 def list_active_championship_events():
-    return jsonify([event.to_dict() for event in Event.query.filter_by(active=True).order_by(Event.year, Event.name).all()])
+    # Public catalogue remains global metadata, not foreign policy/auditor data.
+    return jsonify([{key:value for key,value in event.to_dict().items() if key!='quotaRules'}
+                    for event in Event.query.filter_by(active=True).order_by(Event.year, Event.name).all()])
 
 
 @events.route('/api/admin/events', methods=['GET', 'POST'])
@@ -109,6 +111,8 @@ def administer_event(event_id):
     if request.method == 'GET':
         return jsonify(event_record.to_dict(include_mappings=True))
     data = request.get_json() or {}
+    if any(key in data for key in ('quotaRules','quotaRulesJson','quotaRulesFixedAt','quotaRulesRevision','isWorldChampionship')):
+        return jsonify(error='USE_QUOTA_RULES_WORKFLOW'),400
     for source, target in (('name', 'name'), ('year', 'year'), ('active', 'active'),
                            ('fisEventId', 'fis_event_id'), ('sectorCode', 'sector_code')):
         if source in data:
@@ -136,6 +140,8 @@ def add_event_competition(event_id):
 def update_event_competition(event_id, mapping_id):
     mapping = EventCompetition.query.filter_by(id=mapping_id, event_id=event_id).first_or_404()
     data = request.get_json() or {}
+    if any(key in data for key in ('quotaRules','quotaRulesJson','quotaRulesFixedAt','quotaRulesRevision','isWorldChampionship')):
+        return jsonify(error='USE_QUOTA_RULES_WORKFLOW'),400
     for source, target in (('officialName', 'official_name'), ('fisCodex', 'fis_codex'),
                            ('importCode', 'import_code'), ('active', 'active')):
         if source in data:
@@ -160,3 +166,102 @@ def copy_event_competitions(event_id):
     db.session.add_all(copies)
     db.session.commit()
     return jsonify({'created': len(copies), 'event': target.to_dict(include_mappings=True)})
+
+
+@events.route('/api/quota-rules', methods=['GET'])
+def active_quota_rules():
+    from accommodation_scope import accommodation_event_id
+    from quota_rules import rule_projection, examples
+    event = db.session.get(Event, accommodation_event_id())
+    result = rule_projection(event)
+    result.update(eventId=str(event.id), eventName=event.name, isWorldChampionship=event.is_world_championship)
+    if result['status']=='FIXED':
+        result['examples']=examples(result['config'])
+    return jsonify(result)
+
+
+@events.route('/api/admin/events/<int:event_id>/quota-rules', methods=['GET', 'PUT'])
+def event_quota_rules(event_id):
+    import json
+    from quota_rules import rule_projection, validate_rules, initialization_preflight, examples, standard_rules
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    event = Event.query.filter_by(id=event_id).populate_existing().with_for_update().first_or_404()
+    if request.method=='PUT':
+        if event.quota_rules_fixed_at:
+            return jsonify(error='QUOTA_RULES_FIXED',message='Fixierte Quotenregeln sind unveränderlich.'),409
+        data=request.get_json() or {}
+        if not isinstance(data,dict):return jsonify(error='INVALID_QUOTA_RULES'),400
+        if data.get('expectedDigest') != rule_projection(event)['digest']:
+            return jsonify(error='STALE_QUOTA_RULES'),409
+        try:
+            rules=validate_rules(data.get('config'))
+        except ValueError as exc:
+            return jsonify(error='INVALID_QUOTA_RULES',message=str(exc)),400
+        event.quota_rules_json=json.dumps(rules,sort_keys=True)
+        if 'isWorldChampionship' in data:
+            if type(data['isWorldChampionship']) is not bool:
+                return jsonify(error='INVALID_WORLD_CHAMPIONSHIP'),400
+            event.is_world_championship=data['isWorldChampionship']
+        from quota_rules import audit_rules
+        audit_rules(event,'Quotenregelentwurf gespeichert')
+        db.session.commit()
+    result=rule_projection(event)
+    result.update(isWorldChampionship=event.is_world_championship,preflight=initialization_preflight(event), standardProposal=standard_rules())
+    if result['config']:result['examples']=examples(result['config'])
+    return jsonify(result)
+
+
+@events.route('/api/admin/events/<int:event_id>/quota-rules/fix', methods=['POST'])
+def fix_event_quota_rules(event_id):
+    import json
+    from auth import current_user
+    from quota_rules import rule_projection, validate_rules, initialization_preflight, standard_rules
+    from imports.workflow import lock_import_snapshot
+    from accommodation_mutations import lock_accommodation_writes
+    lock_accommodation_writes()
+    lock_import_snapshot()
+    event=Event.query.filter_by(id=event_id).populate_existing().with_for_update().first_or_404()
+    if event.quota_rules_fixed_at:return jsonify(error='QUOTA_RULES_FIXED'),409
+    data=request.get_json() or {}
+    if not event.quota_rules_json:return jsonify(error='INVALID_QUOTA_RULES'),400
+    try:config=validate_rules(json.loads(event.quota_rules_json))
+    except (ValueError,TypeError):return jsonify(error='INVALID_QUOTA_RULES'),400
+    preflight=initialization_preflight(event)
+    if (data.get('confirm') is not True or data.get('expectedDigest')!=rule_projection(event)['digest']
+            or data.get('preflightFingerprint')!=preflight['fingerprint']):
+        return jsonify(error='QUOTA_FIX_CONFIRMATION_REQUIRED',preflight=preflight),409
+    if preflight['blockers'] or (any(preflight['counts'].values()) and config!=standard_rules()):
+        return jsonify(error='QUOTA_INITIALIZATION_BLOCKED',preflight=preflight,
+                       message='Bestand erfordert eine geprüfte Initialisierung; keine Daten wurden bereinigt.'),409
+    event.quota_rules_fixed_at=datetime.utcnow()
+    event.quota_rules_fixed_by=current_user().username
+    event.quota_rules_revision=1
+    from quota_rules import audit_rules
+    audit_rules(event,'Quotenregeln verbindlich fixiert')
+    db.session.commit()
+    return jsonify(rule_projection(event))
+
+
+@events.route('/api/fis/athlete-quotas', methods=['GET'])
+@events.route('/api/athlete-quotas', methods=['GET'])
+def live_athlete_quotas():
+    from accommodation_scope import accommodation_event_id
+    from models import Athlete, ImportApproval, ImportSession, ImportSessionVersion, ImportSessionEvent
+    from quota_rules import rules_for_event
+    from athlete_quota import quota_rows
+    from competitions import quota_disciplines, competition_athlete_family
+    from imports.identity import build_name_key
+    owner=accommodation_event_id()
+    rules=rules_for_event(owner)
+    people=event_query(Athlete).all()
+    roster=[{'personId':p.id,'matchKey':p.fis_code or p.competitor_id or build_name_key(p.lastname,p.firstname,p.nation_code),
+        'nationCode':p.nation_code,'gender':p.gender,'function':p.function,'firstname':p.firstname,'lastname':p.lastname,
+        'quotaDisciplines':quota_disciplines(p.competitions),'athleteQuotaFamilies':list({competition_athlete_family(c) for c in p.competitions}),'competitionIds':[str(c.id) for c in p.competitions]} for p in people]
+    if any((p['function'] or '').strip().lower()=='athlete' and (not p['athleteQuotaFamilies'] or None in p['athleteQuotaFamilies']) for p in roster):
+        return jsonify(error='ATHLETE_QUOTA_FAMILY_UNKNOWN'),409
+    from quota_service import quota_gender_errors
+    if quota_gender_errors(roster):return jsonify(error='QUOTA_GENDER_REVIEW_REQUIRED'),409
+    superseded=db.select(ImportSessionEvent.approval_id).where(ImportSessionEvent.event_type=='QUOTA_DECISION_REVISED_FROM',ImportSessionEvent.approval_id.isnot(None),ImportSessionEvent.session_id.in_(db.select(ImportSession.id).where(ImportSession.event_id==owner)))
+    approvals=ImportApproval.query.join(ImportSession).join(ImportSessionVersion,(ImportSessionVersion.id==ImportApproval.version_id)&(ImportSessionVersion.session_id==ImportApproval.session_id)).filter(ImportSession.event_id==owner,ImportApproval.decision=='APPROVED',~ImportApproval.id.in_(superseded)).order_by(ImportApproval.id).all()
+    return jsonify(quota_rows(roster,rules,owner,approvals,db.session.get(Event,owner).quota_rules_revision))

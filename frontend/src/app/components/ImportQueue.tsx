@@ -17,7 +17,7 @@ export function ImportQueue({ sessions, selectedId, isCreating, onCreate, onSele
   const filtered = sessions.filter(session => `${session.id} ${session.nation} ${session.discipline} ${session.uploadedBy}`.toLowerCase().includes(search.toLowerCase()));
   const openSessions = filtered.filter(session => !completedImportStatuses.has(session.status));
   const completedSessions = filtered.filter(session => completedImportStatuses.has(session.status));
-  return <ContentCard surface="raised" className="flex min-h-0 flex-col overflow-hidden xl:w-[23rem] xl:shrink-0">
+  return <ContentCard surface="raised" className="flex shrink-0 flex-col overflow-hidden xl:min-h-0 xl:w-[23rem]">
     <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
       <SectionHeader title={`Importwarteschlange (${sessions.length})`} subtitle="Offene Arbeit zuerst · Sitzung auswählen" />
       <label className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
@@ -29,7 +29,7 @@ export function ImportQueue({ sessions, selectedId, isCreating, onCreate, onSele
         <span><span className="block font-extrabold">Neue Importsession</span><span className="block text-xs text-[var(--ops-text-muted)]">FIS-Dateien hochladen</span></span>
       </button>
     </div>
-    <div className="overflow-y-auto p-3 xl:min-h-0 xl:flex-1">
+    <div className="max-h-64 overflow-y-auto p-3 xl:max-h-none xl:min-h-0 xl:flex-1">
       <SessionGroup title="Offene Importsessions" sessions={openSessions} selectedId={selectedId} onSelect={onSelect} />
       <SessionGroup title="Abgeschlossene Importsessions" sessions={completedSessions} selectedId={selectedId} onSelect={onSelect} className="mt-5" />
       {!filtered.length && <EmptyState title="Keine Importsessions gefunden" />}

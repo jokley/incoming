@@ -48,6 +48,8 @@ def refresh_plan(session, preview=None, *, read_context=None, recalculate=True):
     preview['_currentApprovalIds']=[a.id for a in session.current_approvals]
     read_context=read_context or ImportReadContext(session.event_id)
     if recalculate:recalculate_fis_import_preview(preview,read_context=read_context)
+    from athlete_quota import reconcile_tasks
+    reconcile_tasks(session,preview)
     db.session.flush()
     plan=build_plan(preview,read_context,version=version)
     preview['_workflow']={'state':'REVIEW','plan':plan}
@@ -105,3 +107,24 @@ def present_plan(preview,plan):
     if 'summary' in preview:
         preview['summary']['people'].update(wouldCreate=len(plan['people']['create']),wouldUpdate=len(plan['people']['update']),
             wouldUnchanged=len(plan['people']['unchanged']),wouldRemove=len(plan['people']['remove']))
+
+
+def fork_review_version(session, preview, username):
+    """Reuse parsed facts while retaining the published version and its history."""
+    import uuid
+    prior=session.current_version
+    preview=deepcopy(preview)
+    preview.pop('accommodationRateOverrides',None)
+    preview.pop('accommodationRequirementOverrides',None)
+    preview['carriedSingleRoomQuotaExemptKeys']=list(preview.get('singleRoomQuotaExemptOverrides',{}))
+    preview.pop('_workflow',None)
+    token=uuid.uuid4().hex
+    preview['previewToken']=token
+    version=ImportSessionVersion(session_id=session.id,version=session.next_version_number(),preview_token=token,
+        preview_json=encoded(preview),source_hash=prior.source_hash,entries_filename=prior.entries_filename,
+        room_filename=prior.room_filename,uploaded_by=username)
+    db.session.add(version);db.session.flush();session.current_version=version
+    session.status='PROFESSIONALLY_REVIEWED'
+    session.approved_at=session.approved_by=None
+    db.session.flush()
+    return preview

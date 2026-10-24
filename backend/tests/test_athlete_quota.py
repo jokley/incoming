@@ -124,7 +124,7 @@ def test_new_evaluation_does_not_modify_existing_detailed_quota_results():
     assert {r['discipline'] for r in existing} == {'Freestyle'}
 
 
-def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
+def test_preview_exposes_athlete_requirement_independent_of_ez_exemption():
     app = Flask(__name__)
     app.config.update(SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
                       SQLALCHEMY_TRACK_MODIFICATIONS=False)
@@ -143,7 +143,7 @@ def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
             result = excel_import.create_fis_import_preview('entries', 'rooms', prepare_import_championship(Competition.query.all()))
         try:
             assert result['isValid'] is True
-            assert result['warnings'] == []
+            assert [w['code'] for w in result['warnings']] == ['QUOTA_ATHLETE_EXCEEDED']
             assert result['athleteQuotaChecks'][0]['athleteQuotaExceeded'] is True
             raw = excel_import.PREVIEW_STORE[result['previewToken']]
             assert raw['athleteQuotaChecks'] == result['athleteQuotaChecks']
@@ -154,7 +154,7 @@ def test_preview_exposes_informational_checks_without_new_warnings_or_gates():
             excel_import.recalculate_fis_import_preview(raw)
             assert raw['athleteQuotaChecks'] == result['athleteQuotaChecks']
             assert raw['quotaChecks'] == detailed
-            assert raw['warnings'] == []
+            assert [w['code'] for w in raw['warnings']] == ['QUOTA_ATHLETE_EXCEEDED']
         finally:
             excel_import.PREVIEW_STORE.pop(result['previewToken'], None)
             db.session.remove()

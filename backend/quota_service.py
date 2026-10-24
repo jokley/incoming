@@ -4,8 +4,8 @@ from fis_rules import compute_official_quota, compute_single_room_entitlement
 from competitions import athlete_top_level_discipline
 
 
-def evaluate_athlete_quota_usage(people):
-    """Report base 36/20 limits, independently of accommodation/workflow rules.
+def evaluate_athlete_quota_usage(people, rules=None):
+    """Evaluate event athlete limits independently of accommodation rules.
 
     Input memberships are canonical ``quotaDisciplines`` resolved through
     the selected catalogue mapping. Identity is the persisted personId or the
@@ -13,12 +13,13 @@ def evaluate_athlete_quota_usage(people):
     supported; administrative single-room exemptions have no effect here.
     Unknown/conflicting individual genders remain visible as incomplete data.
     """
+    from quota_rules import evaluation_rules
+    rules = evaluation_rules(rules)
     groups = {}
     for person in people:
         if (person.get('function') or '').strip().lower() != 'athlete':
             continue
-        for discipline in {athlete_top_level_discipline(group)
-                           for group in person.get('quotaDisciplines') or []} - {None}:
+        for discipline in set(person.get('athleteQuotaFamilies', [athlete_top_level_discipline(group) for group in person.get('quotaDisciplines') or []])) - {None}:
             identity = person.get('personId')
             if identity is None:
                 identity = person.get('matchKey')
@@ -39,12 +40,15 @@ def evaluate_athlete_quota_usage(people):
                 genders[next(iter(values))] += 1
             else:
                 unknown += 1
-        total_exceeded = len(members) > 36
-        gender_exceeded = {gender: used > 20 for gender, used in genders.items()}
+        rule = rules['athletes'][discipline]
+        if not rule['enabled']:
+            continue
+        total_exceeded = len(members) > rule['totalLimit']
+        gender_exceeded = {gender: used > rule['genderLimit'] for gender, used in genders.items()}
         rows.append({
             'nationCode': nation, 'topLevelDiscipline': discipline,
-            'athleteQuotaUsed': len(members), 'athleteQuotaLimit': 36,
-            'athleteGenderUsed': genders, 'athleteGenderLimit': 20,
+            'athleteQuotaUsed': len(members), 'athleteQuotaLimit': rule['totalLimit'],
+            'athleteGenderUsed': genders, 'athleteGenderLimit': rule['genderLimit'],
             'athleteQuotaExceeded': total_exceeded,
             'athleteGenderExceeded': gender_exceeded,
             'athleteGenderUnknown': unknown,
@@ -262,7 +266,7 @@ def single_room_usage_by_quota_group(people, single_room_person_ids=(), exempt_p
             for r in evaluate_quota_usage(people, assigned) if r['singleRoomsUsed']}
 
 
-def evaluate_quota_usage(people, assigned_people=()):
+def evaluate_quota_usage(people, assigned_people=(), rules=None):
     """Return quota rows for a roster and its assigned officials.
 
     ``people`` is the authoritative roster. ``assigned_people`` contains one
@@ -270,6 +274,8 @@ def evaluate_quota_usage(people, assigned_people=()):
     calculation free of database concerns lets previews project the same rules
     that the disposition applies to persisted records.
     """
+    from quota_rules import evaluation_rules
+    rules = evaluation_rules(rules)
     errors = quota_gender_errors(people)
     if errors:
         raise QuotaGenderValidationError(errors)
@@ -288,14 +294,14 @@ def evaluate_quota_usage(people, assigned_people=()):
     rows = []
     for nation, discipline, gender in sorted(keys):
         key = (nation, discipline, gender)
-        official_quota = compute_official_quota(athletes.get(key, 0))
+        official_quota = compute_official_quota(athletes.get(key, 0), rules['officials']['allowance'])
         rows.append({
             'nationCode': nation,
             'discipline': discipline,
             'gender': gender,
             'athletesEntered': athletes.get(key, 0),
             'officialQuota': official_quota,
-            'singleRoomsAllowed': compute_single_room_entitlement(official_quota),
+            'singleRoomsAllowed': compute_single_room_entitlement(official_quota, rules['singleRooms']),
             'assignedOfficials': assigned.get(key, 0),
             'singleRoomsUsed': 0,
             'quotaExemptSingleRooms': 0,

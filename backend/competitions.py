@@ -21,7 +21,16 @@ ATHLETE_DISCIPLINE_BY_EVENT_GROUP = {
 
 
 def athlete_top_level_discipline(event_group):
-    return ATHLETE_DISCIPLINE_BY_EVENT_GROUP.get(event_group)
+    return ATHLETE_DISCIPLINE_BY_EVENT_GROUP.get(event_group) if isinstance(event_group,str) else None
+
+
+def competition_athlete_family(competition):
+    """Exact configured sport/group evidence; never names or numeric prefixes."""
+    group=athlete_top_level_discipline(competition.quota_discipline)
+    sport={'Snowboard':'Snowboard','Freeski':'Freestyle','Freestyle':'Freestyle'}.get(getattr(competition,'sport',None))
+    if group and sport and group!=sport:
+        return None
+    return group or sport
 
 
 def normalize_competition_ids(values):
@@ -56,6 +65,7 @@ def resolve_quota_memberships(person, competition_mapping):
         {'competitionId': str(item.id) if getattr(item, 'id', None) is not None else None,
          'importCode': code, 'quotaDiscipline': item.quota_discipline}
         for code in codes for item in [competition_mapping[code]]]
+    person['athleteQuotaFamilies'] = sorted({competition_athlete_family(competition_mapping[code]) for code in codes}, key=lambda value:value or '')
     person['quotaDisciplines'] = groups
     person['topLevelDisciplines'] = list(groups)
     return person

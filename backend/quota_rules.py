@@ -1,0 +1,131 @@
+"""Small versioned event policy: validated parameters, never executable formulas."""
+import copy
+import hashlib
+import json
+
+FAMILIES = ('Snowboard', 'Freestyle')  # Persisted/API names retained.
+
+
+def standard_rules():
+    return {'schemaVersion': 1, 'athletes': {family: {'enabled': True, 'totalLimit': 36, 'genderLimit': 20}
+            for family in FAMILIES}, 'officials': {'model': 'ATHLETES_PLUS', 'allowance': 2},
+            'singleRooms': [{'upTo': 3, 'rooms': 1}, {'upTo': 6, 'rooms': 2}, {'upTo': None, 'rooms': 3}]}
+
+
+def fingerprint(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
+
+
+def validate_rules(value):
+    def keys(obj, expected):
+        if not isinstance(obj, dict) or set(obj) != set(expected):
+            raise ValueError('Unvollständige oder unbekannte Quotenparameter.')
+    def number(value):
+        if type(value) is not int or not 0 <= value <= 10000:
+            raise ValueError('Quotenwerte müssen ganze Zahlen von 0 bis 10000 sein.')
+    keys(value, ('schemaVersion', 'athletes', 'officials', 'singleRooms'))
+    if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1:
+        raise ValueError('Unbekannte Regelversion.')
+    keys(value['athletes'], FAMILIES)
+    for rule in value['athletes'].values():
+        keys(rule, ('enabled', 'totalLimit', 'genderLimit'))
+        if type(rule['enabled']) is not bool:
+            raise ValueError('Aktivierung muss boolesch sein.')
+        number(rule['totalLimit']); number(rule['genderLimit'])
+        if rule['genderLimit'] > rule['totalLimit']:
+            raise ValueError('Geschlechterlimit darf Gesamtlimit nicht überschreiten.')
+    keys(value['officials'], ('model', 'allowance'))
+    if value['officials']['model'] != 'ATHLETES_PLUS':
+        raise ValueError('Nicht unterstütztes Officials-Modell.')
+    number(value['officials']['allowance'])
+    tiers = value['singleRooms']
+    if not isinstance(tiers, list) or not 1 <= len(tiers) <= 12:
+        raise ValueError('Eine bis zwölf EZ-Stufen erforderlich.')
+    previous, previous_rooms = 0, 0
+    for index, tier in enumerate(tiers):
+        keys(tier, ('upTo', 'rooms')); number(tier['rooms'])
+        if tier['rooms'] < previous_rooms:
+            raise ValueError('EZ-Ansprüche müssen aufsteigend sein.')
+        previous_rooms = tier['rooms']
+        if tier['upTo'] is None:
+            if index != len(tiers)-1:
+                raise ValueError('Offene EZ-Stufe muss die letzte sein.')
+        else:
+            number(tier['upTo'])
+            if tier['upTo'] <= previous or index == len(tiers)-1:
+                raise ValueError('EZ-Schwellen müssen steigen und mit einer offenen Stufe enden.')
+            previous = tier['upTo']
+    return copy.deepcopy(value)
+
+
+def rule_projection(event):
+    config = json.loads(event.quota_rules_json) if event.quota_rules_json else None
+    return {'status': 'FIXED' if event.quota_rules_fixed_at else 'DRAFT', 'config': config,
+            'digest': fingerprint({'config':config,'isWorldChampionship':event.is_world_championship}), 'revision': event.quota_rules_revision,
+            'fixedAt': event.quota_rules_fixed_at.isoformat()+'Z' if event.quota_rules_fixed_at else None,
+            'fixedBy': event.quota_rules_fixed_by}
+
+
+def rules_for_event(event_id=None):
+    from models import Event, db
+    from imports.event_context import import_event_id, ImportValidationError
+    from flask import g,has_request_context
+    owner=import_event_id(event_id)
+    cached=getattr(g,'_quota_event_record',None) if has_request_context() else None
+    event = cached if cached is not None and cached.id==owner else db.session.get(Event,owner)
+    if not event or not event.quota_rules_fixed_at or not event.quota_rules_json:
+        raise ImportValidationError('EVENT_QUOTA_RULES_NOT_FIXED', 'Quotenregeln sind noch nicht verbindlich festgelegt.')
+    return validate_rules(json.loads(event.quota_rules_json))
+
+
+def evaluation_rules(rules=None):
+    if rules is not None:
+        return rules
+    from flask import has_app_context
+    # Standalone mathematical helpers retain explicit historical standards;
+    # every operational Flask evaluation requires its configured event policy.
+    return rules_for_event() if has_app_context() else standard_rules()
+
+
+def examples(config):
+    from fis_rules import compute_official_quota, compute_single_room_entitlement
+    basis = compute_official_quota(4, config['officials']['allowance'])
+    rooms=compute_single_room_entitlement(basis, config['singleRooms'])
+    lower=1;scale=[]
+    for tier in config['singleRooms']:
+        scale.append(f"{lower}–{tier['upTo']} Officials → {tier['rooms']} EZ" if tier['upTo'] is not None else f"ab {lower} Officials → {tier['rooms']} EZ")
+        if tier['upTo'] is not None:lower=tier['upTo']+1
+    return {'athletes':4,'officials':basis,'singleRooms':rooms,'scale':scale,
+        'rows':[{'name':name,'used':used,'covered':used<=rooms,'progress':min(used/max(1,rooms),1)*100,
+                 'label':f'{used} / {rooms} genutzt' if used<=rooms else 'Quote überschritten'}
+                for name,used in [('Person A im EZ',1),('Person B im EZ',2),('Zusätzliche EZ-Nutzung',max(3,rooms+1))]]}
+
+
+def initialization_preflight(event):
+    from models import Athlete, RoomBooking, ImportSession, ImportApproval,ImportSessionVersion
+    people = Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id).all()
+    sessions = ImportSession.query.filter_by(event_id=event.id).order_by(ImportSession.id).all()
+    bookings = RoomBooking.query.filter_by(event_id=event.id).order_by(RoomBooking.id).all()
+    approvals = ImportApproval.query.join(ImportSession).filter(ImportSession.event_id==event.id).order_by(ImportApproval.id).all()
+    def raw(obj):return {column.name:getattr(obj,column.name) for column in obj.__table__.columns}
+    facts = {'people':[raw(p) for p in people], 'sessions':[raw(s) for s in sessions],
+             'bookings':[raw(b) for b in bookings], 'approvals':[raw(a) for a in approvals],
+             'versions':[raw(v) for v in ImportSessionVersion.query.filter(ImportSessionVersion.session_id.in_([s.id for s in sessions])).order_by(ImportSessionVersion.id)]}
+    from models import AthleteCompetition,EventCompetition
+    memberships=[(r.athlete_id,r.competition_id) for r in AthleteCompetition.query.filter(AthleteCompetition.athlete_id.in_([p.id for p in people])).order_by(AthleteCompetition.athlete_id,AthleteCompetition.competition_id)]
+    mappings=[raw(m) for m in EventCompetition.query.filter_by(event_id=event.id).order_by(EventCompetition.id)]
+    blockers = ['Bestehende abgeschlossene Genehmigungen ohne fixierten Regelkontext müssen vor Initialisierung geprüft werden.'] if any(a.decision=='APPROVED' for a in approvals) or any(p.single_room_status=='APPROVED_EXTRA' for p in people) else []
+    return {'counts': {key:len(value) for key,value in facts.items()}, 'fingerprint':fingerprint({'facts':facts,'memberships':memberships,'mappings':mappings}), 'blockers':blockers}
+
+
+def audit_rules(event,activity):
+    from flask import g,request
+    from auth import current_user
+    from models import db,AuditEvent
+    import uuid
+    user=current_user()
+    db.session.add(AuditEvent(username=user.username,action='update',entity_type='event-quota-rules',entity_id=str(event.id),
+        request_id=getattr(g,'request_id',str(uuid.uuid4())),method=request.method,path=request.path,
+        activity=activity,category='Administration',entity_label=event.name,
+        details_json=json.dumps({'rules':rule_projection(event),'isWorldChampionship':event.is_world_championship}),entity_refs_json=json.dumps({'eventId':str(event.id)})))
+    g.atomic_import_audit=True  # Existing app-wide atomic-audit hook.

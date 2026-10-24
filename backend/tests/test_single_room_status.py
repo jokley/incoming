@@ -31,7 +31,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             db.drop_all()
             db.create_all()
             competition = Competition(import_code='WSC_BA_W_6183', code='6183', name='Display',
-                display_name='Display', sport='Sport', gender='F', quota_discipline='Big Air')
+                display_name='Display', sport='Snowboard', gender='F', quota_discipline='Big Air')
             db.session.add(competition)
             db.session.commit()
             prepare_import_championship([competition])

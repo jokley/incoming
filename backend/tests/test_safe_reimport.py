@@ -281,7 +281,7 @@ def test_real_jpn_durable_workflow_and_same_file_recheck(events):
     for approval in current['session']['approvals']:
         if approval['decision']=='APPROVED':continue
         details=approval['quotaDetails'];keys=[p['personKey'] for p in details.get('singleRoomCandidates',[])][:details.get('excessCount',0)]
-        response=client.patch(f"/api/import/sessions/{sid}/approvals/{approval['id']}?eventId={a.id}",json=dict(decision='APPROVED',approvalType='NATION_APPROVED',approvalMethod='EMAIL',approvalBy='JPN test',approvalDate='2026-10-22T12:00:00Z',approvedPersonKeys=keys))
+        response=client.patch(f"/api/import/sessions/{sid}/approvals/{approval['id']}?eventId={a.id}",json=dict(decision='APPROVED',approvalType='NATION_APPROVED',approvalMethod='EMAIL',approvalBy='JPN test',approvalDate='2026-10-22T12:00:00Z',approvedPersonKeys=keys,**({'approvedExtent':details['uncoveredExtent']} if details.get('decisionKind')=='ATHLETE_QUOTA' else {})))
         assert response.status_code==200,response.json
     PREVIEW_STORE.clear()
     result=run(current,a);assert result['summary']['peopleCreated']==64
