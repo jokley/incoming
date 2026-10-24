@@ -32,6 +32,26 @@ test('unauthorized or duplicate bootstrap selection fails closed', async () => {
   }
 });
 
+test('missing grant bootstrap clears prior context and retry requires explicit server grant', async t => {
+  const scope = new EventRequestScope(); let granted = true;
+  const store = new ActiveEventStore(scope, async () => {
+    if (!granted) throw new Error('FORBIDDEN');
+    return { events: [event('1')], selectedEventId: '1', switchingAllowed: false };
+  });
+  await store.load(); assert.equal(scope.eventId, '1');
+  granted = false; await store.load();
+  assert.equal(store.snapshot().status, 'error');
+  assert.equal(store.snapshot().error, 'FORBIDDEN');
+  assert.equal(store.snapshot().selectedEvent, null);
+  assert.deepEqual(store.snapshot().events, []);
+  assert.equal(scope.eventId, null);
+  const fetch = t.mock.method(globalThis, 'fetch', async () => Response.json([]));
+  await assert.rejects(scope.run('/api/athletes', undefined, json), /Eventkontext/);
+  assert.equal(fetch.mock.callCount(), 0);
+  granted = true; await store.load();
+  assert.equal(store.snapshot().status, 'ready'); assert.equal(scope.eventId, '1');
+});
+
 test('explicit simulated A-B-A changes every request lease and workspace revision', async t => {
   const scope = new EventRequestScope(); let resets = 0;
   const store = new ActiveEventStore(scope, async () => catalog(true), () => null, () => { resets++; });

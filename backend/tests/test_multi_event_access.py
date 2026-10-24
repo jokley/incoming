@@ -116,6 +116,49 @@ def test_operator_cli_grants_and_revokes_without_implicit_admin_access(workspace
     assert client.get('/api/athletes',headers=headers('cli-user',a.id)).status_code==403
 
 
+def test_pinned_bootstrap_operator_recovery_is_explicit_and_repeatable(workspace, monkeypatch):
+    a,b,*_=workspace
+    monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(a.id))
+    client=app.test_client(); runner=app.test_cli_runner()
+    user='Actual.Authelia-User'
+    identity=client.get('/api/auth/me',headers=headers(user))
+    assert identity.status_code==200
+    assert identity.json['username']==user
+    denied=client.get('/api/active-event-context',headers=headers(user))
+    assert denied.status_code==403
+    assert denied.json['error']=='EVENT_ACCESS_DENIED'
+    before={(r.username,r.event_id):r.can_write for r in db.session.query(EventAccess).all()}
+    for mode in ['--read-only','--read-only','--write','--write','--read-only']:
+        result=runner.invoke(args=['event-access','grant',user,str(a.id),mode])
+        assert result.exit_code==0,result.output
+        assert db.session.query(EventAccess).filter_by(username=user,event_id=a.id).count()==1
+        response=client.get('/api/active-event-context',headers=headers(user))
+        assert response.status_code==200
+        assert response.json['selectedEventId']==str(a.id)
+        assert response.json['switchingAllowed'] is False
+        assert [r['id'] for r in response.json['events']]==[str(a.id)]
+        assert response.json['events'][0]['canWrite']==(mode=='--write')
+        # Nonexistent person: write grant passes authorization to 404; reader stops at 403.
+        assert client.put('/api/athletes/999999',headers=headers(user),json={}).status_code==(404 if mode=='--write' else 403)
+    assert client.get('/api/active-event-context',headers=headers(user.lower())).status_code==403
+    assert client.get('/api/active-event-context',headers=headers('ungranted')).status_code==403
+    assert client.get('/api/athletes',headers=headers(user,b.id)).status_code==409
+    for _ in range(2):
+        assert runner.invoke(args=['event-access','revoke',user,str(a.id)]).exit_code==0
+        assert client.get('/api/active-event-context',headers=headers(user)).status_code==403
+    assert {(r.username,r.event_id):r.can_write for r in db.session.query(EventAccess).all()}==before
+
+
+def test_identity_cannot_be_obtained_through_untrusted_proxy_headers(workspace):
+    client=app.test_client()
+    for secret in [None, 'wrong-secret']:
+        supplied=headers()
+        if secret is None: supplied.pop('X-Auth-Proxy-Secret')
+        else: supplied['X-Auth-Proxy-Secret']=secret
+        for path in ['/api/auth/me','/api/active-event-context']:
+            assert client.get(path,headers=supplied).status_code==401
+
+
 def test_global_downloads_validate_explicit_context_and_database_requires_all_grants(workspace):
     a,b,*_=workspace;client=app.test_client()
     for path in ['/api/admin/scenarios','/api/import/fis/mock-files', '/api/admin/database/backups']:

@@ -1,5 +1,10 @@
 # PR8 – Serverautorisierter Multi-Event-Betrieb
 
+Produktiver Erststart bei leerer `event_access`-Tabelle:
+[Betriebsanleitung für explizite Erstfreigabe und Secret-Rotation](event-access-production-bootstrap.md).
+Ein gepinntes Event gewährt selbst keinen Benutzerzugriff; auch Administratoren
+benötigen den ausdrücklichen CLI-Grant.
+
 Stand: 24.10.2026. Lokale Implementierung auf main einschließlich PR1–7 und
 Auditstabilisierung. Kein Commit, Push, Deployment oder produktiver Datenbankzugriff.
 Die ursprüngliche Entwicklungsdatenbank wurde weder migriert noch zurückgesetzt.
