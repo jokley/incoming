@@ -2,7 +2,32 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { AuditEvent } from '../types.ts';
-import { assignmentWorkspaceHref, describeAuditEvent } from './auditActivity.ts';
+import { assignmentWorkspaceHref, auditDetailLines, describeAuditEvent } from './auditActivity.ts';
+
+test('structured import evidence is searchable and renderable without changing history', () => {
+  for (const entityRefs of [
+    { eventId: '1', importSessionId: '95' },
+    { championshipEventId: '1', _scope: 'OPERATIONAL_EVENT', importSessionId: '95' },
+  ]) {
+    const source = { ...event('/api/import/sessions/95/import', entityRefs),
+      activity: 'Import durchgeführt', category: 'Import' as const, entityLabel: 'JPN',
+      details: { peopleUnchanged: 4, bookingsRemoved: 0, futureEvidence: { preserved: false } } };
+    const before = JSON.stringify(source);
+    const description = describeAuditEvent(source);
+    assert.deepEqual(description.details, ['Personen unverändert: 4', 'Buchungen entfernt: 0', 'futureEvidence: {"preserved":false}']);
+    assert.ok([...description.details].join(' ').includes('Personen unverändert: 4'));
+    assert.equal(description.href, '/import?sessionId=95');
+    assert.equal(JSON.stringify(source), before);
+  }
+});
+
+test('legacy detail shapes always produce text lines', () => {
+  assert.deepEqual(auditDetailLines(['Hotel: Test', 'Zimmer: 2']), ['Hotel: Test', 'Zimmer: 2']);
+  for (const empty of [undefined, null, [], {}, '']) assert.deepEqual(auditDetailLines(empty), []);
+  assert.deepEqual(auditDetailLines('Einzelner Hinweis'), ['Einzelner Hinweis']);
+  assert.deepEqual(auditDetailLines([null, 0, false, { unknown: ['A', 'B'] }]), ['0', 'false', 'unknown: ["A","B"]']);
+  assert.deepEqual(auditDetailLines(3), ['3']);
+});
 
 test('athlete review deep-links use the booking projection without an unsupported room type id', () => {
   const href = assignmentWorkspaceHref({ bookingId: '17', hotelId: '4', personId: '23' });

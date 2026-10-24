@@ -31,7 +31,9 @@ export interface AuditEvent {
   activity?: string;
   category?: 'Import' | 'Disposition' | 'Hotels' | 'Stammdaten' | 'Entscheidungen';
   entityLabel?: string;
-  details?: string[];
+  // Historical text lists and structured import evidence share this wire field.
+  // Validate at the presentation boundary rather than trusting an API cast.
+  details?: unknown;
   entityRefs?: Record<string, string>;
 }
 

@@ -118,6 +118,36 @@ def test_new_mutation_activity_is_visible_only_to_its_event(inventory,monkeypatc
     assert client.get('/api/audit-events').json['total']==0
 
 
+def test_import_audit_detail_shapes_preserve_evidence_and_event_isolation(inventory, monkeypatch):
+    a, b, *_ = inventory
+    expected = {}
+    for owner in (a, b):
+        expected[owner.id] = []
+        for canonical in (False, True):
+            refs = (event_audit_refs({'importSessionId': '95'}, owner.id) if canonical else
+                    json.dumps({'eventId': str(owner.id), 'importSessionId': '95'}, separators=(',', ':')))
+            details = {'peopleUnchanged': 4, 'bookingsRemoved': 0} if not canonical else ['Version 2']
+            row = audit_row(refs, f'import-{owner.id}-{canonical}')
+            row.entity_type = 'import'
+            row.action = 'import'
+            row.method = 'POST'
+            row.path = '/api/import/sessions/95/import'
+            row.activity = 'Import durchgeführt'
+            row.category = 'Import'
+            row.details_json = json.dumps(details)
+            expected[owner.id].append((str(row.id), details))
+    db.session.commit()
+    before = snapshot(AuditEvent)
+    client = app.test_client()
+    for owner in (a, b, a):
+        monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(owner.id))
+        response = client.get('/api/audit-events', headers={'X-Championship-Event-ID': str(owner.id)})
+        assert response.status_code == 200
+        assert response.json['total'] == 2
+        assert {r['id']: r['details'] for r in response.json['items']} == dict(expected[owner.id])
+    assert snapshot(AuditEvent) == before
+
+
 def test_world_champion_references_do_not_leak(inventory,monkeypatch):
     a,b,*_=inventory;refs=[]
     for owner in (a,b):

@@ -60,6 +60,30 @@ function personName(athlete: Athlete): string {
   return `${athlete.firstname} ${athlete.lastname}`.trim();
 }
 
+const auditDetailLabels: Record<string, string> = {
+  peopleCreated: 'Personen angelegt', peopleUpdated: 'Personen aktualisiert',
+  peopleUnchanged: 'Personen unverändert', peopleRemoved: 'Personen entfernt',
+  membershipsRemoved: 'Teilnahmen entfernt', duplicatesRemoved: 'Duplikate entfernt',
+  bookingsAffected: 'Buchungen betroffen', bookingsRemoved: 'Buchungen entfernt',
+  occupantsRemoved: 'Belegungen entfernt', dispositionsChanged: 'Dispositionen geändert',
+  approvalsPreserved: 'Genehmigungen erhalten', fisRoomsImported: 'FIS-Zimmer importiert',
+  fisRoomsReplaced: 'FIS-Zimmer ersetzt',
+};
+
+/** Read-only projection: preserve structured evidence, including zero/false values. */
+export function auditDetailLines(details: unknown): string[] {
+  if (details == null) return [];
+  if (typeof details === 'string') return details.trim() ? [details] : [];
+  if (Array.isArray(details)) return details.flatMap(auditDetailLines);
+  if (typeof details === 'object') {
+    return Object.entries(details).map(([key, value]) => {
+      const rendered = typeof value === 'string' ? value : JSON.stringify(value);
+      return `${auditDetailLabels[key] ?? key}: ${rendered ?? '—'}`;
+    });
+  }
+  return [String(details)];
+}
+
 export function describeAuditEvent(event: AuditEvent, context: AuditActivityContext = {}): AuditActivity {
   // New records already contain their immutable fachliche description.  The
   // mappings below intentionally remain as compatibility for existing history.
@@ -74,7 +98,7 @@ export function describeAuditEvent(event: AuditEvent, context: AuditActivityCont
       category: event.category,
       activity: event.activity,
       entity: event.entityLabel,
-      details: event.details ?? [],
+      details: auditDetailLines(event.details),
       openLabel,
       href,
     };
