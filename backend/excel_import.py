@@ -1,3 +1,4 @@
+from quota_rules import rules_for_event
 from accommodation_requirements import apply_preview_requirements, set_requirement, accommodation_room_requests
 import json
 import re
@@ -13,7 +14,7 @@ from sqlalchemy import func
 from accommodation_rates import apply_preview_rates, resolve_rate
 from quota_history import approval_event_matches, applicable_approval_groups, historical_approval_groups, preview_approval_person, quota_person
 from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
-from models import Athlete, Competition, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSession, ImportSessionEvent, ImportSessionVersion, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
+from models import Athlete, Competition, Event, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSession, ImportSessionEvent, ImportSessionVersion, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids, athlete_top_level_discipline
 
 # Compatibility exports retained for existing callers and tests.
@@ -307,10 +308,9 @@ def resolve_current_quota_memberships(person, competition_mapping):
     resolved = {**person, 'competitionImportCodes': [code for code in codes
         if competition_mapping.get(code) is not None]}
     resolve_quota_memberships(resolved, competition_mapping)
-    for key in ('competitionIds', 'competitionMemberships', 'quotaDisciplines', 'topLevelDisciplines'):
+    for key in ('competitionIds', 'competitionMemberships', 'quotaDisciplines', 'topLevelDisciplines', 'athleteQuotaFamilies'):
         person[key] = resolved[key]
-    person['athleteTopLevelDisciplines'] = sorted({athlete_top_level_discipline(group)
-        for group in person['quotaDisciplines']} - {None}) if normalize_string(person.get('function')) == 'athlete' else []
+    person['athleteTopLevelDisciplines'] = sorted(set(person.get('athleteQuotaFamilies',[])) - {None}) if normalize_string(person.get('function')) == 'athlete' else []
     return person
 
 
@@ -695,7 +695,8 @@ def quota_requirement_errors(preview, approvals, *, require_approved=True, read_
     approvals = list(approvals)
     people = preview.get('people', [])
     roster = None
-    errors = []
+    from athlete_quota import requirement_errors
+    errors = requirement_errors(preview,approvals,require_approved)
     for requirement in preview.get('warnings', []):
         kind = requirement.get('code')
         if kind != 'QUOTA_SINGLE_ROOMS_EXCEEDED':
@@ -763,6 +764,7 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
     requested = []
     projected = []
     imported_by_existing_id = {}
+    from quota_rules import rules_for_event
     athlete_maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
     for person in roster:
         room = room_by_person.get(person.get('matchKey'))
@@ -800,9 +802,11 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
         previous = combined.get(identity)
         combined[identity] = {**person, 'countsAsSingle': bool(person.get('countsAsSingle')
             or (previous and previous.get('countsAsSingle')))}
-    physical_rows = evaluate_quota_usage(roster, list(combined.values()))
-    requested_rows = evaluate_quota_usage(roster, requested)
-    projected_rows = evaluate_quota_usage(roster, projected)
+    from quota_rules import rules_for_event
+    rules=rules_for_event(read_context.event_id if read_context else None)
+    physical_rows = evaluate_quota_usage(roster, list(combined.values()),rules)
+    requested_rows = evaluate_quota_usage(roster, requested,rules)
+    projected_rows = evaluate_quota_usage(roster, projected,rules)
     rows_by_key = {}
     for source, rows in (('existing', projected_rows), ('requested', requested_rows)):
         for row in rows:
@@ -913,6 +917,12 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
         'details': {'personKey': person.get('matchKey'), 'quotaDisciplines': person.get('quotaDisciplines')}}
         for person in people if normalize_string(person.get('function')) != 'athlete'
         and person.get('quotaDisciplines') and not quota_keys(person, roster))
+    from quota_rules import fingerprint
+    owner=import_event_id(read_context.event_id if read_context else None)
+    event_record=db.session.get(Event,owner)
+    for warning in warnings:
+        if warning.get('code') in {'QUOTA_SINGLE_ROOMS_EXCEEDED','INFO_OFFICIALS_OVER_BASIS'}:
+            warning['details'].update(eventId=owner,rulesSnapshot=rules,rulesDigest=fingerprint(rules),rulesRevision=event_record.quota_rules_revision)
     return warnings
 
 
@@ -1587,6 +1597,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
     room_df = load_first_sheet(roomlist_path)
     event, _ = revalidate_confirmation_event(import_event_id(event.id if event else None), [], validate_codes=False)
     read_context = read_context or ImportReadContext(event.id)
+    rules_for_event(event.id)
     athlete_maps = read_context.athlete_maps
 
     mapping = None
@@ -1642,7 +1653,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
         'quotaChecks': quota_checks,
-        'athleteQuotaChecks': evaluate_athlete_quota_usage(people_result['people']),
+        'athleteQuotaChecks': evaluate_athlete_quota_usage(people_result['people'],rules_for_event(event.id)),
         'preservedSingleRoomApprovals': {
             key: {'decisionId': value['decisionId'], 'groups': [list(group) for group in value['groups']]}
             for key, value in preserved.items()
@@ -1651,6 +1662,8 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'dispositionAnalysis': disposition_analysis,
     }
 
+    from athlete_quota import project_preview
+    project_preview(preview,read_context)
     preview_token = uuid.uuid4().hex
     PREVIEW_STORE[preview_token] = preview
 
@@ -1658,7 +1671,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'previewToken': preview_token,
         'roomListHasNoData': preview['roomListHasNoData'],
         'eventId': str(event.id) if event else None,
-        'isValid': len(blocking_errors) == 0,
+        'isValid': preview['isValid'],
         'summary': {
             'people': {
                 'total': len(people_result['people']),
@@ -1672,7 +1685,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
                 'shared': sum(normalize_string(room.get('roomType')) == 'double shared' for room in accommodation_room_requests(people_result['people'], room_result['rooms'])),
             },
             'validation': {
-                'errorCount': len(blocking_errors),
+                'errorCount': len(preview['errors']),
                 'warningCount': len(preview['warnings']),
             },
         },
@@ -1682,9 +1695,11 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'detectedDiscipline': preview.get('detectedDiscipline'),
         'people': [_serialize_person_preview(person) for person in people_result['people']],
         'rooms': [_serialize_room_preview(room) for room in room_result['rooms']],
-        'errors': blocking_errors,
+        'errors': preview['errors'],
         'warnings': preview['warnings'],
         'athleteQuotaChecks': preview['athleteQuotaChecks'],
+        'quotaRulesSnapshot': preview['quotaRulesSnapshot'],
+        'quotaRulesDigest': preview['quotaRulesDigest'],
         'quotaChecks': preview['quotaChecks'],
         'singleRoomQuotaExemptOverrides': preview['singleRoomQuotaExemptOverrides'],
         'dispositionAnalysis': disposition_analysis,
@@ -1719,16 +1734,18 @@ def resolve_saved_quota_memberships(person, event_mapping=None, *, read_context=
             person['competitionMemberships'] = [
                 {'competitionId': str(c.id), 'importCode': c.import_code, 'quotaDiscipline': c.quota_discipline}
                 for c in sorted(rows, key=lambda row: row.id)]
+            from competitions import competition_athlete_family
+            person['athleteQuotaFamilies']=sorted({competition_athlete_family(c) for c in rows},key=lambda value:value or '')
             person['quotaDisciplines'] = quota_disciplines(rows)
             person['topLevelDisciplines'] = list(person['quotaDisciplines'])
-            person['athleteTopLevelDisciplines'] = sorted({athlete_top_level_discipline(group)
-                for group in person['quotaDisciplines']} - {None}) if normalize_string(person.get('function')) == 'athlete' else []
+            person['athleteTopLevelDisciplines'] = sorted(set(person.get('athleteQuotaFamilies',[])) - {None}) if normalize_string(person.get('function')) == 'athlete' else []
             return person
     person['competitionIds'] = []
     person['competitionMemberships'] = []
     person['quotaDisciplines'] = []
     person['topLevelDisciplines'] = []
     person['athleteTopLevelDisciplines'] = []
+    person['athleteQuotaFamilies'] = []
     return person
 
 
@@ -1802,7 +1819,7 @@ def recalculate_fis_import_preview(preview, *, read_context=None):
         key: {'decisionId': value['decisionId'], 'groups': [list(group) for group in sorted(value['groups'])]}
         for key, value in preserved.items()}
     preview['quotaChecks'] = quota_checks
-    preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people)
+    preview['athleteQuotaChecks'] = evaluate_athlete_quota_usage(people,rules_for_event(read_context.event_id))
     preview['errors'] = ([e for e in preview.get('errors', [])
         if not e.get('code', '').startswith(('ENTRY_QUOTA_GENDER_', 'ENTRY_WSC_MEMBERSHIP', 'ENTRY_WSC_SOURCE_', 'ENTRY_SINGLE_ROOM_CONTEXT_', 'ACCOMMODATION_REQUIREMENT_'))]
         + quota_gender_errors(people) + wsc_membership_errors(people, preview.get('eventId'))
@@ -1815,6 +1832,8 @@ def recalculate_fis_import_preview(preview, *, read_context=None):
     preview['warnings'] = [warning for warning in preview.get('warnings', [])
         if not warning.get('code', '').startswith('QUOTA_')
         and warning.get('code') not in {'INFO_OFFICIALS_OVER_BASIS', 'ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED', 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED'}] + membership_warnings + quota_warnings
+    from athlete_quota import project_preview
+    project_preview(preview,read_context)
     preview['dispositionAnalysis'] = build_disposition_analysis(people, rooms, quota_warnings, read_context=read_context,
         room_list_has_no_data=preview.get('roomListHasNoData', False))
     preview['dispositionAnalysis']['changes'] = build_import_changes(
@@ -1985,6 +2004,11 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             raise ImportValidationError('QUOTA_REQUIREMENTS_UNREVIEWED',
                 'Aktuelle Quotenverletzungen sind nicht durch anwendbare Entscheidungen abgedeckt.',
                 details={'requirements': requirements})
+
+    from athlete_quota import requirement_errors as athlete_requirement_errors
+    athlete_errors=athlete_requirement_errors(preview,[],True)
+    if athlete_errors:
+        raise ImportValidationError('ATHLETE_QUOTA_UNREVIEWED', 'Athletenquote benötigt eine anwendbare Genehmigung vor Confirm.',details={'requirements':athlete_errors})
 
     # Legacy internal callers cannot bypass explicit destructive review.
     imported_nations = {p.get('nationCode') for p in preview['people'] if p.get('nationCode')}

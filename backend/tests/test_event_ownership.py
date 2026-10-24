@@ -76,7 +76,7 @@ def reviewed(legacy, rows=None):
 def test_lossless_stock_and_seven_planning_events(legacy):
     engine,cfg,target,other,_,_=legacy
     before,plan=reviewed(legacy)
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'20261022_01')
     with engine.connect() as c:
         after=inventory(c);compare(before,after)
         for name,field in [('hotel_room_inventory','event_id'),('event','championship_event_id')]:
@@ -86,7 +86,7 @@ def test_lossless_stock_and_seven_planning_events(legacy):
         assert c.exec_driver_sql('select version_num from alembic_version').scalar()=='20261022_01'
         for table in ['athlete','room_booking','import_session','hotel_room_inventory']:
             assert not next(col for col in sa.inspect(c).get_columns(table) if col['name']=='event_id')['nullable']
-    command.upgrade(cfg,'head')  # Alembic rerun is a no-op, not a second data assignment.
+    command.upgrade(cfg,'20261022_01')  # Alembic rerun is a no-op, not a second data assignment.
 
 
 @pytest.mark.parametrize('failure',['missing_plan','wrong_target','stale','unknown_people'])
@@ -101,7 +101,7 @@ def test_preflight_failure_is_atomic(legacy,failure,monkeypatch):
     elif failure=='wrong_target':plan['wsc_event_id']=other
     elif failure=='stale':plan['baseline_fingerprint']='stale'
     (folder/'plan.json').write_text(json.dumps(plan))
-    with pytest.raises(OwnershipError):command.upgrade(cfg,'head')
+    with pytest.raises(OwnershipError):command.upgrade(cfg,'20261022_01')
     with engine.connect() as c:
         assert 'event_id' not in {col['name'] for col in sa.inspect(c).get_columns('athlete')}
         assert c.exec_driver_sql('select version_num from alembic_version').scalar()=='20261016_02'
@@ -118,7 +118,7 @@ def test_explicit_legacy_rows_and_approval_preserved(legacy):
         booking=put(c,'room_booking',hotel_id=hotel,room_type_id=rt,room_number='04',counts_as_single=False,check_in_date=date(2027,3,4),check_out_date=date(2027,3,9))
         put(c,'room_booking_occupant',room_booking_id=booking,athlete_id=person)
     before,_=reviewed(legacy,{'athlete':{str(person):target},'room_booking':{str(booking):target},'import_session':{str(session):target}})
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'20261022_01')
     with engine.connect() as c:compare(before,inventory(c))
 
 
@@ -129,11 +129,11 @@ def test_mixed_legacy_bookings_rejected_before_ddl(legacy):
         booking=put(c,'room_booking',hotel_id=c.exec_driver_sql('select id from hotel limit 1').scalar(),counts_as_single=False)
         put(c,'room_booking_occupant',room_booking_id=booking,athlete_id=person)
     reviewed(legacy,{'athlete':{str(person):target},'room_booking':{str(booking):other}})
-    with pytest.raises(OwnershipError,match='Mixed ownership'):command.upgrade(cfg,'head')
+    with pytest.raises(OwnershipError,match='Mixed ownership'):command.upgrade(cfg,'20261022_01')
 
 
 def test_database_constraints_and_same_fis_across_events(legacy):
-    engine,cfg,target,other,_,_=legacy;reviewed(legacy);command.upgrade(cfg,'head')
+    engine,cfg,target,other,_,_=legacy;reviewed(legacy);command.upgrade(cfg,'20261022_01')
     m=sa.MetaData();m.reflect(engine)
     # Explicit raw SQL bypasses ORM compatibility: database constraints are real.
     with engine.begin() as c:
@@ -153,7 +153,7 @@ def test_failure_after_ddl_rolls_back_columns_data_and_revision(legacy,monkeypat
     engine,cfg,_,_,_,_=legacy;before,_=reviewed(legacy)
     def reject(*args):raise OwnershipError('Injected post-DDL validation failure')
     monkeypatch.setattr('event_ownership.compare',reject)
-    with pytest.raises(OwnershipError,match='Injected'):command.upgrade(cfg,'head')
+    with pytest.raises(OwnershipError,match='Injected'):command.upgrade(cfg,'20261022_01')
     with engine.connect() as c:
         assert 'event_id' not in {col['name'] for col in sa.inspect(c).get_columns('athlete')}
         assert c.exec_driver_sql('select version_num from alembic_version').scalar()=='20261016_02'
@@ -254,7 +254,7 @@ def test_read_only_cli_and_post_migration_verification(legacy):
     plan={'wsc_event_id':target,'baseline_fingerprint':before['fingerprint'],'rows':{}}
     plan_path=folder/'plan.json';plan_path.write_text(json.dumps(plan))
     cfg.cmd_opts=type('Options',(),{'x':['ownership_plan='+str(plan_path)]})()
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'20261022_01')
     result=subprocess.run([sys.executable,'-m','event_ownership','--output',str(folder/'after.json'),
         '--compare',str(report_path),'--plan',str(plan_path)],cwd=ROOT,env=env,text=True,capture_output=True)
     assert result.returncode==0,result.stderr

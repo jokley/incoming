@@ -44,3 +44,11 @@ test('completed residual EZ decision retains structured EZ figures after its typ
   approval.description='A human-readable description without rule names';
   assert.deepEqual(buildOperationsTask(session,approval).quota,task.quota);
 });
+
+test('athlete quota tasks keep extent approval separate from extra single rooms',()=>{
+  const approval={id:'a',sessionId:'s',nation:'JPN',type:'ATHLETE_QUOTA',description:'Athletenquote',decision:'PENDING',user:'test',timestamp:'',quotaDetails:{decisionKind:'ATHLETE_QUOTA',family:'Snowboard',uncoveredExtent:{total:4,M:1,F:0}}} as const;
+  const task=buildOperationsTask({id:'s',nation:'JPN'} as any,approval as any);
+  assert.equal(task.discipline,'Snowboard');assert.equal(task.quota,undefined);
+  assert.deepEqual(task.singleRoomCandidates,[]);
+  assert.match(task.recommendation,/keine automatische Tarifentscheidung/);
+});

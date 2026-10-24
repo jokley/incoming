@@ -106,6 +106,7 @@ export function Dashboard() {
   const [importSessions, setImportSessions] = useState<ImportSession[]>([]);
   const [demandSource, setDemandSource] = useState<DemandSource>('live');
   const [loading, setLoading] = useState(true);
+  const [athleteQuotaStatus,setAthleteQuotaStatus]=useState('Athletenquote wird geladen …');
 
   useEffect(() => {
     let cancelled = false;
@@ -118,6 +119,7 @@ export function Dashboard() {
       void api.getAuditEvents(1)
         .then(data => { if (!cancelled) setAuditEvents(data.items.slice(0, 3)); })
         .catch(() => undefined);
+      void api.getAthleteQuotas().then(rows=>{if(!cancelled)setAthleteQuotaStatus(rows.some(r=>r.decisionStatus==='PENDING')?`${rows.filter(r=>r.decisionStatus==='PENDING').length} Athletenquoten mit offener Entscheidung`:'Athletenquote: keine ungedeckte Überschreitung');}).catch(e=>{if(!cancelled)setAthleteQuotaStatus(`Athletenquote nicht verfügbar: ${e.message}`)});
       void api.getImportSessions()
         .then(data => { if (!cancelled) setImportSessions(data); })
         .catch(() => undefined);
@@ -328,6 +330,7 @@ export function Dashboard() {
 
   return (
     <div className="space-y-1.5 rounded-[var(--ops-radius-xxl)] bg-[var(--ops-background)] p-3 text-[var(--ops-text)]">
+      <p className="text-xs text-[var(--ops-text-muted)]">{athleteQuotaStatus} <Link to="/import" className="underline">Importentscheidungen öffnen</Link></p>
       <ContentCard className="p-2.5" surface="raised" elevation="none">
         <SectionHeader title="Bedarf & Kontingente" subtitle="Reicht das Kontingent für den aktuellen Bedarf?" actions={<div className="flex items-center gap-3"><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1" aria-label="Bedarfsquelle">{(['event', 'live'] as const).map(source => <button type="button" key={source} aria-pressed={demandSource === source} onClick={() => setDemandSource(source)} className={`rounded-md px-3 py-1.5 text-xs font-bold ${demandSource === source ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]'}`}>{source === 'event' ? 'Event' : 'Live'}</button>)}</div><StatusChip tone={reserveTone}>{reserveStatus}</StatusChip></div>} />
         <p className="mt-2 text-xs font-semibold text-[var(--ops-text-muted)]">Gemeinsamer Bezug: Bedarfspeak {capacity.date ? `am ${formatDate(capacity.date)}` : 'ohne verfügbaren Zeitraum'} · Quelle {demandSource === 'event' ? 'Event' : 'Live'}</p>

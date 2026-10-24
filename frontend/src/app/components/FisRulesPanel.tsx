@@ -1,4 +1,6 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
+import { api } from '../services/api';
+import type { EventQuotaRules } from '../types';
 import { ArrowRight, BedSingle, BookOpen, Check, CircleHelp, ClipboardCheck, Coins, Flag, Hotel, Info, Lightbulb, MountainSnow, ShieldCheck, Snowflake, UserRound, Users, X } from 'lucide-react';
 import './FisRulesPanel.css';
 
@@ -39,13 +41,18 @@ function Figure({ kind, count = 1 }: { kind: 'athlete' | 'official' | 'bed'; cou
     ? <BedSingle key={i} /> : <span className="fis-person" key={i}><UserRound />{kind === 'athlete' ? <Snowflake /> : <ClipboardCheck />}</span>)}</span>;
 }
 
-export function FisRulesPanel() {
+export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={}) {
+  const [rules,setRules]=useState<EventQuotaRules|undefined>(providedRules),[error,setError]=useState('');
+  useEffect(()=>{if(providedRules)return;let live=true;void api.getQuotaRules().then(r=>{if(live)setRules(r)}).catch(e=>{if(live)setError(e.message)});return()=>{live=false}},[providedRules]);
+  if(!rules || rules.status!=='FIXED' || !rules.config || !rules.examples) return <article className="fis-guide" aria-labelledby="fis-title"><h1 id="fis-title">FIS Unterkunft &amp; Quoten – einfach erklärt</h1><p role="status">{error || (!rules?'Quotenregeln werden geladen …':'Entwurf: Für diese Veranstaltung sind noch keine verbindlichen Quotenregeln festgelegt.')}</p></article>;
+  const config=rules.config, example=rules.examples;
+
   return <div className="fis-guide-scroll"><article className="fis-guide" aria-labelledby="fis-title">
     <header className="fis-masthead">
       <div><p className="fis-eyebrow"><BookOpen aria-hidden="true" /> FIS Rules · Disposition kompakt</p>
         <h1 id="fis-title">FIS Unterkunft &amp; Quoten <span>– einfach erklärt</span></h1>
         <p>Wie Officials, EZ-Quote, Mehrpreis und Unterkunft zusammenhängen.</p>
-        <small>Operativer Leitfaden · FIS-Regeln und aktuelle Anwendung getrennt erklärt</small>
+        <small>{rules.eventName} · Fixierte Eventregeln · Revision {rules.revision} · {rules.fixedAt?new Date(rules.fixedAt).toLocaleDateString('de-AT'):'—'}. FIS-Referenzen und eventbezogene Vereinbarungen sind getrennt zu betrachten.</small>
       </div>
       <div className="fis-landscape" aria-hidden="true"><MountainSnow /><Hotel /></div>
     </header>
@@ -53,11 +60,11 @@ export function FisRulesPanel() {
       <Section number={1} title="Quotenkontext" className="fis-half">
         <p className="fis-context"><Flag aria-hidden="true" /> Nation <b>+</b> Event Group <b>+</b> Gender <b>=</b> Quotenkontext</p>
         <div className="fis-flow fis-quota-flow">
-          <div><strong>4 Athleten</strong><Figure kind="athlete" count={4} /></div><Arrow />
-          <div><strong>+ 2 → 6 Officials</strong><Figure kind="official" count={3} /><small>Officials-Basis</small></div><Arrow />
-          <div><strong>2 EZ erlaubt</strong><Figure kind="bed" count={2} /></div>
+          <div><strong>{example.athletes} Athleten</strong><Figure kind="athlete" count={4} /></div><Arrow />
+          <div><strong>+ {config.officials.allowance} → {example.officials} Officials</strong><Figure kind="official" count={3} /><small>Officials-Basis</small></div><Arrow />
+          <div><strong>{example.singleRooms} EZ erlaubt</strong><Figure kind="bed" count={Math.min(example.singleRooms,5)} /></div>
         </div>
-        <div className="fis-rule-strip"><b>Athleten + 2 = Officials-Quote</b><span>1–3 Officials → 1 EZ · 4–6 → 2 EZ · ab 7 → 3 EZ</span><small>FIS 9.1.3 · 13.3</small></div>
+        <div className="fis-rule-strip"><b>Athleten + {config.officials.allowance} = Officials-Quote</b><span>{example.scale.join(" · ")}</span><small>Fixierte Eventparameter · FIS-Referenzen 9.1.3 / 13.3 zum Vergleich</small></div>
         <Note>Die Quote gilt je Nation + Event Group + Gender. Ohne gemeldete Athleten entsteht in der Anwendung keine reguläre Quote.</Note>
       </Section>
       <Section number={2} title="Wichtigster Merksatz" className="fis-half">
@@ -72,11 +79,9 @@ export function FisRulesPanel() {
       </Section>
       <Section number={3} title="Konkretes Beispiel" className="fis-full">
         <div className="fis-example">
-          <div className="fis-example-equation"><div><Figure kind="athlete" count={4} /><b>4 Athleten</b></div><span>+ 2</span><div><Figure kind="official" count={3} /><b>Officials-Basis = 6</b></div><Arrow /><div><Figure kind="bed" count={2} /><b>2 EZ erlaubt</b></div></div>
+          <div className="fis-example-equation"><div><Figure kind="athlete" count={4} /><b>{example.athletes} Athleten</b></div><span>+ {config.officials.allowance}</span><div><Figure kind="official" count={3} /><b>Officials-Basis = {example.officials}</b></div><Arrow /><div><Figure kind="bed" count={Math.min(example.singleRooms,5)} /><b>{example.singleRooms} EZ erlaubt</b></div></div>
           <div className="fis-example-rows">
-            <ExampleRow name="Person A im EZ" used={1} label="1 / 2 genutzt" result="Kein Mehrpreis" />
-            <ExampleRow name="Person B im EZ" used={2} label="2 / 2 genutzt" result="Kein Mehrpreis" />
-            <ExampleRow name="Zusätzliche EZ-Nutzung" used={3} label="Quote überschritten" result="Genehmigung erforderlich → nach Genehmigung EZ-Mehrpreis" />
+            {example.rows.map(row=><ExampleRow key={row.name} name={row.name} allowed={example.singleRooms} progress={row.progress} covered={row.covered} label={row.label} result={row.covered?'Kein Mehrpreis':'Genehmigung erforderlich → nach Genehmigung EZ-Mehrpreis'}/>)}
           </div>
         </div>
         <Note>Konzeptbeispiel, keine Vergabereihenfolge: Die Zuteilung erfolgt nach zulässigen Quotenkontexten und stabilen Schlüsseln, nicht nach dem Zeitpunkt der Zuweisung. Athleten und Officials können regulär abgedeckt sein.</Note>
@@ -120,7 +125,8 @@ export function FisRulesPanel() {
           <div><Hotel aria-hidden="true" /><h3>External</h3><p>Unterkunft vorhanden, aber außerhalb der normalen LOC-Disposition.</p></div></div>
         <p className="fis-distinction"><b>No room ≠ External</b><b>Sondertarif ≠ EZ-Mehrpreis</b></p>
       </Section>
-      <Section number={10} title="Quellen / FIS Rules" className="fis-full fis-sources">
+      <Section number={10} title="Athleten-/Disziplinquoten" className="fis-full"><p>Je Nation und Quotenfamilie; eine Person zählt innerhalb einer Familie einmal.</p><div className="fis-layers">{Object.entries(config.athletes).map(([family,rule])=><div key={family}><Users aria-hidden="true"/><h3>{family==='Freestyle'?'Freestyle / Freeski':family}</h3><p>{rule.enabled?`${rule.totalLimit} Athleten gesamt · ${rule.genderLimit} je Geschlecht`:'Spezielle Athletenquote deaktiviert'}</p></div>)}</div><Note>Überschreitungen benötigen eine dokumentierte Ausnahmeentscheidung. Keine automatische Auswahl kostenpflichtiger Personen; keine Änderung von Sondertarif oder EZ-Status. World-Champion-EZ-Ausnahmen sind keine Athletenzulassungsausnahme.</Note></Section>
+      <Section number={11} title="Quellen / FIS Rules" className="fis-full fis-sources">
         <p><BookOpen aria-hidden="true" /><b>FIS Rules for the Organisation of FIS World Championships</b><span>Fassung 19.03.2023</span></p>
         <ul>{references.map(([article, label]) => <li key={article} data-fis-reference={article}><b>{article}</b> — {label}</li>)}</ul>
         <small>Referenzen ohne hinterlegte Online-Links. FIS-Regeltext, aktuelle Anwendungslogik und organisatorische Entscheidungen sind zu unterscheiden. Art. 13.3 bemisst die EZ-Anzahl nach Officials; er nennt keine ausdrückliche Beschränkung der Belegung auf Officials.</small>
@@ -129,8 +135,8 @@ export function FisRulesPanel() {
     <footer className="fis-bottom"><Lightbulb aria-hidden="true" /><b>Merke:</b> Zimmerart, EZ-Quote, Mehrpreis und Tarif sind verbunden – aber nicht dasselbe.</footer>
   </article></div>;
 }
-function ExampleRow({ name, used, label, result }: { name: string; used: number; label: string; result: string }) {
-  return <div className={`fis-example-row ${used > 2 ? 'fis-pending' : 'fis-ok'}`}><span><UserRound aria-hidden="true" />{name}</span><div><span className="fis-meter" role="img" aria-label={`${label}, 2 EZ erlaubt`}><i style={{ width: `${Math.min(used / 2, 1) * 100}%` }} /></span><small>{label}</small></div><b>{used > 2 ? <ClipboardCheck aria-hidden="true" /> : <Check aria-hidden="true" />}{result}</b></div>;
+function ExampleRow({ name, allowed, progress, covered, label, result }: { name:string;allowed:number;progress:number;covered:boolean;label:string;result:string }) {
+  return <div className={`fis-example-row ${covered?'fis-ok':'fis-pending'}`}><span><UserRound aria-hidden="true"/>{name}</span><div><span className="fis-meter" role="img" aria-label={`${label}, ${allowed} EZ erlaubt`}><i style={{width:`${progress}%`}}/></span><small>{label}</small></div><b>{covered?<Check aria-hidden="true"/>:<ClipboardCheck aria-hidden="true"/>}{result}</b></div>;
 }
 function Layer({ icon, title, items }: { icon: ReactNode; title: string; items: string[] }) {
   return <div><span aria-hidden="true">{icon}</span><h3>{title}</h3><ul>{items.map(item => <li key={item}>{item}</li>)}</ul></div>;

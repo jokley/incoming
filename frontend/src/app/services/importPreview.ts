@@ -1,12 +1,12 @@
 import type { ImportSession } from '../data/importSessions.ts';
 /** Open dialogs display the latest canonical preview, including after crown mutations. */
 export function currentPreviewDetail<T extends { title: string; rows?: unknown[][] }>(
-  detail: T | null, rows: { people: NonNullable<T['rows']>; rooms: NonNullable<T['rows']>; quota: NonNullable<T['rows']> },
+  detail: T | null, rows: { people: NonNullable<T['rows']>; rooms: NonNullable<T['rows']>; quota: NonNullable<T['rows']>; athleteQuota?:NonNullable<T['rows']> },
 ): T | null {
   if (!detail) return null;
   const current = detail.title === 'Personen der Importvorschau' ? rows.people
     : detail.title === 'Zimmer der Importvorschau' ? rows.rooms
-      : detail.title === 'Quota & EZ' ? rows.quota : undefined;
+      : (detail.title === 'Quota & EZ' || detail.title === 'Officials & EZ-Quote') ? rows.quota : detail.title === 'Athleten-/Disziplinquote' ? rows.athleteQuota : undefined;
   return current ? { ...detail, rows: current } : detail;
 }
 

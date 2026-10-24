@@ -1,3 +1,4 @@
+import { EventQuotaRulesEditor } from './EventQuotaRulesEditor';
 import { useActiveEvent } from '../events/ActiveEventProvider';
 import { useEffect, useMemo, useState } from 'react';
 import { Checkbox, FormControlLabel, MenuItem, Stack, Tab, Tabs, TextField } from '@mui/material';
@@ -69,8 +70,8 @@ export function AdministrationEvents() {
           <div><div className="flex items-center gap-2"><CalendarDays size={18}/><h3 className="text-xl font-extrabold">{selected.name}</h3></div><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{selected.year || 'Jahr nicht gesetzt'} · {selected.competitionMappings?.length ?? 0} Competition Mappings</p></div>
           <OpsButton onClick={() => setEventDialog({open:true,value:selected})}><Pencil className="mr-2 inline h-4 w-4"/>Event bearbeiten</OpsButton>
         </div>
-        <Tabs value={tab} onChange={(_,value)=>setTab(value)} sx={{px:2,borderBottom:'1px solid var(--ops-divider)'}}><Tab label="Allgemein"/><Tab label="Competition Mapping"/></Tabs>
-        {tab===0 ? <GeneralEvent event={selected}/> : <div className="p-5">
+        <Tabs value={tab} onChange={(_,value)=>setTab(value)} sx={{px:2,borderBottom:'1px solid var(--ops-divider)'}}><Tab label="Allgemein"/><Tab label="Competition Mapping"/><Tab label="Quotenregeln"/></Tabs>
+        {tab===0 ? <GeneralEvent event={selected}/> : tab===2 ? <EventQuotaRulesEditor key={selected.id} eventId={selected.id} isWorldChampionship={selected.isWorldChampionship}/> : <div className="p-5">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><SectionHeader title="Competition Mapping" subtitle="Globale Competition-Stammdaten und eventbezogene FIS-Werte."/><div className="flex flex-wrap gap-2">
             <TextField select size="small" label="Competition" value={addId} onChange={e=>setAddId(e.target.value)} sx={{minWidth:230}}>{availableCompetitions.map(c=><MenuItem key={c.id} value={c.id}>{c.displayName} · {c.gender}</MenuItem>)}</TextField>
             <OpsButton disabled={!addId} onClick={async()=>{const c=competitions.find(x=>x.id===addId);if(!c)return;await api.addEventCompetition(selected.id,{competitionId:c.id,officialName:c.name,fisCodex:c.code,importCode:c.importCode,active:true});setAddId('');await reload();}}><Plus className="mr-2 inline h-4 w-4"/>Hinzufügen</OpsButton>

@@ -86,6 +86,7 @@ def test_shared_role_resolver_and_no_descriptive_fallbacks():
 def test_arbitrary_configuration_propagates_preview_confirmation_live_and_exemptions(database):
     from app import _build_official_quota_usage_rows
     competition = comp()
+    competition.sport = 'Snowboard'  # Explicit admission family; arbitrary Officials group remains supported.
     event = Event(name='Configured event', active=True)
     db.session.add(EventCompetition(event=event, competition=competition,
         import_code='EXACT', fis_codex='6182', official_name='Exact'))
@@ -97,7 +98,7 @@ def test_arbitrary_configuration_propagates_preview_confirmation_live_and_exempt
         errors=[], warnings=[], singleRoomQuotaExemptOverrides={'E': 'OTHER'})
     recalculate_fis_import_preview(preview)
     assert {p['quotaDisciplines'][0] for p in people} == {'TestGroup'}
-    assert preview['athleteQuotaChecks'] == []  # No invented 36/20 policy for arbitrary groups.
+    assert preview['athleteQuotaChecks'][0]['athleteQuotaUsed'] == 1  # Family comes from exact sport, not the arbitrary group label.
     check = preview['quotaChecks'][0]
     assert check['discipline'] == 'TestGroup' and check['singleRooms'] == 3
     warning = next(w for w in preview['warnings'] if w['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED')
@@ -217,7 +218,7 @@ def canonical_decision(session, competition, key='A', group='TestGroup'):
 @pytest.mark.parametrize('remap', ['group', 'identity'])
 def test_confirmation_rejects_approval_after_remapping_without_rewriting_history(database, remap):
     from quota_history import applicable_approval_groups
-    c = comp(); event = Event(name='Review boundary', active=True)
+    c = comp(); c.sport='Snowboard'; event = Event(name='Review boundary', active=True)
     mapping = EventCompetition(event=event, competition=c, import_code='EXACT', fis_codex='6182', official_name='Exact')
     session = ImportSession(nation='AUT')
     db.session.add_all([mapping, session]); db.session.flush()
@@ -230,7 +231,7 @@ def test_confirmation_rejects_approval_after_remapping_without_rewriting_history
     if remap == 'group':
         c.quota_discipline = 'NewGroup'
     else:
-        replacement = comp('8179', 'TestGroup', 'OTHER')
+        replacement = comp('8179', 'TestGroup', 'OTHER'); replacement.sport='Snowboard'
         mapping.competition = replacement
     db.session.commit()
     incoming = person('A', role='Official')

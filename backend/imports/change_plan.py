@@ -74,7 +74,7 @@ def state(event_id, nation):
 
 def input_fingerprint(preview):
     return digest({k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
-        'roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
+        'quotaRulesDigest','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
         'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')})
 
 

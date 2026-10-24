@@ -11,6 +11,7 @@ from sqlalchemy import event, select, func
 
 
 def pytest_configure(config):
+    config.addinivalue_line('markers', 'quota_rule_lifecycle: exercises draft/fixed rules without legacy policy fixture')
     config.addinivalue_line('markers', 'explicit_event_ownership: supplies ownership explicitly without legacy fixture defaults')
 
 
@@ -44,7 +45,7 @@ def legacy_championship_fixture(request):
             owner=existing[0]
         elif not existing and not pending:
             owner=900000001
-            session.connection().execute(Event.__table__.insert().values(id=owner,name='Explicit legacy test championship',year=2027,active=True))
+            session.connection().execute(Event.__table__.insert().values(id=owner,name='Explicit legacy test championship',year=2027,active=True,quota_rules_json=__import__('json').dumps(__import__('quota_rules').standard_rules()),quota_rules_fixed_at=__import__('datetime').datetime(2026,10,23),quota_rules_fixed_by='explicit-test-fixture',quota_rules_revision=1))
         elif app.config.get('OPERATIONAL_EVENT_ID') in existing:
             owner=app.config['OPERATIONAL_EVENT_ID']
         else:
@@ -58,3 +59,28 @@ def legacy_championship_fixture(request):
         for app,old in changed_configs.items():
             if old is None:app.config.pop('OPERATIONAL_EVENT_ID',None)
             else:app.config['OPERATIONAL_EVENT_ID']=old
+
+
+@pytest.fixture(autouse=True)
+def explicit_standard_quota_policy_for_existing_fixtures(request):
+    """Old domain fixtures explicitly use the frozen historical policy.
+
+    PR7 lifecycle tests opt out; production never seeds/fixes policy implicitly.
+    """
+    if request.node.get_closest_marker('quota_rule_lifecycle'):
+        yield
+        return
+    from datetime import datetime
+    import json
+    from models import Event, db
+    from quota_rules import standard_rules
+    def seed(session, context, instances):
+        for obj in session.new:
+            if isinstance(obj,Event) and obj.quota_rules_json is None:
+                obj.quota_rules_json=json.dumps(standard_rules())
+                obj.quota_rules_fixed_at=datetime(2026,10,23)
+                obj.quota_rules_fixed_by='explicit-test-fixture'
+                obj.quota_rules_revision=1
+    event.listen(db.session,'before_flush',seed,insert=True)
+    try:yield
+    finally:event.remove(db.session,'before_flush',seed)

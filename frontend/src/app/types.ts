@@ -97,10 +97,24 @@ export interface EventCompetitionMapping {
   sport: string; gender: string; quotaDiscipline: string; teamCompetition: boolean;
 }
 
+export type QuotaExtent = {total:number;M:number;F:number};
+export interface QuotaRuleConfig {
+  schemaVersion:1;
+  athletes: Record<'Snowboard'|'Freestyle',{enabled:boolean;totalLimit:number;genderLimit:number}>;
+  officials:{model:'ATHLETES_PLUS';allowance:number};
+  singleRooms:Array<{upTo:number|null;rooms:number}>;
+}
+export interface EventQuotaRules {
+  status:'DRAFT'|'FIXED';config:QuotaRuleConfig|null;digest:string;revision:number;fixedAt:string|null;fixedBy:string|null;
+  eventId?:string;eventName?:string;isWorldChampionship?:boolean;
+  preflight?:{counts:Record<string,number>;fingerprint:string;blockers:string[]};standardProposal?:QuotaRuleConfig;
+  examples?:{athletes:number;officials:number;singleRooms:number;scale:string[];rows:Array<{name:string;used:number;covered:boolean;progress:number;label:string}>};
+}
 export interface ChampionshipEvent {
   id: string; name: string; year?: number; active: boolean;
   fisEventId?: string; sectorCode?: string;
   competitionMappings?: EventCompetitionMapping[];
+  isWorldChampionship?:boolean;quotaRules?:EventQuotaRules;
 }
 
 export type SingleRoomStatus = 'NONE' | 'IN_QUOTA' | 'APPROVED_EXTRA' | 'PENDING_APPROVAL';
@@ -531,19 +545,21 @@ export interface FisImportPreview {
   rooms: FisImportPreviewRoom[];
   errors: FisImportIssue[];
   warnings: FisImportIssue[];
-  /** Informational base limits; article 8.2 eligibility is not inferred. */
+  /** Fixed event admission limits and scoped exception coverage; article 8.2 eligibility is not inferred. */
   athleteQuotaChecks?: Array<{
     nationCode: string;
     topLevelDiscipline: string;
     athleteQuotaUsed: number;
-    athleteQuotaLimit: 36;
+    athleteQuotaLimit: number;
     athleteGenderUsed: { M: number; F: number };
-    athleteGenderLimit: 20;
+    athleteGenderLimit: number;
     athleteQuotaExceeded: boolean;
     athleteGenderExceeded: { M: boolean; F: boolean };
     athleteGenderUnknown: number;
     athleteQuotaStatus: 'EXCEEDED' | 'INCOMPLETE' | 'WITHIN_BASE_LIMITS';
     worldChampionExceptionSupported: false;
+    requiredExtent?:QuotaExtent;approvedExtent?:QuotaExtent;uncoveredExtent?:QuotaExtent;
+    decisionStatus?:'PENDING'|'APPROVED'|'WITHIN_QUOTA';approvalIds?:number[];
   }>;
   quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
