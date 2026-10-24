@@ -173,7 +173,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             self.assertEqual(live['accommodationPeopleRequired'], 5)
             # People, select-in competition memberships, bookings, approval state.
             query_count = int(response.headers['X-Assignment-Query-Count'])
-            self.assertLessEqual(query_count, 7)  # Includes owner validation and coverage inputs added since the original budget.
+            self.assertLessEqual(query_count, 8)  # Seven domain queries plus one fresh user/event grant check (PR8).
             db.session.add_all([Athlete(firstname='Additional', lastname=str(index),
                 nation_code='AUT', discipline='Big Air', gender='F', function='Athlete',
                 competitions=[competition])

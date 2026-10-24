@@ -446,8 +446,8 @@ class SingleRoomStatusTest(unittest.TestCase):
                 f'/api/import/sessions/{session.id}/single-room-exemptions/O',
                 headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
                 json={'reason': 'WORLD_CHAMPION'})
-            self.assertEqual(response.status_code, 409)
-            self.assertEqual(response.get_json()['error'], 'EVENT_INACTIVE')
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.get_json()['error'], 'EVENT_ACCESS_DENIED')
             db.session.expire_all()
             self.assertEqual(db.session.get(ImportSessionVersion, version.id).preview_json, original)
 

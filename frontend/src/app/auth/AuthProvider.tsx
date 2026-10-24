@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { api } from '../services/api';
 import type { AuthenticatedUser } from '../types';
-import { buildPermissions, type Permissions } from './permissions';
+import { buildPermissions, withEventWriteAccess, type Permissions } from './permissions';
+import { useEventWriteAccess } from '../events/ActiveEventProvider';
 
 interface AuthContextValue {
   user: AuthenticatedUser | null;
@@ -67,5 +68,5 @@ export function useAuth() {
 
 
 export function usePermissions() {
-  return useAuth().permissions;
+  return withEventWriteAccess(useAuth().permissions, useEventWriteAccess());
 }

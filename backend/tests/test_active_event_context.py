@@ -30,9 +30,12 @@ def test_capabilities_reuse_existing_permissions(inventory,monkeypatch,role,writ
     assert response.json['events'][0]['canRead'] is True
 
 
-def test_bootstrap_is_authenticated_and_missing_configuration_never_chooses_first(inventory,monkeypatch):
+def test_bootstrap_uses_grants_without_a_deployment_pin(inventory,monkeypatch):
     monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',None)
-    assert app.test_client().get('/api/active-event-context').status_code==409
+    response=app.test_client().get('/api/active-event-context')
+    assert response.status_code==200
+    assert response.json['switchingAllowed'] is True
+    assert {e['id'] for e in response.json['events']}=={str(e.id) for e in inventory[:2]}
     monkeypatch.setitem(app.config,'AUTH_DEV_USER','')
     assert app.test_client().get('/api/active-event-context',headers={HEADER:'not-an-id'}).status_code==401
 
@@ -41,7 +44,7 @@ def test_inactive_context_is_not_offered_after_earlier_request(inventory):
     a,*_=inventory;client=app.test_client()
     assert client.get('/api/active-event-context').status_code==200
     a.active=False;db.session.commit()
-    assert client.get('/api/active-event-context').status_code==409
+    assert client.get('/api/active-event-context').status_code==403
 
 
 @pytest.mark.parametrize('path',['/api/athletes','/athletes/','/api/fis/official-quotas',

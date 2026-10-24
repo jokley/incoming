@@ -60,6 +60,8 @@ if settings.cors_origins:
 
 app.config['MOCK_FILES_DIR'] = str(settings.mock_files_dir)
 db.init_app(app)
+from event_access_cli import event_access
+app.cli.add_command(event_access)
 app.register_blueprint(database_admin)
 app.register_blueprint(hotels)
 app.register_blueprint(events)
@@ -105,7 +107,7 @@ def validate_import_request_context():
         if len(values) > 1 and len({str(v) for v in values}) != 1:
             raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Widersprüchliche Request-Event-IDs.')
         return
-    selected = normalize_event_id(values[0]) if values else None
+    selected = normalize_event_id(values[0]) if values else getattr(g, 'authorized_event_id', None)
     if any(normalize_event_id(v) != selected for v in values):
         raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Widersprüchliche Request-Event-IDs.')
     if selected is not None:
@@ -125,13 +127,13 @@ def validate_import_request_context():
     token = data.get('previewToken')
     if token:
         raw = PREVIEW_STORE.get(token)
-        if raw is not None and raw.get('eventId') is not None and not raw.get('errors'):
+        if raw is not None and raw.get('eventId') is not None:
             token_event = normalize_event_id(raw.get('eventId'))
             if selected is not None and token_event != selected:
                 raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Token und Request gehören zu verschiedenen Events.')
             selected = token_event
     if session:
-        selected = selected if selected is not None else app.config.get('OPERATIONAL_EVENT_ID') or session.event_id
+        selected = selected if selected is not None else configured_event_id()
         validate_session_event(session, event_id=selected)
         _import_session_raw_preview(session)
         for version in session.versions:
@@ -150,6 +152,12 @@ def validate_import_request_context():
 def operational_event_error(error):
     db.session.rollback()
     return jsonify(error='OPERATIONAL_EVENT_REQUIRED', message=str(error)), 409
+
+
+@app.errorhandler(403)
+def event_access_denied(error):
+    db.session.rollback()
+    return jsonify(error='EVENT_ACCESS_DENIED', message='Championship access not granted'), 403
 
 
 @app.errorhandler(RequirementConflict)
@@ -553,6 +561,7 @@ def authenticate_api_request():
     g._validated_accommodation_owner = None
     g.import_event_id = None
     g._quota_event_record = None
+    g.authorized_event_id = None
     g.api_path = _canonical_api_path()
     if g.api_path is None or request.method == 'OPTIONS':
         return None
@@ -565,17 +574,27 @@ def authenticate_api_request():
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
     # Explicit UI context is validated after authentication/permissions and before
     # object snapshots or mutations. Legacy clients retain the configured owner.
-    header_owner = request.headers.get('X-Championship-Event-ID')
-    if header_owner is not None:
-        owner = normalize_event_id(header_owner)
-        validate_operational_import_event(owner)
-        if owner != configured_event_id():
-            raise OperationalEventError('Request event conflicts with the operational championship')
-        record = db.session.get(Event, owner)
-        if record is None or not record.active:
-            raise OperationalEventError('Operational event is missing or inactive')
-        g._validated_accommodation_owner = owner
-        g._quota_event_record = record
+    # These immutable/global catalogues contain no event-owned operational data.
+    # An explicit header is still validated even on a global catalogue request.
+    global_catalogue = (g.api_path.rstrip('/') == '/api/competitions' and request.method in {'GET','HEAD'}
+        or g.api_path.startswith('/api/import/fis/mock-files')
+        or g.api_path.startswith('/api/admin/scenarios')
+        or g.api_path == '/api/admin/events' and request.method == 'POST')
+    if g.api_path not in {'/api/auth/me', '/api/active-event-context'} and (not global_catalogue or request.headers.get('X-Championship-Event-ID') is not None):
+        from event_ownership_runtime import bind_request_event
+        bind_request_event()
+        if g.api_path.startswith('/api/admin/events/') and (request.view_args or {}).get('event_id') is not None:
+            if request.view_args['event_id'] != g.authorized_event_id:
+                raise OperationalEventError('Administrative event and request context differ')
+        if g.api_path.startswith('/api/admin/database'):
+            # A database download/restore spans every event, including inactive ones.
+            from event_ownership_runtime import authorize_event
+            for identity, in db.session.query(Event.id).all():
+                authorize_event(identity, write=request.method not in {'GET', 'HEAD'}, respect_pin=False, active=False)
+            if not app.config.get('OPERATIONAL_EVENT_ID'):
+                # Historical dumps may contain events no longer in the live catalogue.
+                # Current grants cannot prove access to their contents.
+                raise OperationalEventError('Global database operations require a pinned maintenance deployment')
     if g.api_path != '/api/assignments/availability' and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and (
             g.api_path.startswith('/api/assignments/') or g.api_path.startswith('/api/room-assignments')):
         lock_accommodation_writes()
@@ -827,7 +846,7 @@ def audit_successful_mutation(response):
             entity_label=business['entity_label'],
             details_json=json.dumps(business['details'], ensure_ascii=False),
             entity_refs_json=(event_audit_refs(business['entity_refs'])
-                if app.config.get('OPERATIONAL_EVENT_ID') else json.dumps(business['entity_refs'], ensure_ascii=False)),
+                if getattr(g, 'authorized_event_id', None) else json.dumps(business['entity_refs'], ensure_ascii=False)),
         ))
         db.session.commit()
     except Exception:

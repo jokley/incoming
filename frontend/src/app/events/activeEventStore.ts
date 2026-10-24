@@ -3,7 +3,7 @@ export interface OperationalEvent {
   id: string; name: string; year?: number | null; active: boolean;
   fisEventId?: string | null; sectorCode?: string | null; canRead: boolean; canWrite: boolean;
 }
-export interface EventCapabilities { events: OperationalEvent[]; selectedEventId: string; switchingAllowed: boolean }
+export interface EventCapabilities { events: OperationalEvent[]; selectedEventId: string | null; switchingAllowed: boolean }
 export interface ActiveEventState {
   status: 'loading' | 'ready' | 'error'; events: OperationalEvent[];
   selectedEvent: OperationalEvent | null; switchingAllowed: boolean; revision: number; error: string | null;

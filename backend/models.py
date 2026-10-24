@@ -471,6 +471,15 @@ class Event(db.Model):
         return result
 
 
+class EventAccess(db.Model):
+    """Explicit grants for the identity supplied by the existing authentication layer."""
+    __tablename__ = 'event_access'
+    username = db.Column(db.String(100), primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='CASCADE'), primary_key=True)
+    can_write = db.Column(db.Boolean, nullable=False, default=False)
+    event = db.relationship('Event')
+
+
 class WorldChampion(db.Model):
     """A title reference explicitly applicable to one target championship."""
     __tablename__ = 'world_champion'

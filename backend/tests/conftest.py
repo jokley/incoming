@@ -11,8 +11,36 @@ from sqlalchemy import event, select, func
 
 
 def pytest_configure(config):
+    config.addinivalue_line('markers', 'explicit_event_access: supplies event grants explicitly')
     config.addinivalue_line('markers', 'quota_rule_lifecycle: exercises draft/fixed rules without legacy policy fixture')
     config.addinivalue_line('markers', 'explicit_event_ownership: supplies ownership explicitly without legacy fixture defaults')
+
+
+@pytest.fixture(autouse=True)
+def legacy_event_access_fixture(request):
+    """Explicit legacy test identities only; production has no automatic grants."""
+    if request.node.get_closest_marker('explicit_event_access'):
+        yield
+        return
+    from models import db, Event, EventAccess
+    from sqlalchemy.dialects.postgresql import insert
+    def seed(session, context):
+        identities = [row.id for row in session.new if isinstance(row, Event)]
+        identities += session.info.pop('legacy_access_event_ids', [])
+        if not identities:
+            return
+        connection = session.connection()
+        # Historical migration fixtures deliberately do not have this table yet.
+        if not __import__('sqlalchemy').inspect(connection).has_table('event_access'):
+            return
+        users = ('test-admin','context-user','tester','editor','viewer','reader','admin',
+                 'analytics-user','hotel-test-user','segment-editor','baseline-user')
+        connection.execute(insert(EventAccess).values([
+            dict(username=username,event_id=identity,can_write=True)
+            for username in users for identity in identities]).on_conflict_do_nothing())
+    event.listen(db.session, 'after_flush', seed)
+    try: yield
+    finally: event.remove(db.session, 'after_flush', seed)
 
 
 @pytest.fixture(autouse=True)
@@ -46,6 +74,7 @@ def legacy_championship_fixture(request):
         elif not existing and not pending:
             owner=900000001
             session.connection().execute(Event.__table__.insert().values(id=owner,name='Explicit legacy test championship',year=2027,active=True,quota_rules_json=__import__('json').dumps(__import__('quota_rules').standard_rules()),quota_rules_fixed_at=__import__('datetime').datetime(2026,10,23),quota_rules_fixed_by='explicit-test-fixture',quota_rules_revision=1))
+            session.info.setdefault('legacy_access_event_ids', []).append(owner)
         elif app.config.get('OPERATIONAL_EVENT_ID') in existing:
             owner=app.config['OPERATIONAL_EVENT_ID']
         else:

@@ -35,7 +35,7 @@ export default defineConfig({
     // Proxy `/api/*` to the backend so the app can use same-origin `/api` URLs.
     proxy: {
       '/api': {
-        target: 'http://localhost:5000',
+        target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:5000',
         changeOrigin: true,
       },
     },

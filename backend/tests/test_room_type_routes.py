@@ -11,7 +11,7 @@ from test_support import configure_test_app, postgres_test_url
 
 os.environ['DATABASE_URL'] = postgres_test_url()
 from app import app
-from models import db, AuditEvent, Hotel, HotelRoomInventory, RoomType
+from models import db, AuditEvent, Event, Hotel, HotelRoomInventory, RoomType
 
 
 class RoomTypeRoutesTest(unittest.TestCase):
@@ -23,6 +23,7 @@ class RoomTypeRoutesTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            db.session.add(Event(name='Room type test championship', year=2027, active=True))
             room_type = RoomType(name='Double', max_persons=2)
             db.session.add(room_type)
             db.session.commit()

@@ -57,3 +57,10 @@ export function buildPermissions(user: AuthenticatedUser | null): Permissions {
     isReadOnly: !canWrite,
   };
 }
+
+export function withEventWriteAccess(permissions: Permissions, canWrite: boolean): Permissions {
+  if (canWrite) return permissions;
+  return { ...permissions, canEdit: false, canDelete: false, canCreate: false,
+    canManageHotels: false, canManageRoomTypes: false, canManageAssignments: false,
+    canManageImports: false, isReadOnly: true };
+}

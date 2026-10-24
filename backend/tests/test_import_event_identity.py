@@ -257,8 +257,9 @@ def test_real_jpn_http_workflow_both_events(events,monkeypatch):
     entries=os.environ.get('JPN_ENTRIES_FILE');rooms=os.environ.get('JPN_ROOMS_FILE')
     if not entries or not rooms:pytest.skip('Supply real JPN workbooks via environment')
     a,b=events
-    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',a.id)
+    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',None)
     client=app.test_client()
+    client.environ_base['HTTP_X_CHAMPIONSHIP_EVENT_ID']=str(a.id)
     totals=[]
     for event in (a,b):
         def upload(**extra):
@@ -268,9 +269,9 @@ def test_real_jpn_http_workflow_both_events(events,monkeypatch):
                 'roomListDetailed':(io.BytesIO(Path(rooms).read_bytes()),Path(rooms).name)})
         if event == b:
             denied = upload()
-            assert denied.status_code == 409 and denied.json['error'] == 'OPERATIONAL_EVENT_REQUIRED'
-        # PR1/restore deployment guard: test each event as the sole configured owner.
-        monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(event.id))
+            assert denied.status_code == 409 and denied.json['error'] == 'IMPORT_EVENT_MISMATCH'
+        # PR8: the same app/config and explicit grants, only the request header changes.
+        client.environ_base['HTTP_X_CHAMPIONSHIP_EVENT_ID']=str(event.id)
         result=upload()
         assert result.status_code==200,result.json
         assert result.json['isValid'],result.json['errors']
@@ -295,11 +296,23 @@ def test_real_jpn_http_workflow_both_events(events,monkeypatch):
         repeated=upload()
         assert repeated.status_code==200,repeated.json
         assert repeated.json['summary']['people']['wouldCreate']==0
+        current=client.get(f'/api/import/sessions/{sid}').json['preview']
+        approved=client.post(f'/api/import/sessions/{sid}/approve',json={
+            'snapshotScope':'FULL_NATION','planDigest':current['changePlan']['digest'],
+            'confirmDestructiveChanges':True})
+        assert approved.status_code==200,approved.json
+        reimported=client.post('/api/import/fis/confirm',json={'previewToken':repeated.json['previewToken']})
+        assert reimported.status_code==200,reimported.json
+        assert Athlete.query.filter_by(event_id=event.id).count()==totals[-1]
         if event==b:
             wrong=upload(sessionId=str(ImportSession.query.filter_by(event_id=a.id).one().id))
             assert wrong.status_code==409,wrong.json
     assert len(set(totals))==1 and totals[0]>0
     assert ImportSession.query.count()==2
+    from models import AthleteCompetition
+    memberships=[(row.athlete_id,row.competition_id) for row in AthleteCompetition.query.all()]
+    assert len(memberships)==len(set(memberships))
+    assert app.config['OPERATIONAL_EVENT_ID'] is None
     print(f'JPN real HTTP: {totals[0]} people per event, two isolated JPN sessions; reupload creates zero people')
 
 
@@ -329,6 +342,6 @@ def test_foreign_current_version_is_rejected(events):
     a,b=events
     own,foreign=session(a),session(b)
     own.current_version=foreign.current_version;db.session.commit()
-    response=app.test_client().get(f'/api/import/sessions/{own.id}?eventId={a.id}')
+    response=app.test_client().get(f'/api/import/sessions/{own.id}?eventId={a.id}',headers={'X-Championship-Event-ID':str(a.id)})
     assert response.status_code==409
     assert response.json['error']=='IMPORT_SESSION_VERSION_MISMATCH'

@@ -35,6 +35,11 @@ class ApiRouteSafetyTest(unittest.TestCase):
         lock = patch('app.lock_accommodation_writes')
         lock.start()
         self.addCleanup(lock.stop)
+        # This suite isolates functional permissions using sentinel handlers.
+        # Real grant/ownership checks are exercised against PG in PR8 acceptance.
+        context = patch('event_ownership_runtime.bind_request_event', return_value=1)
+        context.start()
+        self.addCleanup(context.stop)
         self.client = app.test_client()
 
     @staticmethod

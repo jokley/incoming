@@ -87,13 +87,19 @@ def delete_event_demand(event_id, demand_id):
 def list_active_championship_events():
     # Public catalogue remains global metadata, not foreign policy/auditor data.
     return jsonify([{key:value for key,value in event.to_dict().items() if key!='quotaRules'}
-                    for event in Event.query.filter_by(active=True).order_by(Event.year, Event.name).all()])
+                    for event in authorized_catalogue().filter(Event.active.is_(True)).order_by(Event.year, Event.name).all()])
+
+
+def authorized_catalogue():
+    from auth import current_user
+    from models import EventAccess
+    return Event.query.join(EventAccess).filter(EventAccess.username == current_user().username)
 
 
 @events.route('/api/admin/events', methods=['GET', 'POST'])
 def administer_events():
     if request.method == 'GET':
-        return jsonify([event.to_dict() for event in Event.query.order_by(Event.year, Event.name).all()])
+        return jsonify([event.to_dict() for event in authorized_catalogue().order_by(Event.year, Event.name).all()])
     data = request.get_json() or {}
     if not str(data.get('name', '')).strip():
         return jsonify({'error': 'Name ist erforderlich.'}), 400
@@ -158,6 +164,8 @@ def copy_event_competitions(event_id):
     except ImportValidationError as exc:
         return jsonify(exc.to_dict()), 400
     source = Event.query.get_or_404(source_event_id)
+    from event_ownership_runtime import authorize_event
+    authorize_event(source.id, respect_pin=False)
     existing = {row.competition_id for row in target.competition_mappings}
     copies = [EventCompetition(event_id=target.id, competition_id=row.competition_id,
         fis_codex=row.fis_codex, import_code=row.import_code,

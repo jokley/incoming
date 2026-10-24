@@ -38,7 +38,7 @@ def test_fixed_rules_prevent_destructive_downgrade(legacy):
     with pytest.raises(RuntimeError,match='reviewed recovery'):command.downgrade(cfg,'20261022_01')
     with engine.connect() as connection:
         assert FIELDS <= {c['name'] for c in sa.inspect(connection).get_columns('championship_event')}
-        assert connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()=='20261023_01'
+        assert connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()=='20261024_01'
 
 
 def test_policy_ddl_failure_rolls_back_all_new_columns(legacy,monkeypatch):

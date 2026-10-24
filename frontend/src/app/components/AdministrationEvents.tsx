@@ -29,7 +29,7 @@ export function AdministrationEvents() {
     setSelectedId(current => preferredId ?? current ?? rows[0]?.id ?? '');
   };
   const loadSelected = async (id=selectedId) => {
-    if (id) setSelected(await api.getAdminEvent(id)); else setSelected(null);
+    if (id && id === eventId) setSelected(await api.getAdminEvent(id)); else setSelected(null);
   };
   useEffect(() => { void Promise.all([loadList(), api.getCompetitions().then(setCompetitions)]); }, []);
   useEffect(() => { void loadSelected(); }, [selectedId]);
@@ -80,7 +80,7 @@ export function AdministrationEvents() {
           </div></div>
           <MappingTable mappings={selected.competitionMappings ?? []} onEdit={setMappingDialog}/>
         </div>}
-      </> : <div className="p-10"><EmptyState title="Event auswählen" /></div>}
+      </> : <div className="p-10"><EmptyState title="Event im Hauptheader auswählen" description="Die Administration verwendet denselben autorisierten Veranstaltungskontext wie der operative Bereich." /></div>}
     </ContentCard>
 
     <EventEditor open={eventDialog.open} event={eventDialog.value} onClose={()=>setEventDialog({open:false,value:null})} onSave={saveEvent}/>

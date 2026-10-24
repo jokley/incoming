@@ -1,5 +1,5 @@
 """Ownership invariants and explicit single-operational-event compatibility."""
-from flask import current_app, g, has_app_context, has_request_context
+from flask import current_app, g, has_app_context, has_request_context, request, abort
 from sqlalchemy import inspect
 
 
@@ -8,6 +8,13 @@ class OperationalEventError(ValueError):
 
 
 def configured_event_id():
+    # Within HTTP, every old resolver call resolves the authorized request owner.
+    if has_request_context() and getattr(g, 'authorized_event_id', None) is not None:
+        return g.authorized_event_id
+    return deployment_event_id()
+
+
+def deployment_event_id():
     value = current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None
     if value is None or str(value).strip() == '':
         raise OperationalEventError('OPERATIONAL_EVENT_ID must explicitly identify the single operational championship')
@@ -17,13 +24,53 @@ def configured_event_id():
     return int(raw)
 
 
+def authorize_event(value, *, write=False, respect_pin=True, active=True):
+    """Role checks remain app-wide. Grants never imply functional permissions."""
+    from auth import current_user
+    from imports.event_context import normalize_event_id
+    from models import db, Event, EventAccess
+    owner = normalize_event_id(value)
+    user = current_user()
+    if user is None:
+        abort(401)
+    if respect_pin and current_app.config.get('OPERATIONAL_EVENT_ID'):
+        if owner != deployment_event_id():
+            raise OperationalEventError('Request conflicts with the pinned championship')
+    # SELECT scalar columns: do not reuse grants from an ORM identity map.
+    grant = db.session.query(EventAccess.can_write).join(Event).filter(
+        EventAccess.username == user.username, EventAccess.event_id == owner,
+        *([Event.active.is_(True)] if active else [])).first()
+    if grant is None or (write and not grant.can_write):
+        abort(403, description='Championship access not granted')
+    return owner
+
+
+def bind_request_event():
+    """One immutable request context, shared by imports, reads and ORM guards."""
+    value = request.headers.get('X-Championship-Event-ID')
+    if value is None:
+        value = deployment_event_id()  # No owner inference from object IDs.
+    write = request.method not in {'GET', 'HEAD', 'OPTIONS'} and getattr(g, 'api_path', '') != '/api/assignments/availability'
+    owner = authorize_event(value, write=write,
+        active=not getattr(g, 'api_path', '').startswith('/api/admin/events/'))
+    g.authorized_event_id = owner
+    return owner
+
+
 def validate_operational_import_event(value):
     """Normalize request ownership and honor an explicit single-event deployment."""
     from imports.event_context import normalize_event_id
     selected = normalize_event_id(value)
+    if has_request_context() and hasattr(g, 'authorized_event_id'):
+        owner = getattr(g, 'authorized_event_id', None)
+        if owner is None:
+            owner = bind_request_event()
+        if selected != owner:
+            raise OperationalEventError('Object and authorized request event differ')
+        return selected
     configured = current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None
     if configured is not None and str(configured).strip():
-        if selected != configured_event_id():
+        if selected != deployment_event_id():
             raise OperationalEventError('A second operational event is disabled until backend isolation is complete')
     return selected
 
@@ -34,11 +81,12 @@ def apply_event_ownership(session, flush_context, instances):
     from imports.event_context import normalize_event_id
     from models import (Athlete, RoomBooking, ImportSession, HotelRoomInventory,
         AccommodationEvent, ImportRun, RoomBookingOccupant, RoomAssignment,
-        FisRoomAssignment, EventRoomDemand)
-    required = (Athlete, RoomBooking, ImportSession, HotelRoomInventory, AccommodationEvent, ImportRun)
+        FisRoomAssignment, EventRoomDemand, WorldChampion, ImportSessionVersion, ImportApproval, ImportSessionEvent)
+    required = (Athlete, RoomBooking, ImportSession, HotelRoomInventory, AccommodationEvent, ImportRun, WorldChampion)
+    children = (ImportSessionVersion, ImportApproval, ImportSessionEvent)
     objects = session.new.union(session.dirty).union(session.deleted)
     allowed = None
-    if has_request_context() and any(isinstance(o, required + (RoomBookingOccupant, RoomAssignment, FisRoomAssignment, EventRoomDemand)) for o in objects):
+    if has_request_context() and any(isinstance(o, required + children + (RoomBookingOccupant, RoomAssignment, FisRoomAssignment, EventRoomDemand)) for o in objects):
         from accommodation_scope import accommodation_event_id
         allowed = accommodation_event_id()
 
@@ -85,6 +133,15 @@ def apply_event_ownership(session, flush_context, instances):
             raise OperationalEventError('Accommodation occupants and relationships must belong to the authorized event')
 
     for obj in objects:
+        if isinstance(obj, children) and allowed is not None:
+            parent = related(obj, 'session', 'session_id', ImportSession)
+            if parent is None or parent.event_id != allowed:
+                raise OperationalEventError('Import evidence belongs to another event')
+            for field, model in (('version_id', ImportSessionVersion), ('approval_id', ImportApproval)):
+                identity = getattr(obj, field, None)
+                linked = session.get(model, identity) if identity is not None else None
+                if linked is not None and linked.session_id != parent.id:
+                    raise OperationalEventError('Import evidence belongs to another session')
         if isinstance(obj, RoomBookingOccupant):
             check(related(obj, 'athlete', 'athlete_id', Athlete), related(obj, 'room_booking', 'room_booking_id', RoomBooking))
         elif isinstance(obj, RoomAssignment):

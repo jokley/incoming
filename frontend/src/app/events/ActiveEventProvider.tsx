@@ -1,8 +1,17 @@
 import { createContext, useContext, useEffect, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { api } from '../services/api';
-import { ActiveEventStore } from './activeEventStore';
+import { ActiveEventStore, type ActiveEventState } from './activeEventStore';
 
 const ActiveEventContext = createContext<ActiveEventStore | null>(null);
+const noEventSubscription = () => () => {};
+const noEventSnapshot = () => null;
+
+export function useEventWriteAccess() {
+  const store = useContext(ActiveEventContext);
+  const state = useSyncExternalStore<ActiveEventState | null>(
+    store?.subscribe ?? noEventSubscription, store?.snapshot ?? noEventSnapshot, store?.snapshot ?? noEventSnapshot);
+  return state?.status === 'ready' && state.selectedEvent?.canWrite === true;
+}
 const domBlockReason = () => document.querySelector('[role="dialog"], [role="alertdialog"], form[data-event-dirty="true"]')
   ? 'Bitte offene Dialoge und ungespeicherte Formulare zuerst abschließen oder schließen.' : null;
 

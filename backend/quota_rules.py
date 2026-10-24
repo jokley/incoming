@@ -119,6 +119,7 @@ def initialization_preflight(event):
 
 
 def audit_rules(event,activity):
+    from accommodation_scope import event_audit_refs
     from flask import g,request
     from auth import current_user
     from models import db,AuditEvent
@@ -127,5 +128,5 @@ def audit_rules(event,activity):
     db.session.add(AuditEvent(username=user.username,action='update',entity_type='event-quota-rules',entity_id=str(event.id),
         request_id=getattr(g,'request_id',str(uuid.uuid4())),method=request.method,path=request.path,
         activity=activity,category='Administration',entity_label=event.name,
-        details_json=json.dumps({'rules':rule_projection(event),'isWorldChampionship':event.is_world_championship}),entity_refs_json=json.dumps({'eventId':str(event.id)})))
+        details_json=json.dumps({'rules':rule_projection(event),'isWorldChampionship':event.is_world_championship}),entity_refs_json=event_audit_refs({'eventId':str(event.id)},event.id)))
     g.atomic_import_audit=True  # Existing app-wide atomic-audit hook.

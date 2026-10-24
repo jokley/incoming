@@ -20,7 +20,7 @@ test('only the server-selected event is used; presence in catalogue is no releas
   assert.equal(scope.eventId, '1'); assert.equal(store.select('999'), false);
 });
 
-for (const selectedEventId of ['', '999']) test(`no first/active fallback for selected ID ${selectedEventId}`, async () => {
+for (const selectedEventId of [null, '', '999']) test(`no first/active fallback for selected ID ${selectedEventId}`, async () => {
   const scope = new EventRequestScope(); const store = new ActiveEventStore(scope, async () => ({ ...catalog(), selectedEventId }));
   await store.load(); assert.equal(store.snapshot().status, 'error'); assert.equal(scope.eventId, null);
 });

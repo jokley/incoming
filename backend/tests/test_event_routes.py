@@ -44,11 +44,24 @@ class EventRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return response.get_json()
 
+    def use_explicit_catalogue_context(self, fallback):
+        """Old catalogue tests now send the explicit target on each admin request."""
+        import re
+        original = self.client.open
+        def scoped(path, *args, **kwargs):
+            app.config['OPERATIONAL_EVENT_ID'] = None
+            target = re.match(r'/api/admin/events/(\d+)', path)
+            kwargs['headers'] = {**kwargs.get('headers', {}),
+                'X-Championship-Event-ID': target.group(1) if target else str(fallback)}
+            return original(path, *args, **kwargs)
+        self.client.open = scoped
+
     def test_championship_lists_detail_update_and_validation(self):
         self.assertEqual(self.client.post('/api/admin/events', json={'name': '  '}).status_code, 400)
         later = self.create_event(' Later ', year=2028, fisEventId='123', sectorCode='SB')
         earlier = self.create_event('Earlier', year=2027)
         inactive = self.create_event('Inactive', year=2026, active=False)
+        self.use_explicit_catalogue_context(earlier['id'])
         self.assertEqual(later, {'id': later['id'], 'name': 'Later', 'year': 2028,
                                 'fisEventId': '123', 'sectorCode': 'SB', 'active': True,
                                 'isWorldChampionship':False,'quotaRules':{'status':'DRAFT','config':None,'digest':__import__('quota_rules').fingerprint({'config':None,'isWorldChampionship':False}),'revision':0,'fixedAt':None,'fixedBy':None}})
@@ -61,13 +74,14 @@ class EventRoutesTest(unittest.TestCase):
         response = self.client.put(path, json=changes)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {**later, **changes, 'competitionMappings': []})
-        self.assertEqual(self.client.get('/api/admin/events/2147483647').status_code, 404)
+        self.assertEqual(self.client.get('/api/admin/events/2147483647').status_code, 403)
         with app.app_context():
             self.assertEqual(AuditEvent.query.count(), 0)
 
     def test_mapping_creation_update_copy_and_event_scoping(self):
         source = self.create_event('Source')['id']
         target = self.create_event('Target')['id']
+        self.use_explicit_catalogue_context(source)
         source_path = f'/api/admin/events/{source}'
         target_path = f'/api/admin/events/{target}'
         payload = {'competitionId': self.competition_id, 'fisCodex': ' 6182 ',
@@ -112,6 +126,7 @@ class EventRoutesTest(unittest.TestCase):
             self.assertEqual(AuditEvent.query.count(), 0)
 
     def test_accommodation_mutation_audit_and_rejected_commands(self):
+        self.create_event('Explicit planning owner')
         payload = {'discipline': 'Big Air', 'startDate': '2027-03-01',
                    'endDate': '2027-03-10', 'personDemand': 10}
         response = self.client.post('/api/events', json=payload, headers=self.editor)

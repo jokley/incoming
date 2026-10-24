@@ -1,6 +1,6 @@
 """Identity read endpoint; authentication remains app-wide."""
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, current_app, request
 
 from auth import current_user
 
@@ -16,15 +16,25 @@ def get_authenticated_user():
 @identity.route('/api/active-event-context', methods=['GET'])
 def get_active_event_context():
     """Only explicit operational capability, never the championship catalogue."""
-    from accommodation_scope import accommodation_event_id
-    from models import Event, db
-    owner = accommodation_event_id()
-    event = db.session.get(Event, owner)
+    from event_ownership_runtime import authorize_event, deployment_event_id
+    from models import Event, EventAccess, db
     user = current_user()
+    query = db.session.query(Event, EventAccess.can_write).join(EventAccess).filter(
+        EventAccess.username == user.username, Event.active.is_(True))
+    pinned = deployment_event_id() if current_app.config.get('OPERATIONAL_EVENT_ID') else None
+    if pinned is not None:
+        authorize_event(pinned)
+        query = query.filter(Event.id == pinned)
+    rows = query.order_by(Event.year, Event.id).all()
+    requested = request.headers.get('X-Championship-Event-ID')
+    if requested is not None:
+        selected = authorize_event(requested)
+    else:
+        selected = pinned or (rows[0][0].id if rows else None)
     return jsonify({
         'events': [{**event.to_dict(), 'canRead': user.has_permission('data.read'),
-                    'canWrite': any(user.has_permission(p) for p in
-                        ('data.write', 'assignments.write', 'imports.write'))}],
-        'selectedEventId': str(owner),
-        'switchingAllowed': False,
+                    'canWrite': writable and any(user.has_permission(p) for p in
+                        ('data.write', 'assignments.write', 'imports.write'))} for event, writable in rows],
+        'selectedEventId': str(selected) if selected is not None else None,
+        'switchingAllowed': pinned is None and len(rows) > 1,
     })

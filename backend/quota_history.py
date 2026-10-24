@@ -202,12 +202,13 @@ def preview_approval_person(person, *, competitions_by_id=None):
     """Current DB-resolved preview evidence, never a static catalogue lookup."""
     from types import SimpleNamespace
     from models import Competition
-    from flask import has_app_context, current_app
+    from flask import has_app_context, current_app, has_request_context, g
     ids = normalize_competition_ids(person.get('competitionIds') or [])
     competitions = ([competitions_by_id[key] for key in ids if key in competitions_by_id]
                     if competitions_by_id is not None else
                     Competition.query.filter(Competition.id.in_(ids)).all() if ids else [])
-    return SimpleNamespace(event_id=person.get('eventId') or (current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None), nation_code=person.get('nationCode'), gender=person.get('gender'),
+    owner = (getattr(g, 'authorized_event_id', None) if has_request_context() else None)
+    return SimpleNamespace(event_id=person.get('eventId') or owner or (current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None), nation_code=person.get('nationCode'), gender=person.get('gender'),
         function=person.get('function'),
         for_gender=person.get('forGender'), fis_code=person.get('fisCode'),
         competitor_id=person.get('competitorId'), lastname=person.get('lastname'),
