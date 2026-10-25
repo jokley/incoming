@@ -11,6 +11,7 @@ export type AuthGroup = (typeof AUTH_GROUPS)[keyof typeof AUTH_GROUPS];
 export interface Permissions {
   groups: string[];
   isAdmin: boolean;
+  canManageUsers: boolean;
   isEditor: boolean;
   isViewer: boolean;
   canEdit: boolean;
@@ -35,7 +36,7 @@ export function buildPermissions(user: AuthenticatedUser | null): Permissions {
   const groups = normalizeGroups(user?.groups);
   const permissions = user?.permissions ?? [];
   const hasWildcard = permissions.includes('*');
-  const isAdmin = groups.includes(AUTH_GROUPS.admin) || hasWildcard;
+  const isAdmin = groups.includes(AUTH_GROUPS.admin) || hasWildcard || user?.isSuperadmin === true;
   const isEditor = groups.includes(AUTH_GROUPS.editor) || permissions.includes('data.write');
   const isViewer = groups.includes(AUTH_GROUPS.viewer) || (!isAdmin && !isEditor);
   const canWrite = isAdmin || isEditor;
@@ -43,6 +44,7 @@ export function buildPermissions(user: AuthenticatedUser | null): Permissions {
   return {
     groups,
     isAdmin,
+    canManageUsers: user?.isSuperadmin === true,
     isEditor,
     isViewer,
     canEdit: canWrite,

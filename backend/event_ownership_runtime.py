@@ -24,7 +24,7 @@ def deployment_event_id():
     return int(raw)
 
 
-def authorize_event(value, *, write=False, respect_pin=True, active=True):
+def authorize_event(value, *, write=False, respect_pin=True, active=True, allow_superadmin=True):
     """Role checks remain app-wide. Grants never imply functional permissions."""
     from auth import current_user
     from imports.event_context import normalize_event_id
@@ -36,6 +36,13 @@ def authorize_event(value, *, write=False, respect_pin=True, active=True):
     if respect_pin and current_app.config.get('OPERATIONAL_EVENT_ID'):
         if owner != deployment_event_id():
             raise OperationalEventError('Request conflicts with the pinned championship')
+    if allow_superadmin and user.is_superadmin:
+        query = db.session.query(Event.id).filter(Event.id == owner)
+        if active:
+            query = query.filter(Event.active.is_(True))
+        if query.first() is None:
+            abort(403, description='Championship access not granted')
+        return owner
     # SELECT scalar columns: do not reuse grants from an ORM identity map.
     grant = db.session.query(EventAccess.can_write).join(Event).filter(
         EventAccess.username == user.username, EventAccess.event_id == owner,

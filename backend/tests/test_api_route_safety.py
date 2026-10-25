@@ -40,6 +40,11 @@ class ApiRouteSafetyTest(unittest.TestCase):
         context = patch('event_ownership_runtime.bind_request_event', return_value=1)
         context.start()
         self.addCleanup(context.stop)
+        # This suite replaces route bodies and isolates authentication/permissions;
+        # reference persistence is covered against PostgreSQL in PR9 acceptance.
+        references = patch('user_access.remember_authenticated_user')
+        references.start()
+        self.addCleanup(references.stop)
         self.client = app.test_client()
 
     @staticmethod

@@ -63,6 +63,7 @@ class RuntimeSettings:
             AUTH_PROXY_SECRET=self.auth_proxy_secret,
             AUTH_DEV_USER=self.auth_dev_user,
             AUTH_DEV_GROUPS=self.auth_dev_groups,
+            SUPERADMIN_USERNAME=os.environ.get('SUPERADMIN_USERNAME', '').strip(),
             LOG_LEVEL=self.log_level,
             RUNTIME_ENV=self.environment,
             BACKUP_DIR=str(self.backup_dir),

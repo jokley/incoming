@@ -34,11 +34,12 @@ def test_fixed_rules_prevent_destructive_downgrade(legacy):
     engine,cfg,target,*_=legacy
     reviewed(legacy);command.upgrade(cfg,'head')
     with engine.begin() as connection:
+        before_version = connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()
         connection.execute(sa.text('UPDATE championship_event SET quota_rules_fixed_at=:now WHERE id=:id'),{'id':target,'now':__import__('datetime').datetime(2026,10,23)})
     with pytest.raises(RuntimeError,match='reviewed recovery'):command.downgrade(cfg,'20261022_01')
     with engine.connect() as connection:
         assert FIELDS <= {c['name'] for c in sa.inspect(connection).get_columns('championship_event')}
-        assert connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()=='20261024_01'
+        assert connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()==before_version
 
 
 def test_policy_ddl_failure_rolls_back_all_new_columns(legacy,monkeypatch):
