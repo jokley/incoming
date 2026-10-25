@@ -3,7 +3,6 @@ import { api } from '../services/api';
 import type { EventQuotaRules, QuotaRuleConfig, QuotaRevisionProposal, QuotaRevisionSnapshot } from '../types';
 import { ConfirmDialog, ContentCard, OpsButton, SectionHeader, StatusChip } from '../design-system';
 import { useAuth } from '../auth/AuthProvider';
-import { useActiveEvent } from '../events/ActiveEventProvider';
 import { useActiveEventBlocker } from '../events/ActiveEventProvider';
 
 export function EventQuotaRulesEditor({eventId,isWorldChampionship=false}:{eventId:string;isWorldChampionship?:boolean}) {
@@ -11,7 +10,7 @@ export function EventQuotaRulesEditor({eventId,isWorldChampionship=false}:{event
   const [savedWorld,setSavedWorld]=useState(isWorldChampionship);
   const [world,setWorld]=useState(isWorldChampionship),[error,setError]=useState(''),[busy,setBusy]=useState(false),[confirm,setConfirm]=useState(false);
   const [revising,setRevising]=useState(false),[reason,setReason]=useState(''),[proposal,setProposal]=useState<QuotaRevisionProposal|null>(null),[history,setHistory]=useState<QuotaRevisionSnapshot[]>([]);
-  const {user}=useAuth(); const {events}=useActiveEvent(); const writable=Boolean(user?.isSuperadmin || events.find(e=>e.id===eventId)?.canWrite);
+  const {user}=useAuth(); const writable=Boolean(user?.isSuperadmin || user?.permissions.includes('*') || user?.permissions.includes('admin.reset'));
   const canAdmin=writable && Boolean(user?.isSuperadmin || user?.permissions.includes('*') || user?.permissions.includes('admin.reset'));
   const fixed=record?.status==='FIXED'; const locked=(fixed&&!revising)||!canAdmin;
   useEffect(()=>{setProposal(null)},[config,world,reason]);

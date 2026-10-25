@@ -13,7 +13,7 @@ def test_additive_policy_migration_preserves_all_stock_and_planning(legacy):
     engine,cfg,*_=legacy
     reviewed(legacy);command.upgrade(cfg,'20261022_01')
     with engine.connect() as connection:before=inventory(connection)
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'20261025_01')
     with engine.connect() as connection:
         after=inventory(connection)
         for name,table in before['tables'].items():
@@ -32,7 +32,7 @@ def test_additive_policy_migration_preserves_all_stock_and_planning(legacy):
 
 def test_fixed_rules_prevent_destructive_downgrade(legacy):
     engine,cfg,target,*_=legacy
-    reviewed(legacy);command.upgrade(cfg,'head')
+    reviewed(legacy);command.upgrade(cfg,'20261025_01')
     with engine.begin() as connection:
         before_version = connection.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()
         connection.execute(sa.text('UPDATE championship_event SET quota_rules_fixed_at=:now WHERE id=:id'),{'id':target,'now':__import__('datetime').datetime(2026,10,23)})
@@ -53,7 +53,7 @@ def test_policy_ddl_failure_rolls_back_all_new_columns(legacy,monkeypatch):
         if len(calls)==2:raise RuntimeError('Injected policy DDL failure')
         return original(self,*args,**kwargs)
     monkeypatch.setattr(Operations,'add_column',interrupted)
-    with pytest.raises(RuntimeError,match='Injected policy DDL'):command.upgrade(cfg,'head')
+    with pytest.raises(RuntimeError,match='Injected policy DDL'):command.upgrade(cfg,'20261025_01')
     with engine.connect() as connection:
         assert not FIELDS & {c['name'] for c in sa.inspect(connection).get_columns('championship_event')}
         assert inventory(connection)==before

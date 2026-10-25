@@ -126,10 +126,10 @@ def postgres_version(settings):
     return process.stdout.strip().split(".")[0]
 
 
-def create_backup(category, now=None):
+def create_backup(category, now=None, *, _lock_reserved=False):
     if category not in BACKUP_CATEGORIES:
         raise ValueError(f"Unknown backup category: {category}")
-    if not BACKUP_LOCK.acquire(blocking=False):
+    if not _lock_reserved and not BACKUP_LOCK.acquire(blocking=False):
         raise RuntimeError("A backup is already running")
     started = time.monotonic()
     settings = None
@@ -391,9 +391,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         if self.path == "/backup":
-            if BACKUP_LOCK.locked() or RESTORE_LOCK.locked():
+            if RESTORE_LOCK.locked() or not BACKUP_LOCK.acquire(blocking=False):
                 return self._reply(409, {"error": "backup already running"})
-            threading.Thread(target=_background_backup, args=("manual",), daemon=True).start()
+            try:
+                threading.Thread(target=_background_backup, args=("manual",), daemon=True).start()
+            except Exception:
+                BACKUP_LOCK.release()
+                raise
             return self._reply(202, {"status": "accepted"})
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -423,7 +427,7 @@ class Handler(BaseHTTPRequestHandler):
 
 def _background_backup(category):
     try:
-        create_backup(category)
+        create_backup(category, _lock_reserved=True)
     except Exception:
         pass
 

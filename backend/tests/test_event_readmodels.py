@@ -148,8 +148,10 @@ def test_import_audit_detail_shapes_preserve_evidence_and_event_isolation(invent
     assert snapshot(AuditEvent) == before
 
 
-def test_world_champion_references_do_not_leak(inventory,monkeypatch):
+def test_world_champion_catalogue_is_admin_global_but_recognition_is_event_scoped(inventory,monkeypatch):
     a,b,*_=inventory;refs=[]
+    from models import Event
+    db.session.execute(db.update(Event).where(Event.id.in_([a.id,b.id])).values(is_world_championship=True));db.session.commit()
     for owner in (a,b):
         row=WorldChampion(event_id=owner.id,fis_code='100',name=f'Title {owner.id}',nation='LAT',gender='M',
             discipline='Snowboard',event_group='Snowboard Cross',championship='Worlds',championship_year=2025,
@@ -158,8 +160,12 @@ def test_world_champion_references_do_not_leak(inventory,monkeypatch):
     db.session.commit();client=app.test_client()
     for owner,index in ((a,0),(b,1),(a,0)):
         monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',str(owner.id))
-        assert [r['id'] for r in client.get('/api/admin/world-champions').json]==[str(refs[index].id)]
-        assert client.get(f'/api/admin/world-champions/{refs[1-index].id}').status_code==404
+        assert {r['id'] for r in client.get('/api/admin/world-champions').json}=={str(r.id) for r in refs}
+        assert client.get(f'/api/admin/world-champions/{refs[1-index].id}').status_code==200
+        from world_champions import recognize
+        person=dict(matchKey='100',fisCode='100',function='Athlete')
+        recognize(person,None,{},owner.id)
+        assert [r['id'] for r in person['worldChampionReferences']]==[str(refs[index].id)]
 
 
 @pytest.mark.parametrize('path',['/api/athletes','/api/fis/official-quotas','/api/audit-events',
@@ -237,6 +243,8 @@ def test_manual_tariff_requirement_and_single_flags_survive_all_readmodels(inven
 def test_world_champion_recognition_uses_only_explicit_target_event(inventory):
     from world_champions import recognize
     a,b,*_=inventory
+    from models import Event
+    db.session.execute(db.update(Event).where(Event.id.in_([a.id,b.id])).values(is_world_championship=True));db.session.commit()
     ref=WorldChampion(event_id=b.id,fis_code='100',name='Foreign title',nation='LAT',gender='M',
         discipline='Snowboard',event_group='Snowboard Cross',championship='Worlds',championship_year=2025,
         title_type='INDIVIDUAL',entitlement_enabled=True,source='Test')

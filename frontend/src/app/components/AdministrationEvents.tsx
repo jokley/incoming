@@ -13,7 +13,7 @@ type EventDraft = Partial<ChampionshipEvent>;
 type MappingDraft = Pick<EventCompetitionMapping, 'officialName'|'fisCodex'|'importCode'|'active'>;
 
 export function AdministrationEvents() {
-  const { eventId, refreshEvents, selectEvent, switchingAllowed } = useActiveEvent();
+  const { status, eventId, refreshEvents, selectEvent, switchingAllowed } = useActiveEvent();
   const [events, setEvents] = useState<ChampionshipEvent[]>([]);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [selectedId, setSelectedId] = useState(eventId);  // Catalogue editor selection, not an operational event switch.
@@ -29,7 +29,7 @@ export function AdministrationEvents() {
   const loadList = async (preferredId?: string) => {
     const rows = await api.getAdminEvents();
     setEvents(rows);
-    setSelectedId(current => preferredId ?? current ?? rows[0]?.id ?? '');
+    setSelectedId(current => preferredId ?? (current || rows[0]?.id || ''));
   };
   const loadSelected = async (id=selectedId) => {
     const request=++selectionRequest.current;setSelected(null);setLoadError('');
@@ -47,7 +47,7 @@ export function AdministrationEvents() {
     let savedId=eventDialog.value?.id;
     if (savedId) await api.updateChampionshipEvent(savedId,draft);
     else {const created=await api.createChampionshipEvent(draft);savedId=created.id;setSelectedId(created.id);setCreatedNotice(created);}
-    try{await refreshEvents();await loadList(savedId);await loadSelected(savedId);}catch(e){setLoadError('Event gespeichert, Aktualisierung fehlgeschlagen: '+String(e));}
+    try{if(status==='ready')await refreshEvents();await loadList(savedId);await loadSelected(savedId);}catch(e){setLoadError('Event gespeichert, Aktualisierung fehlgeschlagen: '+String(e));}
   };
   const saveMapping = async (draft: MappingDraft) => {
     if (!mappingDialog || !selected) return;
@@ -77,7 +77,7 @@ export function AdministrationEvents() {
           <div><div className="flex items-center gap-2"><CalendarDays size={18}/><h3 className="text-xl font-extrabold">{selected.name}</h3></div><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{selected.year || 'Jahr nicht gesetzt'} · {selected.competitionMappings?.length ?? 0} Competition Mappings</p></div>
           <OpsButton onClick={() => setEventDialog({open:true,value:selected})}><Pencil className="mr-2 inline h-4 w-4"/>Event bearbeiten</OpsButton>
         </div>
-        <Tabs value={tab} onChange={(_,value)=>setTab(value)} sx={{px:2,borderBottom:'1px solid var(--ops-divider)'}}><Tab label="Allgemein"/><Tab label="Competition Mapping"/><Tab label="Quotenregeln"/><Tab label="Weltmeister"/></Tabs>
+        <p className="px-5 py-2 text-xs text-[var(--ops-text-muted)]">Dieses Event wird administrativ bearbeitet. Der aktive operative Eventkontext bleibt unverändert.</p><Tabs value={tab} onChange={(_,value)=>setTab(value)} sx={{px:2,borderBottom:'1px solid var(--ops-divider)'}}><Tab label="Allgemein"/><Tab label="Competition Mapping"/><Tab label="Quotenregeln"/><Tab label="Weltmeister"/></Tabs>
         {tab===3 ? <EventWorldChampions eventId={selected.id}/> : tab===0 ? <GeneralEvent event={selected}/> : tab===2 ? <EventQuotaRulesEditor key={selected.id} eventId={selected.id} isWorldChampionship={selected.isWorldChampionship}/> : <div className="p-5">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><SectionHeader title="Competition Mapping" subtitle="Globale Competition-Stammdaten und eventbezogene FIS-Werte."/><div className="flex flex-wrap gap-2">
             <TextField select size="small" label="Competition" value={addId} onChange={e=>setAddId(e.target.value)} sx={{minWidth:230}}>{availableCompetitions.map(c=><MenuItem key={c.id} value={c.id}>{c.displayName} · {c.gender}</MenuItem>)}</TextField>

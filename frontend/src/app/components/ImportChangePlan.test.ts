@@ -15,25 +15,26 @@ let Component: React.ElementType;
 before(async()=>{server=await createServer({configFile:false,root:fileURLToPath(new URL('../../..',import.meta.url)),optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false,ws:false,watch:null},esbuild:{jsx:'automatic'}});Component=(await server.ssrLoadModule('/src/app/components/ImportChangePlan.tsx')).ImportChangePlan;});
 after(async()=>{await server?.close();});
 
-test('requires scope, destructive consent and a current plan',()=>{
-  for(const [scope,destructive,stale] of [[false,true,false],[true,false,false],[true,true,true]]){
-    assert.equal(canConfirmReview(plan,scope,destructive,stale),false);
-    assert.throws(()=>importReviewRequest(plan,scope,destructive,stale));
-  }
-  assert.deepEqual(importReviewRequest(plan,true,true),{planDigest:'reviewed',snapshotScope:'FULL_NATION',confirmDestructiveChanges:true});
-  assert.equal(canConfirmReview(undefined,true,true),false);
+test('requires destructive consent and a current plan, but no separate scope consent',()=>{
+  assert.equal(canConfirmReview(plan,false),false);
+  assert.equal(canConfirmReview(plan,true,true),false);
+  assert.throws(()=>importReviewRequest(plan,false));
+  assert.deepEqual(importReviewRequest(plan,true),{planDigest:'reviewed',snapshotScope:'FULL_NATION',confirmDestructiveChanges:true});
+  assert.equal(canConfirmReview(undefined,true),false);
+  assert.equal(canConfirmReview({...plan,requiresDestructiveConfirmation:false},false),true);
 });
 
 test('shows removal identities, manual values, booking consequences and explicit consent',()=>{
   const html=renderToStaticMarkup(createElement(Component,{plan,editable:true,scopeConfirmed:false,destructiveConfirmed:false,onScope:()=>{},onDestructive:()=>{},onRecheck:()=>{},busy:false}));
-  for(const text of ['Änderungsplan','Removed Person','9300953','0042','SPECIAL','NO_ROOM','Vollständige Nationenmeldung bestätigen','Die importierten Dateien enthalten sämtliche Personen dieser Nation für die Veranstaltung, einschließlich aller Disziplinen. Fehlende Personen können bei einem späteren vollständigen Reimport nach zusätzlicher Bestätigung entfernt werden.','Buchungsfolgen','Nach Entfernung leer','Historische Genehmigungs-Evidence'])assert.ok(html.includes(text),text);
-  assert.equal((html.match(/type="checkbox"/g)||[]).length,2);
+  for(const text of ['Änderungsplan','Removed Person','9300953','0042','SPECIAL','NO_ROOM','Diese Meldung ersetzt den bisherigen vollständigen Nationenbestand für das ausgewählte Event.','Buchungsfolgen','Nach Entfernung leer','Historische Genehmigungs-Evidence'])assert.ok(html.includes(text),text);
+  assert.equal((html.match(/type="checkbox"/g)||[]).length,1);
   assert.ok(!html.includes('checked=""'));
+  assert.ok(!html.includes('Vollständige Nationenmeldung bestätigen'));
 });
 
 test('stale plans visibly require new review and disable confirmation controls',()=>{
   const html=renderToStaticMarkup(createElement(Component,{plan,stale:true,editable:true,scopeConfirmed:false,destructiveConfirmed:false,onScope:()=>{},onDestructive:()=>{},onRecheck:()=>{},busy:false}));
   assert.ok(html.includes('Prüfstand veraltet'));
   assert.ok(html.includes('Erneut prüfen / Reimport vorbereiten'));
-  assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,2);
+  assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,1);
 });

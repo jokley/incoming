@@ -427,3 +427,21 @@ def test_historical_decision_evidence_changes_invalidate_plan(events,kind):
         version.preview_json=json.dumps(facts)
     db.session.commit();response=review(current,a)
     assert response.status_code==409 and response.json['error']=='STALE_PREVIEW',response.json
+
+
+def test_regular_snapshot_needs_plan_consent_not_a_scope_checkbox(events):
+    a,_=events;c=app.test_client()
+    first=upload(a);sid=first['session']['id']
+    plan=c.get(f'/api/import/sessions/{sid}').json['preview']['changePlan']
+    assert c.post(f'/api/import/sessions/{sid}/approve',json={'planDigest':plan['digest']}).status_code==200
+    assert c.post(f'/api/import/sessions/{sid}/import',json={'versionId':db.session.get(ImportSession,int(sid)).current_version_id}).status_code==200
+    assert Athlete.query.filter_by(event_id=a.id,nation_code='JPN').count()==2
+    second=upload(a,codes=('9300953',));sid=second['session']['id']
+    plan=c.get(f'/api/import/sessions/{sid}').json['preview']['changePlan']
+    assert len(plan['people']['remove'])==1
+    assert Athlete.query.filter_by(event_id=a.id,nation_code='JPN').count()==2
+    assert c.post(f'/api/import/sessions/{sid}/approve',json={'planDigest':plan['digest']}).status_code==409
+    assert Athlete.query.filter_by(event_id=a.id,nation_code='JPN').count()==2
+    assert c.post(f'/api/import/sessions/{sid}/approve',json={'planDigest':plan['digest'],'confirmDestructiveChanges':True}).status_code==200
+    assert c.post(f'/api/import/sessions/{sid}/import',json={'versionId':db.session.get(ImportSession,int(sid)).current_version_id}).status_code==200
+    assert Athlete.query.filter_by(event_id=a.id,nation_code='JPN').count()==1

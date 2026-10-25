@@ -51,6 +51,10 @@
     "GET",
     "POST"
   ],
+  "/api/admin/events/<int:event_id>/world-champion-list": [
+    "GET",
+    "PUT"
+  ],
   "/api/admin/events/<int:event_id>/world-champions": [
     "GET",
     "POST"
@@ -77,6 +81,9 @@
   ],
   "/api/admin/users/grants": [
     "PUT"
+  ],
+  "/api/admin/world-champion-lists": [
+    "GET"
   ],
   "/api/admin/world-champion-titles": [
     "GET"

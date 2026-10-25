@@ -206,3 +206,24 @@ class BackupServiceTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_manual_request_reserves_lock_before_starting_the_worker():
+    import pytest
+    statuses=[]
+    handler=object.__new__(backup_service.Handler)
+    handler.path='/backup'
+    handler._reply=lambda status,payload:statuses.append(status)
+    assert not backup_service.BACKUP_LOCK.locked()
+    assert not backup_service.RESTORE_LOCK.locked()
+    try:
+        with patch('backup_service.threading.Thread') as worker:
+            handler.do_POST()
+            handler.do_POST()
+            assert statuses==[202,409]
+            assert worker.call_count==1
+            # Scheduler/CLI also cannot enter pg_dump while a request is reserved.
+            with pytest.raises(RuntimeError,match='already running'):
+                backup_service.create_backup('automatic')
+    finally:
+        if backup_service.BACKUP_LOCK.locked():backup_service.BACKUP_LOCK.release()

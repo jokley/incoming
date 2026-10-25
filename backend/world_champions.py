@@ -41,15 +41,20 @@ def recognize(person, existing, overrides, event_id, carried_keys=(), override_r
     elif source in {'MANUAL_SET', 'MANUAL_REMOVE'} or (reason == 'WORLD_CHAMPION' and not source):
         source = source or 'MANUAL_SET'
     else:
-        if (person.get('function') or '').strip().lower() == 'athlete' and person.get('fisCode') and event_id:
+        from models import Event
+        championship = db.session.get(Event, int(event_id)) if event_id else None
+        if championship and championship.is_world_championship and (person.get('function') or '').strip().lower() == 'athlete' and person.get('fisCode'):
             from models import WorldChampionRecognition
             from sqlalchemy import or_,and_,exists
             links=WorldChampionRecognition
+            selected_ids = json.loads(championship.world_champion_list_json)['titleIds'] if championship.world_champion_list_json else None
             references = WorldChampion.query.filter(
-                WorldChampion.fis_code==canonical_fis_code(person['fisCode']),WorldChampion.active.is_(True),WorldChampion.entitlement_enabled.is_(True),
+                *([WorldChampion.id.in_(selected_ids)] if selected_ids is not None else []),
+                WorldChampion.fis_code==canonical_fis_code(person['fisCode']),WorldChampion.active.is_(True),WorldChampion.entitlement_enabled.is_(True),WorldChampion.title_type=='INDIVIDUAL',
                 or_(exists().where(links.title_id==WorldChampion.id,links.event_id==int(event_id),links.active.is_(True)),
                     and_(WorldChampion.event_id==int(event_id),~exists().where(links.title_id==WorldChampion.id,links.event_id==WorldChampion.event_id)))).order_by(WorldChampion.id).all()
-        reason = 'WORLD_CHAMPION' if references else None
+        historical = existing and reason == 'WORLD_CHAMPION' and not (championship and championship.is_world_championship)
+        reason = 'WORLD_CHAMPION' if references or historical else None
         source = 'AUTO_REFERENCE' if references or source == 'AUTO_REFERENCE' else None
     person.update(singleRoomQuotaExemptReason=reason, singleRoomExemptionSource=source,
                   worldChampionReferences=[row.to_dict() for row in references])

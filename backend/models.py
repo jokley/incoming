@@ -458,6 +458,7 @@ class Event(db.Model):
     quota_rules_revision = db.Column(db.Integer, nullable=False, default=0, server_default='0')
     quota_rules_fixed_at = db.Column(db.DateTime)
     quota_rules_fixed_by = db.Column(db.String(100))
+    world_champion_list_json = db.Column(db.Text)
     competition_mappings = db.relationship('EventCompetition', back_populates='event', cascade='all, delete-orphan')
 
     def to_dict(self, include_mappings=False):

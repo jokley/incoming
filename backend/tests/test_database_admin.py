@@ -16,7 +16,7 @@ class DatabaseAdminTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.app = Flask(__name__)
         self.app.config.update(BACKUP_DIR=self.temporary.name,
-                               BACKUP_SERVICE_URL='http://backup:8080')
+                               BACKUP_SERVICE_URL='http://backup:8080', DATABASE_MAINTENANCE_MODE=True)
         self.app.register_blueprint(database_admin)
         self.client = self.app.test_client()
 
@@ -100,7 +100,7 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(request.full_url, 'http://backup:8080/import')
         self.assertEqual(request.headers['Content-length'], '5')
         self.assertEqual(uploaded, [b'PGDMP'])
-        response = self.client.post('/api/admin/database/restore', json={'token': 'abc'})
+        response = self.client.post('/api/admin/database/restore', json={'token': 'abc','confirmation':'RESTORE DATABASE'})
         self.assertEqual(response.status_code, 200)
         restore_request = urlopen.call_args_list[1].args[0]
         self.assertEqual(restore_request.full_url, 'http://backup:8080/restore')
@@ -113,10 +113,10 @@ class DatabaseAdminTest(unittest.TestCase):
         restored.read.return_value = json.dumps({'status': 'success'}).encode()
         urlopen.return_value.__enter__.return_value = restored
 
-        self.client.post('/api/admin/database/restore', json={'filename': 'server.dump.gz'})
+        self.client.post('/api/admin/database/restore', json={'filename': 'server.dump.gz','confirmation':'RESTORE DATABASE'})
         server_payload = json.loads(urlopen.call_args_list[0].args[0].data)
         self.client.post('/api/admin/database/restore',
-                         json={'filename': 'import.dump', 'token': 'a' * 32})
+                         json={'filename': 'import.dump', 'token': 'a' * 32,'confirmation':'RESTORE DATABASE'})
         imported_payload = json.loads(urlopen.call_args_list[1].args[0].data)
 
         self.assertEqual(set(server_payload), {'filename', 'category', 'token'})

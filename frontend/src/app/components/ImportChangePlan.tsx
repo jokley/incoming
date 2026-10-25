@@ -1,9 +1,9 @@
 import type { ImportChangePlan as Plan } from '../types';
 import { InfoPanel, OpsButton } from '../design-system';
 
-export function ImportChangePlan({ plan, stale, editable, scopeConfirmed, destructiveConfirmed, onScope, onDestructive, onRecheck, busy }: {
-  plan?: Plan | null; stale?: boolean; editable: boolean; scopeConfirmed: boolean; destructiveConfirmed: boolean;
-  onScope: (value: boolean) => void; onDestructive: (value: boolean) => void; onRecheck: () => void; busy: boolean;
+export function ImportChangePlan({ plan, stale, editable, destructiveConfirmed, onDestructive, onRecheck, busy }: {
+  plan?: Plan | null; stale?: boolean; editable: boolean; destructiveConfirmed: boolean;
+  onDestructive: (value: boolean) => void; onRecheck: () => void; busy: boolean;
 }) {
   return <section aria-labelledby="import-change-plan" className="space-y-3 rounded-xl border border-[var(--ops-border)] p-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="import-change-plan" className="font-bold">Änderungsplan</h3><OpsButton onClick={onRecheck} disabled={busy}>Erneut prüfen / Reimport vorbereiten</OpsButton></div>
@@ -32,8 +32,7 @@ export function ImportChangePlan({ plan, stale, editable, scopeConfirmed, destru
       {plan.operations.clearPartnerFields?.length ? <p className="text-xs">Textbezug auf entfernte Zimmerpartner bei Personen {plan.operations.clearPartnerFields.join(', ')} entfernen.</p>:null}
       {plan.operations.partnerIds.length > 0 && <p className="text-xs">Betroffene verbleibende Zimmerpartner: {plan.operations.partners?.map(p=>`${p.name} (${p.id})`).join(', ') || plan.operations.partnerIds.join(', ')}. Nur ausdrücklich aufgeführte Beziehungsänderungen werden angewendet.</p>}
       {editable && <div className="space-y-2 text-sm">
-        <label className="flex items-start gap-2"><input type="checkbox" checked={scopeConfirmed} disabled={busy || stale} onChange={e => onScope(e.target.checked)} aria-describedby="full-nation-explanation" /><span>Vollständige Nationenmeldung bestätigen</span></label>
-        <p id="full-nation-explanation" className="text-sm text-muted-foreground">Die importierten Dateien enthalten sämtliche Personen dieser Nation für die Veranstaltung, einschließlich aller Disziplinen. Fehlende Personen können bei einem späteren vollständigen Reimport nach zusätzlicher Bestätigung entfernt werden.</p>
+        <p className="text-sm text-muted-foreground">Diese Meldung ersetzt den bisherigen vollständigen Nationenbestand für das ausgewählte Event. Fehlende Personen werden nach Prüfung bei der Importbestätigung entfernt.</p>
         {plan.requiresDestructiveConfirmation && <label className="flex items-start gap-2"><input type="checkbox" checked={destructiveConfirmed} disabled={busy || stale} onChange={e => onDestructive(e.target.checked)} /><span>Ich bestätige die aufgeführten Personen-/Competition-Entfernungen und Buchungsfolgen, einschließlich {plan.operations.deleteEmptyBookingIds.length} leer werdender Buchungen.</span></label>}
       </div>}
     </>}
