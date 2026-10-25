@@ -1700,6 +1700,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'athleteQuotaChecks': preview['athleteQuotaChecks'],
         'quotaRulesSnapshot': preview['quotaRulesSnapshot'],
         'quotaRulesDigest': preview['quotaRulesDigest'],
+        'quotaRulesRevision': preview['quotaRulesRevision'],
         'quotaChecks': preview['quotaChecks'],
         'singleRoomQuotaExemptOverrides': preview['singleRoomQuotaExemptOverrides'],
         'dispositionAnalysis': disposition_analysis,

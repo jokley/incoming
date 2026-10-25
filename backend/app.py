@@ -2264,11 +2264,17 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
             plan=(preview.get('_workflow') or {}).get('plan')
             if plan:present_plan(preview,plan)
             else:preview['changePlan']=None
+            saved=json.loads(session.current_version.preview_json or '{}')
             preview['planStale']=False
             if plan and session.status!='IMPORTED':
-                try:verify_plan(preview,plan)
+                # Older upload responses omitted revision 1. Compare using their
+                # original representation, without changing saved review evidence.
+                compared = preview
+                if 'quotaRulesRevision' not in saved and preview.get('quotaRulesRevision') == 1:
+                    compared = dict(preview)
+                    compared.pop('quotaRulesRevision', None)
+                try:verify_plan(compared,plan)
                 except ImportValidationError:preview['planStale']=True
-            saved=json.loads(session.current_version.preview_json or '{}')
             preview['quotaRulesChanged']=session.status!='IMPORTED' and saved.get('quotaRulesRevision',1)!=db.session.get(Event,session.event_id).quota_rules_revision
             payload['preview'] = preview
     return payload
