@@ -156,7 +156,7 @@ class EventRoutesTest(unittest.TestCase):
         routes = json.loads((Path(__file__).parent / 'fixtures/api_routes.json').read_text())
         event_paths = {p for p in routes if p.startswith(('/api/events', '/api/admin/events',
                                                         '/api/championship-events'))}
-        self.assertEqual(len(event_paths), 12)
+        self.assertEqual(len(event_paths), 15)
         registered = {r.rule for r in app.url_map.iter_rules()}
         for path in event_paths:
             self.assertIn(path, registered)

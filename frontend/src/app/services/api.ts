@@ -64,6 +64,14 @@ let mockAthletes = [...initialAthletes];
 let mockRoomBookings: RoomBooking[] = [];
 
 class ApiService {
+  async observeCurrentUser() { return this.request('/auth/me',{method:'POST'}); }
+  async previewQuotaRevision(id:string,data:unknown):Promise<import('../types').QuotaRevisionProposal> {return this.request(`/admin/events/${id}/quota-rules/revision-preview`,{method:'POST',body:JSON.stringify(data)});}
+  async activateQuotaRevision(id:string,data:unknown):Promise<import('../types').EventQuotaRules> {return this.request(`/admin/events/${id}/quota-rules/revisions`,{method:'POST',body:JSON.stringify(data)});}
+  async getQuotaRevisions(id:string):Promise<import('../types').QuotaRevisionSnapshot[]> {return this.request(`/admin/events/${id}/quota-rules/revisions`);}
+  async getChampionTitles():Promise<import('../types').WorldChampion[]> {return this.request('/admin/world-champion-titles');}
+  async getChampionRecognitions(id:string):Promise<{recognitions:{titleId:string;active:boolean}[]}> {return this.request(`/admin/events/${id}/world-champions`);}
+  async setChampionRecognition(id:string,titleId:string,active:boolean) {return this.request(`/admin/events/${id}/world-champions`,{method:'POST',body:JSON.stringify({titleId,active})});}
+
   async getUserAccess(): Promise<import('../types').UserAccessOverview> { return this.request('/admin/users'); }
   async createUserReference(username: string, displayName: string): Promise<import('../types').UserAccessOverview> {
     return this.request('/admin/users', {method:'POST', body:JSON.stringify({username,displayName})});
@@ -146,7 +154,7 @@ class ApiService {
         return undefined as T;
       }
       return body as T;
-    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : false);
+    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
   }
 
   async getCurrentUser(): Promise<AuthenticatedUser> {

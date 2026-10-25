@@ -38,9 +38,10 @@ class AdminScenarioRoutesTest(unittest.TestCase):
         response = self.client.get('/api/admin/scenarios', headers=self.admin)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.mimetype, 'application/json')
-        self.assertEqual(response.get_json(), [item.public_dict() for item in SCENARIOS])
+        self.assertEqual(response.get_json()[:-1], [item.public_dict() for item in SCENARIOS])
+        self.assertEqual(response.get_json()[-1]['number'],'feature-freeze')
         self.assertEqual([row['number'] for row in response.get_json()],
-                         [f'{number:03d}' for number in range(1, 10)])
+                         [f'{number:03d}' for number in range(1, 10)]+['feature-freeze'])
         self.assertEqual(response.get_json()[0], {'number': '001', 'title': 'Erstimport',
             'description': 'Eine neue Nation wird erstmals importiert.', 'versions': 1})
 

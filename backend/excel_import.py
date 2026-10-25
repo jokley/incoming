@@ -2107,7 +2107,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             athlete = _find_existing_athlete(person, athlete_maps)
             operational_decision=None
             if athlete and athlete.single_room_decision_id and applicable_approval_groups(athlete.single_room_decision,
-                    preview_approval_person(person,competitions_by_id=read_context.competitions_by_id),person.get('matchKey'),current_roster):
+                    preview_approval_person(person,competitions_by_id=read_context.competitions_by_id),person.get('matchKey'),current_roster,preserve_historical_rule=True):
                 operational_decision=(athlete.single_room_status,athlete.single_room_entitlement,athlete.single_room_decision_id)
             existing_before = _snapshot_roomlist_fields(athlete) if athlete else None
             identity_before = (athlete.fis_code, athlete.competitor_id, athlete.lastname,
@@ -2192,7 +2192,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 athlete.single_room_status = 'NONE'
                 athlete.single_room_decision_id = None
             if operational_decision and person.get('matchKey') not in approved_extra_single_room_decisions and not athlete.single_room_quota_exempt_reason:
-                # Retained, still-applicable operational decisions are not source fields.
+                # Retain the same historical person/price decision, not coverage of a new quota violation.
                 athlete.single_room_status,athlete.single_room_entitlement,athlete.single_room_decision_id=operational_decision
             if existing_before is None:
                 # A newly created person is new assignment work, not a change to an

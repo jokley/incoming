@@ -57,6 +57,8 @@ def test_global_database_operations_stay_separately_guarded(admin,monkeypatch):
 def test_directory_hints_and_manual_references_never_grant_rights(admin):
     a,*_=admin;c=app.test_client()
     assert c.get('/api/auth/me',headers=headers('new-viewer',role='incoming-viewer')).status_code==200
+    assert db.session.get(UserReference,'new-viewer') is None
+    assert c.post('/api/auth/me',headers=headers('new-viewer',role='incoming-viewer')).status_code==200
     assert db.session.get(UserReference,'new-viewer').last_seen_at
     assert grant_state('new-viewer')=={}
     response=c.post('/api/admin/users',headers=headers('owner',a.id),json={'username':'manual','displayName':'Name'})

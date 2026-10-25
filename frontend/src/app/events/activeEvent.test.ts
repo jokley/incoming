@@ -145,3 +145,12 @@ test('late choice refresh after A-B-A cannot overwrite current event permissions
   assert.equal(store.snapshot().selectedEvent?.canWrite,true);
   assert.equal(store.snapshot().events.length,2);
 });
+
+test('administrative target uses an explicit request owner without switching operational context',async t=>{
+ const scope=new EventRequestScope();scope.activate('1');
+ t.mock.method(globalThis,'fetch',async(_url,init)=>Response.json({owner:new Headers(init?.headers).get(EVENT_HEADER)}));
+ assert.deepEqual(await scope.run('/api/admin/events/2/quota-rules',undefined,json,false,'2'),{owner:'2'});
+ assert.equal(scope.eventId,'1');assert.deepEqual(await scope.run('/api/athletes',undefined,json),{owner:'1'});
+ await assert.rejects(scope.run('/api/admin/events/20',undefined,json,false,'2'),/Administrationskontext/);
+ await assert.rejects(scope.run('/api/athletes',undefined,json,false,'2'),/Administrationskontext/);
+});

@@ -175,6 +175,8 @@ def _expectation(version: int, step: str) -> dict:
 
 
 def generate_scenario(number: str, output_dir: Path) -> dict:
+    if number=='feature-freeze':
+        return {'root':generate_freeze_suite(output_dir),'number':number,'title':'Feature-Freeze · 20 Abnahmefälle'}
     scenario = SCENARIO_BY_NUMBER.get(number)
     if not scenario:
         raise KeyError(number)
@@ -206,4 +208,43 @@ def generate_complete_suite(output_dir: Path) -> Path:
         expectations['scenarios'].append({**scenario.public_dict(),
                                           **_expectation(int(scenario.number), scenario.steps[-1])})
     (root / 'expected.json').write_text(json.dumps(expectations, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    generate_freeze_suite(root)
+    return root
+
+
+FREEZE_CASES = (
+ 'Championship anlegen','Zweites Event, gleiche Nation','A → B → A, getrennte Personen',
+ 'Superadmin bearbeitet beide Events','Benutzer nur mit Grant','READ verweigert Schreiben',
+ 'Import unter Revision 1','Revision mit erhöhten Limits','Revision mit niedrigeren Limits',
+ 'Genehmigte Überschreitung historisch unverändert','Aktuelle Anzeige mit neuer Überschreitung',
+ 'Offener Review ist veraltet','Recheck mit neuer Revision','Mehrere Competitions zählen einmal',
+ 'Nur eine Frau','Nur ein Mann','Unterschiedliche Aufenthaltsintervalle',
+ 'Eventbezogene Weltmeister-EZ-Ausnahme','Gleicher Titel, unterschiedliche Anerkennung',
+ 'Keine Änderungen an Zimmern, Preisen und Genehmigungen')
+
+
+def generate_freeze_suite(output_dir):
+    """Portable explicit test recipe and real workbooks; never connect to a database."""
+    from quota_rules import standard_rules
+    root=output_dir/'FeatureFreeze';root.mkdir(parents=True,exist_ok=True)
+    first=standard_rules();higher=deepcopy(first);lower=deepcopy(first)
+    higher['athletes']['Snowboard'].update(totalLimit=40,genderLimit=22)
+    lower['athletes']['Snowboard'].update(totalLimit=2,genderLimit=1)
+    manifest={'isolatedDatabaseRequired':True,'automaticProductionExecution':False,
+        'eventNames':['Synthetic Championship A','Synthetic Championship B'],
+        'rules':{'revision1':first,'revision2Higher':higher,'revision2Lower':lower},
+        'cases':[{'number':i+1,'title':title} for i,title in enumerate(FREEZE_CASES)],
+        'genderSemantics':'Alleinige Frau/alleiniger Mann erzeugt keine automatische Gebührenbefreiung. Physischer Raum, countsAsSingle, Genehmigung und Tarif getrennt prüfen.',
+        'automatedAcceptance':'python -m pytest tests/test_freeze_acceptance.py tests/test_user_access_admin.py tests/test_safe_reimport.py tests/test_world_champion_workflow.py -q'}
+    for minority in ('M','W'):
+        people=_base_people()[:4]
+        for i,p in enumerate(people):
+            p['Gender']=minority if i==0 else ('M' if minority=='W' else 'W')
+            p['WSC_SS_M_6188']='YES' if p['Gender']=='M' else 'NO'
+            p['WSC_SS_W_6190']='YES' if p['Gender']=='W' else 'NO'
+            p['Room_type']='Double shared';p['Arrival_date']='2027-03-12' if i%2 else '2027-03-13'
+            p['Departure_date']='2027-03-21';p['Shared with Name']=''
+        write_excel(people,root/f'only_one_{minority}_entries.xlsx',document_tag=f'freeze:{minority}:entries')
+        write_excel(_room_rows(people),root/f'only_one_{minority}_room_list.xlsx',document_tag=f'freeze:{minority}:rooms')
+    (root/'manifest.json').write_text(json.dumps(manifest,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     return root

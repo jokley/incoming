@@ -471,6 +471,32 @@ class Event(db.Model):
         return result
 
 
+class EventQuotaRevision(db.Model):
+    __tablename__ = 'event_quota_revision'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id'), primary_key=True)
+    revision = db.Column(db.Integer, primary_key=True)
+    config_json = db.Column(db.Text, nullable=False)
+    is_world_championship = db.Column(db.Boolean, nullable=False)
+    digest = db.Column(db.String(64), nullable=False)
+    activated_at = db.Column(db.DateTime, nullable=False)
+    activated_by = db.Column(db.String(100))
+    reason = db.Column(db.Text, nullable=False)
+
+    def to_dict(self):
+        return dict(eventId=str(self.event_id),revision=self.revision,config=json.loads(self.config_json),
+            isWorldChampionship=self.is_world_championship,digest=self.digest,
+            activatedAt=self.activated_at.isoformat()+'Z',activatedBy=self.activated_by,reason=self.reason)
+
+
+class WorldChampionRecognition(db.Model):
+    __tablename__ = 'world_champion_recognition'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id'), primary_key=True)
+    title_id = db.Column(db.Integer, db.ForeignKey('world_champion.id'), primary_key=True)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_by = db.Column(db.String(100))
+
+
 class UserReference(db.Model):
     """Directory hints only; no login credentials or functional role assignments."""
     __tablename__ = 'user_reference'
@@ -898,4 +924,13 @@ def protect_fixed_event_rules(session, flush_context, instances):
         was_fixed=bool(fixed.deleted and fixed.deleted[0]) or bool(obj.quota_rules_fixed_at and not fixed.has_changes())
         if was_fixed and any(state.attrs[field].history.has_changes() for field in
             ('quota_rules_json','quota_rules_revision','quota_rules_fixed_at','quota_rules_fixed_by','is_world_championship')):
-            raise ValueError('Fixed event quota rules cannot be changed')
+            from quota_rules import rule_projection
+            token=session.info.get('quota_revision_activation')
+            snapshot=next((r for r in session.new if isinstance(r,EventQuotaRevision) and r.event_id==obj.id and r.revision==obj.quota_rules_revision),None)
+            if (token != (obj.id,obj.quota_rules_revision) or snapshot is None or
+                snapshot.digest != rule_projection(obj)['digest'] or
+                not obj.quota_rules_fixed_at or obj.quota_rules_revision != session.info.get('quota_revision_previous',0)+1):
+                raise ValueError('Fixed event quota rules cannot be changed')
+    for obj in session.dirty.union(session.deleted):
+        if isinstance(obj,EventQuotaRevision):
+            raise ValueError('Historical quota revisions are append-only')

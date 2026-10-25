@@ -527,6 +527,7 @@ export interface ImportChangePlan {
 export interface FisImportPreview {
   changePlan?: ImportChangePlan | null;
   planStale?: boolean;
+  quotaRulesChanged?: boolean;
   roomListHasNoData?: boolean;
   previewToken: string;
   eventId?: string | null;
@@ -654,4 +655,14 @@ export interface ExternalStayPlan {
   previewToken:string;hotelId:string;hotelName:string;athleteIds:string[];
   checkInDate:string;checkOutDate:string;openInterval:AccommodationInterval;
   people:Array<{personId:string;name:string;accommodationCoverage:AccommodationCoverage}>;
+}
+
+export interface QuotaRevisionProposal {
+  eventId: number; previousRevision: number; reason: string; confirmationDigest: string;
+  before: {config: QuotaRuleConfig; isWorldChampionship: boolean};
+  after: {config: QuotaRuleConfig; isWorldChampionship: boolean};
+}
+export interface QuotaRevisionSnapshot {
+  eventId:string; revision:number; config:QuotaRuleConfig; isWorldChampionship:boolean;
+  digest:string; activatedAt:string; activatedBy:string|null; reason:string;
 }

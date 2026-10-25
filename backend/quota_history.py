@@ -156,12 +156,16 @@ def historical_approval_evidence(approval):
     return result
 
 
-def applicable_approval_groups(approval, person, person_key=None, roster=None):
-    """Selected historical person + immutable evidence + exact current membership."""
+def applicable_approval_groups(approval, person, person_key=None, roster=None, *, preserve_historical_rule=False):
+    """Selected person + immutable evidence + exact membership.
+
+    preserve_historical_rule is only for restoring an existing stored price/
+    operational tuple during reimport, never for covering a current quota check.
+    """
     import json
     if not approval or approval.decision != 'APPROVED' or json.loads(approval.quota_details_json or '{}').get('decisionKind')=='ATHLETE_QUOTA':
         return set()
-    if not approval_event_matches(approval, getattr(person, 'event_id', None)):
+    if not approval_event_matches(approval, getattr(person, 'event_id', None), require_current_rules=not preserve_historical_rule):
         return set()
     selected = {str(value) for value in json.loads(approval.approved_person_keys_json or '[]')}
     if person_key is not None and str(person_key) not in person_keys(person):
@@ -215,7 +219,7 @@ def preview_approval_person(person, *, competitions_by_id=None):
         firstname=person.get('firstname'), competitions=competitions)
 
 
-def approval_event_matches(approval, event_id):
+def approval_event_matches(approval, event_id, *, require_current_rules=True):
     """Resolve Event identity without modifying immutable decision evidence.
 
     Older EZ decisions omitted eventId while their owning upload version retained
@@ -231,6 +235,10 @@ def approval_event_matches(approval, event_id):
     if not session or str(session.event_id) != str(event_id):
         return False
     details = json.loads(approval.quota_details_json or '{}')
+    from models import Event
+    policy=db.session.get(Event,int(event_id))
+    if require_current_rules and policy and policy.quota_rules_revision>1 and details.get('rulesRevision')!=policy.quota_rules_revision:
+        return False
     saved_event = details.get('eventId')
     version_id = getattr(approval, 'version_id', None)
     version = db.session.get(ImportSessionVersion, version_id) if version_id else None

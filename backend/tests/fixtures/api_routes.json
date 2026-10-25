@@ -24,13 +24,6 @@
     "GET",
     "POST"
   ],
-  "/api/admin/events/<int:event_id>/quota-rules": [
-    "GET",
-    "PUT"
-  ],
-  "/api/admin/events/<int:event_id>/quota-rules/fix": [
-    "POST"
-  ],
   "/api/admin/events/<int:event_id>": [
     "GET",
     "PUT"
@@ -42,6 +35,24 @@
     "PUT"
   ],
   "/api/admin/events/<int:event_id>/copy-mappings": [
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules": [
+    "GET",
+    "PUT"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/fix": [
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/revision-preview": [
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/revisions": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/world-champions": [
+    "GET",
     "POST"
   ],
   "/api/admin/scenarios": [
@@ -59,6 +70,16 @@
   ],
   "/api/admin/test-data/reset": [
     "POST"
+  ],
+  "/api/admin/users": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/users/grants": [
+    "PUT"
+  ],
+  "/api/admin/world-champion-titles": [
+    "GET"
   ],
   "/api/admin/world-champions": [
     "GET",
@@ -160,7 +181,8 @@
     "GET"
   ],
   "/api/auth/me": [
-    "GET"
+    "GET",
+    "POST"
   ],
   "/api/championship-events": [
     "GET"
@@ -451,13 +473,6 @@
   ],
   "/room-types/<int:room_type_id>/": [
     "DELETE",
-    "PUT"
-  ],
-  "/api/admin/users": [
-    "GET",
-    "POST"
-  ],
-  "/api/admin/users/grants": [
     "PUT"
   ]
 }

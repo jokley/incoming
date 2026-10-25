@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import sqlalchemy as sa
 from models import (db, Athlete, AthleteCompetition, RoomBooking, RoomBookingOccupant,
     RoomAssignment, FisRoomAssignment, ImportSession, ImportSessionVersion,
-    ImportApproval, ImportSessionEvent, Event, EventCompetition, Competition, WorldChampion, AuditEvent)
+    ImportApproval, ImportSessionEvent, Event, EventCompetition, Competition, WorldChampion, WorldChampionRecognition, AuditEvent)
 from .identity import _find_existing_athlete
 from .event_context import ImportValidationError
 
@@ -69,12 +69,12 @@ def state(event_id, nation):
     return dict(people=people, partners=partners, memberships=rows(AthleteCompetition, AthleteCompetition.athlete_id.in_(ids)) if ids else [],
         bookings=bookings, occupants=occupants, legacy=legacy, fis=fis, sessions=sessions, versions=versions,
         approvals=approvals, approvalHistory=approval_history, mappings=mappings, competitions=competitions,
-        event=rows(Event, Event.id == event_id), champions=rows(WorldChampion, WorldChampion.event_id == event_id), audits=audits)
+        event=rows(Event, Event.id == event_id), champions=rows(WorldChampion, sa.or_(WorldChampion.event_id == event_id,WorldChampion.id.in_(sa.select(WorldChampionRecognition.title_id).where(WorldChampionRecognition.event_id==event_id)))), recognitions=rows(WorldChampionRecognition, WorldChampionRecognition.event_id==event_id), audits=audits)
 
 
 def input_fingerprint(preview):
     return digest({k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
-        'quotaRulesDigest','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
+        'quotaRulesDigest','quotaRulesRevision','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
         'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')})
 
 
