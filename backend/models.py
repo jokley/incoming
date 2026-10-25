@@ -471,6 +471,15 @@ class Event(db.Model):
         return result
 
 
+class UserReference(db.Model):
+    """Directory hints only; no login credentials or functional role assignments."""
+    __tablename__ = 'user_reference'
+    username = db.Column(db.String(100), primary_key=True)
+    display_name = db.Column(db.String(200))
+    groups_json = db.Column(db.Text)  # Last authenticated observation, never authorization.
+    last_seen_at = db.Column(db.DateTime)
+
+
 class EventAccess(db.Model):
     """Explicit grants for the identity supplied by the existing authentication layer."""
     __tablename__ = 'event_access'

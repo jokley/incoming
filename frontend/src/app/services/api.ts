@@ -64,6 +64,13 @@ let mockAthletes = [...initialAthletes];
 let mockRoomBookings: RoomBooking[] = [];
 
 class ApiService {
+  async getUserAccess(): Promise<import('../types').UserAccessOverview> { return this.request('/admin/users'); }
+  async createUserReference(username: string, displayName: string): Promise<import('../types').UserAccessOverview> {
+    return this.request('/admin/users', {method:'POST', body:JSON.stringify({username,displayName})});
+  }
+  async saveUserGrants(username: string, expectedRevision: string, grants: Record<string, import('../types').EventAccessLevel>): Promise<{users: import('../types').KnownUser[]}> {
+    return this.request('/admin/users/grants', {method:'PUT', body:JSON.stringify({username,expectedRevision,grants})});
+  }
   async getAthleteQuotas():Promise<NonNullable<import('../types').FisImportPreview['athleteQuotaChecks']>> { return this.request('/fis/athlete-quotas'); }
   async getQuotaRules():Promise<import('../types').EventQuotaRules> { return this.request('/quota-rules'); }
   async getEventQuotaRules(id:string):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`); }

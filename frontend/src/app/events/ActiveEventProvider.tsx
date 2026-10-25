@@ -41,7 +41,7 @@ export function useActiveEvent() {
   const store = useContext(ActiveEventContext);
   if (!store) throw new Error('useActiveEvent requires ActiveEventProvider');
   const state = useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
-  return { ...state, eventId: state.selectedEvent!.id, selectEvent: store.select };
+  return { ...state, eventId: state.selectedEvent!.id, selectEvent: store.select, refreshEvents: () => store.refreshChoices() };
 }
 export function useActiveEventBlocker(blocked: boolean, reason: string) {
   const store = useContext(ActiveEventContext);

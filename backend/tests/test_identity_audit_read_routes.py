@@ -78,12 +78,12 @@ class IdentityAuditReadRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {'username': 'reader', 'displayName': 'Reader Name',
             'email': 'reader@example.test', 'groups': ['incoming-editor', 'incoming-viewer'],
-            'permissions': ['assignments.write', 'audit.read', 'data.read', 'data.write', 'imports.write']})
+            'permissions': ['assignments.write', 'audit.read', 'data.read', 'data.write', 'imports.write'], 'isSuperadmin': False})
         response = self.client.get('/api/auth/me', headers={**self.headers,
             'X-Authenticated-Groups': 'unknown'})
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {'username': 'reader', 'displayName': 'reader',
-            'email': '', 'groups': ['unknown'], 'permissions': []})
+            'email': '', 'groups': ['unknown'], 'permissions': [], 'isSuperadmin': False})
         with app.app_context():
             self.assertEqual(AuditEvent.query.count(), 0)
 

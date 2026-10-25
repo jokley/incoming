@@ -123,3 +123,25 @@ test('authentication refresh survives workspace disposal while event requests do
   scope.activate(null); reply.resolve(Response.json({ username:'current user' }));
   assert.deepEqual(await auth, { username:'current user' });
 });
+
+test('newly authorized choices appear without changing the current workspace or dirty blockers', async () => {
+  const scope = new EventRequestScope(); let choices = catalog(false);
+  const store = new ActiveEventStore(scope, async () => choices);
+  await store.load(); const revision = store.snapshot().revision;
+  const unblock = store.block('Ungespeichert');
+  choices = {events:[event('1'),event('2'),event('3')],selectedEventId:'1',switchingAllowed:true};
+  await store.refreshChoices();
+  assert.equal(store.snapshot().events.length,3); assert.equal(store.snapshot().revision,revision);
+  assert.equal(scope.eventId,'1'); assert.equal(store.select('3'),false);
+  unblock(); assert.equal(store.select('3'),true);
+});
+
+test('late choice refresh after A-B-A cannot overwrite current event permissions', async () => {
+  const scope = new EventRequestScope(); let reply:Promise<EventCapabilities> = Promise.resolve(catalog(true));
+  const store = new ActiveEventStore(scope, () => reply); await store.load();
+  const delayed = deferred<EventCapabilities>(); reply=delayed.promise;
+  const refresh = store.refreshChoices(); store.select('2'); store.select('1');
+  delayed.resolve({...catalog(true), events:[{...event('1'),canWrite:false}]}); await refresh;
+  assert.equal(store.snapshot().selectedEvent?.canWrite,true);
+  assert.equal(store.snapshot().events.length,2);
+});

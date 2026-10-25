@@ -452,5 +452,12 @@
   "/room-types/<int:room_type_id>/": [
     "DELETE",
     "PUT"
+  ],
+  "/api/admin/users": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/users/grants": [
+    "PUT"
   ]
 }

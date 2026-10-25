@@ -13,6 +13,15 @@ ROLE_PERMISSIONS = {
     'admin': {'*'},
 }
 
+# Deliberately excludes global database/reset rights. Functional endpoint guards
+# and all domain validations continue to apply, including quota fixation.
+SUPERADMIN_PERMISSIONS = frozenset({'data.read', 'data.write', 'assignments.write',
+    'imports.write', 'audit.read', 'events.manage', 'users.manage'})
+
+
+def superadmin_username():
+    return current_app.config.get('SUPERADMIN_USERNAME', '')
+
 
 @dataclass(frozen=True)
 class AuthenticatedUser:
@@ -21,9 +30,11 @@ class AuthenticatedUser:
     email: str
     groups: tuple[str, ...]
     permissions: frozenset[str]
+    is_superadmin: bool = False
 
     def has_permission(self, permission: str) -> bool:
-        return '*' in self.permissions or permission in self.permissions
+        return '*' in self.permissions or permission in self.permissions or (
+            self.is_superadmin and permission in SUPERADMIN_PERMISSIONS)
 
     def to_dict(self):
         return {
@@ -31,7 +42,8 @@ class AuthenticatedUser:
             'displayName': self.display_name,
             'email': self.email,
             'groups': list(self.groups),
-            'permissions': sorted(self.permissions),
+            'permissions': sorted(self.permissions | (SUPERADMIN_PERMISSIONS if self.is_superadmin else frozenset())),
+            'isSuperadmin': self.is_superadmin,
         }
 
 
@@ -55,6 +67,7 @@ def load_user_from_request():
     if expected_proxy_secret and not secrets.compare_digest(expected_proxy_secret, supplied_proxy_secret):
         return None
     username = request.headers.get('X-Authenticated-User', '').strip()
+    proxy_authenticated = bool(expected_proxy_secret and username)
     groups = _split_groups(request.headers.get('X-Authenticated-Groups', ''))
 
     # Explicit opt-in for local development only. Never set this in production.
@@ -71,6 +84,7 @@ def load_user_from_request():
         email=request.headers.get('X-Authenticated-Email', '').strip(),
         groups=groups,
         permissions=_permissions(groups),
+        is_superadmin=bool(proxy_authenticated and superadmin_username() and username == superadmin_username()),
     )
 
 

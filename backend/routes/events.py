@@ -93,6 +93,8 @@ def list_active_championship_events():
 def authorized_catalogue():
     from auth import current_user
     from models import EventAccess
+    if current_user().is_superadmin:
+        return Event.query
     return Event.query.join(EventAccess).filter(EventAccess.username == current_user().username)
 
 
@@ -117,6 +119,14 @@ def administer_event(event_id):
     if request.method == 'GET':
         return jsonify(event_record.to_dict(include_mappings=True))
     data = request.get_json() or {}
+    from auth import current_user
+    if current_user().is_superadmin and event_record.active and data.get('active') is False:
+        # The UI must not strand its owner with an empty/pinned bootstrap.
+        from flask import current_app
+        from sqlalchemy import text
+        db.session.execute(text('LOCK TABLE championship_event IN SHARE ROW EXCLUSIVE MODE'))
+        if current_app.config.get('OPERATIONAL_EVENT_ID') or not Event.query.filter(Event.active.is_(True), Event.id != event_id).first():
+            return jsonify(error='Gepinnten oder letzten aktiven Event nicht deaktivieren; zuerst den Betriebskontext prüfen.'), 409
     if any(key in data for key in ('quotaRules','quotaRulesJson','quotaRulesFixedAt','quotaRulesRevision','isWorldChampionship')):
         return jsonify(error='USE_QUOTA_RULES_WORKFLOW'),400
     for source, target in (('name', 'name'), ('year', 'year'), ('active', 'active'),

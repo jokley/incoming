@@ -14,6 +14,7 @@ export class ActiveEventStore {
   private listeners = new Set<() => void>();
   private blockers = new Map<symbol, string>();
   private loadGeneration = 0;
+  private choicesGeneration = 0;
   private transport: EventRequestScope;
   private capabilities: () => Promise<EventCapabilities>;
   private canLeave: () => string | null;
@@ -43,6 +44,15 @@ export class ActiveEventStore {
     }
   }
   block(reason: string) { const key = Symbol(); this.blockers.set(key, reason); return () => { this.blockers.delete(key); }; }
+  async refreshChoices() {
+    const choice = ++this.choicesGeneration; const revision = this.state.revision;
+    const generation = this.loadGeneration; const selected = this.state.selectedEvent?.id;
+    const result = await this.capabilities();
+    if (choice !== this.choicesGeneration || revision !== this.state.revision || generation !== this.loadGeneration || selected !== this.state.selectedEvent?.id) return;
+    if (!result.events.some(e => e.id === selected && e.active && e.canRead)) { await this.load(); return; }
+    this.update({events: result.events.filter(e => e.active && e.canRead),
+      selectedEvent: result.events.find(e => e.id === selected)!, switchingAllowed: result.switchingAllowed});
+  }
   select = (id: string): boolean => {
     if (id === this.state.selectedEvent?.id) return true;
     const target = this.state.events.find(e => e.id === id && e.canRead && e.active);

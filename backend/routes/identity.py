@@ -10,6 +10,8 @@ identity = Blueprint('identity', __name__)
 
 @identity.route('/api/auth/me', methods=['GET'])
 def get_authenticated_user():
+    from user_access import remember_authenticated_user
+    remember_authenticated_user(current_user())
     return jsonify(current_user().to_dict())
 
 
@@ -19,8 +21,12 @@ def get_active_event_context():
     from event_ownership_runtime import authorize_event, deployment_event_id
     from models import Event, EventAccess, db
     user = current_user()
-    query = db.session.query(Event, EventAccess.can_write).join(EventAccess).filter(
-        EventAccess.username == user.username, Event.active.is_(True))
+    if user.is_superadmin:
+        from sqlalchemy import literal
+        query = db.session.query(Event, literal(True)).filter(Event.active.is_(True))
+    else:
+        query = db.session.query(Event, EventAccess.can_write).join(EventAccess).filter(
+            EventAccess.username == user.username, Event.active.is_(True))
     pinned = deployment_event_id() if current_app.config.get('OPERATIONAL_EVENT_ID') else None
     if pinned is not None:
         authorize_event(pinned)

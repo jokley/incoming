@@ -47,6 +47,7 @@ from routes.admin_scenarios import admin_scenarios
 from routes.import_mock_files import import_mock_files
 from routes.booking_reads import booking_reads
 from routes.identity import identity
+from routes.user_access import user_access
 from routes.audit_events import audit_events
 from routes.world_champions import world_champions
 from world_champions import audit_status, persisted_manual_revision
@@ -73,6 +74,7 @@ app.register_blueprint(admin_scenarios)
 app.register_blueprint(import_mock_files)
 app.register_blueprint(booking_reads)
 app.register_blueprint(identity)
+app.register_blueprint(user_access)
 app.register_blueprint(audit_events)
 app.register_blueprint(world_champions)
 app.register_blueprint(accommodation_segments)
@@ -296,6 +298,10 @@ def _canonical_api_path():
 
 def _required_permission():
     path = g.api_path
+    if path.startswith('/api/admin/users'):
+        return 'users.manage'
+    if path.startswith('/api/admin/events') and current_user().is_superadmin:
+        return 'events.manage'
     if path == '/api/assignments/availability':
         return 'data.read'
     if path == '/api/auth/me':
@@ -577,6 +583,7 @@ def authenticate_api_request():
     # These immutable/global catalogues contain no event-owned operational data.
     # An explicit header is still validated even on a global catalogue request.
     global_catalogue = (g.api_path.rstrip('/') == '/api/competitions' and request.method in {'GET','HEAD'}
+        or g.api_path.startswith('/api/admin/users')
         or g.api_path.startswith('/api/import/fis/mock-files')
         or g.api_path.startswith('/api/admin/scenarios')
         or g.api_path == '/api/admin/events' and request.method == 'POST')
@@ -590,7 +597,7 @@ def authenticate_api_request():
             # A database download/restore spans every event, including inactive ones.
             from event_ownership_runtime import authorize_event
             for identity, in db.session.query(Event.id).all():
-                authorize_event(identity, write=request.method not in {'GET', 'HEAD'}, respect_pin=False, active=False)
+                authorize_event(identity, write=request.method not in {'GET', 'HEAD'}, respect_pin=False, active=False, allow_superadmin=False)
             if not app.config.get('OPERATIONAL_EVENT_ID'):
                 # Historical dumps may contain events no longer in the live catalogue.
                 # Current grants cannot prove access to their contents.

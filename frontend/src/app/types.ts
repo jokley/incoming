@@ -9,11 +9,21 @@ export interface RoomType {
 }
 
 export interface AuthenticatedUser {
+  isSuperadmin?: boolean;
   username: string;
   displayName: string;
   email: string;
   groups: string[];
   permissions: string[];
+}
+
+export type EventAccessLevel = 'NONE' | 'READ' | 'WRITE';
+export interface KnownUser {
+  username: string; displayName: string; groups: string[] | null; lastSeenAt: string | null;
+  isSuperadmin: boolean; grants: Record<string, EventAccessLevel>; revision: string;
+}
+export interface UserAccessOverview {
+  users: KnownUser[]; events: { id: string; name: string; active: boolean }[]; history: AuditEvent[];
 }
 
 export interface AuditEvent {

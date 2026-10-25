@@ -12,7 +12,7 @@ type EventDraft = Partial<ChampionshipEvent>;
 type MappingDraft = Pick<EventCompetitionMapping, 'officialName'|'fisCodex'|'importCode'|'active'>;
 
 export function AdministrationEvents() {
-  const { eventId } = useActiveEvent();
+  const { eventId, refreshEvents } = useActiveEvent();
   const [events, setEvents] = useState<ChampionshipEvent[]>([]);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [selectedId, setSelectedId] = useState(eventId);  // Catalogue editor selection, not an operational event switch.
@@ -41,6 +41,7 @@ export function AdministrationEvents() {
   const saveEvent = async (draft: EventDraft) => {
     if (eventDialog.value) await api.updateChampionshipEvent(eventDialog.value.id, draft);
     else { const created = await api.createChampionshipEvent(draft); setSelectedId(created.id); }
+    await refreshEvents();
     await loadList(); await loadSelected(eventDialog.value?.id);
   };
   const saveMapping = async (draft: MappingDraft) => {
