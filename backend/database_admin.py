@@ -19,6 +19,39 @@ BACKUP_PATTERN = re.compile(r'^[A-Za-z0-9_.-]+\.dump\.gz$')
 BACKUP_CATEGORIES = ('automatic', 'manual', 'pre-restore')
 
 
+# Exact allowlist: a GET download is a global data export, never metadata.
+def is_database_metadata_request(path, method):
+    return method in {'GET', 'HEAD'} and path in {
+        '/api/admin/database/status', '/api/admin/database/backups'}
+
+
+def database_capabilities():
+    """UI hints only; mutation/download requests retain their original guards."""
+    from auth import current_user
+    from event_ownership_runtime import authorize_event, deployment_event_id, OperationalEventError
+    from werkzeug.exceptions import HTTPException
+    from models import Event
+    user = current_user()
+    result = dict(download=False, create=False, upload=False, restore=False)
+    if not user or not user.has_permission('admin.reset') or not current_app.config.get('OPERATIONAL_EVENT_ID'):
+        return result
+    for write in (False, True):
+        try:
+            authorize_event(deployment_event_id(), write=write)
+            for identity, in db.session.query(Event.id).all():
+                authorize_event(identity, write=write, respect_pin=False, active=False, allow_superadmin=False)
+        except (HTTPException, OperationalEventError):
+            continue
+        except SQLAlchemyError:
+            db.session.rollback()
+            return dict(download=False, create=False, upload=False, restore=False)
+        if write:
+            result.update(create=True, upload=True, restore=True)
+        else:
+            result['download'] = True
+    return result
+
+
 def backup_directory():
     return Path(current_app.config['BACKUP_DIR'])
 
@@ -32,7 +65,11 @@ def backup_files():
 
 def last_status():
     try:
-        return json.loads((backup_directory() / 'last-backup.json').read_text(encoding='utf-8'))
+        payload = json.loads((backup_directory() / 'last-backup.json').read_text(encoding='utf-8'))
+        # Do not disclose raw pg_dump errors, connection details or database names.
+        if not isinstance(payload, dict):
+            return None
+        return {key: payload[key] for key in ('status', 'created', 'size', 'durationSeconds', 'category') if key in payload}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
@@ -52,6 +89,7 @@ def database_status():
         current_app.logger.exception('Database status check failed')
         return jsonify({
             'databaseStatus': 'unavailable',
+            'capabilities': database_capabilities(),
             'postgresVersion': None,
             'databaseSize': None,
             'alembicVersion': None,
@@ -62,6 +100,7 @@ def database_status():
         }), 503
     return jsonify({
         'databaseStatus': 'available',
+        'capabilities': database_capabilities(),
         'postgresVersion': version,
         'databaseSize': size,
         'alembicVersion': alembic,

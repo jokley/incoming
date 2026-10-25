@@ -298,6 +298,9 @@ def _canonical_api_path():
 
 def _required_permission():
     path = g.api_path
+    from database_admin import is_database_metadata_request
+    if is_database_metadata_request(path, request.method) and current_user().is_superadmin:
+        return None
     if path.startswith('/api/admin/users'):
         return 'users.manage'
     if path.startswith(('/api/admin/events','/api/admin/world-champion')) and current_user().is_superadmin:
@@ -568,6 +571,7 @@ def authenticate_api_request():
     g.import_event_id = None
     g._quota_event_record = None
     g.authorized_event_id = None
+    g._approval_read_projection = None
     g.api_path = _canonical_api_path()
     if g.api_path is None or request.method == 'OPTIONS':
         return None
@@ -582,12 +586,14 @@ def authenticate_api_request():
     # object snapshots or mutations. Legacy clients retain the configured owner.
     # These immutable/global catalogues contain no event-owned operational data.
     # An explicit header is still validated even on a global catalogue request.
+    from database_admin import is_database_metadata_request
+    safe_database_metadata = is_database_metadata_request(g.api_path, request.method) and g.current_user.is_superadmin
     global_catalogue = (g.api_path.rstrip('/') == '/api/competitions' and request.method in {'GET','HEAD'}
         or g.api_path.startswith('/api/admin/users')
         or g.api_path.startswith('/api/import/fis/mock-files')
         or g.api_path.startswith('/api/admin/scenarios')
         or g.api_path == '/api/admin/events' and request.method == 'POST')
-    if g.api_path not in {'/api/auth/me', '/api/active-event-context'} and (not global_catalogue or request.headers.get('X-Championship-Event-ID') is not None):
+    if not safe_database_metadata and g.api_path not in {'/api/auth/me', '/api/active-event-context'} and (not global_catalogue or request.headers.get('X-Championship-Event-ID') is not None):
         from event_ownership_runtime import bind_request_event
         bind_request_event()
         if g.api_path.startswith('/api/admin/events/') and (request.view_args or {}).get('event_id') is not None:
@@ -1741,7 +1747,8 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
 
 
 def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
-    athletes = event_query(Athlete)
+    from approval_projection import projected_approval_groups
+    athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions))
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     # Allocate across all eligible groups before applying display filters.
@@ -1778,7 +1785,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     for athlete, person in zip(athletes, roster):
         if athlete.id not in booking_by_athlete:
             continue
-        evidence = applicable_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
+        evidence = projected_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
         assigned.append({**person, 'countsAsSingle': booking_by_athlete[athlete.id],
             'singleRoomStatus': athlete.single_room_status,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
@@ -1793,7 +1800,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         allocation = allocation_by_person.get(athlete.id)
         groups = {tuple(allocation['context'])} if allocation else set()
         if athlete.single_room_entitlement == 'APPROVED_EXTRA':
-            approved_groups = applicable_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
+            approved_groups = projected_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
             if not approved_groups and athlete.single_room_decision_id:
                 unresolved_approvals.append(athlete.single_room_decision_id)
             reviewed = approved_groups & groups if groups else set(sorted(approved_groups)[:1])
@@ -1841,7 +1848,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             matches = list(people_by_key.get(str(identity), {}).values())
             applicable = set()
             if len(matches) == 1:
-                applicable = (applicable_approval_groups(approval, matches[0], identity, athletes)
+                applicable = (projected_approval_groups(approval, matches[0], identity, athletes)
                     if decision == 'APPROVED' else historical_approval_groups(details, matches[0], identity, athletes))
             if not applicable:
                 unresolved = True

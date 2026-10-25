@@ -39,20 +39,39 @@ def test_exact_verified_identity_pin_and_inactive_events(admin,monkeypatch):
     monkeypatch.setitem(app.config,'AUTH_PROXY_SECRET','');monkeypatch.setitem(app.config,'AUTH_DEV_USER','owner')
     assert c.get('/api/auth/me').json['isSuperadmin'] is False
 
-def test_global_database_operations_stay_separately_guarded(admin,monkeypatch):
+def test_global_database_operations_stay_separately_guarded(admin,monkeypatch,tmp_path):
     a,b,*_=admin;c=app.test_client()
-    assert c.get('/api/admin/database/backups',headers=headers('owner',a.id,'unknown')).status_code==403
-    assert c.get('/api/admin/database/backups',headers=headers('owner',a.id)).status_code==403
-    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',a.id)
-    assert c.get('/api/admin/database/backups',headers=headers('owner',a.id)).status_code==403
+    monkeypatch.setitem(app.config,'BACKUP_DIR',str(tmp_path))
+    # Metadata is global and available to the verified configured Superadmin,
+    # without functional reset permission, event grants, a header or a pin.
+    for supplied in (headers('owner',role='unknown'), headers('owner',b.id,'unknown')):
+        assert c.get('/api/admin/database/backups',headers=supplied).status_code==200
+        status=c.get('/api/admin/database/status',headers=supplied)
+        # create_all fixtures have no Alembic version table; service error is
+        # independent of permission, and capabilities remain fail-closed.
+        assert status.status_code in {200,503}
+        assert not any(status.json['capabilities'].values())
+    for role in ('unknown','incoming-viewer','incoming-editor'):
+        assert c.get('/api/admin/database/backups',headers=headers('reader',a.id,role)).status_code==403
+    assert c.get('/api/admin/database/backups').status_code==401
+    dangerous=[('GET','/api/admin/database/backups/manual/test.dump.gz'),
+               ('POST','/api/admin/database/backup'),('POST','/api/admin/database/import'),
+               ('POST','/api/admin/database/restore'),('POST','/api/admin/test-data/reset')]
+    for method,path in dangerous:
+        assert c.open(path,method=method,headers=headers('owner',a.id,'unknown')).status_code==403
+    # Admin role alone still cannot bypass global grants/pinned maintenance.
+    assert c.get(dangerous[0][1],headers=headers('owner',a.id)).status_code==403
     runner=app.test_cli_runner()
     for e in (a,b):
         assert runner.invoke(args=['event-access','grant','owner',str(e.id),'--write']).exit_code==0
-    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',None)
-    assert c.get('/api/admin/database/backups',headers=headers('owner',a.id)).status_code==409
-    for e in (a,b):
-        assert runner.invoke(args=['event-access','revoke','owner',str(e.id)]).exit_code==0
-    assert c.get('/api/athletes',headers=headers('owner',a.id)).status_code==200
+    assert c.get(dangerous[0][1],headers=headers('owner',a.id)).status_code==409
+    monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',a.id)
+    metadata=c.get('/api/admin/database/status',headers=headers('owner',role='unknown')).json
+    assert not any(metadata['capabilities'].values())
+    metadata=c.get('/api/admin/database/status',headers=headers('owner')).json
+    assert all(metadata['capabilities'].values())
+    assert c.get(dangerous[0][1],headers=headers('owner',a.id)).status_code==404
+
 
 def test_directory_hints_and_manual_references_never_grant_rights(admin):
     a,*_=admin;c=app.test_client()

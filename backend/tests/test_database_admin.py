@@ -57,7 +57,7 @@ class DatabaseAdminTest(unittest.TestCase):
         automatic.mkdir()
         Path(automatic, 'incoming-1.dump.gz').write_bytes(b'dump')
         Path(self.temporary.name, 'last-backup.json').write_text(json.dumps({
-            'status': 'success', 'filename': 'incoming-1.dump.gz', 'size': 4}))
+            'status': 'success', 'filename': 'incoming-1.dump.gz', 'size': 4, 'error': 'private diagnostic', 'database': 'internal'}))
         payload = self.client.get('/api/admin/database/status').get_json()
         self.assertEqual(payload['postgresVersion'], '17.5')
         self.assertEqual(payload['databaseSize'], 42000000)
@@ -65,6 +65,9 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(payload['backupCount'], 1)
         self.assertEqual(payload['backupStatus'], 'success')
         self.assertEqual(payload['databaseStatus'], 'available')
+        self.assertNotIn('error', payload['lastBackup'])
+        self.assertNotIn('database', payload['lastBackup'])
+        self.assertNotIn('filename', payload['lastBackup'])
 
     @patch('database_admin.db.session.rollback')
     @patch('database_admin.db.session.execute')
@@ -125,3 +128,12 @@ class DatabaseAdminTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_metadata_allowlist_never_includes_downloads_or_writes():
+    from database_admin import is_database_metadata_request
+    assert is_database_metadata_request('/api/admin/database/status','GET')
+    assert is_database_metadata_request('/api/admin/database/backups','HEAD')
+    assert not is_database_metadata_request('/api/admin/database/backups/manual/file.dump.gz','GET')
+    assert not is_database_metadata_request('/api/admin/database/status','POST')
+    assert not is_database_metadata_request('/api/admin/database/restore','GET')
