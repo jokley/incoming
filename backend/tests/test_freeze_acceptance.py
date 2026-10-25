@@ -198,4 +198,5 @@ def test_superadmin_can_read_reference_catalogue_without_global_backup_permissio
     supplied={'X-Authenticated-User':'owner','X-Authenticated-Groups':'unknown','X-Auth-Proxy-Secret':'freeze-test-secret','X-Championship-Event-ID':str(a.id)}
     client=app.test_client()
     assert client.get('/api/admin/world-champion-titles',headers=supplied).status_code==200
-    assert client.get('/api/admin/database/backups',headers=supplied).status_code==403
+    assert client.get('/api/admin/database/backups',headers=supplied).status_code==200
+    assert client.get('/api/admin/database/backups/manual/test.dump.gz',headers=supplied).status_code==403

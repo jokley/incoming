@@ -70,7 +70,7 @@ def _evidence_keys(person, person_key):
     return keys
 
 
-def historical_approval_groups(details, person, person_key=None, roster=None):
+def historical_approval_groups(details, person, person_key=None, roster=None, *, _projection=None):
     """Read immutable evidence; unknown provenance never means a current label."""
     gender = normalize_gender(details.get('gender'))
     if details.get('nationCode') != person.nation_code or gender not in {'M', 'W'}:
@@ -113,7 +113,8 @@ def historical_approval_groups(details, person, person_key=None, roster=None):
         else:
             from models import Athlete
             roster = Athlete.query.filter_by(event_id=person.event_id, nation_code=person.nation_code).all()
-    current_keys = quota_keys(quota_person(person), [quota_person(p) for p in roster])
+    current_keys = (_projection.current_keys(person, roster) if _projection else
+                    quota_keys(quota_person(person), [quota_person(p) for p in roster]))
     return {(person.nation_code or '', c.quota_discipline, gender)
             for c in supported if c.quota_discipline} & current_keys
 
@@ -156,50 +157,75 @@ def historical_approval_evidence(approval):
     return result
 
 
-def applicable_approval_groups(approval, person, person_key=None, roster=None, *, preserve_historical_rule=False):
+def applicable_approval_groups(approval, person, person_key=None, roster=None, *, preserve_historical_rule=False, _projection=None):
     """Selected person + immutable evidence + exact membership.
 
     preserve_historical_rule is only for restoring an existing stored price/
     operational tuple during reimport, never for covering a current quota check.
     """
     import json
-    if not approval or approval.decision != 'APPROVED' or json.loads(approval.quota_details_json or '{}').get('decisionKind')=='ATHLETE_QUOTA':
+    if not approval or approval.decision != 'APPROVED':
         return set()
-    if not approval_event_matches(approval, getattr(person, 'event_id', None), require_current_rules=not preserve_historical_rule):
+    details = (_projection.details_for(approval) if _projection else
+               json.loads(approval.quota_details_json or '{}'))
+    if details.get('decisionKind') == 'ATHLETE_QUOTA':
         return set()
-    selected = {str(value) for value in json.loads(approval.approved_person_keys_json or '[]')}
+    owner = getattr(person, 'event_id', None)
+    valid_event = (_projection.event_matches(approval, owner) if _projection else
+                   approval_event_matches(approval, owner, require_current_rules=not preserve_historical_rule))
+    if not valid_event:
+        return set()
+    selected = (_projection.selected_for(approval) if _projection else
+                {str(value) for value in json.loads(approval.approved_person_keys_json or '[]')})
     if person_key is not None and str(person_key) not in person_keys(person):
         return set()
     keys = _evidence_keys(person, person_key)
     matched = selected & keys
     if len(matched) != 1:
         return set()
+    if roster is None and _projection:
+        # Athletes formerly used a singleton roster for a single-person approval.
+        # Keep that distinction; Officials require active athlete contexts.
+        roster = ([person] if len(selected) == 1 and
+                  (quota_person(person)['function'] or '').strip().lower() == 'athlete'
+                  else _projection.roster_for(person))
+    evidence = (_projection.evidence_for(approval) if _projection else historical_approval_evidence(approval))
     if len(selected) > 1:
         if roster is None:
             from models import Athlete
             roster = Athlete.query.filter_by(event_id=person.event_id, nation_code=person.nation_code).all()
-        details = historical_approval_evidence(approval)
-        for key in selected:
-            people = [p for p in roster if key in person_keys(p)]
-            if len(people) != 1 or not historical_approval_groups(details, people[0], key, roster):
-                return set()
-    return historical_approval_groups(historical_approval_evidence(approval),
-                                      person, next(iter(matched)), roster)
+        cohort_key = (id(approval), _projection.roster_key(roster)) if _projection else None
+        valid = _projection.cohorts.get(cohort_key) if _projection else None
+        if valid is None:
+            index = _projection.index_for(roster) if _projection else None
+            valid = True
+            for key in selected:
+                people = index.get(key, []) if index is not None else [p for p in roster if key in person_keys(p)]
+                if len(people) != 1 or not historical_approval_groups(evidence, people[0], key, roster, _projection=_projection):
+                    valid = False
+                    break
+            if _projection:
+                _projection.cohorts[cohort_key] = valid
+        if not valid:
+            return set()
+    return historical_approval_groups(evidence, person, next(iter(matched)), roster, _projection=_projection)
 
 
 def approved_quota_disciplines(person):
     """API projection; person-level status alone cannot authorize a group."""
     if person.single_room_status != 'APPROVED_EXTRA' or person.single_room_quota_exempt_reason:
         return []
-    return sorted({group[1] for group in applicable_approval_groups(person.single_room_decision, person)})
+    from approval_projection import projected_approval_groups
+    return sorted({group[1] for group in projected_approval_groups(person.single_room_decision, person)})
 
 
 def approved_quota_contexts(person):
     """Derived API evidence; approval coverage must not spread across genders."""
     if person.single_room_status != 'APPROVED_EXTRA' or person.single_room_quota_exempt_reason:
         return []
+    from approval_projection import projected_approval_groups
     return [{'nationCode': nation, 'discipline': group, 'gender': gender}
-            for nation, group, gender in sorted(applicable_approval_groups(person.single_room_decision, person))]
+            for nation, group, gender in sorted(projected_approval_groups(person.single_room_decision, person))]
 
 
 def preview_approval_person(person, *, competitions_by_id=None):

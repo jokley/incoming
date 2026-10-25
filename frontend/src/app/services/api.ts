@@ -154,7 +154,7 @@ class ApiService {
         return undefined as T;
       }
       return body as T;
-    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
+    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : ['GET', 'HEAD'].includes((options?.method ?? 'GET').toUpperCase()) && ['/admin/database/status', '/admin/database/backups'].includes(endpoint) ? 'global-metadata' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
   }
 
   async getCurrentUser(): Promise<AuthenticatedUser> {
@@ -1039,5 +1039,5 @@ class ApiService {
 
 export const api = new ApiService();
 
-export interface DatabaseStatus { postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string } | null; backupSize: number | null; backupCount: number; }
+export interface DatabaseStatus { databaseStatus?: 'available' | 'unavailable'; postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string; status?: string } | null; backupSize: number | null; backupCount: number; backupStatus?: string; capabilities?: { download: boolean; create: boolean; upload: boolean; restore: boolean }; }
 export interface DatabaseBackup { filename: string; size: number; modified: number; category?: 'automatic' | 'manual' | 'pre-restore'; token?: string; local?: boolean; localFile?: File; }
