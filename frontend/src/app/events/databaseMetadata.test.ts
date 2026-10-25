@@ -18,9 +18,16 @@ test('only exact database metadata GETs work without an operational event lease'
   await api.getDatabaseStatus();await api.getDatabaseBackups();
   assert.equal(calls.length,2);
   assert.ok(calls.every(c=>!c.headers.has('X-Championship-Event-ID')));
-  await assert.rejects(api.createDatabaseBackup(),/Eventkontext/);
-  await assert.rejects(api.downloadDatabaseBackup('test.dump.gz','manual'),/Eventkontext/);
-  assert.equal(calls.length,2);
+  await api.createDatabaseBackup();
+  assert.equal(calls.length,3);
+  assert.equal(calls.at(-1)?.headers.has('X-Championship-Event-ID'),false);
+  await api.getAdminEvents(); await api.getAdminEvent('7'); await api.getChampionLists();
+  assert.equal(calls.at(-2)?.headers.get('X-Championship-Event-ID'),'7');
+  assert.equal(api.eventScope.eventId,null);
+  await assert.rejects(api.getAthletes(),/Eventkontext/);
+  // Download remains a backend-authorized global export; test denied response without DOM save.
+  t.mock.method(globalThis,'fetch',async()=>new Response('',{status:403}));
+  await assert.rejects(api.downloadDatabaseBackup('test.dump.gz','manual'),/FORBIDDEN/);
   const {DatabaseBackups}=await server.ssrLoadModule('/src/app/components/DatabaseBackups.tsx');
   const markup=renderToStaticMarkup(createElement(DatabaseBackups));
   assert.match(markup,/HTTP-Erreichbarkeit ist kein Sicherungsnachweis/);

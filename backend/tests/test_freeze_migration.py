@@ -18,7 +18,7 @@ def test_freeze_upgrade_preserves_stock_and_snapshots_only_existing_applicabilit
   conn.execute(sa.text("INSERT INTO world_champion(event_id,fis_code,name,nation,gender,discipline,event_group,championship,championship_year,title_type,entitlement_enabled,source,active,created_at,updated_at) VALUES (:e,'1234567','Preserved Title','JPN','M','Snowboard','Snowboard Cross','Original Source',2025,'INDIVIDUAL',true,'original evidence',true,:t,:t)"),dict(e=target,t=datetime(2026,10,23)))
  with engine.connect() as conn:
   before=inventory(conn);titles=list(conn.exec_driver_sql('SELECT * FROM world_champion ORDER BY id').mappings())
- command.upgrade(cfg,'head')
+ command.upgrade(cfg,'20261025_01')
  with engine.connect() as conn:
   assert inventory(conn)['tables']==before['tables']
   assert list(conn.exec_driver_sql('SELECT * FROM world_champion ORDER BY id').mappings())==titles
@@ -37,7 +37,7 @@ def test_additive_ddl_failure_is_transactional(legacy,monkeypatch):
   if name=='world_champion_recognition':raise RuntimeError('Injected recognition DDL failure')
   return original(self,name,*args,**kwargs)
  monkeypatch.setattr(Operations,'create_table',interrupted)
- with pytest.raises(RuntimeError,match='Injected'):command.upgrade(cfg,'head')
+ with pytest.raises(RuntimeError,match='Injected'):command.upgrade(cfg,'20261025_01')
  with engine.connect() as conn:
   assert 'event_quota_revision' not in sa.inspect(conn).get_table_names()
   assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar()=='20261024_02'

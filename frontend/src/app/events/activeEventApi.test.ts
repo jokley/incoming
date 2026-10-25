@@ -32,7 +32,8 @@ test('actual API facade applies context to JSON, multipart, globals and download
   t.mock.method(globalThis, 'fetch', async (url, init) => { calls.push({url:String(url),init}); return new Response('', {status:403}); });
   await assert.rejects(api.generateScenario('1'), /FORBIDDEN/);
   await assert.rejects(api.downloadDatabaseBackup('file.dump','manual'));
-  assert.ok(calls.slice(-2).every(c => new Headers(c.init?.headers).get('X-Championship-Event-ID') === '7'));
+  assert.equal(new Headers(calls.at(-2)!.init?.headers).get('X-Championship-Event-ID'),'7');
+  assert.equal(new Headers(calls.at(-1)!.init?.headers).has('X-Championship-Event-ID'),false);
   const { EventSelector } = await server.ssrLoadModule('/src/app/events/ActiveEventSelector.tsx');
   const markup = renderToStaticMarkup(createElement(EventSelector, { state: { events:[{id:'7',name:'WSC Montafon 2027'}], selectedEvent:{id:'7'}, switchingAllowed:false }, selectEvent:()=>false }));
   assert.match(markup, /WSC Montafon 2027/); assert.match(markup, /Aktive Veranstaltung/); assert.match(markup, /disabled/);

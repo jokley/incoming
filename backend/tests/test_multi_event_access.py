@@ -43,7 +43,7 @@ def test_bootstrap_grants_are_explicit_even_for_admin(workspace):
 
 @pytest.mark.parametrize('path',['/api/athletes','/athletes/','/api/audit-events','/api/import/sessions',
     '/api/hotels','/api/events','/api/room-bookings/grouped','/api/quota-rules',
-    '/api/analytics/room-availability','/api/admin/world-champions'])
+    '/api/analytics/room-availability'])
 def test_missing_foreign_and_revoked_contexts_fail_closed(workspace,path):
     a,b,*_=workspace; client=app.test_client()
     assert client.get(path,headers=headers()).status_code==409
@@ -102,7 +102,7 @@ def test_request_fields_and_admin_target_must_match(workspace):
     assert client.post('/api/import/fis/preview',headers=headers(owner=a.id),data={'eventId':b.id}).status_code==409
     assert client.get(f'/api/admin/events/{b.id}/quota-rules',headers=headers(owner=a.id)).status_code==409
     assert client.get('/api/admin/events',headers=headers('only-a',a.id)).json[0]['id']==str(a.id)
-    assert len(client.get('/api/admin/events',headers=headers('only-a',a.id)).json)==1
+    assert len(client.get('/api/admin/events',headers=headers('only-a',a.id)).json)==2
 
 
 def test_operator_cli_grants_and_revokes_without_implicit_admin_access(workspace):
@@ -159,17 +159,13 @@ def test_identity_cannot_be_obtained_through_untrusted_proxy_headers(workspace):
             assert client.get(path,headers=supplied).status_code==401
 
 
-def test_global_downloads_validate_explicit_context_and_database_requires_all_grants(workspace):
+def test_global_backups_use_administrative_authority_not_individual_event_grants(workspace):
     a,b,*_=workspace;client=app.test_client()
-    for path in ['/api/admin/scenarios','/api/import/fis/mock-files', '/api/admin/database/backups']:
+    for path in ['/api/admin/scenarios','/api/import/fis/mock-files']:
         assert client.get(path,headers=headers('only-a',b.id)).status_code==403
-    assert client.get('/api/admin/database/backups',headers=headers('only-a',a.id)).status_code==403
-    for method,path in [('GET','/api/admin/database/backups'),
-                        ('POST','/api/admin/database/backup'),
-                        ('POST','/api/admin/database/import'),
-                        ('POST','/api/admin/database/restore')]:
-        # Even grants for every current event do not authorize historical dump contents.
-        assert client.open(path,method=method,headers=headers('both',a.id),json={}).status_code==409
+    assert client.get('/api/admin/database/backups',headers=headers('only-a',b.id)).status_code==200
+    assert client.get('/api/admin/database/backups',headers=headers('reader',a.id,'incoming-viewer')).status_code==403
+    assert client.post('/api/admin/database/restore',headers=headers('both',a.id),json={}).status_code==409
 
 
 def test_every_registered_api_method_rejects_unauthorized_explicit_event(workspace):
@@ -184,7 +180,7 @@ def test_every_registered_api_method_rejects_unauthorized_explicit_event(workspa
             continue
         path=re.sub(r'<(?:[^:>]+:)?[^>]+>', '1', rule.rule)
         for method in sorted(rule.methods-{'OPTIONS','HEAD'}):
-            response=client.open(path,method=method,headers=headers('only-a',b.id),json={})
+            response=client.open(path,method=method,headers=headers('only-a',b.id,'incoming-editor'),json={})
             assert response.status_code==403,(method,path,response.status_code,response.get_json(silent=True))
             checked.append((method,path))
     assert len(checked)>100

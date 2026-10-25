@@ -94,7 +94,7 @@ def list_active_championship_events():
 def authorized_catalogue():
     from auth import current_user
     from models import EventAccess
-    if current_user().is_superadmin:
+    if current_user().is_superadmin or (request.path.startswith('/api/admin/') and current_user().has_permission('admin.reset')):
         return Event.query
     return Event.query.join(EventAccess).filter(EventAccess.username == current_user().username)
 
@@ -133,12 +133,12 @@ def administer_event(event_id):
         return jsonify(event_record.to_dict(include_mappings=True))
     data = request.get_json() or {}
     from auth import current_user
-    if current_user().is_superadmin and event_record.active and data.get('active') is False:
+    if event_record.active and data.get('active') is False:
         # The UI must not strand its owner with an empty/pinned bootstrap.
         from flask import current_app
         from sqlalchemy import text
         db.session.execute(text('LOCK TABLE championship_event IN SHARE ROW EXCLUSIVE MODE'))
-        if current_app.config.get('OPERATIONAL_EVENT_ID') or not Event.query.filter(Event.active.is_(True), Event.id != event_id).first():
+        if str(current_app.config.get('OPERATIONAL_EVENT_ID')) == str(event_id) or not Event.query.filter(Event.active.is_(True), Event.id != event_id).first():
             return jsonify(error='Gepinnten oder letzten aktiven Event nicht deaktivieren; zuerst den Betriebskontext prüfen.'), 409
     if any(key in data for key in ('quotaRules','quotaRulesJson','quotaRulesFixedAt','quotaRulesRevision','isWorldChampionship')):
         return jsonify(error='USE_QUOTA_RULES_WORKFLOW'),400
@@ -188,7 +188,9 @@ def copy_event_competitions(event_id):
         return jsonify(exc.to_dict()), 400
     source = Event.query.get_or_404(source_event_id)
     from event_ownership_runtime import authorize_event
-    authorize_event(source.id, respect_pin=False)
+    from admin_scope import can_administer_events
+    if not can_administer_events():
+        authorize_event(source.id, respect_pin=False)
     existing = {row.competition_id for row in target.competition_mappings}
     copies = [EventCompetition(event_id=target.id, competition_id=row.competition_id,
         fis_codex=row.fis_codex, import_code=row.import_code,

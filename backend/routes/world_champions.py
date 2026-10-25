@@ -30,7 +30,8 @@ def save(row, data):
         values['entitlementEnabled'] = values.get('titleType') == 'INDIVIDUAL'
     try:
         values['eventId'] = int(values['eventId'])
-        if values['eventId'] != accommodation_event_id():
+        from flask import g
+        if values['eventId'] != g.authorized_event_id:
             raise ValueError('Target Event conflicts with the operational context')
         values['championshipYear'] = int(values['championshipYear'])
         if not db.session.get(Event, values['eventId']):
@@ -73,13 +74,13 @@ def save(row, data):
 @world_champions.route('/api/admin/world-champions', methods=['GET', 'POST'])
 def champions():
     if request.method == 'GET':
-        return jsonify([row.to_dict() for row in event_query(WorldChampion).order_by(WorldChampion.name, WorldChampion.id).all()])
+        return jsonify([row.to_dict() for row in WorldChampion.query.order_by(WorldChampion.name, WorldChampion.id).all()])
     return save(WorldChampion(), request.get_json() or {})
 
 
 @world_champions.route('/api/admin/world-champions/<int:champion_id>', methods=['GET', 'PUT'])
 def champion(champion_id):
-    row = event_get(WorldChampion, champion_id, required=True)
+    row = db.get_or_404(WorldChampion, champion_id)
     if request.method == 'GET':
         return jsonify(row.to_dict())
     return save(row, request.get_json() or {})
@@ -87,8 +88,8 @@ def champion(champion_id):
 
 @world_champions.route('/api/admin/world-champion-titles',methods=['GET'])
 def title_catalogue():
-    # Global reference metadata, not person/booking records. Existing admin role
-    # and an authorized active event are still mandatory at the composition root.
+    # Global reference metadata, never operative persons/bookings. Explicit
+    # administrative function authority is enforced at the composition root.
     return jsonify([row.to_dict() for row in WorldChampion.query.order_by(WorldChampion.name,WorldChampion.id)])
 
 
@@ -110,6 +111,9 @@ def event_champions(event_id):
         title=db.session.get(WorldChampion,title_id)
         if title is None:raise ValueError('Titel existiert nicht.')
         link=db.session.get(WorldChampionRecognition,(event_id,title_id))
+        event=db.session.get(Event,event_id)
+        if event.world_champion_list_json:
+            return jsonify(error='USE_WHOLE_LIST_SELECTION',message='Anerkennungen über die vollständige WM-Liste verwalten.'),409
         if not active and recognition_protected(event_id,title):
             return jsonify(error='RECOGNITION_REVIEW_REQUIRED',message='Event enthält Importhistorie oder eine bestehende Ausnahme. Gesonderte Prüfung erforderlich; keine Daten geändert.'),409
         if active and (not title.active or not title.entitlement_enabled):
@@ -124,3 +128,49 @@ def event_champions(event_id):
         return jsonify(titleId=str(title_id),active=active)
     except (ValueError,KeyError,TypeError) as error:
         db.session.rollback();return jsonify(error=str(error)),400
+
+
+@world_champions.get('/api/admin/world-champion-lists')
+def champion_lists():
+    from champion_lists import catalogue
+    return jsonify([dict(id=key,championship=value['championship'],year=value['year'],
+        titleCount=len(value['titleIds']),eligibleCount=len(value['eligibleIds'])) for key,value in catalogue().items()])
+
+
+@world_champions.route('/api/admin/events/<int:event_id>/world-champion-list',methods=['GET','PUT'])
+def event_champion_list(event_id):
+    from champion_lists import catalogue, selection, choose
+    from quota_rules import fingerprint
+    event = db.get_or_404(Event,event_id)
+    if request.method == 'GET':
+        return jsonify(event_champion_list_state(event))
+    from accommodation_mutations import lock_accommodation_writes
+    from imports.workflow import lock_import_snapshot
+    lock_accommodation_writes();lock_import_snapshot()
+    db.session.refresh(event)
+    current=event_champion_list_state(event)
+    data=request.get_json(silent=True) or {}
+    if data.get('digest')!=current['digest']:
+        return jsonify(error='STALE_SELECTION',message='Weltmeisterzuordnung wurde geändert; erneut laden.'),409
+    try:
+        choose(event,data['listId'])
+        from models import AuditEvent
+        from auth import current_user
+        from accommodation_scope import event_audit_refs
+        import json,uuid
+        db.session.add(AuditEvent(username=current_user().username,action='update',entity_type='world-champion-list',entity_id=str(event_id),request_id=str(uuid.uuid4()),method='PUT',path=request.path,category='Administration',activity='WM-Liste zugeordnet',changes_json=json.dumps({'old':current['listId'],'new':data['listId']}),entity_refs_json=event_audit_refs({},event_id)))
+        from flask import g
+        g.atomic_import_audit=True
+        db.session.commit()
+        return jsonify(event_champion_list_state(event))
+    except (ValueError,KeyError) as error:
+        db.session.rollback();return jsonify(error='LIST_REVIEW_REQUIRED',message=str(error)),409
+
+
+def event_champion_list_state(event):
+    from champion_lists import catalogue,selection
+    from quota_rules import fingerprint
+    from models import WorldChampionRecognition
+    result=selection(event,catalogue())
+    result['digest']=fingerprint(dict(selection=event.world_champion_list_json,catalogue=catalogue(),links=[(r.title_id,r.active) for r in WorldChampionRecognition.query.filter_by(event_id=event.id).order_by(WorldChampionRecognition.title_id)]))
+    return result

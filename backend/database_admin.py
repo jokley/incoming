@@ -25,31 +25,75 @@ def is_database_metadata_request(path, method):
         '/api/admin/database/status', '/api/admin/database/backups'}
 
 
+DATABASE_PERMISSIONS = {
+    'database_admin.database_status': 'database.read',
+    'database_admin.list_backups': 'database.read',
+    'database_admin.trigger_backup': 'database.backup',
+    'database_admin.import_backup': 'database.backup',
+    'database_admin.download_backup': 'database.export',
+    'database_admin.restore_backup': 'database.restore',
+}
+
+
+def database_permission():
+    from flask import abort
+    permission = DATABASE_PERMISSIONS.get(request.endpoint)
+    if permission is None: abort(403)
+    return permission
+
+
+def require_maintenance(confirmation):
+    from flask import abort
+    if not current_app.config.get('DATABASE_MAINTENANCE_MODE'):
+        abort(409, description='Restore/Reset nur im ausdrücklich freigegebenen Wartungsmodus.')
+    if (request.get_json(silent=True) or {}).get('confirmation') != confirmation:
+        abort(400, description='Zusätzliche ausdrückliche Bestätigung erforderlich.')
+
+
 def database_capabilities():
-    """UI hints only; mutation/download requests retain their original guards."""
     from auth import current_user
-    from event_ownership_runtime import authorize_event, deployment_event_id, OperationalEventError
-    from werkzeug.exceptions import HTTPException
-    from models import Event
     user = current_user()
-    result = dict(download=False, create=False, upload=False, restore=False)
-    if not user or not user.has_permission('admin.reset') or not current_app.config.get('OPERATIONAL_EVENT_ID'):
-        return result
-    for write in (False, True):
-        try:
-            authorize_event(deployment_event_id(), write=write)
-            for identity, in db.session.query(Event.id).all():
-                authorize_event(identity, write=write, respect_pin=False, active=False, allow_superadmin=False)
-        except (HTTPException, OperationalEventError):
-            continue
-        except SQLAlchemyError:
-            db.session.rollback()
-            return dict(download=False, create=False, upload=False, restore=False)
-        if write:
-            result.update(create=True, upload=True, restore=True)
-        else:
-            result['download'] = True
-    return result
+    has = lambda permission: bool(user and user.has_permission(permission))
+    maintenance = current_app.config.get('DATABASE_MAINTENANCE_MODE', False)
+    return dict(download=has('database.export'), create=has('database.backup'),
+                upload=has('database.backup'), restore=has('database.restore') and maintenance,
+                reset=has('database.reset') and maintenance)
+
+
+@database_admin.before_request
+def audit_database_attempt():
+    from auth import current_user
+    from flask import g
+    from models import AuditEvent
+    import uuid
+    user = current_user()
+    if not user or request.endpoint in {'database_admin.database_status','database_admin.list_backups'}:
+        return
+    # App authentication/functional authorization ran first. This records an
+    # explicitly requested sensitive operation, not a business-data GET update.
+    if not user.has_permission(database_permission()): return
+    if request.endpoint == 'database_admin.restore_backup':
+        require_maintenance('RESTORE DATABASE')
+    db.session.add(AuditEvent(username=user.username,action='request',entity_type='global-database',
+        entity_id=request.endpoint,request_id=str(getattr(g,'request_id',uuid.uuid4()))[:36],
+        method=request.method,path=request.url_rule.rule,category='Administration',
+        activity='Globale Datenbankoperation angefordert',changes_json=json.dumps({'operation':request.endpoint}),
+        entity_refs_json='{}'))
+    db.session.commit()
+
+
+@database_admin.after_request
+def audit_database_operation(response):
+    # Persistent service logs also survive a database restore. Never log tokens,
+    # uploaded contents, filenames, connection parameters or request bodies.
+    from auth import current_user
+    from flask import g
+    user = current_user()
+    current_app.logger.info('database_operation actor=%s operation=%s status=%s request_id=%s',
+        user.username if user else 'unauthenticated', request.endpoint, response.status_code,
+        getattr(g, 'request_id', '-'))
+    g.atomic_import_audit = True
+    return response
 
 
 def backup_directory():
@@ -90,6 +134,7 @@ def database_status():
         return jsonify({
             'databaseStatus': 'unavailable',
             'capabilities': database_capabilities(),
+            'maintenanceMode': bool(current_app.config.get('DATABASE_MAINTENANCE_MODE')),
             'postgresVersion': None,
             'databaseSize': None,
             'alembicVersion': None,
@@ -101,6 +146,7 @@ def database_status():
     return jsonify({
         'databaseStatus': 'available',
         'capabilities': database_capabilities(),
+        'maintenanceMode': bool(current_app.config.get('DATABASE_MAINTENANCE_MODE')),
         'postgresVersion': version,
         'databaseSize': size,
         'alembicVersion': alembic,
@@ -160,6 +206,7 @@ def import_backup():
 
 @database_admin.post('/api/admin/database/restore')
 def restore_backup():
+    require_maintenance('RESTORE DATABASE')
     payload = request.get_json(silent=True) or {}
     if not payload.get('filename') and not payload.get('token'):
         return jsonify({'error': 'BACKUP_REQUIRED', 'message': 'Bitte wählen Sie ein Backup aus.'}), 400

@@ -12,7 +12,7 @@ def test_grant_migration_is_additive_and_has_no_implicit_users(legacy):
     engine,cfg,target,*_=legacy
     reviewed(legacy);command.upgrade(cfg,'20261023_01')
     with engine.connect() as conn:before=inventory(conn)
-    command.upgrade(cfg,'head')
+    command.upgrade(cfg,'20261025_01')
     with engine.connect() as conn:
         assert inventory(conn)['tables']==before['tables']
         assert conn.exec_driver_sql('SELECT count(*) FROM event_access').scalar()==0

@@ -298,9 +298,13 @@ def _canonical_api_path():
 
 def _required_permission():
     path = g.api_path
-    from database_admin import is_database_metadata_request
-    if is_database_metadata_request(path, request.method) and current_user().is_superadmin:
-        return None
+    if request.blueprint == 'database_admin':
+        from database_admin import database_permission
+        return database_permission()
+    if path == '/api/admin/test-data/reset': return 'database.reset'
+    from admin_scope import EVENT_ENDPOINTS, CATALOGUE_ENDPOINTS
+    if request.endpoint in EVENT_ENDPOINTS | CATALOGUE_ENDPOINTS:
+        return 'events.manage' if current_user().is_superadmin else 'admin.reset'
     if path.startswith('/api/admin/users'):
         return 'users.manage'
     if path.startswith(('/api/admin/events','/api/admin/world-champion')) and current_user().is_superadmin:
@@ -582,32 +586,29 @@ def authenticate_api_request():
     permission = _required_permission()
     if permission and not g.current_user.has_permission(permission):
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
+    if app.config.get('DATABASE_MAINTENANCE_MODE') and request.method not in {'GET','HEAD','OPTIONS'} and request.blueprint != 'database_admin' and request.endpoint != 'reset_test_data' and g.api_path != '/api/auth/me':
+        return jsonify(error='MAINTENANCE_MODE',message='Wartungsmodus: operative und administrative Änderungen sind vorübergehend gesperrt.'),503
     # Explicit UI context is validated after authentication/permissions and before
     # object snapshots or mutations. Legacy clients retain the configured owner.
     # These immutable/global catalogues contain no event-owned operational data.
     # An explicit header is still validated even on a global catalogue request.
-    from database_admin import is_database_metadata_request
-    safe_database_metadata = is_database_metadata_request(g.api_path, request.method) and g.current_user.is_superadmin
+    from admin_scope import EVENT_ENDPOINTS, CATALOGUE_ENDPOINTS, bind_admin_target
+    configuration = request.endpoint in EVENT_ENDPOINTS | CATALOGUE_ENDPOINTS
+    if configuration:
+        bind_admin_target()
+    global_backup = request.blueprint == 'database_admin'
+    global_reset = request.endpoint == 'reset_test_data'
+    if global_reset:
+        from database_admin import require_maintenance
+        from admin_scope import bind_reset_target
+        require_maintenance('RESET EVENT DATA')
+        bind_reset_target()
     global_catalogue = (g.api_path.rstrip('/') == '/api/competitions' and request.method in {'GET','HEAD'}
-        or g.api_path.startswith('/api/admin/users')
-        or g.api_path.startswith('/api/import/fis/mock-files')
-        or g.api_path.startswith('/api/admin/scenarios')
-        or g.api_path == '/api/admin/events' and request.method == 'POST')
-    if not safe_database_metadata and g.api_path not in {'/api/auth/me', '/api/active-event-context'} and (not global_catalogue or request.headers.get('X-Championship-Event-ID') is not None):
+        or g.api_path.startswith('/api/admin/users') or g.api_path.startswith('/api/import/fis/mock-files')
+        or g.api_path.startswith('/api/admin/scenarios'))
+    if not configuration and not global_backup and not global_reset and g.api_path not in {'/api/auth/me', '/api/active-event-context'} and (not global_catalogue or request.headers.get('X-Championship-Event-ID') is not None):
         from event_ownership_runtime import bind_request_event
         bind_request_event()
-        if g.api_path.startswith('/api/admin/events/') and (request.view_args or {}).get('event_id') is not None:
-            if request.view_args['event_id'] != g.authorized_event_id:
-                raise OperationalEventError('Administrative event and request context differ')
-        if g.api_path.startswith('/api/admin/database'):
-            # A database download/restore spans every event, including inactive ones.
-            from event_ownership_runtime import authorize_event
-            for identity, in db.session.query(Event.id).all():
-                authorize_event(identity, write=request.method not in {'GET', 'HEAD'}, respect_pin=False, active=False, allow_superadmin=False)
-            if not app.config.get('OPERATIONAL_EVENT_ID'):
-                # Historical dumps may contain events no longer in the live catalogue.
-                # Current grants cannot prove access to their contents.
-                raise OperationalEventError('Global database operations require a pinned maintenance deployment')
     if g.api_path != '/api/assignments/availability' and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'} and (
             g.api_path.startswith('/api/assignments/') or g.api_path.startswith('/api/room-assignments')):
         lock_accommodation_writes()
@@ -2717,7 +2718,7 @@ def approve_import_session(session_id):
     try:stored,workflow,plan=require_review(session)
     except ImportValidationError as exc:return jsonify({**exc.to_dict(),'validationErrors':[{'code':exc.code,'message':str(exc)}]}),409
     data=request.get_json(silent=True) or {}
-    if data.get('planDigest')!=plan['digest'] or data.get('snapshotScope')!='FULL_NATION':
+    if data.get('planDigest')!=plan['digest'] or data.get('snapshotScope','FULL_NATION')!='FULL_NATION':
         return jsonify(error='IMPORT_SCOPE_CONFIRMATION_REQUIRED',message='Vollständigen Nationen-Snapshot und aktuellen Änderungsplan bestätigen.'),409
     if plan['requiresDestructiveConfirmation'] and data.get('confirmDestructiveChanges') is not True:
         return jsonify(error='IMPORT_DELETION_CONFIRMATION_REQUIRED',message='Entfernungen einschließlich Buchungsfolgen ausdrücklich bestätigen.'),409

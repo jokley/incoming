@@ -70,6 +70,7 @@ def test_title_links_are_event_specific_and_no_title_is_copied(inventory):
     a,b,*_=inventory;app.config['OPERATIONAL_EVENT_ID']=str(a.id)
     title=WorldChampion(event_id=a.id,fis_code='9300953',name='Reference',nation='JPN',gender='M',discipline='Snowboard',event_group='Snowboard Cross',championship='Source Championship',championship_year=2025,title_type='INDIVIDUAL',entitlement_enabled=True,active=True,source='verified fixture')
     db.session.add(title);db.session.flush();db.session.add(WorldChampionRecognition(event_id=a.id,title_id=title.id,active=True));db.session.commit()
+    db.session.execute(db.update(Event).where(Event.id.in_([a.id,b.id])).values(is_world_championship=True));db.session.commit()
     def reason(owner):
         person=dict(matchKey='9300953',function='Athlete',fisCode='9300953');recognize(person,None,{},owner);return person['singleRoomQuotaExemptReason']
     assert reason(a.id)=='WORLD_CHAMPION' and reason(b.id) is None
@@ -124,6 +125,7 @@ def test_legacy_title_fallback_does_not_disappear_when_another_event_recognizes_
     a,b,*_=inventory
     title=WorldChampion(event_id=a.id,fis_code='9876543',name='Legacy source',nation='JPN',gender='M',discipline='Snowboard',event_group='Snowboard Cross',championship='Source',championship_year=2025,title_type='INDIVIDUAL',entitlement_enabled=True,active=True,source='fixture')
     db.session.add(title);db.session.commit()
+    db.session.execute(db.update(Event).where(Event.id.in_([a.id,b.id])).values(is_world_championship=True));db.session.commit()
     def crown(owner):
         p=dict(matchKey='9876543',function='Athlete',fisCode='9876543');recognize(p,None,{},owner);return p['singleRoomQuotaExemptReason']
     assert crown(a.id)=='WORLD_CHAMPION' and crown(b.id) is None
@@ -199,4 +201,4 @@ def test_superadmin_can_read_reference_catalogue_without_global_backup_permissio
     client=app.test_client()
     assert client.get('/api/admin/world-champion-titles',headers=supplied).status_code==200
     assert client.get('/api/admin/database/backups',headers=supplied).status_code==200
-    assert client.get('/api/admin/database/backups/manual/test.dump.gz',headers=supplied).status_code==403
+    assert client.get('/api/admin/database/backups/manual/test.dump.gz',headers=supplied).status_code==404

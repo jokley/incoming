@@ -314,7 +314,8 @@ def test_corrupt_legacy_occupant_is_not_serialized(inventory,path):
 
 def test_unscopable_history_reset_is_blocked_even_for_empty_second_event(events,monkeypatch):
     a,_=events;monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',str(a.id))
-    response=app.test_client().post('/api/admin/test-data/reset',json={'scope':'activities'})
+    monkeypatch.setitem(app.config,'DATABASE_MAINTENANCE_MODE',True)
+    response=app.test_client().post('/api/admin/test-data/reset',json={'scope':'activities','confirmation':'RESET EVENT DATA'})
     assert response.status_code==409,response.json
     from models import Event
     assert Event.query.count()==2

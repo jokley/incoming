@@ -17,7 +17,7 @@ export class EventRequestScope {
   }
   async run<T>(url: string, init: RequestInit | undefined,
     consume: (response: Response, assertCurrent: () => void) => Promise<T>, bootstrap: false | 'auth' | 'context' | 'global-metadata' = false, managementOwner?: string): Promise<T> {
-    if (!bootstrap && !this.owner) throw new Error('Bitte zuerst einen verfügbaren Eventkontext laden.');
+    if (!bootstrap && !this.owner && !managementOwner) throw new Error('Bitte zuerst einen verfügbaren Eventkontext laden.');
     const generation = this.generation;
     const controller = new AbortController();
     const headers = new Headers(init?.headers);

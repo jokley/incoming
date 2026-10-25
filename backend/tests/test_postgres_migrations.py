@@ -235,6 +235,8 @@ class PostgresMigrationTest(unittest.TestCase):
                                      scripts.get_current_head())
                     tables = inspect(conn).get_table_names()
                     self.assertIn('world_champion', tables)
+                    self.assertIn('world_champion_list_json', {c['name'] for c in inspect(conn).get_columns('championship_event')})
+                    self.assertEqual(conn.execute(text('SELECT count(*) FROM championship_event WHERE world_champion_list_json IS NOT NULL')).scalar_one(),0)
                     self.assertIn('single_room_exemption_source', {c['name'] for c in inspect(conn).get_columns('athlete')})
                     self.assertEqual(conn.execute(text('SELECT count(*) FROM world_champion')).scalar_one(), 35)
                     self.assertEqual(conn.execute(text("SELECT count(*) FROM world_champion WHERE title_type = 'INDIVIDUAL' AND entitlement_enabled")).scalar_one(), 26)

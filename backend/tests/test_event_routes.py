@@ -74,7 +74,7 @@ class EventRoutesTest(unittest.TestCase):
         response = self.client.put(path, json=changes)
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), {**later, **changes, 'competitionMappings': []})
-        self.assertEqual(self.client.get('/api/admin/events/2147483647').status_code, 403)
+        self.assertEqual(self.client.get('/api/admin/events/2147483647').status_code, 404)
         with app.app_context():
             self.assertEqual(AuditEvent.query.count(), 0)
 
@@ -156,7 +156,7 @@ class EventRoutesTest(unittest.TestCase):
         routes = json.loads((Path(__file__).parent / 'fixtures/api_routes.json').read_text())
         event_paths = {p for p in routes if p.startswith(('/api/events', '/api/admin/events',
                                                         '/api/championship-events'))}
-        self.assertEqual(len(event_paths), 15)
+        self.assertEqual(len(event_paths), 16)
         registered = {r.rule for r in app.url_map.iter_rules()}
         for path in event_paths:
             self.assertIn(path, registered)

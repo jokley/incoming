@@ -68,6 +68,9 @@ class ApiService {
   async previewQuotaRevision(id:string,data:unknown):Promise<import('../types').QuotaRevisionProposal> {return this.request(`/admin/events/${id}/quota-rules/revision-preview`,{method:'POST',body:JSON.stringify(data)});}
   async activateQuotaRevision(id:string,data:unknown):Promise<import('../types').EventQuotaRules> {return this.request(`/admin/events/${id}/quota-rules/revisions`,{method:'POST',body:JSON.stringify(data)});}
   async getQuotaRevisions(id:string):Promise<import('../types').QuotaRevisionSnapshot[]> {return this.request(`/admin/events/${id}/quota-rules/revisions`);}
+  async getChampionLists():Promise<{id:string;championship:string;year:number;titleCount:number;eligibleCount:number}[]> {return this.request('/admin/world-champion-lists');}
+  async getChampionList(id:string):Promise<{listId:string|null;digest:string;partial:boolean;inferred:boolean}> {return this.request(`/admin/events/${id}/world-champion-list`);}
+  async setChampionList(id:string,listId:string|null,digest:string) {return this.request<{listId:string|null;digest:string;partial:boolean;inferred:boolean}>(`/admin/events/${id}/world-champion-list`,{method:'PUT',body:JSON.stringify({listId,digest})});}
   async getChampionTitles():Promise<import('../types').WorldChampion[]> {return this.request('/admin/world-champion-titles');}
   async getChampionRecognitions(id:string):Promise<{recognitions:{titleId:string;active:boolean}[]}> {return this.request(`/admin/events/${id}/world-champions`);}
   async setChampionRecognition(id:string,titleId:string,active:boolean) {return this.request(`/admin/events/${id}/world-champions`,{method:'POST',body:JSON.stringify({titleId,active})});}
@@ -154,7 +157,7 @@ class ApiService {
         return undefined as T;
       }
       return body as T;
-    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : ['GET', 'HEAD'].includes((options?.method ?? 'GET').toUpperCase()) && ['/admin/database/status', '/admin/database/backups'].includes(endpoint) ? 'global-metadata' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
+    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : (endpoint.startsWith('/admin/database/') || ['/admin/events','/admin/test-data/reset','/admin/world-champions','/admin/world-champion-titles','/admin/world-champion-lists'].includes(endpoint) || /^\/admin\/world-champions\/[1-9]\d*$/.test(endpoint) || endpoint === '/competitions' && (options?.method??'GET')==='GET') ? 'global-metadata' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
   }
 
   async getCurrentUser(): Promise<AuthenticatedUser> {
@@ -166,7 +169,7 @@ class ApiService {
   }
 
   async resetTestData(scope: 'activities' | 'imports' | 'athletes' | 'assignments' | 'all'): Promise<{ scope: string; deleted: string[]; counts: Record<string, number> }> {
-    return this.request('/admin/test-data/reset', { method: 'POST', body: JSON.stringify({ scope }) });
+    return this.request('/admin/test-data/reset', { method: 'POST', body: JSON.stringify({ scope, confirmation: 'RESET EVENT DATA' }) });
   }
 
   async getScenarios(): Promise<Array<{ number: string; title: string; description: string; versions: number }>> {
@@ -177,7 +180,7 @@ class ApiService {
     return this.eventScope.run(`${API_BASE_URL}${endpoint}`, options, async (response, assertCurrent) => {
       if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Datei konnte nicht geladen werden.');
       await downloadResponse(response, filename, assertCurrent);
-    });
+    }, endpoint.startsWith('/admin/database/backups/') ? 'global-metadata' : false);
   }
   async generateScenario(number: string): Promise<void> {
     return this.download(`/admin/scenarios/${number}/generate`, `wm-scenario-${number}.zip`, { method: 'POST' });
@@ -206,7 +209,7 @@ class ApiService {
     // Imported and server-side backups deliberately use the exact same request
     // shape and endpoint. The backup service chooses the token when present and
     // otherwise resolves the server-side filename.
-    const restoreRequest = { filename: backup.filename, category: backup.category ?? null, token: backup.token ?? null };
+    const restoreRequest = { filename: backup.filename, category: backup.category ?? null, token: backup.token ?? null, confirmation: 'RESTORE DATABASE' };
     return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(restoreRequest) });
   }
   async downloadDatabaseBackup(filename: string, category: string): Promise<void> {
@@ -1039,5 +1042,5 @@ class ApiService {
 
 export const api = new ApiService();
 
-export interface DatabaseStatus { databaseStatus?: 'available' | 'unavailable'; postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string; status?: string } | null; backupSize: number | null; backupCount: number; backupStatus?: string; capabilities?: { download: boolean; create: boolean; upload: boolean; restore: boolean }; }
+export interface DatabaseStatus { maintenanceMode?: boolean; databaseStatus?: 'available' | 'unavailable'; postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string; status?: string } | null; backupSize: number | null; backupCount: number; backupStatus?: string; capabilities?: { download: boolean; create: boolean; upload: boolean; restore: boolean; reset?: boolean }; }
 export interface DatabaseBackup { filename: string; size: number; modified: number; category?: 'automatic' | 'manual' | 'pre-restore'; token?: string; local?: boolean; localFile?: File; }

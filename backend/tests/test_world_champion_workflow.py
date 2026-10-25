@@ -13,6 +13,8 @@ from excel_import import apply_single_room_quota_exemptions, recalculate_fis_imp
 
 
 def reference(event_id, **extra):
+    # This positive reference fixture is an explicit World Championship.
+    db.session.execute(db.update(Event).where(Event.id==event_id).values(is_world_championship=True))
     row = WorldChampion(event_id=event_id, fis_code='M', name='M Person', nation='AUT', gender='M',
         discipline='SX', event_group='Ski Cross', championship='Engadin', championship_year=2025,
         title_type='INDIVIDUAL', entitlement_enabled=True, active=True, source='verified test evidence')
@@ -182,6 +184,8 @@ def test_reference_admin_crud_and_team_default(database):
         gender='M', discipline='SX', eventGroup='Ski Cross', championship='Engadin', championshipYear=2025,
         titleType='TEAM', entitlementEnabled=False, active=True, source='verified evidence')
     with current_app.test_request_context(method='POST', json=payload):
+        from flask import g
+        g.authorized_event_id=preview['eventId']
         response, status = champions(); assert status == 201
     row_id = int(response.get_json()['id'])
     with current_app.test_request_context(method='PUT', json={'active':False}):
