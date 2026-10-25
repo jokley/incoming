@@ -2,6 +2,7 @@
 from accommodation_scope import event_query, event_get
 
 from datetime import datetime
+from sqlalchemy.exc import IntegrityError
 
 from flask import Blueprint, jsonify, request
 
@@ -102,15 +103,27 @@ def authorized_catalogue():
 def administer_events():
     if request.method == 'GET':
         return jsonify([event.to_dict() for event in authorized_catalogue().order_by(Event.year, Event.name).all()])
-    data = request.get_json() or {}
-    if not str(data.get('name', '')).strip():
-        return jsonify({'error': 'Name ist erforderlich.'}), 400
+    data = request.get_json(silent=True)
+    if not isinstance(data,dict) or not isinstance(data.get('name'),str) or not 1<=len(data['name'].strip())<=160:
+        return jsonify(error='EVENT_INVALID',message='Eventname mit 1–160 Zeichen erforderlich.'),400
+    if (data.get('year') is not None and (type(data['year']) is not int or not 1900<=data['year']<=2200)) or type(data.get('active',True)) is not bool:
+        return jsonify(error='EVENT_INVALID',message='Gültiges Jahr und boolescher Aktivstatus erforderlich.'),400
+    for key,limit in [('fisEventId',50),('sectorCode',50)]:
+        if data.get(key) is not None and (not isinstance(data[key],str) or len(data[key])>limit):
+            return jsonify(error='EVENT_INVALID',message=f'{key}: maximal {limit} Zeichen.'),400
     event = Event(name=data['name'].strip(), year=data.get('year'),
-                  active=bool(data.get('active', True)), fis_event_id=data.get('fisEventId'),
-                  sector_code=data.get('sectorCode'))
-    db.session.add(event)
-    db.session.commit()
-    return jsonify(event.to_dict()), 201
+                  active=data.get('active',True), fis_event_id=data.get('fisEventId'),sector_code=data.get('sectorCode'))
+    try:
+        db.session.add(event);db.session.commit()
+    except IntegrityError as error:
+        constraint=getattr(getattr(error.orig,'diag',None),'constraint_name','') or ''
+        db.session.rollback()
+        if constraint in {'uq_championship_event_name','championship_event_name_key'}:
+            return jsonify(error='EVENT_NAME_EXISTS',message='Ein Event mit diesem Namen existiert bereits.'),409
+        if constraint in {'pk_championship_event','championship_event_pkey'}:
+            return jsonify(error='EVENT_ID_CONFLICT',message='Event-ID konnte nicht vergeben werden. Operator muss die Datenbank-Sequenz prüfen; keine Daten geändert.'),409
+        return jsonify(error='EVENT_CREATE_CONFLICT',message='Event konnte wegen eines Datenbankkonflikts nicht gespeichert werden. Keine Daten geändert.'),409
+    return jsonify(event.to_dict()),201
 
 
 @events.route('/api/admin/events/<int:event_id>', methods=['GET', 'PUT'])
@@ -256,6 +269,8 @@ def fix_event_quota_rules(event_id):
     event.quota_rules_fixed_by=current_user().username
     event.quota_rules_revision=1
     from quota_rules import audit_rules
+    from quota_rules import revision_snapshot
+    db.session.add(revision_snapshot(event,'Erstfixierung'))
     audit_rules(event,'Quotenregeln verbindlich fixiert')
     db.session.commit()
     return jsonify(rule_projection(event))
@@ -283,3 +298,45 @@ def live_athlete_quotas():
     superseded=db.select(ImportSessionEvent.approval_id).where(ImportSessionEvent.event_type=='QUOTA_DECISION_REVISED_FROM',ImportSessionEvent.approval_id.isnot(None),ImportSessionEvent.session_id.in_(db.select(ImportSession.id).where(ImportSession.event_id==owner)))
     approvals=ImportApproval.query.join(ImportSession).join(ImportSessionVersion,(ImportSessionVersion.id==ImportApproval.version_id)&(ImportSessionVersion.session_id==ImportApproval.session_id)).filter(ImportSession.event_id==owner,ImportApproval.decision=='APPROVED',~ImportApproval.id.in_(superseded)).order_by(ImportApproval.id).all()
     return jsonify(quota_rows(roster,rules,owner,approvals,db.session.get(Event,owner).quota_rules_revision))
+
+
+@events.route('/api/admin/events/<int:event_id>/quota-rules/revision-preview',methods=['POST'])
+@events.route('/api/admin/events/<int:event_id>/quota-rules/revisions',methods=['POST','GET'])
+def revise_quota_rules(event_id):
+    import json
+    from models import EventQuotaRevision
+    from quota_rules import rule_projection, revision_proposal, revision_snapshot, audit_rules
+    from accommodation_mutations import lock_accommodation_writes
+    from imports.workflow import lock_import_snapshot
+    if request.method=='GET':
+        return jsonify([r.to_dict() for r in EventQuotaRevision.query.filter_by(event_id=event_id).order_by(EventQuotaRevision.revision)])
+    lock_accommodation_writes();lock_import_snapshot()
+    event=Event.query.filter_by(id=event_id).populate_existing().with_for_update().first_or_404()
+    data=request.get_json(silent=True) or {}
+    try:
+        proposal=revision_proposal(event,data)
+    except (ValueError,TypeError,AttributeError) as error:
+        return jsonify(error='INVALID_QUOTA_REVISION',message=str(error)),409
+    if request.path.endswith('revision-preview'):return jsonify(proposal)
+    if data.get('confirm') is not True or data.get('confirmationDigest')!=proposal['confirmationDigest']:
+        return jsonify(error='QUOTA_REVISION_CONFIRMATION_REQUIRED'),409
+    # Bestandsmigration creates the current snapshot; explicit isolated fixtures
+    # may predate it. Never mutate an existing historical row.
+    if not db.session.get(EventQuotaRevision,(event.id,event.quota_rules_revision)):
+        db.session.add(revision_snapshot(event,'Bestandsrevision; unverändert übernommen'))
+        db.session.flush()
+    previous=event.quota_rules_revision
+    from auth import current_user
+    try:
+        db.session.info['quota_revision_activation']=(event.id,previous+1)
+        db.session.info['quota_revision_previous']=previous
+        event.quota_rules_json=json.dumps(proposal['after']['config'],sort_keys=True)
+        event.is_world_championship=proposal['after']['isWorldChampionship']
+        event.quota_rules_revision=previous+1
+        event.quota_rules_fixed_at=datetime.utcnow();event.quota_rules_fixed_by=current_user().username
+        db.session.add(revision_snapshot(event,proposal['reason']))
+        audit_rules(event,'Neue Quotenrevision aktiviert: '+proposal['reason'])
+        db.session.commit()
+    finally:
+        db.session.info.pop('quota_revision_activation',None);db.session.info.pop('quota_revision_previous',None)
+    return jsonify(rule_projection(event))

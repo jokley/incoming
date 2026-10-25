@@ -1,6 +1,7 @@
+import { EventWorldChampions } from './EventWorldChampions';
 import { EventQuotaRulesEditor } from './EventQuotaRulesEditor';
 import { useActiveEvent } from '../events/ActiveEventProvider';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { Checkbox, FormControlLabel, MenuItem, Stack, Tab, Tabs, TextField } from '@mui/material';
 import { CalendarDays, Copy, Pencil, Plus } from 'lucide-react';
 import { api } from '../services/api';
@@ -12,12 +13,14 @@ type EventDraft = Partial<ChampionshipEvent>;
 type MappingDraft = Pick<EventCompetitionMapping, 'officialName'|'fisCodex'|'importCode'|'active'>;
 
 export function AdministrationEvents() {
-  const { eventId, refreshEvents } = useActiveEvent();
+  const { eventId, refreshEvents, selectEvent, switchingAllowed } = useActiveEvent();
   const [events, setEvents] = useState<ChampionshipEvent[]>([]);
   const [competitions, setCompetitions] = useState<Competition[]>([]);
   const [selectedId, setSelectedId] = useState(eventId);  // Catalogue editor selection, not an operational event switch.
+  const selectionRequest=useRef(0); const [loadError,setLoadError]=useState('');
   const [selected, setSelected] = useState<ChampionshipEvent | null>(null);
   const [tab, setTab] = useState(0);
+  const [createdNotice,setCreatedNotice]=useState<{id:string;name:string}|null>(null);
   const [eventDialog, setEventDialog] = useState<{open:boolean; value:ChampionshipEvent|null}>({open:false,value:null});
   const [mappingDialog, setMappingDialog] = useState<EventCompetitionMapping|null>(null);
   const [addId, setAddId] = useState('');
@@ -29,7 +32,9 @@ export function AdministrationEvents() {
     setSelectedId(current => preferredId ?? current ?? rows[0]?.id ?? '');
   };
   const loadSelected = async (id=selectedId) => {
-    if (id && id === eventId) setSelected(await api.getAdminEvent(id)); else setSelected(null);
+    const request=++selectionRequest.current;setSelected(null);setLoadError('');
+    if(!id)return;
+    try{const row=await api.getAdminEvent(id);if(request===selectionRequest.current)setSelected(row);}catch(e){if(request===selectionRequest.current)setLoadError(e instanceof Error?e.message:'Eventdetails konnten nicht geladen werden.');}
   };
   useEffect(() => { void Promise.all([loadList(), api.getCompetitions().then(setCompetitions)]); }, []);
   useEffect(() => { void loadSelected(); }, [selectedId]);
@@ -39,10 +44,10 @@ export function AdministrationEvents() {
   ), [competitions, selected]);
 
   const saveEvent = async (draft: EventDraft) => {
-    if (eventDialog.value) await api.updateChampionshipEvent(eventDialog.value.id, draft);
-    else { const created = await api.createChampionshipEvent(draft); setSelectedId(created.id); }
-    await refreshEvents();
-    await loadList(); await loadSelected(eventDialog.value?.id);
+    let savedId=eventDialog.value?.id;
+    if (savedId) await api.updateChampionshipEvent(savedId,draft);
+    else {const created=await api.createChampionshipEvent(draft);savedId=created.id;setSelectedId(created.id);setCreatedNotice(created);}
+    try{await refreshEvents();await loadList(savedId);await loadSelected(savedId);}catch(e){setLoadError('Event gespeichert, Aktualisierung fehlgeschlagen: '+String(e));}
   };
   const saveMapping = async (draft: MappingDraft) => {
     if (!mappingDialog || !selected) return;
@@ -50,7 +55,7 @@ export function AdministrationEvents() {
     await reload();
   };
 
-  return <div className="grid min-h-[38rem] gap-4 xl:grid-cols-[17rem_minmax(0,1fr)]">
+  return <><div role="status">{createdNotice&&<p>Event „{createdNotice.name}“ angelegt · ID {createdNotice.id}. Der aktive Kontext bleibt unverändert. {switchingAllowed&&<OpsButton onClick={()=>selectEvent(createdNotice.id)}>Bewusst zu neuem Event wechseln</OpsButton>}</p>}</div><div className="grid min-h-[38rem] gap-4 xl:grid-cols-[17rem_minmax(0,1fr)]">
     <ContentCard surface="raised" className="overflow-hidden">
       <div className="border-b border-[var(--ops-divider)] p-4">
         <SectionHeader title="Events" subtitle={`${events.length} Veranstaltung${events.length===1?'':'en'}`} />
@@ -66,13 +71,14 @@ export function AdministrationEvents() {
     </ContentCard>
 
     <ContentCard surface="raised" className="min-w-0 overflow-hidden">
+      {loadError&&<p role="alert" className="p-4">{loadError}</p>}
       {selected ? <>
         <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] p-5">
           <div><div className="flex items-center gap-2"><CalendarDays size={18}/><h3 className="text-xl font-extrabold">{selected.name}</h3></div><p className="mt-1 text-sm text-[var(--ops-text-muted)]">{selected.year || 'Jahr nicht gesetzt'} · {selected.competitionMappings?.length ?? 0} Competition Mappings</p></div>
           <OpsButton onClick={() => setEventDialog({open:true,value:selected})}><Pencil className="mr-2 inline h-4 w-4"/>Event bearbeiten</OpsButton>
         </div>
-        <Tabs value={tab} onChange={(_,value)=>setTab(value)} sx={{px:2,borderBottom:'1px solid var(--ops-divider)'}}><Tab label="Allgemein"/><Tab label="Competition Mapping"/><Tab label="Quotenregeln"/></Tabs>
-        {tab===0 ? <GeneralEvent event={selected}/> : tab===2 ? <EventQuotaRulesEditor key={selected.id} eventId={selected.id} isWorldChampionship={selected.isWorldChampionship}/> : <div className="p-5">
+        <Tabs value={tab} onChange={(_,value)=>setTab(value)} sx={{px:2,borderBottom:'1px solid var(--ops-divider)'}}><Tab label="Allgemein"/><Tab label="Competition Mapping"/><Tab label="Quotenregeln"/><Tab label="Weltmeister"/></Tabs>
+        {tab===3 ? <EventWorldChampions eventId={selected.id}/> : tab===0 ? <GeneralEvent event={selected}/> : tab===2 ? <EventQuotaRulesEditor key={selected.id} eventId={selected.id} isWorldChampionship={selected.isWorldChampionship}/> : <div className="p-5">
           <div className="mb-4 flex flex-wrap items-end justify-between gap-3"><SectionHeader title="Competition Mapping" subtitle="Globale Competition-Stammdaten und eventbezogene FIS-Werte."/><div className="flex flex-wrap gap-2">
             <TextField select size="small" label="Competition" value={addId} onChange={e=>setAddId(e.target.value)} sx={{minWidth:230}}>{availableCompetitions.map(c=><MenuItem key={c.id} value={c.id}>{c.displayName} · {c.gender}</MenuItem>)}</TextField>
             <OpsButton disabled={!addId} onClick={async()=>{const c=competitions.find(x=>x.id===addId);if(!c)return;await api.addEventCompetition(selected.id,{competitionId:c.id,officialName:c.name,fisCodex:c.code,importCode:c.importCode,active:true});setAddId('');await reload();}}><Plus className="mr-2 inline h-4 w-4"/>Hinzufügen</OpsButton>
@@ -81,12 +87,12 @@ export function AdministrationEvents() {
           </div></div>
           <MappingTable mappings={selected.competitionMappings ?? []} onEdit={setMappingDialog}/>
         </div>}
-      </> : <div className="p-10"><EmptyState title="Event im Hauptheader auswählen" description="Die Administration verwendet denselben autorisierten Veranstaltungskontext wie der operative Bereich." /></div>}
+      </> : <div className="p-10"><EmptyState title="Eventdetails nicht verfügbar" description="Ein Event links wählen. Zugriff und ein möglicher Deployment-Pin werden serverseitig geprüft; der operative Kontext wechselt dabei nicht." /></div>}
     </ContentCard>
 
     <EventEditor open={eventDialog.open} event={eventDialog.value} onClose={()=>setEventDialog({open:false,value:null})} onSave={saveEvent}/>
     <MappingEditor mapping={mappingDialog} onClose={()=>setMappingDialog(null)} onSave={saveMapping}/>
-  </div>;
+  </div></>;
 }
 
 function GeneralEvent({event}:{event:ChampionshipEvent}) {
@@ -100,9 +106,9 @@ function MappingTable({mappings,onEdit}:{mappings:EventCompetitionMapping[];onEd
 }
 
 function EventEditor({open,event,onClose,onSave}:{open:boolean;event:ChampionshipEvent|null;onClose:()=>void;onSave:(draft:EventDraft)=>Promise<void>}) {
-  const initial:EventDraft=event??EMPTY_EVENT;const [draft,setDraft]=useState<EventDraft>(initial);const [saving,setSaving]=useState(false);
-  useEffect(()=>{if(open)setDraft(event??EMPTY_EVENT);},[open,event?.id]);
-  return <CrudDialog open={open} title={event?'Event bearbeiten':'Event anlegen'} dirty={JSON.stringify(draft)!==JSON.stringify(initial)} saving={saving} saveDisabled={!draft.name?.trim()} onClose={onClose} onSave={async()=>{setSaving(true);try{await onSave(draft);onClose();}finally{setSaving(false);}}}><Stack spacing={2} sx={{pt:1,maxWidth:520}}><TextField required size="small" label="Name" value={draft.name||''} onChange={e=>setDraft({...draft,name:e.target.value})}/><TextField size="small" type="number" label="Jahr" value={draft.year||''} onChange={e=>setDraft({...draft,year:Number(e.target.value)})}/><TextField size="small" label="FIS Event ID" value={draft.fisEventId||''} onChange={e=>setDraft({...draft,fisEventId:e.target.value})}/><TextField size="small" label="Sector Code" value={draft.sectorCode||''} onChange={e=>setDraft({...draft,sectorCode:e.target.value})}/><FormControlLabel control={<Checkbox checked={draft.active??true} onChange={e=>setDraft({...draft,active:e.target.checked})}/>} label="Aktiv"/></Stack></CrudDialog>;
+  const initial:EventDraft=event??EMPTY_EVENT;const [draft,setDraft]=useState<EventDraft>(initial);const [saving,setSaving]=useState(false);const [error,setError]=useState('');
+  useEffect(()=>{if(open){setDraft(event??EMPTY_EVENT);setError('');}},[open,event?.id]);
+  return <CrudDialog open={open} title={event?'Event bearbeiten':'Event anlegen'} dirty={JSON.stringify(draft)!==JSON.stringify(initial)} saving={saving} saveDisabled={!draft.name?.trim()} onClose={onClose} onSave={async()=>{setSaving(true);try{await onSave({name:draft.name,year:draft.year,active:draft.active,fisEventId:draft.fisEventId,sectorCode:draft.sectorCode});onClose();}catch(cause){setError(cause instanceof Error?cause.message:'Speichern fehlgeschlagen');}finally{setSaving(false);}}}><Stack spacing={2} sx={{pt:1,maxWidth:520}}>{error&&<p role="alert">{error}</p>}<TextField required size="small" label="Name" value={draft.name||''} onChange={e=>setDraft({...draft,name:e.target.value})}/><TextField size="small" type="number" label="Jahr" value={draft.year||''} onChange={e=>setDraft({...draft,year:Number(e.target.value)})}/><TextField size="small" label="FIS Event ID" value={draft.fisEventId||''} onChange={e=>setDraft({...draft,fisEventId:e.target.value})}/><TextField size="small" label="Sector Code" value={draft.sectorCode||''} onChange={e=>setDraft({...draft,sectorCode:e.target.value})}/><FormControlLabel control={<Checkbox checked={draft.active??true} onChange={e=>setDraft({...draft,active:e.target.checked})}/>} label="Aktiv"/></Stack></CrudDialog>;
 }
 
 function MappingEditor({mapping,onClose,onSave}:{mapping:EventCompetitionMapping|null;onClose:()=>void;onSave:(draft:MappingDraft)=>Promise<void>}) {

@@ -8,10 +8,10 @@ from auth import current_user
 identity = Blueprint('identity', __name__)
 
 
-@identity.route('/api/auth/me', methods=['GET'])
+@identity.route('/api/auth/me', methods=['GET','POST'])
 def get_authenticated_user():
     from user_access import remember_authenticated_user
-    remember_authenticated_user(current_user())
+    if request.method=='POST':remember_authenticated_user(current_user())
     return jsonify(current_user().to_dict())
 
 

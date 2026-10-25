@@ -87,7 +87,7 @@ class ApiRouteSafetyTest(unittest.TestCase):
 
     def test_viewer_cannot_mutate_or_read_admin_and_audit_routes(self):
         for path, methods in ROUTES.items():
-            if path in {'/health','/api/assignments/availability'}:
+            if path in {'/health','/api/assignments/availability','/api/auth/me'}:
                 continue
             for method in methods:
                 restricted_read = path.startswith(('/api/admin/', '/api/audit-events'))

@@ -63,6 +63,11 @@ def refresh_plan(session, preview=None, *, read_context=None, recalculate=True):
 
 def require_review(session, *, approved=False):
     preview=load_version_preview(session.current_version)
+    from quota_rules import rules_for_event, fingerprint
+    from models import Event
+    event=db.session.get(Event,session.event_id)
+    if preview.get('quotaRulesDigest') and (preview['quotaRulesDigest']!=fingerprint(rules_for_event(session.event_id)) or preview.get('quotaRulesRevision',1)!=event.quota_rules_revision):
+        raise ImportValidationError('QUOTA_RULES_CHANGED','Quotenregeln wurden geändert – bitte erneut prüfen.')
     workflow=preview.get('_workflow') or {}
     plan=workflow.get('plan')
     verify_plan(preview,plan)
@@ -89,7 +94,7 @@ def lock_import_snapshot():
     if db.session.get_bind().dialect.name=='postgresql':
         db.session.execute(text('LOCK TABLE athlete, athlete_competition, room_booking, room_booking_occupant, '
             'room_assignment, fis_room_assignment, import_session, import_session_version, import_approval, import_session_event, '
-            'championship_event, event_competition, competition, world_champion, audit_event IN SHARE ROW EXCLUSIVE MODE'))
+            'championship_event, event_competition, competition, world_champion, world_champion_recognition, event_quota_revision, audit_event IN SHARE ROW EXCLUSIVE MODE'))
 
 
 def present_plan(preview,plan):

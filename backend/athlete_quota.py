@@ -47,6 +47,7 @@ def project_preview(preview, read_context=None):
         ImportApproval.decision=='APPROVED',~ImportApproval.id.in_(superseded)).order_by(ImportApproval.id).all()
     preview['quotaRulesSnapshot']=rules
     preview['quotaRulesDigest']=fingerprint(rules)
+    preview['quotaRulesRevision']=db.session.get(Event,preview['eventId']).quota_rules_revision
     preview['athleteQuotaChecks']=quota_rows(preview.get('people',[]),rules,preview['eventId'],approvals,db.session.get(Event,preview['eventId']).quota_rules_revision)
     preview['warnings']=[w for w in preview.get('warnings',[]) if w.get('code')!='QUOTA_ATHLETE_EXCEEDED']
     for row in preview['athleteQuotaChecks']:

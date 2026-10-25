@@ -130,3 +130,27 @@ def audit_rules(event,activity):
         activity=activity,category='Administration',entity_label=event.name,
         details_json=json.dumps({'rules':rule_projection(event),'isWorldChampionship':event.is_world_championship}),entity_refs_json=event_audit_refs({'eventId':str(event.id)},event.id)))
     g.atomic_import_audit=True  # Existing app-wide atomic-audit hook.
+
+
+def revision_snapshot(event, reason):
+    from models import EventQuotaRevision
+    projection=rule_projection(event)
+    return EventQuotaRevision(event_id=event.id,revision=event.quota_rules_revision,
+        config_json=event.quota_rules_json,is_world_championship=event.is_world_championship,
+        digest=projection['digest'],activated_at=event.quota_rules_fixed_at,
+        activated_by=event.quota_rules_fixed_by,reason=reason)
+
+
+def revision_proposal(event,data):
+    if not event.quota_rules_fixed_at:
+        raise ValueError('Zuerst die ursprüngliche Revision fixieren.')
+    if data.get('expectedDigest')!=rule_projection(event)['digest'] or data.get('expectedRevision')!=event.quota_rules_revision:
+        raise ValueError('Quotenregeln wurden inzwischen geändert – bitte erneut laden.')
+    config=validate_rules(data.get('config'))
+    if type(data.get('isWorldChampionship')) is not bool or not isinstance(data.get('reason'),str) or not data['reason'].strip() or len(data['reason'])>2000:
+        raise ValueError('WM-Kennzeichen und Änderungsbegründung erforderlich (maximal 2000 Zeichen).')
+    before={'config':json.loads(event.quota_rules_json),'isWorldChampionship':event.is_world_championship}
+    after={'config':config,'isWorldChampionship':data['isWorldChampionship']}
+    if before==after:raise ValueError('Keine Regeländerung vorhanden.')
+    proposal={'eventId':event.id,'previousRevision':event.quota_rules_revision,'before':before,'after':after,'reason':data['reason'].strip()}
+    return {**proposal,'confirmationDigest':fingerprint(proposal)}

@@ -17,7 +17,7 @@ export function AdministrationWorldChampions() {
   const [draft, setDraft] = useState<Partial<WorldChampion> | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-  const load = async () => setRows(await api.getWorldChampions());
+  const load = async () => setRows(await api.getChampionTitles());
   useEffect(() => { void Promise.all([load(), api.getAdminEvents().then(setEvents), api.getCompetitions().then(values => setGroups([...new Set(values.map(c => c.quotaDiscipline))].filter(Boolean)))]).catch(e => setError(String(e))); }, []);
   const editions = championEditions(rows);
   const selected = editions.find(edition => edition.key === selectedId) ?? editions[0];
@@ -65,7 +65,7 @@ export function AdministrationWorldChampions() {
     <CrudDialog open={Boolean(draft)} title={draft?.id ? 'Weltmeister bearbeiten' : 'Weltmeister hinzufügen'} size="medium" dirty={JSON.stringify(draft) !== JSON.stringify(initialDraft)} saving={saving} saveDisabled={!draft?.fisCode || !draft.name || !draft.source || !draft.eventId || !draft.discipline || !draft.eventGroup || !draft.nation || !draft.championship?.trim() || !Number.isInteger(draft.championshipYear)} onClose={() => setDraft(null)} onSave={() => draft ? save(draft, true) : Promise.resolve()}>
       {draft && <div className="grid gap-3 pt-1 sm:grid-cols-2">
         {error && <InfoPanel tone="error" title="Speichern fehlgeschlagen">{error}</InfoPanel>}
-        <TextField select size="small" label="Ziel-Event" value={draft.eventId ?? ''} onChange={e => setDraft({...draft, eventId:e.target.value})}>{events.map(e => <MenuItem key={e.id} value={e.id}>{e.name}</MenuItem>)}</TextField>
+        <TextField select size="small" label="Ursprung / Anlagekontext" value={draft.eventId ?? ''} onChange={e => setDraft({...draft, eventId:e.target.value})}>{events.map(e => <MenuItem key={e.id} value={e.id}>{e.name}</MenuItem>)}</TextField>
         {(['fisCode','name','nation','discipline','championship','source'] as const).map((field, index) => <TextField key={field} required size="small" label={['FIS-Code','Name','Nation','Disziplin','Championship','Quelle / URL'][index]} value={draft[field] ?? ''} onChange={e => setDraft({...draft,[field]:e.target.value})}/>)}
         <TextField size="small" type="number" label="Championship Jahr" value={draft.championshipYear ?? ''} onChange={e => setDraft({...draft,championshipYear:Number(e.target.value)})}/>
         <TextField size="small" select label="Gender" value={draft.gender ?? 'M'} onChange={e => setDraft({...draft,gender:e.target.value})}>{['M','W','A'].map(g => <MenuItem key={g} value={g}>{g}</MenuItem>)}</TextField>

@@ -16,14 +16,16 @@ export class EventRequestScope {
     }
   }
   async run<T>(url: string, init: RequestInit | undefined,
-    consume: (response: Response, assertCurrent: () => void) => Promise<T>, bootstrap: false | 'auth' | 'context' = false): Promise<T> {
+    consume: (response: Response, assertCurrent: () => void) => Promise<T>, bootstrap: false | 'auth' | 'context' = false, managementOwner?: string): Promise<T> {
     if (!bootstrap && !this.owner) throw new Error('Bitte zuerst einen verfügbaren Eventkontext laden.');
     const generation = this.generation;
     const controller = new AbortController();
     const headers = new Headers(init?.headers);
     if (!bootstrap) {
-      if (headers.has(EVENT_HEADER) && headers.get(EVENT_HEADER) !== this.owner) throw new Error('Widersprüchlicher Eventkontext.');
-      headers.set(EVENT_HEADER, this.owner!);
+      const target = managementOwner ?? this.owner;
+      if (managementOwner && new URL(url,'http://local').pathname.match(/^\/api\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1] !== managementOwner) throw new Error('Ungültiger Administrationskontext.');
+      if (headers.has(EVENT_HEADER) && headers.get(EVENT_HEADER) !== target) throw new Error('Widersprüchlicher Eventkontext.');
+      headers.set(EVENT_HEADER, target!);
     }
     const assertCurrent = () => {
       if (controller.signal.aborted || (!bootstrap && generation !== this.generation)) throw contextCancelled();

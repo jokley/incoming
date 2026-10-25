@@ -16,7 +16,7 @@ admin_scenarios = Blueprint('admin_scenarios', __name__)
 @admin_scenarios.route('/api/admin/scenarios', methods=['GET'])
 def list_scenarios():
     """Return immutable scenario metadata; generation happens only on demand."""
-    return jsonify([scenario.public_dict() for scenario in SCENARIOS])
+    return jsonify([scenario.public_dict() for scenario in SCENARIOS]+[{'number':'feature-freeze','title':'Feature-Freeze · 20 Abnahmefälle','description':'Zwei Events, Revisionen, Rechte, Weltmeister und Gender-Einzelbelegung. Nur isoliert verwenden.','versions':1}])
 
 
 @admin_scenarios.route('/api/admin/scenarios/<number>/generate', methods=['POST'])

@@ -87,7 +87,8 @@ class ScenarioGeneratorTest(unittest.TestCase):
     def test_complete_suite_is_flat_and_contains_nine_pairs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = generate_complete_suite(Path(directory))
-            self.assertFalse(any(path.is_dir() for path in root.iterdir()))
+            self.assertEqual([path.name for path in root.iterdir() if path.is_dir()], ['FeatureFreeze'])
+            self.assertEqual(len(json.loads((root/'FeatureFreeze'/'manifest.json').read_text())['cases']),20)
             self.assertEqual(len(list(root.glob('*_entries.xlsx'))), 9)
             self.assertEqual(len(list(root.glob('*_room_list.xlsx'))), 9)
             self.assertTrue((root / '004_Athlet_entfernt_entries.xlsx').is_file())
@@ -100,3 +101,14 @@ class ScenarioGeneratorTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_freeze_workbooks_have_exactly_one_minority_and_compatible_membership_flags(tmp_path):
+    import pandas as pd
+    from scenario_generator import generate_freeze_suite
+    root=generate_freeze_suite(tmp_path)
+    for minority in ('M','W'):
+        rows=pd.read_excel(root/f'only_one_{minority}_entries.xlsx')
+        assert (rows.Gender==minority).sum()==1
+        assert (rows['WSC_SS_M_6188']=='YES').equals(rows.Gender=='M')
+        assert (rows['WSC_SS_W_6190']=='YES').equals(rows.Gender=='W')

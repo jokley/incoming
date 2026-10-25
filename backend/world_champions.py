@@ -42,8 +42,13 @@ def recognize(person, existing, overrides, event_id, carried_keys=(), override_r
         source = source or 'MANUAL_SET'
     else:
         if (person.get('function') or '').strip().lower() == 'athlete' and person.get('fisCode') and event_id:
-            references = WorldChampion.query.filter_by(event_id=int(event_id),
-                fis_code=canonical_fis_code(person['fisCode']), active=True, entitlement_enabled=True).order_by(WorldChampion.id).all()
+            from models import WorldChampionRecognition
+            from sqlalchemy import or_,and_,exists
+            links=WorldChampionRecognition
+            references = WorldChampion.query.filter(
+                WorldChampion.fis_code==canonical_fis_code(person['fisCode']),WorldChampion.active.is_(True),WorldChampion.entitlement_enabled.is_(True),
+                or_(exists().where(links.title_id==WorldChampion.id,links.event_id==int(event_id),links.active.is_(True)),
+                    and_(WorldChampion.event_id==int(event_id),~exists().where(links.title_id==WorldChampion.id,links.event_id==WorldChampion.event_id)))).order_by(WorldChampion.id).all()
         reason = 'WORLD_CHAMPION' if references else None
         source = 'AUTO_REFERENCE' if references or source == 'AUTO_REFERENCE' else None
     person.update(singleRoomQuotaExemptReason=reason, singleRoomExemptionSource=source,
@@ -76,7 +81,12 @@ def reconcile_verified_titles(event_id, records):
         identity = dict(event_id=event_id, fis_code=str(record['fisCode']),
             championship=record['championship'], championship_year=record['championshipYear'],
             discipline=record['discipline'], title_type=record['titleType'])
-        if WorldChampion.query.filter_by(**identity).first():
+        from models import WorldChampionRecognition
+        source_identity={k:v for k,v in identity.items() if k!='event_id'}
+        known=WorldChampion.query.filter_by(**source_identity).first()
+        if known:
+            if not db.session.get(WorldChampionRecognition,(event_id,known.id)):
+                db.session.add(WorldChampionRecognition(event_id=event_id,title_id=known.id,active=known.active))
             continue
         db.session.add(WorldChampion(**identity, name=record['name'], nation=record['nation'],
             gender=record['gender'], event_group=record['eventGroup'], source=record['source'],
@@ -84,3 +94,22 @@ def reconcile_verified_titles(event_id, records):
         db.session.flush()
         created += 1
     return created
+
+
+def recognition_protected(event_id,title):
+    from models import Athlete,ImportSession
+    # Conservative: any historical import session may contain this title's
+    # evidence. No automatic revalidation or rewrite of those snapshots.
+    return bool(ImportSession.query.filter_by(event_id=event_id).first() or
+        Athlete.query.filter_by(event_id=event_id,fis_code=title.fis_code,single_room_quota_exempt_reason='WORLD_CHAMPION').first())
+
+
+def audit_recognition(event_id,title_id,old,new):
+    from auth import current_user
+    from flask import g
+    db.session.add(AuditEvent(username=current_user().username,action='update',entity_type='world-champion-recognition',
+        entity_id=str(title_id),request_id=str(uuid.uuid4()),method=request.method,path=request.path,
+        activity='Eventbezogene Weltmeisteranerkennung geändert',category='Administration',
+        changes_json=json.dumps({'titleId':str(title_id),'old':old,'new':new}),
+        entity_refs_json=event_audit_refs({'titleId':str(title_id)},event_id)))
+    g.atomic_import_audit=True
