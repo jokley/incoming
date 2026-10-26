@@ -312,10 +312,11 @@ def test_corrupt_legacy_occupant_is_not_serialized(inventory,path):
     assert people[1][2].lastname not in json.dumps(response.json)
 
 
-def test_unscopable_history_reset_is_blocked_even_for_empty_second_event(events,monkeypatch):
+def test_history_cleanup_preserves_evidence_even_with_second_event(events,monkeypatch):
     a,_=events;monkeypatch.setitem(app.config,'OPERATIONAL_EVENT_ID',str(a.id))
     monkeypatch.setitem(app.config,'DATABASE_MAINTENANCE_MODE',True)
-    response=app.test_client().post('/api/admin/test-data/reset',json={'scope':'activities','confirmation':'RESET EVENT DATA'})
-    assert response.status_code==409,response.json
+    response=app.test_client().post('/api/admin/test-data/reset',json={'scope':'activities','confirmed':True})
+    assert response.status_code==200,response.json
+    assert response.json['counts']['workflowEvents']==0
     from models import Event
     assert Event.query.count()==2

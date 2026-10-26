@@ -1,0 +1,18 @@
+{
+  "description": "Anonymized structural regression; no original names, identifiers, contacts or transport details. Nation is synthetic.",
+  "nation": "X03",
+  "entries": {
+    "columns": ["Function", "Competitorid/Staff ID", "Fiscode", "Lastname", "Firstname", "Nationcode", "For_gender", "Gender", "WSC_HP_W_6175", "WSC_HP_M_6174", "WSC_PSL_W_6178", "WSC_PSL_M_6177", "WSC_PRT_A_6180", "WSC_BA_W_6183", "WSC_BA_M_6182", "WSC_SS_W_6190", "WSC_SS_M_6188", "WSC_SBX_W_6192", "WSC_SBX_M_6191", "WSC_BXT_A_6193", "WSC_PGS_W_6172", "WSC_PGS_M_6170", "Arrival_date", "Departure_date", "Room_type", "Shared with Name"],
+    "rows": [
+      ["NSA Coach", 9851898, null, "Reference001", "Person", "X03", "A", "M", "NO", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "04.03.2027", "22.03.2027", "Single", null],
+      ["Athlete", 9823286, 9886207, "Reference002", "Person", "X03", "W", "W", "NO", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "04.03.2027", "22.03.2027", "Single", null]
+    ]
+  },
+  "rooms": {
+    "columns": ["Lastname", "Firstname", "Nationcode", "Industryname", "Function", "For_gender", "Arrival_date", "Departure_date", "Shared with Name", "Shared with Nationcode", "Shared with Industryname", "Shared with Function", "Shared with For_gender", "Shared with Arrival_date", "Shared with Departure_date", "Thu 04.03.2027 (Persons by room)", "Fri 05.03.2027 (Persons by room)", "Sat 06.03.2027 (Persons by room)", "Sun 07.03.2027 (Persons by room)", "Mon 08.03.2027 (Persons by room)", "Tue 09.03.2027 (Persons by room)", "Wed 10.03.2027 (Persons by room)", "Thu 11.03.2027 (Persons by room)", "Fri 12.03.2027 (Persons by room)", "Sat 13.03.2027 (Persons by room)", "Sun 14.03.2027 (Persons by room)", "Mon 15.03.2027 (Persons by room)", "Tue 16.03.2027 (Persons by room)", "Wed 17.03.2027 (Persons by room)", "Thu 18.03.2027 (Persons by room)", "Fri 19.03.2027 (Persons by room)", "Sat 20.03.2027 (Persons by room)", "Sun 21.03.2027 (Persons by room)", "Room_type", "Single", "Double_shared", "Double_single", "Appartment"],
+    "rows": [
+      ["Reference002", "Person", "X03", null, "Athlete", "W", "04.03.2027", "22.03.2027", null, null, null, null, null, null, null, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, "Single", 1, 0, 0, 0],
+      ["Reference001", "Person", "X03", null, "NSA Coach", "A", "04.03.2027", "22.03.2027", null, null, null, null, null, null, null, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, "Single", 1, 0, 0, 0]
+    ]
+  }
+}

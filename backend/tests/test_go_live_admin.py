@@ -56,7 +56,7 @@ def test_restore_requires_confirmation_but_delegates_automatic_maintenance(admin
         assert c.post('/api/admin/database/restore',headers=h,json={'token':'x','confirmation':'RESTORE DATABASE'}).status_code==202
         assert delegate.call_args.args[0]=='/restore-jobs'
         assert json.loads(delegate.call_args.args[1])['actor']=='owner'
-    assert c.post('/api/admin/test-data/reset',headers=h,json={'scope':'assignments','confirmation':'RESET EVENT DATA'}).status_code==409
+    assert c.post('/api/admin/test-data/reset',headers=h,json={'scope':'assignments','confirmed':True}).status_code==200
 
 
 def title_list(owner):
@@ -119,14 +119,14 @@ def test_reset_is_explicit_maintenance_scoped_and_keeps_foreign_bookings(admin,m
     from models import RoomBooking
     a,b,*_=admin;c=app.test_client()
     monkeypatch.setitem(app.config,'DATABASE_MAINTENANCE_MODE',True)
-    h=headers('global-admin',a.id,'incoming-admin')  # no EventAccess grant
+    h=headers('both',a.id,'incoming-admin')  # functional admin plus explicit EventAccess write grant
     original=RoomBooking.query.count()
     assert c.post('/api/admin/test-data/reset',headers=h,json={'scope':'assignments'}).status_code==400
     assert c.post('/api/admin/test-data/reset',headers=headers('global-admin',b.id),json={'scope':'assignments','confirmation':'RESET EVENT DATA'}).status_code==409
     assert RoomBooking.query.count()==original
     blocked=c.post('/api/admin/test-data/reset',headers=h,json={'scope':'activities','confirmation':'RESET EVENT DATA'})
-    assert blocked.status_code==409
-    assert 'Global history cleanup' in blocked.json['message']
+    assert blocked.status_code==200
+    assert blocked.json['counts']['workflowEvents']==0
     response=c.post('/api/admin/test-data/reset',headers=h,json={'scope':'assignments','confirmation':'RESET EVENT DATA'})
     assert response.status_code==200,response.json
     assert RoomBooking.query.filter_by(event_id=a.id).count()==0

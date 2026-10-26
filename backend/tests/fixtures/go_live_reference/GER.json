@@ -1,0 +1,35 @@
+{
+  "description": "Anonymized structural regression; no original names, identifiers, contacts or transport details. Nation is synthetic.",
+  "nation": "X05",
+  "entries": {
+    "columns": ["Function", "Competitorid/Staff ID", "Fiscode", "Lastname", "Firstname", "Nationcode", "For_gender", "Gender", "WSC_HP_W_6175", "WSC_HP_M_6174", "WSC_PSL_W_6178", "WSC_PSL_M_6177", "WSC_PRT_A_6180", "WSC_BA_W_6183", "WSC_BA_M_6182", "WSC_SS_W_6190", "WSC_SS_M_6188", "WSC_SBX_W_6192", "WSC_SBX_M_6191", "WSC_BXT_A_6193", "WSC_PGS_W_6172", "WSC_PGS_M_6170", "Arrival_date", "Departure_date", "Room_type", "Shared with Name"],
+    "rows": [
+      ["Athlete", 9819330, 9864881, "Reference010", "Person", "X05", "W", "W", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["NSA Medical", 9867570, null, "Reference005", "Person", "X05", "A", "M", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9801593, 9837214, "Reference013", "Person", "X05", "W", "W", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["NSA Team Coach", 9860402, null, "Reference008", "Person", "X05", "A", "M", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "09.03.2027", "No room", null],
+      ["Athlete", 9888542, 9904740, "Reference016", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9864758, 9883745, "Reference019", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9866730, 9833784, "Reference002", "Person", "X05", "W", "W", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9845771, 9848867, "Reference001", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9868340, 9814006, "Reference014", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9856063, 9839565, "Reference017", "Person", "X05", "M", "M", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "09.03.2027", "No room", null],
+      ["Athlete", 9879937, 9886811, "Reference007", "Person", "X05", "W", "W", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "09.03.2027", "No room", null],
+      ["Athlete", 9825763, 9841470, "Reference006", "Person", "X05", "W", "W", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "09.03.2027", "No room", null],
+      ["NSA Team Coach", 9805663, null, "Reference012", "Person", "X05", "A", "M", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9884641, 9895915, "Reference003", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9886283, 9898008, "Reference018", "Person", "X05", "M", "M", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "09.03.2027", "No room", null],
+      ["Athlete", 9832138, 9889702, "Reference015", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9817462, 9824253, "Reference021", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9850909, 9865770, "Reference009", "Person", "X05", "W", "W", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9909700, 9860816, "Reference011", "Person", "X05", "M", "M", "NO", "NO", "NO", "NO", "NO", "NO", "YES", "NO", "YES", "NO", "NO", "NO", "NO", "NO", "06.03.2027", "20.03.2027", "No room", null],
+      ["NSA Head Coach", 9895144, null, "Reference020", "Person", "X05", "A", "M", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "20.03.2027", "No room", null],
+      ["Athlete", 9902174, 9848869, "Reference004", "Person", "X05", "W", "W", "YES", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "NO", "05.03.2027", "09.03.2027", "No room", null]
+    ]
+  },
+  "rooms": {
+    "columns": ["no data available"],
+    "rows": [
+    ]
+  }
+}

@@ -432,6 +432,21 @@ class Handler(BaseHTTPRequestHandler):
                 return self._reply(201, import_dump(body, unquote(self.headers.get("X-Filename", "Lokales Backup"))))
             if self.path == "/restore":
                 return self._reply(410, {'error': 'COORDINATED_RESTORE_REQUIRED'})
+            if self.path == '/cleanup-backup':
+                import secrets
+                secret=os.environ.get('AUTH_PROXY_SECRET','')
+                if not secret or not secrets.compare_digest(secret,self.headers.get('X-Backup-Control-Secret','')):
+                    return self._reply(403, {'error':'FORBIDDEN'})
+                if length<=0 or length>4096:raise ValueError('Invalid cleanup backup request')
+                payload=json.loads(self.rfile.read(length));settings=config()
+                target={'host':settings['host'].lower(),'port':int(settings['port']),'database':settings['database']}
+                if not isinstance(payload,dict) or payload.get('databaseTarget')!=target:raise ValueError('Backup target mismatch')
+                if not RESTORE_LOCK.acquire(blocking=False):raise BlockingIOError('Restore active')
+                try:
+                    result=create_backup('manual')
+                    validate_dump(settings['directory']/'manual'/result['filename'],settings)
+                    return self._reply(200,{k:result[k] for k in ('status','filename','category','size')})
+                finally:RESTORE_LOCK.release()
             if self.path == "/restore-jobs":
                 import secrets
                 secret = os.environ.get('AUTH_PROXY_SECRET', '')
