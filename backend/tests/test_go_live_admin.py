@@ -27,8 +27,8 @@ def test_global_backup_authority_never_grants_operative_event_access(admin,user,
     with patch('database_admin.urllib.request.urlopen') as remote:
         remote.return_value.__enter__.return_value=upstream
         assert c.post('/api/admin/database/backup',headers=h).status_code==202
-        assert c.post('/api/admin/database/restore',headers=h,json={'token':'x','confirmation':'RESTORE DATABASE'}).status_code==409
-        assert remote.call_count==1
+        assert c.post('/api/admin/database/restore',headers=h,json={'token':'x','confirmation':'RESTORE DATABASE'}).status_code==202
+        assert remote.call_count==2
     assert c.get('/api/athletes',headers=headers(user,b.id,role)).status_code==409
     assert AuditEvent.query.filter_by(entity_type='global-database').count()==1
 
@@ -48,17 +48,15 @@ def test_configure_other_championship_without_switch_or_data_grants(admin,user,r
     assert c.get(f'/api/admin/events/{b.id}',headers=headers('reader',b.id,'incoming-editor')).status_code==403
 
 
-def test_restore_requires_both_server_maintenance_and_explicit_confirmation(admin,monkeypatch):
+def test_restore_requires_confirmation_but_delegates_automatic_maintenance(admin,monkeypatch):
     c=app.test_client();h=headers('owner',role='unknown')
-    with patch('database_admin.delegate',return_value=({'status':'success'},200)) as delegate:
-        assert c.post('/api/admin/database/restore',headers=h,json={'token':'x','confirmation':'RESTORE DATABASE','maintenanceMode':True}).status_code==409
-        monkeypatch.setitem(app.config,'DATABASE_MAINTENANCE_MODE',True)
-        assert c.put(f'/api/athletes/{admin[4][0][0].id}',headers=headers('owner',admin[0].id,'unknown'),json={'internalNote':'must not persist'}).status_code==503
-        assert c.get('/api/admin/database/backups',headers=h).status_code==200
-        assert c.get('/api/admin/database/status',headers=h).json['maintenanceMode'] is True
+    with patch('database_admin.delegate',return_value=({'state':'QUEUED','operationId':'job'},202)) as delegate:
         assert c.post('/api/admin/database/restore',headers=h,json={'token':'x'}).status_code==400
-        assert c.post('/api/admin/database/restore',headers=h,json={'token':'x','confirmation':'RESTORE DATABASE'}).status_code==200
-        assert delegate.call_count==1
+        delegate.assert_not_called()
+        assert c.post('/api/admin/database/restore',headers=h,json={'token':'x','confirmation':'RESTORE DATABASE'}).status_code==202
+        assert delegate.call_args.args[0]=='/restore-jobs'
+        assert json.loads(delegate.call_args.args[1])['actor']=='owner'
+    assert c.post('/api/admin/test-data/reset',headers=h,json={'scope':'assignments','confirmation':'RESET EVENT DATA'}).status_code==409
 
 
 def title_list(owner):

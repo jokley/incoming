@@ -49,9 +49,9 @@ def test_global_database_operations_stay_separately_guarded(admin,monkeypatch,tm
         status=c.get('/api/admin/database/status',headers=supplied)
         assert status.status_code in {200,503}
         assert status.json['capabilities']['create'] and status.json['capabilities']['download']
-        assert not status.json['capabilities']['restore'] and not status.json['capabilities']['reset']
+        assert status.json['capabilities']['restore'] and not status.json['capabilities']['reset']
         assert c.get('/api/admin/database/backups/manual/test.dump.gz',headers=supplied).status_code==404
-        assert c.post('/api/admin/database/restore',headers=supplied,json={'confirmation':'RESTORE DATABASE','token':'x'}).status_code==409
+        assert c.post('/api/admin/database/restore',headers=supplied,json={'token':'x'}).status_code==400
         assert c.post('/api/admin/test-data/reset',headers=headers(user,a.id,role),json={'scope':'all','confirmation':'RESET EVENT DATA'}).status_code==409
     for role in ('unknown','incoming-viewer','incoming-editor'):
         for path,method in [('/api/admin/database/backups','GET'),('/api/admin/database/backup','POST'),('/api/admin/database/restore','POST'),('/api/admin/test-data/reset','POST')]:

@@ -113,3 +113,11 @@ def explicit_standard_quota_policy_for_existing_fixtures(request):
     event.listen(db.session,'before_flush',seed,insert=True)
     try:yield
     finally:event.remove(db.session,'before_flush',seed)
+
+
+@pytest.fixture(autouse=True)
+def legacy_restore_coordination(request, monkeypatch):
+    # Ordinary domain tests have no backup service/volume. Coordination tests
+    # explicitly enable and initialize their own isolated control directory.
+    from app import app
+    monkeypatch.setitem(app.config, 'RESTORE_COORDINATION_REQUIRED', False)

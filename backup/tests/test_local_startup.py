@@ -86,7 +86,8 @@ class LocalStartupTest(unittest.TestCase):
         self.assertEqual(env['POSTGRES_HOST'], '127.0.0.1')
 
     def test_listener_is_loopback_locally_and_preserves_production_default(self):
-        with patch.object(backup_service, 'config'), \
+        with __import__('tempfile').TemporaryDirectory() as control, \
+                patch.object(backup_service, 'config', return_value={'directory': Path(control)}), \
                 patch.dict(os.environ, {'BACKUP_ENABLED': 'false'}, clear=True), \
                 patch.object(backup_service, 'ThreadingHTTPServer') as server:
             backup_service.serve(host='127.0.0.1', port=58080)

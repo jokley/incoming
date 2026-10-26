@@ -12,16 +12,16 @@ before(async () => {
 after(async () => server?.close());
 test('normal operation explains server maintenance and global restore scope before any action', () => {
   const html = renderToStaticMarkup(createElement(Information,{filename:'manual.dump.gz',maintenanceMode:false,canRestore:false}));
-  for (const text of ['manual.dump.gz','Wartungsmodus ist nicht aktiv','DATABASE_MAINTENANCE_MODE=true','Backenddienst mit dieser Konfiguration neu erstellen/starten','aller Championship-Events','Sicherheitsbackup','startet keinen Restore']) assert.ok(html.includes(text),text);
+  for (const text of ['manual.dump.gz','automatisch','Keine manuelle Wartungsvariable','aller Championship-Events','Sicherheitsbackup']) assert.ok(html.includes(text),text);
 });
 test('maintenance alone does not confer restore permission', () => {
   const html = renderToStaticMarkup(createElement(Information,{maintenanceMode:true,canRestore:false}));
-  assert.ok(html.includes('Keine Berechtigung zur Wiederherstellung'));
+  assert.ok(html.includes('Berechtigung und Restorestatus prüfen'));
 });
 test('authorized maintenance retains backup and global-impact warnings', () => {
   const html = renderToStaticMarkup(createElement(Information,{maintenanceMode:true,canRestore:true}));
   assert.ok(html.includes('Sicherheitsbackup'));
   assert.ok(html.includes('aller Championship-Events'));
   assert.ok(!html.includes('Wartungsmodus ist nicht aktiv'));
-  assert.ok(!html.includes('Keine Berechtigung'));
+  assert.ok(!html.includes('Restorestatus prüfen'));
 });

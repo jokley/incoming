@@ -204,7 +204,7 @@ def import_dump(source, original_name):
         if not target.stat().st_size:
             raise ValueError("Die ausgewählte Datei ist leer.")
         validate_dump(target, settings)
-        log("backup_imported", token=token, size=target.stat().st_size)
+        log("backup_imported", size=target.stat().st_size)
         return {"token": token, "filename": original_name, "size": target.stat().st_size,
                 "modified": datetime.now(timezone.utc).timestamp(), "local": True}
     except Exception:
@@ -307,7 +307,21 @@ def _activate_staged_database(settings, staging, rollback):
             error=str(cleanup_error))
 
 
-def restore_backup(payload):
+def _probe_safety_backup(settings, filename, verify):
+    probe = settings['database'][:35] + '_safety_' + uuid.uuid4().hex[:10]
+    try:
+        _postgres_command(settings, f'CREATE DATABASE {_quoted_identifier(probe)} TEMPLATE template0')
+        result = subprocess.run(['pg_restore','-h',settings['host'],'-p',settings['port'],'-U',settings['user'],
+            '-d',probe,'--no-owner','--no-privileges','--exit-on-error','--single-transaction',
+            str(settings['directory'] / 'pre-restore' / filename)],
+            env={**os.environ,'PGPASSWORD':settings['password']},capture_output=True,text=True)
+        if result.returncode: raise RuntimeError('PRE_RESTORE_BACKUP_VALIDATION_FAILED')
+        verify(probe)
+    finally:
+        _drop_database(settings,probe)
+
+
+def restore_backup(payload, *, progress=None, verify=None):
     """Restore into an isolated database and atomically activate it after validation.
 
     Restoring with ``--clean`` into the live schema is unsafe when the running
@@ -323,17 +337,26 @@ def restore_backup(payload):
     settings = None
     try:
         settings = config()
-        source, imported = resolve_restore_source(payload, settings)
+        source, imported = (Path(payload['_job_source']), False) if '_job_source' in payload else resolve_restore_source(payload, settings)
         if not source.is_file():
             raise FileNotFoundError
         validate_dump(source, settings)
         # This must finish successfully before pg_restore is ever invoked.
-        safety_backup = create_backup("pre-restore")
+        if progress: progress('SAFETY_BACKUP')
+        if verify:
+            if not BACKUP_LOCK.acquire(timeout=120):raise RuntimeError('BACKUP_DRAIN_TIMEOUT')
+            safety_backup = create_backup('pre-restore', _lock_reserved=True)
+        else:
+            safety_backup = create_backup('pre-restore')
+        validate_dump(settings['directory'] / 'pre-restore' / safety_backup['filename'], settings)
+        if progress: progress('SAFETY_BACKUP', safetyBackup=safety_backup['filename'])
+        if verify: _probe_safety_backup(settings, safety_backup['filename'], verify)
         suffix = uuid.uuid4().hex[:10]
         # Keep the random suffix even for unusually long configured DB names.
         prefix = settings['database'][:40]
         staging = f'{prefix}_restore_{suffix}'
         rollback = f'{prefix}_rollback_{suffix}'
+        if progress: progress('RESTORING', stagingDatabase=staging, rollbackDatabase=rollback)
         _postgres_command(settings, f'CREATE DATABASE {_quoted_identifier(staging)} '
                           f'OWNER {_quoted_identifier(settings["user"])} TEMPLATE template0')
         command = ["pg_restore", "-h", settings["host"], "-p", settings["port"],
@@ -343,7 +366,7 @@ def restore_backup(payload):
         result = subprocess.run(command, env={**os.environ, "PGPASSWORD": settings["password"]},
                                 capture_output=True, text=True)
         if result.returncode:
-            raise RuntimeError(result.stderr.strip() or "Wiederherstellung fehlgeschlagen.")
+            raise RuntimeError('ARCHIVE_RESTORE_FAILED' if verify else result.stderr.strip() or "Wiederherstellung fehlgeschlagen.")
         # A dump can legitimately predate the running application. Bring its
         # schema forward before the application reconnects (for example, an
         # older athlete dump has no internal_note column yet).
@@ -355,14 +378,15 @@ def restore_backup(payload):
             capture_output=True, text=True,
         )
         if migration.returncode:
-            raise RuntimeError(migration.stderr.strip() or "Die Datenbankmigration ist fehlgeschlagen.")
+            raise RuntimeError('MIGRATION_FAILED' if verify else migration.stderr.strip() or "Die Datenbankmigration ist fehlgeschlagen.")
         # A successful query verifies connectivity and the migrated Alembic schema.
         _verify_database(settings, staging)
+        if verify: verify(staging)
         _activate_staged_database(settings, staging, rollback)
         staging = None
         if imported:
             source.unlink(missing_ok=True)
-        log("restore_succeeded", safetyBackup=safety_backup["filename"])
+        log("restore_database_activated" if verify else "restore_succeeded", safetyBackup=safety_backup["filename"])
         return {"status": "success", "safetyBackup": safety_backup["filename"]}
     except Exception:
         # Before activation this only removes the disposable database. Production
@@ -407,12 +431,24 @@ class Handler(BaseHTTPRequestHandler):
                 body = LimitedReader(self.rfile, length)
                 return self._reply(201, import_dump(body, unquote(self.headers.get("X-Filename", "Lokales Backup"))))
             if self.path == "/restore":
+                return self._reply(410, {'error': 'COORDINATED_RESTORE_REQUIRED'})
+            if self.path == "/restore-jobs":
+                import secrets
+                secret = os.environ.get('AUTH_PROXY_SECRET', '')
+                if not secret or not secrets.compare_digest(secret, self.headers.get('X-Backup-Control-Secret', '')):
+                    return self._reply(403, {'error': 'FORBIDDEN'})
+                if length <= 0 or length > 4096: raise ValueError('Invalid restore request')
                 payload = json.loads(self.rfile.read(length))
-                return self._reply(200, restore_backup(payload))
+                if not isinstance(payload,dict):raise ValueError('Invalid restore request')
+                if payload.get('confirmation') != 'RESTORE DATABASE': raise ValueError('Confirmation required')
+                from restore_jobs import start
+                return self._reply(202, start(payload, str(payload.get('actor', ''))[:100], sys.modules[__name__]))
         except ValueError as error:
             return self._reply(400, {"error": "INVALID_BACKUP", "message": str(error)})
         except FileNotFoundError:
             return self._reply(404, {"error": "BACKUP_NOT_FOUND", "message": "Das Backup wurde nicht gefunden."})
+        except BlockingIOError:
+            return self._reply(409, {"error": "RESTORE_BUSY"})
         except RuntimeError as error:
             log("restore_failed", level="error", error=str(error))
             return self._reply(409, {"error": "RESTORE_FAILED", "message": str(error)})
@@ -440,11 +476,19 @@ def scheduler():
         now = datetime.now(timezone.utc)
         delay = max(0, (parsed.next(now) - now).total_seconds())
         time.sleep(delay)
-        _background_backup("automatic")
+        try:
+            from restore_coordination import read_status, NORMAL
+            if read_status(config()['directory'])['state'] in NORMAL:
+                create_backup('automatic')
+        except Exception:
+            log('scheduled_backup_failed_or_restore_active', level='error')
 
 
 def serve(host="0.0.0.0", port=8080):
-    config()  # validate secrets before reporting healthy
+    settings = config()  # validate secrets before reporting healthy
+    from restore_jobs import directory
+    from restore_coordination import initialize
+    initialize(settings['directory'])
     if os.environ.get("BACKUP_ENABLED", "true").lower() in {"1", "true", "yes", "on"}:
         threading.Thread(target=scheduler, daemon=True).start()
     else:

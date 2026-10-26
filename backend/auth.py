@@ -14,7 +14,7 @@ ROLE_PERMISSIONS = {
 }
 
 # Explicit global backup authority is separate from EventAccess. Restore/reset
-# additionally require server-side maintenance and confirmation. This does not
+# additionally require coordinated restore or manual reset maintenance and confirmation. This does not
 # grant the generic admin.reset capability used by unrelated administration tools.
 SUPERADMIN_PERMISSIONS = frozenset({'data.read', 'data.write', 'assignments.write',
     'imports.write', 'audit.read', 'events.manage', 'users.manage',

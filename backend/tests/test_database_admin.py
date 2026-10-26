@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 from sqlalchemy.exc import OperationalError
 
-from flask import Flask
+from flask import Flask, g
+from types import SimpleNamespace
+from restore_coordination import schema_contract
 
 from database_admin import database_admin
 
@@ -17,6 +19,12 @@ class DatabaseAdminTest(unittest.TestCase):
         self.app = Flask(__name__)
         self.app.config.update(BACKUP_DIR=self.temporary.name,
                                BACKUP_SERVICE_URL='http://backup:8080', DATABASE_MAINTENANCE_MODE=True)
+        self.app.config['AUTH_PROXY_SECRET'] = 'unit-test-control'
+        @self.app.before_request
+        def contract_identity():
+            g.current_user = SimpleNamespace(username='contract-admin', has_permission=lambda permission: False)
+        target=patch('database_admin.restore_database_target',return_value={'host':'postgres','port':5432,'database':'isolated'})
+        target.start();self.addCleanup(target.stop)
         self.app.register_blueprint(database_admin)
         self.client = self.app.test_client()
 
@@ -103,9 +111,9 @@ class DatabaseAdminTest(unittest.TestCase):
         response = self.client.post('/api/admin/database/restore', json={'token': 'abc','confirmation':'RESTORE DATABASE'})
         self.assertEqual(response.status_code, 200)
         restore_request = urlopen.call_args_list[1].args[0]
-        self.assertEqual(restore_request.full_url, 'http://backup:8080/restore')
+        self.assertEqual(restore_request.full_url, 'http://backup:8080/restore-jobs')
         self.assertEqual(json.loads(restore_request.data),
-                         {'filename': None, 'category': None, 'token': 'abc'})
+                         {'filename': None, 'category': None, 'token': 'abc', 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
 
     @patch('database_admin.urllib.request.urlopen')
     def test_server_and_imported_backups_use_same_restore_request_shape(self, urlopen):
@@ -119,11 +127,11 @@ class DatabaseAdminTest(unittest.TestCase):
                          json={'filename': 'import.dump', 'token': 'a' * 32,'confirmation':'RESTORE DATABASE'})
         imported_payload = json.loads(urlopen.call_args_list[1].args[0].data)
 
-        self.assertEqual(set(server_payload), {'filename', 'category', 'token'})
-        self.assertEqual(set(imported_payload), {'filename', 'category', 'token'})
-        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'category': None, 'token': None})
+        self.assertEqual(set(server_payload), {'filename', 'category', 'token', 'actor', 'confirmation', 'schemaContract', 'databaseTarget'})
+        self.assertEqual(set(imported_payload), {'filename', 'category', 'token', 'actor', 'confirmation', 'schemaContract', 'databaseTarget'})
+        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'category': None, 'token': None, 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
         self.assertEqual(imported_payload,
-                         {'filename': 'import.dump', 'category': None, 'token': 'a' * 32})
+                         {'filename': 'import.dump', 'category': None, 'token': 'a' * 32, 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
 
 
 if __name__ == '__main__':

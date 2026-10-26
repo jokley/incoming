@@ -6,6 +6,6 @@ set -eu
 # columns that have not been installed yet. Alembic is transactional on
 # PostgreSQL, so a failed migration stops the container instead of serving with
 # a partially upgraded schema.
-python -m alembic -c /app/alembic.ini upgrade head
+python /app/restore_startup.py python -m alembic -c /app/alembic.ini upgrade head
 
 exec "$@"
