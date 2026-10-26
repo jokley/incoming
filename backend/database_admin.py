@@ -58,7 +58,7 @@ def database_capabilities():
     maintenance = current_app.config.get('DATABASE_MAINTENANCE_MODE', False)
     return dict(download=has('database.export'), create=has('database.backup'),
                 upload=has('database.backup'), restore=has('database.restore'),
-                reset=has('database.reset') and maintenance)
+                reset=has('database.reset'))
 
 
 @database_admin.before_request

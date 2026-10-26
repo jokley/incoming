@@ -51,4 +51,5 @@ def bind_reset_target():
         raise OperationalEventError('Reset target conflicts with the pinned championship')
     event=db.session.get(Event,owner)
     if event is None or not event.active: abort(403)
-    g.authorized_event_id=owner
+    from event_ownership_runtime import authorize_event
+    g.authorized_event_id=authorize_event(owner,write=True)

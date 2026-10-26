@@ -162,7 +162,7 @@ class ApiService {
         return undefined as T;
       }
       return body as T;
-    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : (endpoint.startsWith('/admin/database/') || ['/admin/events','/admin/test-data/reset','/admin/world-champions','/admin/world-champion-titles','/admin/world-champion-lists'].includes(endpoint) || /^\/admin\/world-champions\/[1-9]\d*$/.test(endpoint) || endpoint === '/competitions' && (options?.method??'GET')==='GET') ? 'global-metadata' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
+    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : (endpoint.startsWith('/admin/database/') || ['/admin/events','/admin/world-champions','/admin/world-champion-titles','/admin/world-champion-lists'].includes(endpoint) || /^\/admin\/world-champions\/[1-9]\d*$/.test(endpoint) || endpoint === '/competitions' && (options?.method??'GET')==='GET') ? 'global-metadata' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
   }
 
   async getCurrentUser(): Promise<AuthenticatedUser> {
@@ -173,8 +173,11 @@ class ApiService {
     return this.request(`/audit-events?page=${page}`);
   }
 
-  async resetTestData(scope: 'activities' | 'imports' | 'athletes' | 'assignments' | 'all'): Promise<{ scope: string; deleted: string[]; counts: Record<string, number> }> {
-    return this.request('/admin/test-data/reset', { method: 'POST', body: JSON.stringify({ scope, confirmation: 'RESET EVENT DATA' }) });
+  async previewCleanup(scope: string = 'activities', nation?: string): Promise<CleanupPreview> {
+    return this.request(`/admin/test-data/reset?scope=${encodeURIComponent(scope)}${nation?`&nation=${encodeURIComponent(nation)}`:''}`);
+  }
+  async resetTestData(scope: string, nation?: string): Promise<CleanupPreview> {
+    return this.request('/admin/test-data/reset', {method:'POST',body:JSON.stringify({scope,nation,confirmed:true})});
   }
 
   async getScenarios(): Promise<Array<{ number: string; title: string; description: string; versions: number }>> {
@@ -1055,3 +1058,5 @@ export interface DatabaseStatus { maintenanceMode?: boolean; databaseStatus?: 'a
 export interface DatabaseBackup { filename: string; size: number; modified: number; category?: 'automatic' | 'manual' | 'pre-restore'; token?: string; local?: boolean; localFile?: File; }
 
 export interface RestoreJob { state: string; operationId?: string; actor?: string; filename?: string; message?: string; safetyBackup?: string; updatedAt?: string; }
+
+export interface CleanupPreview { eventId:number;scope:string;nation:string|null;nations:string[];counts:Record<string,number>;preserved:string[];message?:string;safetyBackup?:{filename:string;category:string;size:number}|null; }

@@ -47,6 +47,8 @@ class ApiRouteSafetyTest(unittest.TestCase):
         self.addCleanup(references.stop)
         administrative_context = patch('admin_scope.bind_admin_target')
         administrative_context.start(); self.addCleanup(administrative_context.stop)
+        cleanup_context=patch('admin_scope.bind_reset_target')
+        cleanup_context.start();self.addCleanup(cleanup_context.stop)
         self.client = app.test_client()
 
     @staticmethod

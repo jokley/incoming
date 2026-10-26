@@ -329,75 +329,30 @@ def _required_permission():
     return 'data.write'
 
 
-RESET_TARGETS = {
-    'activities': ('Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse'),
-    'imports': ('Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen'),
-    'athletes': ('Athleten', 'Zimmerpartner', 'Prüfmarkierungen'),
-    'assignments': ('Zimmerbelegungen', 'Assignments', 'Dispositionsstatus'),
-    'all': ('Aktivitäten', 'Audit-Log', 'Workflowhistorie', 'Systemereignisse',
-            'Import Sessions', 'Import Versionen', 'Import Historie', 'Genehmigungen', 'Rücksprachen',
-            'Athleten', 'Assignments', 'Zimmerpartner', 'Prüfmarkierungen', 'Quotenstatus',
-            'Dispositionsstatus', 'temporäre Analysen', 'generierte Listen', 'Workflow-Status'),
-}
+@app.route('/api/admin/test-data/reset', methods=['GET'])
+def preview_admin_cleanup():
+    from admin_cleanup import plan, preview
+    try:
+        return jsonify(preview(plan(accommodation_event_id(),request.args.get('scope','activities'),request.args.get('nation'))))
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()),409
 
 
 @app.route('/api/admin/test-data/reset', methods=['POST'])
 def reset_test_data():
-    """Remove dynamic test data in one transaction while preserving reference data."""
-    scope = (request.get_json(silent=True) or {}).get('scope')
-    if scope not in RESET_TARGETS:
-        return jsonify({'error': 'INVALID_SCOPE', 'message': 'Unbekannter Reset-Umfang'}), 400
-    counts = {}
-    owner = accommodation_event_id()
-    if scope in {'activities', 'imports', 'all'}:
-        # Historical/global audit rows have no reliable event FK yet (PR5).
-        # Even an otherwise empty second championship can own old audit evidence.
-        if Event.query.filter(Event.id != owner).first():
-            raise OperationalEventError('Global history cleanup is disabled with multiple championships')
-        for model in (Athlete, RoomBooking, HotelRoomInventory, ImportSession, ImportRun):
-            if model.query.filter(model.event_id != owner).first():
-                raise OperationalEventError('Global history cleanup is disabled while another event contains operational data')
+    from admin_cleanup import execute
+    data=request.get_json(silent=True) or {}
+    if data.get('confirmed') is not True and data.get('confirmation')!='RESET EVENT DATA':
+        return jsonify(error='CLEANUP_CONFIRMATION_REQUIRED',message='Bitte die Löschung im Dialog bestätigen.'),400
     try:
-        if scope in {'activities', 'all'}:
-            counts['Aktivitäten / Audit-Log'] = AuditEvent.query.delete(synchronize_session=False)
-            counts['Workflowhistorie'] = ImportSessionEvent.query.delete(synchronize_session=False)
-            event_query(FisRoomAssignment).update(
-                {FisRoomAssignment.import_run_id: None}, synchronize_session=False)
-            counts['Systemereignisse'] = ImportRun.query.delete(synchronize_session=False)
-        if scope in {'assignments', 'athletes', 'all'}:
-            # Athlete deletion also has to detach all dependent assignments.
-            models = (
-                ('Zimmerbelegungen', RoomBookingOccupant), ('Buchungen', RoomBooking),
-                ('Assignments', RoomAssignment), ('FIS Assignments', FisRoomAssignment),
-            )
-            if scope in {'athletes', 'all'}:
-                models += (('Athleten', Athlete),)
-            for label, model in models:
-                counts[label] = event_query(model).delete(synchronize_session=False)
-        if scope in {'imports', 'all'}:
-            # Break nullable cycle links before deleting children and parents.
-            ImportSession.query.update(
-                {ImportSession.current_version_id: None},
-                synchronize_session=False,
-            )
-            # Establish the session/version cycle break in PostgreSQL before
-            # any dependent bulk DELETE is issued.
-            db.session.flush()
-            event_query(Athlete).update(
-                {Athlete.single_room_decision_id: None}, synchronize_session=False)
-            event_query(FisRoomAssignment).update(
-                {FisRoomAssignment.import_run_id: None}, synchronize_session=False)
-            counts['Import Historie'] = ImportSessionEvent.query.delete(synchronize_session=False)
-            counts['Genehmigungen'] = ImportApproval.query.delete(synchronize_session=False)
-            counts['Import Versionen'] = ImportSessionVersion.query.delete(synchronize_session=False)
-            counts['Import Sessions'] = ImportSession.query.delete(synchronize_session=False)
-            counts['Import-Läufe'] = ImportRun.query.delete(synchronize_session=False)
-        db.session.commit()
+        return jsonify(execute(accommodation_event_id(),data.get('scope'),data.get('nation'),current_user().username))
+    except ImportValidationError as exc:
+        db.session.rollback()
+        return jsonify(exc.to_dict()),409
     except Exception:
         db.session.rollback()
-        app.logger.exception('Dynamic data reset failed')
-        return jsonify({'error': 'RESET_FAILED', 'message': 'Reset konnte nicht sicher ausgeführt werden'}), 500
-    return jsonify({'scope': scope, 'deleted': list(RESET_TARGETS[scope]), 'counts': counts})
+        app.logger.exception('Administrative cleanup rolled back')
+        return jsonify(error='CLEANUP_FAILED',message='Bereinigung wurde vollständig zurückgerollt. Keine Daten wurden gelöscht.'),409
 
 
 def _delete_simulation_data():
@@ -603,11 +558,9 @@ def authenticate_api_request():
     if configuration:
         bind_admin_target()
     global_backup = request.blueprint == 'database_admin'
-    global_reset = request.endpoint == 'reset_test_data'
+    global_reset = request.endpoint in {'reset_test_data','preview_admin_cleanup'}
     if global_reset:
-        from database_admin import require_maintenance
         from admin_scope import bind_reset_target
-        require_maintenance('RESET EVENT DATA')
         bind_reset_target()
     global_catalogue = (g.api_path.rstrip('/') == '/api/competitions' and request.method in {'GET','HEAD'}
         or g.api_path.startswith('/api/admin/users') or g.api_path.startswith('/api/import/fis/mock-files')
