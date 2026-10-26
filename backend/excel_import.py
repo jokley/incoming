@@ -1701,6 +1701,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'quotaRulesSnapshot': preview['quotaRulesSnapshot'],
         'quotaRulesDigest': preview['quotaRulesDigest'],
         'quotaRulesRevision': preview['quotaRulesRevision'],
+        'quotaOverview': preview['quotaOverview'],
         'quotaChecks': preview['quotaChecks'],
         'singleRoomQuotaExemptOverrides': preview['singleRoomQuotaExemptOverrides'],
         'dispositionAnalysis': disposition_analysis,
