@@ -165,7 +165,7 @@ def test_global_backups_use_administrative_authority_not_individual_event_grants
         assert client.get(path,headers=headers('only-a',b.id)).status_code==403
     assert client.get('/api/admin/database/backups',headers=headers('only-a',b.id)).status_code==200
     assert client.get('/api/admin/database/backups',headers=headers('reader',a.id,'incoming-viewer')).status_code==403
-    assert client.post('/api/admin/database/restore',headers=headers('both',a.id),json={}).status_code==409
+    assert client.post('/api/admin/database/restore',headers=headers('both',a.id),json={}).status_code==400
 
 
 def test_every_registered_api_method_rejects_unauthorized_explicit_event(workspace):

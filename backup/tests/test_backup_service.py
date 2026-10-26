@@ -98,7 +98,7 @@ class BackupServiceTest(unittest.TestCase):
             imported.parent.mkdir()
             imported.write_bytes(b'PGDMP-valid')
             result = backup_service.restore_backup({'token': 'a' * 32})
-            self.assertEqual(events, ['validation', 'backup:pre-restore', 'postgres-control',
+            self.assertEqual(events, ['validation', 'backup:pre-restore', 'validation', 'postgres-control',
                                       'pg_restore', 'alembic', 'verification', 'activation'])
             self.assertEqual(result['safetyBackup'], 'safety.dump.gz')
             self.assertFalse(imported.exists())
@@ -119,6 +119,8 @@ class BackupServiceTest(unittest.TestCase):
                 patch('backup_service.create_backup', return_value={'filename': 'safety.dump.gz'}), \
                 patch('backup_service.subprocess.run', side_effect=run), \
                 patch.dict(os.environ, EVENT_OWNERSHIP_PLAN='/reviewed/plan.json'):
+            safety = Path(directory, 'pre-restore', 'safety.dump.gz')
+            safety.parent.mkdir(); safety.write_bytes(b'PGDMP-valid')
             dump = Path(directory, 'manual', 'incoming-2026-08-16_152043.dump.gz')
             dump.parent.mkdir()
             dump.write_bytes(b'PGDMP-valid')
@@ -227,3 +229,12 @@ def test_manual_request_reserves_lock_before_starting_the_worker():
                 backup_service.create_backup('automatic')
     finally:
         if backup_service.BACKUP_LOCK.locked():backup_service.BACKUP_LOCK.release()
+
+
+def test_failed_safety_restore_probe_never_activates_selected_backup(tmp_path):
+    settings={'directory':tmp_path,'database':'isolated','host':'localhost','port':'5432','user':'test','password':'test'}
+    failed=Result();failed.returncode=1
+    with patch('backup_service._postgres_command'),patch('backup_service._drop_database') as drop,patch('backup_service.subprocess.run',return_value=failed),patch('backup_service._activate_staged_database') as activate:
+        with __import__('pytest').raises(RuntimeError,match='PRE_RESTORE_BACKUP_VALIDATION_FAILED'):
+            backup_service._probe_safety_backup(settings,'safety.dump.gz',lambda _:None)
+        activate.assert_not_called();drop.assert_called_once()

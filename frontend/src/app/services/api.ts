@@ -1,3 +1,4 @@
+import { DatabaseGeneration } from './databaseGeneration';
 import { EventRequestScope } from '../events/eventRequestScope';
 import type { EventCapabilities } from '../events/activeEventStore';
 import type { SingleRoomQuotaExemptReason } from '../types';
@@ -88,6 +89,7 @@ class ApiService {
   async saveEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`,{method:'PUT',body:JSON.stringify(data)}); }
   async fixEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules/fix`,{method:'POST',body:JSON.stringify(data)}); }
 
+  private readonly databaseGeneration = new DatabaseGeneration(() => window.location.assign('/'));
   readonly eventScope = new EventRequestScope();
   async getActiveEventContext(): Promise<EventCapabilities> { return this.request('/active-event-context'); }
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -97,14 +99,17 @@ class ApiService {
       : null;
     const multipart = typeof FormData !== 'undefined' && options?.body instanceof FormData;
     const headers = new Headers(options?.headers);
+    this.databaseGeneration.decorate(headers);
     if (!multipart && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
     return this.eventScope.run(`${API_BASE_URL}${endpoint}`, { ...options, headers }, async (response, assertCurrent) => {
 
+      this.databaseGeneration.observe(response);
       const headersAt = performance.now();
       const contentType = response.headers.get('content-type') || '';
       const bodyReadStartedAt = performance.now();
       const bodyText = await response.text();
       assertCurrent();
+      this.databaseGeneration.observe(response);
       const bodyReadFinishedAt = performance.now();
 
       const looksLikeJson = (() => {
@@ -177,9 +182,12 @@ class ApiService {
   }
 
   private async download(endpoint: string, filename: string, options?: RequestInit): Promise<void> {
-    return this.eventScope.run(`${API_BASE_URL}${endpoint}`, options, async (response, assertCurrent) => {
+    const headers=new Headers(options?.headers);
+    this.databaseGeneration.decorate(headers);
+    return this.eventScope.run(`${API_BASE_URL}${endpoint}`, {...options,headers}, async (response, assertCurrent) => {
+      this.databaseGeneration.observe(response);
       if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Datei konnte nicht geladen werden.');
-      await downloadResponse(response, filename, assertCurrent);
+      await downloadResponse(response, filename, () => { assertCurrent(); this.databaseGeneration.observe(response); });
     }, endpoint.startsWith('/admin/database/backups/') ? 'global-metadata' : false);
   }
   async generateScenario(number: string): Promise<void> {
@@ -205,11 +213,12 @@ class ApiService {
     const payload = await this.request<DatabaseBackup>('/admin/database/import', { method: 'POST', body: form });
     return { ...payload, localFile: file };
   }
-  async restoreDatabaseBackup(backup: DatabaseBackup): Promise<{ status: string }> {
+  async getRestoreStatus(): Promise<RestoreJob> { return this.request('/admin/database/restore-status'); }
+  async restoreDatabaseBackup(backup: DatabaseBackup, confirmation: string): Promise<RestoreJob> {
     // Imported and server-side backups deliberately use the exact same request
     // shape and endpoint. The backup service chooses the token when present and
     // otherwise resolves the server-side filename.
-    const restoreRequest = { filename: backup.filename, category: backup.category ?? null, token: backup.token ?? null, confirmation: 'RESTORE DATABASE' };
+    const restoreRequest = { filename: backup.filename, category: backup.category ?? null, token: backup.token ?? null, confirmation };
     return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(restoreRequest) });
   }
   async downloadDatabaseBackup(filename: string, category: string): Promise<void> {
@@ -1044,3 +1053,5 @@ export const api = new ApiService();
 
 export interface DatabaseStatus { maintenanceMode?: boolean; databaseStatus?: 'available' | 'unavailable'; postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string; status?: string } | null; backupSize: number | null; backupCount: number; backupStatus?: string; capabilities?: { download: boolean; create: boolean; upload: boolean; restore: boolean; reset?: boolean }; }
 export interface DatabaseBackup { filename: string; size: number; modified: number; category?: 'automatic' | 'manual' | 'pre-restore'; token?: string; local?: boolean; localFile?: File; }
+
+export interface RestoreJob { state: string; operationId?: string; actor?: string; filename?: string; message?: string; safetyBackup?: string; updatedAt?: string; }

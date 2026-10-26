@@ -17,6 +17,9 @@
   "/api/admin/database/restore": [
     "POST"
   ],
+  "/api/admin/database/restore-status": [
+    "GET"
+  ],
   "/api/admin/database/status": [
     "GET"
   ],

@@ -180,6 +180,9 @@ def quota_gender_review_response(error):
 @app.route('/health', methods=['GET'])
 def health_check():
     """Report application and selected database connectivity for orchestration."""
+    from restore_gate import acquire_request_lease
+    blocked = acquire_request_lease()
+    if blocked is not None: return blocked
     try:
         db.session.execute(text('SELECT 1'))
     except Exception:
@@ -588,6 +591,9 @@ def authenticate_api_request():
         return jsonify({'error': 'FORBIDDEN', 'message': 'Insufficient permissions'}), 403
     if app.config.get('DATABASE_MAINTENANCE_MODE') and request.method not in {'GET','HEAD','OPTIONS'} and request.blueprint != 'database_admin' and request.endpoint != 'reset_test_data' and g.api_path != '/api/auth/me':
         return jsonify(error='MAINTENANCE_MODE',message='Wartungsmodus: operative und administrative Änderungen sind vorübergehend gesperrt.'),503
+    from restore_gate import acquire_request_lease
+    blocked = acquire_request_lease()
+    if blocked is not None: return blocked
     # Explicit UI context is validated after authentication/permissions and before
     # object snapshots or mutations. Legacy clients retain the configured owner.
     # These immutable/global catalogues contain no event-owned operational data.
@@ -3481,6 +3487,21 @@ def delete_room_assignment(assignment_id):
     return '', 204
 
 
+
+
+@app.teardown_request
+def release_restore_lease(error=None):
+    lease = g.pop('_restore_lease', None)
+    if lease is not None:
+        try: db.session.remove()
+        finally: lease.close()
+
+
+@app.after_request
+def restore_generation_header(response):
+    generation=getattr(g,'database_generation',None)
+    if generation:response.headers['X-Database-Generation']=generation
+    return response
 
 
 if __name__ == '__main__':
