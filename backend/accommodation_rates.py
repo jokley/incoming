@@ -3,8 +3,11 @@ CATEGORIES = {'STANDARD', 'SPECIAL'}
 
 
 def rate_projection(person):
-    return {'accommodationRateCategory': getattr(person, 'accommodation_rate_category', None) or 'STANDARD',
+    result = {'accommodationRateCategory': getattr(person, 'accommodation_rate_category', None) or 'STANDARD',
             'accommodationRateSource': getattr(person, 'accommodation_rate_source', None) or 'DEFAULT'}
+    if getattr(person, 'accommodation_rate_approval_id', None):
+        result['accommodationRateApprovalId'] = person.accommodation_rate_approval_id
+    return result
 
 
 def validate_category(value):
@@ -30,6 +33,8 @@ def apply_preview_rates(people, overrides=None, *, read_context=None):
     maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
     for person in people:
         existing = _find_existing_athlete(person, maps)
+        for key in ('accommodationRateApprovalId', 'accommodationRateApprovalIds', 'accommodationRateExplanation'):
+            person.pop(key, None)
         person.update(resolve_rate(existing, (overrides or {}).get(person.get('matchKey'))))
 
 

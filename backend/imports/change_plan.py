@@ -49,7 +49,7 @@ def state(event_id, nation):
         raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Eventfremde Legacy-Referenz.')
     sessions = rows(ImportSession, sa.and_(ImportSession.event_id == event_id, ImportSession.nation == nation))
     session_ids = [s['id'] for s in sessions]
-    decision_ids={p['single_room_decision_id'] for p in people if p['single_room_decision_id']}
+    decision_ids={p[k] for p in people for k in ('single_room_decision_id','accommodation_rate_approval_id') if p[k]}
     if decision_ids and db.session.query(ImportApproval.id).join(ImportSession).filter(ImportApproval.id.in_(decision_ids),ImportSession.event_id!=event_id).first():
         raise ImportValidationError('IMPORT_EVENT_MISMATCH','Eventfremde Genehmigungsreferenz.')
     approvals = rows(ImportApproval, sa.or_(ImportApproval.session_id.in_(session_ids),ImportApproval.id.in_(decision_ids)))

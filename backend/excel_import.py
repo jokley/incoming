@@ -1858,6 +1858,11 @@ def _apply_person_record(athlete, person, now, *, rate_override=None, preserve_m
         rate = resolve_rate(athlete, rate_override)
         athlete.accommodation_rate_category = rate['accommodationRateCategory']
         athlete.accommodation_rate_source = rate['accommodationRateSource']
+        athlete.accommodation_rate_approval_id = None
+    elif person.get('accommodationRateSource') == 'APPROVAL' and person.get('accommodationRateApprovalId') and athlete.accommodation_rate_source != 'MANUAL':
+        athlete.accommodation_rate_category = 'SPECIAL'
+        athlete.accommodation_rate_source = 'APPROVAL'
+        athlete.accommodation_rate_approval_id = person['accommodationRateApprovalId']
     athlete.function = person.get('function')
     athlete.competitor_id = person.get('competitorId') or athlete.competitor_id
     athlete.accred_id = person.get('accredId')
@@ -2134,9 +2139,16 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                 # repeated in this snapshot. Keep the existing row-lock/base check.
                 db.session.flush()
                 athlete = Athlete.query.filter_by(id=athlete.id, event_id=read_context.event_id).with_for_update().populate_existing().one()
+            old_rate = (athlete.accommodation_rate_category, athlete.accommodation_rate_source, athlete.accommodation_rate_approval_id)
             missing_roomlist = bool(preview.get('roomListHasNoData') and existing_before is not None)
             _apply_person_record(athlete, person, now, rate_override=rate_override,
                                  preserve_missing_roomlist=missing_roomlist)
+            new_rate = (athlete.accommodation_rate_category, athlete.accommodation_rate_source, athlete.accommodation_rate_approval_id)
+            if version and old_rate != new_rate and athlete.accommodation_rate_source == 'APPROVAL':
+                db.session.add(ImportSessionEvent(session_id=version.session_id, version_id=version.id,
+                    approval_id=athlete.accommodation_rate_approval_id, event_type='ACCOMMODATION_RATE_APPROVAL',
+                    title='Sondertarif aus Athletenquoten-Genehmigung übernommen',
+                    description=f"{person['matchKey']}: {old_rate} → {new_rate}", username=confirmer or 'FIS Import'))
             old_requirement = (athlete.accommodation_requirement, athlete.accommodation_requirement_source)
             set_requirement(athlete, person['accommodationRequirement'], person['accommodationRequirementSource'])
             if person.get('importAccommodationRequirement'):

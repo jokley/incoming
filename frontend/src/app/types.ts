@@ -1,7 +1,7 @@
 export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM';
 export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
-export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL'; }
+export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL' | 'APPROVAL'; accommodationRateApprovalId?: number; accommodationRateApprovalIds?: number[]; accommodationRateExplanation?: string; }
 export interface RoomType {
   id: string;
   name: string;
