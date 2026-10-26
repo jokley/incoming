@@ -2096,8 +2096,11 @@ def preview_fis_import():
             reviewed=refresh_plan(session,result,read_context=read_context,recalculate=False)
             present_plan(result,reviewed['changePlan'])
             result['planStale']=False
+            from import_control import build_import_control
+            control = build_import_control(reviewed,read_context)
             db.session.commit()
             result['session'] = session.to_dict(include_preview=True)
+            result['session']['importControl'] = control
         return jsonify(result), 200
     except ImportValidationError as exc:
         db.session.rollback()
@@ -2212,6 +2215,9 @@ def _current_session_preview(session, *, read_context=None):
 
 
 def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True):
+    if include_preview and resolve_preview and session.status not in {'REPLACED','ARCHIVED','CANCELLED'}:
+        from imports.read_context import ImportReadContext
+        read_context=read_context or ImportReadContext(session.event_id)
     payload = session.to_dict(include_preview=include_preview)
     if resolve_preview and session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
         preview = _current_session_preview(session, read_context=read_context)
@@ -2236,6 +2242,9 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
                 except ImportValidationError:preview['planStale']=True
             preview['quotaRulesChanged']=session.status!='IMPORTED' and saved.get('quotaRulesRevision',1)!=db.session.get(Event,session.event_id).quota_rules_revision
             payload['preview'] = preview
+    if include_preview and payload.get('preview') and read_context is not None:
+        from import_control import build_import_control
+        payload['importControl'] = build_import_control(payload['preview'],read_context)
     return payload
 
 
