@@ -21,7 +21,7 @@ def quota_rows(people, rules, event_id, approvals=(), revision=1):
         evidence={'decisionKind':'ATHLETE_QUOTA','eventId':event_id,'nationCode':nation,
                   'family':family,'rulesRevision':revision,'rulesDigest':fingerprint(rules),'rulesSnapshot':rules,
                   'rosterDigest':fingerprint(sorted(roster.values(),key=lambda p:p['key'])),
-                  'required':required,'candidates':[{'personKey':key,'name':names.get(key) or key} for key in sorted(roster)]}
+                  'required':required,'candidates':[{'personKey':key,'name':names.get(key) or key,'gender':roster[key]['gender']} for key in sorted(roster)]}
         scope=fingerprint({k:evidence[k] for k in ('eventId','nationCode','family','rulesRevision','rulesDigest','rosterDigest')})
         evidence['scopeDigest']=scope
         covered={k:0 for k in required};ids=[]
@@ -60,6 +60,8 @@ def project_preview(preview, read_context=None):
         if (p.get('function') or '').strip().lower()=='athlete' and (not p.get('athleteQuotaFamilies') or None in p['athleteQuotaFamilies'])]
     preview['errors']=[e for e in preview.get('errors',[]) if e.get('code')!='ATHLETE_QUOTA_FAMILY_UNKNOWN']+unknown
     preview['isValid']=not preview['errors']
+    from athlete_quota_tariffs import project_tariffs
+    project_tariffs(preview, approvals)
     from quota_overview import build_quota_overview
     preview['quotaOverview']=build_quota_overview(preview.get('people',[]),preview.get('quotaChecks',[]),preview['athleteQuotaChecks'],event,preview['errors'])
 
@@ -107,4 +109,9 @@ def validated_extent(details,data,*,allow_zero=False):
     valid={c['personKey'] for c in details['candidates']}
     if not isinstance(keys,list) or any(not isinstance(k,str) for k in keys) or len(keys)!=len(set(keys)) or not set(keys)<=valid:
         raise ValueError('Ungültige optionale Personenauswahl.')
-    return {**details,'approvedExtent':extent},keys
+    from athlete_quota_tariffs import validate_tariff_selection
+    effect = data.get('tariffEffect', 'NONE')
+    validate_tariff_selection(details, extent, keys, effect)
+    resolved = {**details,'approvedExtent':extent,'tariffEffect':effect}
+    resolved.pop('approvedPersonKeysByBoundary', None)
+    return resolved,keys

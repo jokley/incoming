@@ -50,5 +50,13 @@ test('athlete quota tasks keep extent approval separate from extra single rooms'
   const task=buildOperationsTask({id:'s',nation:'JPN'} as any,approval as any);
   assert.equal(task.discipline,'Snowboard');assert.equal(task.quota,undefined);
   assert.deepEqual(task.singleRoomCandidates,[]);
-  assert.match(task.recommendation,/keine automatische Tarifentscheidung/);
+  assert.match(task.recommendation,/kostenpflichtige Personen ausdrücklich auswählen/);
+});
+
+
+test('legacy athlete candidates get current gender for explicit tariff review without rewriting history',()=>{
+ const approval={id:'a',type:'ATHLETE_QUOTA',nation:'JPN',quotaDetails:{decisionKind:'ATHLETE_QUOTA',candidates:[{personKey:'p',name:'Candidate'}]}};
+ const task=buildOperationsTask({nation:'JPN',preview:{people:[{matchKey:'p',gender:'W'}]}} as any,approval as any);
+ assert.equal(task.approval.quotaDetails?.candidates?.[0].gender,'F');
+ assert.equal((approval.quotaDetails.candidates[0] as any).gender,undefined);
 });

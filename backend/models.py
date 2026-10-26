@@ -599,7 +599,7 @@ class Athlete(db.Model):
         db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement'),
         db.CheckConstraint("accommodation_requirement_source IN ('DEFAULT', 'IMPORT', 'MANUAL')", name='accommodation_requirement_source'),
         db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
-        db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL')", name='accommodation_rate_source'),
+        db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL', 'APPROVAL')", name='accommodation_rate_source'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
@@ -610,6 +610,7 @@ class Athlete(db.Model):
     accommodation_requirement_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
     accommodation_rate_category = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
     accommodation_rate_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
+    accommodation_rate_approval_id = db.Column(db.Integer, db.ForeignKey('import_approval.id', name='fk_athlete_rate_approval'), nullable=True, index=True)
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
     competitor_id = db.Column(db.String(50))
     accred_id = db.Column(db.String(50))

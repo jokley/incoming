@@ -2573,7 +2573,10 @@ def decide_import_approval(session_id, approval_id):
             return jsonify(error='ATHLETE_DECISION_SCOPE_STALE'),409
         bounds={key:current_row['uncoveredExtent'][key]+(details.get('approvedExtent',{}).get(key,0) if completed else 0) for key in ('total','M','F')}
         if decision=='APPROVED':
-            try:details,approved_person_keys=validated_extent({**details,'uncoveredExtent':bounds},data,allow_zero=completed)
+            try:details,approved_person_keys=validated_extent({**details,'uncoveredExtent':bounds,'candidates':current_row['evidence']['candidates']},data,allow_zero=completed)
+            except ValueError as exc:return jsonify(error=str(exc)),400
+            from athlete_quota_tariffs import bind_tariff_selection
+            try:bind_tariff_selection(details, approved_person_keys, approval.id, current_row['approvalIds'])
             except ValueError as exc:return jsonify(error=str(exc)),400
         if completed and session.status in {'IMPORTED','ARCHIVED','REPLACED'}:
             from imports.workflow import fork_review_version
@@ -3230,6 +3233,7 @@ def _update_athlete_operations(athlete, data):
     if 'accommodationRateCategory' in data:
         athlete.accommodation_rate_category = category
         athlete.accommodation_rate_source = 'MANUAL'
+        athlete.accommodation_rate_approval_id = None
     db.session.commit()
     from routes.athletes import get_athlete
     return get_athlete(athlete.id)
