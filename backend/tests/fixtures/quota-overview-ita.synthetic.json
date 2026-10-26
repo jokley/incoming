@@ -1,0 +1,147 @@
+{
+  "event": {
+    "id": "7",
+    "name": "WSC Montafon 2027",
+    "isWorldChampionship": true,
+    "rulesRevision": 3,
+    "rulesFixed": true
+  },
+  "nations": [
+    {
+      "nationCode": "ITA",
+      "athletes": 10,
+      "officials": 14,
+      "peopleInQuotaGroups": 24,
+      "peopleTotal": 24,
+      "otherPeople": 0,
+      "officialsInMultipleGroups": 5,
+      "officialsWithoutContext": 0,
+      "officialsWithoutCoverage": null,
+      "coverageReviewRequired": true,
+      "athleteDecisionsOpen": 0,
+      "ezDecisionsOpen": 0,
+      "athletesApprovedDistinct": 0,
+      "athleteApprovalFamilies": 0,
+      "incomplete": false,
+      "groups": [
+        {
+          "name": "Freeski Park & Pipe",
+          "athletes": 4,
+          "officials": 9,
+          "contexts": [
+            {
+              "nationCode": "ITA",
+              "discipline": "Freeski Park & Pipe",
+              "gender": "M",
+              "athletes": 2,
+              "officialQuota": 4,
+              "officials": 9,
+              "singleRoomsAllowed": 2,
+              "singleRoomsRequested": 0,
+              "singleRoomsPending": 0,
+              "singleRoomsApproved": 0,
+              "quotaExemptSingleRooms": 0,
+              "officialsExceeded": true,
+              "singleRoomsExceeded": false
+            },
+            {
+              "nationCode": "ITA",
+              "discipline": "Freeski Park & Pipe",
+              "gender": "W",
+              "athletes": 2,
+              "officialQuota": 4,
+              "officials": 9,
+              "singleRoomsAllowed": 2,
+              "singleRoomsRequested": 0,
+              "singleRoomsPending": 0,
+              "singleRoomsApproved": 0,
+              "quotaExemptSingleRooms": 0,
+              "officialsExceeded": true,
+              "singleRoomsExceeded": false
+            }
+          ],
+          "totals": {
+            "officialQuota": 8,
+            "singleRoomsAllowed": 4,
+            "singleRoomsRequested": 0,
+            "singleRoomsPending": 0,
+            "singleRoomsApproved": 0,
+            "quotaExemptSingleRooms": 0
+          },
+          "coverageReviewRequired": true
+        },
+        {
+          "name": "Ski Cross",
+          "athletes": 6,
+          "officials": 10,
+          "contexts": [
+            {
+              "nationCode": "ITA",
+              "discipline": "Ski Cross",
+              "gender": "M",
+              "athletes": 4,
+              "officialQuota": 6,
+              "officials": 10,
+              "singleRoomsAllowed": 2,
+              "singleRoomsRequested": 0,
+              "singleRoomsPending": 0,
+              "singleRoomsApproved": 0,
+              "quotaExemptSingleRooms": 0,
+              "officialsExceeded": true,
+              "singleRoomsExceeded": false
+            },
+            {
+              "nationCode": "ITA",
+              "discipline": "Ski Cross",
+              "gender": "W",
+              "athletes": 2,
+              "officialQuota": 4,
+              "officials": 10,
+              "singleRoomsAllowed": 2,
+              "singleRoomsRequested": 1,
+              "singleRoomsPending": 0,
+              "singleRoomsApproved": 0,
+              "quotaExemptSingleRooms": 0,
+              "officialsExceeded": true,
+              "singleRoomsExceeded": false
+            }
+          ],
+          "totals": {
+            "officialQuota": 10,
+            "singleRoomsAllowed": 4,
+            "singleRoomsRequested": 1,
+            "singleRoomsPending": 0,
+            "singleRoomsApproved": 0,
+            "quotaExemptSingleRooms": 0
+          },
+          "coverageReviewRequired": true
+        }
+      ],
+      "athleteFamilies": [
+        {
+          "nationCode": "ITA",
+          "topLevelDiscipline": "Freestyle",
+          "athleteQuotaUsed": 10,
+          "athleteQuotaLimit": 36,
+          "athleteGenderUsed": {
+            "M": 6,
+            "F": 4
+          },
+          "athleteGenderLimit": 20,
+          "athleteQuotaStatus": "WITHIN_BASE_LIMITS",
+          "decisionStatus": "WITHIN_QUOTA",
+          "approvedExtent": {
+            "total": 0,
+            "M": 0,
+            "F": 0
+          },
+          "uncoveredExtent": {
+            "total": 0,
+            "M": 0,
+            "F": 0
+          }
+        }
+      ]
+    }
+  ]
+}

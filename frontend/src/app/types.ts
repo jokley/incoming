@@ -525,6 +525,7 @@ export interface ImportChangePlan {
 }
 
 export interface FisImportPreview {
+  quotaOverview?: QuotaOverview;
   changePlan?: ImportChangePlan | null;
   planStale?: boolean;
   quotaRulesChanged?: boolean;
@@ -665,4 +666,18 @@ export interface QuotaRevisionProposal {
 export interface QuotaRevisionSnapshot {
   eventId:string; revision:number; config:QuotaRuleConfig; isWorldChampionship:boolean;
   digest:string; activatedAt:string; activatedBy:string|null; reason:string;
+}
+
+/** Authoritative read-only preview aggregation; never a new quota allocation. */
+export interface QuotaOverview {
+  event: {id:string;name:string;isWorldChampionship:boolean;rulesRevision:number;rulesFixed:boolean};
+  nations: Array<{
+    nationCode:string;athletes:number;officials:number;peopleInQuotaGroups:number;peopleTotal:number;otherPeople:number;
+    officialsInMultipleGroups:number;officialsWithoutContext:number;officialsWithoutCoverage:null;
+    coverageReviewRequired:boolean;incomplete:boolean;athleteDecisionsOpen:number;ezDecisionsOpen:number;
+    athletesApprovedDistinct:number|null;athleteApprovalFamilies:number;
+    athleteFamilies:NonNullable<FisImportPreview['athleteQuotaChecks']>;
+    groups:Array<{name:string;athletes:number;officials:number;coverageReviewRequired:boolean;
+      contexts:NonNullable<FisImportPreview['quotaChecks']>;totals:{officialQuota:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;singleRoomsApproved:number;quotaExemptSingleRooms:number}}>
+  }>;
 }

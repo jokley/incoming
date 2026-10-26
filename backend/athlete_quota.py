@@ -41,14 +41,15 @@ def quota_rows(people, rules, event_id, approvals=(), revision=1):
 def project_preview(preview, read_context=None):
     from models import Event,ImportApproval,ImportSession,ImportSessionVersion,ImportSessionEvent,db
     rules=rules_for_event(preview['eventId'])
+    event=db.session.get(Event,preview['eventId'])
     nations={p.get('nationCode') for p in preview.get('people',[])}
     superseded=db.select(ImportSessionEvent.approval_id).where(ImportSessionEvent.event_type=='QUOTA_DECISION_REVISED_FROM',ImportSessionEvent.approval_id.isnot(None),ImportSessionEvent.session_id.in_(db.select(ImportSession.id).where(ImportSession.event_id==preview['eventId'])))
     approvals=ImportApproval.query.join(ImportSession).join(ImportSessionVersion,(ImportSessionVersion.id==ImportApproval.version_id)&(ImportSessionVersion.session_id==ImportApproval.session_id)).filter(ImportSession.event_id==preview['eventId'],ImportSession.nation.in_(nations),
         ImportApproval.decision=='APPROVED',~ImportApproval.id.in_(superseded)).order_by(ImportApproval.id).all()
     preview['quotaRulesSnapshot']=rules
     preview['quotaRulesDigest']=fingerprint(rules)
-    preview['quotaRulesRevision']=db.session.get(Event,preview['eventId']).quota_rules_revision
-    preview['athleteQuotaChecks']=quota_rows(preview.get('people',[]),rules,preview['eventId'],approvals,db.session.get(Event,preview['eventId']).quota_rules_revision)
+    preview['quotaRulesRevision']=event.quota_rules_revision
+    preview['athleteQuotaChecks']=quota_rows(preview.get('people',[]),rules,preview['eventId'],approvals,event.quota_rules_revision)
     preview['warnings']=[w for w in preview.get('warnings',[]) if w.get('code')!='QUOTA_ATHLETE_EXCEEDED']
     for row in preview['athleteQuotaChecks']:
         if any(row['uncoveredExtent'].values()):
@@ -59,6 +60,8 @@ def project_preview(preview, read_context=None):
         if (p.get('function') or '').strip().lower()=='athlete' and (not p.get('athleteQuotaFamilies') or None in p['athleteQuotaFamilies'])]
     preview['errors']=[e for e in preview.get('errors',[]) if e.get('code')!='ATHLETE_QUOTA_FAMILY_UNKNOWN']+unknown
     preview['isValid']=not preview['errors']
+    from quota_overview import build_quota_overview
+    preview['quotaOverview']=build_quota_overview(preview.get('people',[]),preview.get('quotaChecks',[]),preview['athleteQuotaChecks'],event,preview['errors'])
 
 
 def reconcile_tasks(session,preview):

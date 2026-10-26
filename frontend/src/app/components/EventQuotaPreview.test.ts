@@ -16,7 +16,7 @@ test('four responsive preview tiles show actual family data and open decisions',
   const html=renderToStaticMarkup(createElement(Preview,{preview,peopleRows:[],roomRows:[],onOpen:()=>{}}));
   for(const label of ['Personen','Zimmerzuordnungen','Officials &amp; EZ-Quote','Athleten-/Disziplinquote','1 Quotenfamilien','1 offene Entscheidungen','Genehmigung erforderlich'])assert.ok(html.includes(label),label);
   assert.match(html,/sm:grid-cols-2 2xl:grid-cols-4/);
-  assert.deepEqual(rows(preview)[0],['Snowboard','40 / 36','21 / 20','19 / 20','2 / 1 / 0','2 / 0 / 0','Offen']);
+  assert.deepEqual(rows(preview)[0],['Snowboard','40 / 36','21 / 20','19 / 20','Gesamtgrenze: 2 · Männer: 1 · Frauen: 0','Gesamtgrenze: 2 · Männer: 0 · Frauen: 0','Offen']);
 });
 test('an incomplete check is not presented as quota compliant',()=>{
   const html=renderToStaticMarkup(createElement(Preview,{preview:{...preview,athleteQuotaChecks:[{...check,athleteQuotaStatus:'INCOMPLETE'}]},peopleRows:[],roomRows:[],onOpen:()=>{}}));
