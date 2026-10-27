@@ -41,7 +41,7 @@ function AthleteOverview({nation,fixed,control,preview}:{nation:Nation;fixed:boo
   {!nation.athleteFamilies.length&&<InfoPanel tone="info" title="Keine aktive Athleten-/Disziplinquote">Für diese Meldung liegt kein berechneter Familienprüfstand vor. Ungeklärte Zuordnungen müssen separat geprüft werden.</InfoPanel>}
   <p className="text-xs text-[var(--ops-text-muted)]">Genehmigungen sind bereits in den gemeldeten Personen enthalten. Gesamt- und Geschlechtergrenzen können sich überschneiden; genehmigte Umfänge werden nicht zu einer Personenzahl addiert.</p></div>;
 }
-function OfficialsOverview({nation,fixed}:{nation:Nation;fixed:boolean}) {
+function OfficialsOverview({nation,fixed,control,preview}:{nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview}) {
   const review=nation.coverageReviewRequired || nation.incomplete || !fixed;
   return <div className="space-y-4"><Metrics items={[
     {label:'Athleten gesamt',value:nation.athletes},
@@ -51,6 +51,7 @@ function OfficialsOverview({nation,fixed}:{nation:Nation;fixed:boolean}) {
   ]}/>
   {nation.otherPeople>0&&<InfoPanel tone="info" title={`Vollständige Meldung: ${nation.peopleTotal} Personen`}>{nation.otherPeople} weitere oder unzugeordnete Personen sind nicht in der Summe Athleten + Officials enthalten.</InfoPanel>}
   {review?<InfoPanel tone="warning" title="Quotenabdeckung fachlich zu prüfen">Eine rechnerische Abweichung ist kein Mehrpreisfall. Gruppenübergreifende Anrechnung wird hier nicht als genehmigt vorausgesetzt. Eine eindeutige Zahl „Officials ohne reguläre Abdeckung“ ist deshalb nicht ausgewiesen.</InfoPanel>:<InfoPanel tone={nation.ezDecisionsOpen?'warning':'success'} title={nation.ezDecisionsOpen?'EZ-Entscheidung erforderlich':'Keine offenen EZ-Entscheidungen'}>Die vorhandenen Quotenprüfungen ergeben {nation.ezDecisionsOpen?'offene EZ-Fälle.':'keinen Handlungsbedarf in diesen Kontexten.'}</InfoPanel>}
+  <CompetitionDistribution control={control} preview={preview} nation={nation.nationCode}/>
   {nation.groups.map(group=><ContentCard key={group.name} className="space-y-3 p-4"><SectionHeader title={group.name} actions={group.coverageReviewRequired?<StatusChip tone="warning">Quotenabdeckung prüfen</StatusChip>:undefined}/>
     <p className="text-sm"><strong>Officials gemeldet: {group.officials} eindeutige Personen</strong></p>
     <div className="overflow-x-auto" role="region" tabIndex={0} aria-label={`${group.name}: Männer, Frauen und Gesamt – horizontal scrollbar`}><table className="w-full min-w-[520px] text-sm"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Officials-Basis','EZ-Anspruch','EZ angefordert'].map((label,index)=><th key={label} scope="col" className={`border-b border-[var(--ops-divider)] px-3 py-2 text-xs text-[var(--ops-text-muted)] ${index?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
@@ -66,7 +67,7 @@ function OfficialsOverview({nation,fixed}:{nation:Nation;fixed:boolean}) {
 }
 export function QuotaOverviewContent({overview,kind,control,preview}:{overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview}) {
   return <div className="space-y-6"><div className="flex flex-wrap gap-2"><StatusChip tone="neutral">{overview.event.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'}</StatusChip><StatusChip tone={overview.event.rulesFixed?'info':'warning'}>Revision {overview.event.rulesRevision} · {overview.event.rulesFixed?'fixiert':'Entwurf'}</StatusChip></div>
-  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-3" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode || 'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed}/>}</section>)}</div>;
+  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-3" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode || 'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview}/>}</section>)}</div>;
 }
 export function QuotaOverviewDialog({preview,kind,onClose,control}:{preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl}) {
   const overview=preview?.quotaOverview;

@@ -47,3 +47,25 @@ test('additional unassigned functions do not disappear into a misleading nationa
  assert.ok(visible.includes('Athleten + Officials')&&visible.includes('Vollständige Meldung: 25 Personen'));
  assert.ok(visible.includes('nicht in der Summe Athleten + Officials enthalten'));
 });
+
+test('both quota views reuse one informational competition hierarchy without changing officials quotas',()=>{
+ const overview=copy(),nation=overview.nations[0].nationCode;
+ const halfpipe={id:'1',name:"Men's Snowboard Halfpipe",group:'Snowboard Park & Pipe',gender:'M'};
+ const air={...halfpipe,id:'2',name:"Men's Snowboard Big Air"};
+ const preview={people:[{matchKey:'athlete',function:'Athlete',gender:'M',nationCode:nation},{matchKey:'staff',function:'NSA Coach',gender:'M',nationCode:nation}]};
+ const control={people:[{personKey:'athlete',competitions:[halfpipe,air]},{personKey:'staff',competitions:[halfpipe]}],competitions:[halfpipe,air],issues:[]};
+ const before=structuredClone({overview,preview,control});
+ for(const kind of ['athlete','officials']){
+  const output=renderToStaticMarkup(createElement(Content,{overview,kind,preview,control}));
+  assert.equal((output.match(/<caption class="sr-only">Wettbewerbsteilnehmer nach Geschlecht/g)||[]).length,1);
+  const hierarchy=output.match(/<table[^>]*><caption class="sr-only">Wettbewerbsteilnehmer nach Geschlecht[\s\S]*?<\/table>/)?.[0]??'';
+  const rows=[...hierarchy.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(row=>text(row[1]).trim());
+  assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 0 1','Halfpipe 1 0 1','Big Air 1 0 1']);
+  if(kind==='officials'){
+   const quotaTables=(markup:string)=>[...markup.matchAll(/<table[\s\S]*?<\/table>/g)].map(m=>m[0]).filter(t=>!t.includes('Wettbewerbsteilnehmer nach Geschlecht'));
+   assert.deepEqual(quotaTables(output),quotaTables(html(overview)));
+   assert.ok(output.indexOf(hierarchy)<output.indexOf('Quotenkontexte für'));
+  }
+ }
+ assert.deepEqual({overview,preview,control},before);
+});
