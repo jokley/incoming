@@ -4,7 +4,7 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false,ws:false,watch:null},optimizeDeps:{noDiscovery:true,entries:[],include:[]},appType:'custom'});
-const {PersonControlDetails,ControlIssues,CompetitionDistribution}=await server.ssrLoadModule('/src/app/components/ImportControl.tsx');
+const {PersonControlDetails,ControlIssues,CompetitionDistribution,visibleControlIssues}=await server.ssrLoadModule('/src/app/components/ImportControl.tsx');
 await server.close();
 const person={matchKey:'a',firstname:'Synthetic',lastname:'Person',function:'NSA Coach',gender:'W',forGender:'W',rowNumber:2,roomType:'Double shared',accommodationRequirement:'REQUIRED',accommodationRequirementSource:'MANUAL',accommodationRateCategory:'STANDARD',singleRoomQuotaExemptReason:'WORLD_CHAMPION',singleRoomExemptionSource:'MANUAL_SET'};
 const competition={id:'1',name:'Halfpipe Men',group:'Snowboard Park & Pipe',gender:'M'};
@@ -20,8 +20,26 @@ test('clarifications link only known people without introducing a block',()=>{
  assert.match(html,/Klärungsbedarf/);assert.match(html,/Informationen/);assert.match(html,/Keine zusätzliche Importsperre/);
  assert.equal((html.match(/→ Details/g)||[]).length,1);assert.match(html,/Zeile 8/);
 });
-test('competition distribution distinguishes memberships and unique persons including staff',()=>{
- const extra={...competition,id:'2',name:'Big Air Men',people:1,athletes:0};
- const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:{...control,people:[{...control.people[0],competitions:[competition,extra]}],competitions:[...control.competitions,extra]}}));
- assert.match(html,/1 eindeutige Personen · 2 Competition-Zuordnungen/);assert.match(html,/Big Air Men: 0 Athleten · 1 Personen inkl. Staff/);assert.match(html,/keine neue sportliche Quotenprüfung/);
+test('hierarchy counts unique athletes per group and competition, combining genders and excluding staff',()=>{
+ const male={...competition,name:"Men's Snowboard Halfpipe"},female={...competition,id:'2',name:"Women's Snowboard Halfpipe",gender:'W'},air={...competition,id:'3',name:"Men's Snowboard Big Air"};
+ const people=[{...person,matchKey:'m',function:'Athlete',gender:'M',nationCode:'CAN'},{...person,matchKey:'f',function:'Athlete',gender:'W',nationCode:'CAN'},person,{...person,matchKey:'other',function:'Athlete',gender:'M',nationCode:'USA'}];
+ const view={...control,competitions:[male,female,air],people:[{personKey:'m',competitions:[male,air]},{personKey:'f',competitions:[female]},{personKey:'a',competitions:[male]},{personKey:'other',competitions:[air]}]};
+ const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
+ const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+ assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 1 2','Halfpipe 1 1 2','Big Air 1 0 1']);
+});
+test('routine memberships are hidden and every issue list starts collapsed',()=>{
+ const view={...control,issues:[...control.issues,{kind:'info',code:'MULTIPLE_MEMBERSHIPS',message:'Routine membership',personKeys:['a']}]};
+ assert.equal(visibleControlIssues(view).length,2);
+ for(const filter of ['all','clarification','info']){
+  const html=renderToStaticMarkup(createElement(ControlIssues,{control:view,preview,filter,onPerson:()=>{}}));
+  assert.ok(!html.includes(' open=""'));assert.ok(!html.includes('Routine membership'));
+ }
+});
+test('ordinary person has no general exemption advice or expanded technical sections',()=>{
+ const html=renderToStaticMarkup(createElement(PersonControlDetails,{person:{...person,singleRoomQuotaExemptReason:null},preview,control}));
+ assert.ok(!html.includes('Kein Nachweis eines sportlichen Startrechts'));
+ assert.ok(!html.includes('Athletenquoten nachvollziehen'));
+ assert.ok(!html.includes(' open=""'));
+ assert.ok(html.includes('Partner nicht zugeordnet'));
 });
