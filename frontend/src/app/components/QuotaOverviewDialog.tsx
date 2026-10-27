@@ -1,3 +1,5 @@
+import {CompetitionDistribution} from './ImportControl';
+import type {ImportControl} from '../types';
 import type { ReactNode } from 'react';
 import { ContentCard, EmptyState, EnterpriseDialog, InfoPanel, OpsButton, SectionHeader, StatusChip } from '../design-system';
 import type { FisImportPreview, QuotaExtent, QuotaOverview } from '../types';
@@ -65,9 +67,10 @@ export function QuotaOverviewContent({overview,kind}:{overview:QuotaOverview;kin
   return <div className="space-y-6"><div className="flex flex-wrap gap-2"><StatusChip tone="neutral">{overview.event.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'}</StatusChip><StatusChip tone={overview.event.rulesFixed?'info':'warning'}>Revision {overview.event.rulesRevision} · {overview.event.rulesFixed?'fixiert':'Entwurf'}</StatusChip></div>
   {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-3" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode || 'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed}/>}</section>)}</div>;
 }
-export function QuotaOverviewDialog({preview,kind,onClose}:{preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void}) {
+export function QuotaOverviewDialog({preview,kind,onClose,control}:{preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl}) {
   const overview=preview?.quotaOverview;
   return <EnterpriseDialog open title={kind==='athlete'?'Athleten-/Disziplinquote':'Officials & EZ-Quote'} description={overview?`${overview.event.name} · Gemeldete Personen, reguläre Grenzen und bestehende Entscheidungen`:'Gespeicherter Prüfstand'} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}>
+    {kind==='athlete'&&<CompetitionDistribution control={control}/>}
     {overview?<QuotaOverviewContent overview={overview} kind={kind}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen historischen Prüfstand liegt noch keine eindeutige Personenübersicht vor. Eine aktuelle Importprüfung ergänzt sie, ohne historische Genehmigungen umzuschreiben."/>}
   </EnterpriseDialog>;
 }

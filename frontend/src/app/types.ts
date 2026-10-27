@@ -479,11 +479,24 @@ export interface FisImportIssue {
   details?: Record<string, unknown>;
 }
 
+export type ImportControlKind = 'error'|'clarification'|'info';
+export interface ImportControl {
+  people:Array<{personKey:string;competitions:Array<{id:string;name:string;group:string|null;gender:string|null}>;quotaContexts:Array<{nation:string;group:string;gender:string}>;internalNote?:string|null}>;
+  issues:Array<{kind:ImportControlKind;code:string;message:string;personKeys:string[];source?:string|null;row?:number|null}>;
+  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;people:number;athletes:number}>;
+}
+
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  existingAthleteId?:number|null;
+  arrivalDate?:string|null;departureDate?:string|null;
+  singleRoomExemptionSource?:string|null;
+  singleRoomAllocation?:{context?:[string,string,string]|null;status?:string}|null;
+  worldChampionReferences?:Array<{id?:string;discipline?:string;championship?:string;championshipYear?:number;eventGroup?:string;source?:string}>;
   importAccommodationRequirement?: AccommodationRequirement | null;
   accommodationRequirementReviewRequired?: boolean;
   quotaDisciplines?: string[];
   athleteTopLevelDisciplines?: string[];
+  athleteQuotaFamilies?:string[];
   topLevelDisciplines?: string[];
   rowNumber: number;
   function?: string | null;
