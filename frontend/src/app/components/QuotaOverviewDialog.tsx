@@ -23,7 +23,7 @@ function AthleteState({row,incomplete}:{row:Family;incomplete:boolean}) {
   if(row.athleteQuotaStatus==='EXCEEDED') return <StatusChip tone="warning">Quotenbewertung prüfen</StatusChip>;
   return <StatusChip tone="success">Innerhalb der Quote</StatusChip>;
 }
-function AthleteOverview({nation,fixed}:{nation:Nation;fixed:boolean}) {
+function AthleteOverview({nation,fixed,control,preview}:{nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview}) {
   const incomplete=nation.incomplete || !fixed;
   return <div className="space-y-4"><Metrics items={[
     {label:'Athleten gemeldet',value:nation.athletes,hint:'Eindeutige Personen, nicht Familienzeilen'},
@@ -32,6 +32,7 @@ function AthleteOverview({nation,fixed}:{nation:Nation;fixed:boolean}) {
     {label:'Offene Entscheidungen',value:nation.athleteDecisionsOpen,hint:'Entscheidungsfälle der Athletenquote'},
   ]}/>
   {incomplete&&<InfoPanel tone="warning" title="Quotendaten prüfen">Unvollständige Zuordnungen oder noch nicht fixierte Regeln erlauben keinen grünen Gesamtstatus.</InfoPanel>}
+  <CompetitionDistribution control={control} preview={preview} nation={nation.nationCode}/>
   {nation.athleteFamilies.map(row=><ContentCard key={row.topLevelDiscipline} className="space-y-3 p-4"><SectionHeader title={familyName(row.topLevelDiscipline)} actions={<AthleteState row={row} incomplete={incomplete}/>}/>
     <p className="text-sm"><strong>{row.athleteQuotaUsed} Athleten gemeldet</strong> · Reguläres Limit: <strong>{row.athleteQuotaLimit}</strong></p>
     <dl className="grid grid-cols-2 gap-3 text-sm"><div><dt className="text-[var(--ops-text-muted)]">Männer</dt><dd className="font-bold tabular-nums">{row.athleteGenderUsed.M} von {row.athleteGenderLimit}</dd></div><div><dt className="text-[var(--ops-text-muted)]">Frauen</dt><dd className="font-bold tabular-nums">{row.athleteGenderUsed.F} von {row.athleteGenderLimit}</dd></div></dl>
@@ -63,15 +64,14 @@ function OfficialsOverview({nation,fixed}:{nation:Nation;fixed:boolean}) {
   {nation.officialsWithoutContext>0&&<InfoPanel tone="warning" title="Zuordnungen prüfen">{nation.officialsWithoutContext} Personen ohne gültigen Athleten-Quotenkontext. Daraus wird keine neue Genehmigung oder Gebührenregel abgeleitet.</InfoPanel>}
   </div>;
 }
-export function QuotaOverviewContent({overview,kind}:{overview:QuotaOverview;kind:'athlete'|'officials'}) {
+export function QuotaOverviewContent({overview,kind,control,preview}:{overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview}) {
   return <div className="space-y-6"><div className="flex flex-wrap gap-2"><StatusChip tone="neutral">{overview.event.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'}</StatusChip><StatusChip tone={overview.event.rulesFixed?'info':'warning'}>Revision {overview.event.rulesRevision} · {overview.event.rulesFixed?'fixiert':'Entwurf'}</StatusChip></div>
-  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-3" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode || 'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed}/>}</section>)}</div>;
+  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-3" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode || 'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed}/>}</section>)}</div>;
 }
 export function QuotaOverviewDialog({preview,kind,onClose,control}:{preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl}) {
   const overview=preview?.quotaOverview;
   return <EnterpriseDialog open title={kind==='athlete'?'Athleten-/Disziplinquote':'Officials & EZ-Quote'} description={overview?`${overview.event.name} · Gemeldete Personen, reguläre Grenzen und bestehende Entscheidungen`:'Gespeicherter Prüfstand'} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}>
-    {kind==='athlete'&&<CompetitionDistribution control={control}/>}
-    {overview?<QuotaOverviewContent overview={overview} kind={kind}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen historischen Prüfstand liegt noch keine eindeutige Personenübersicht vor. Eine aktuelle Importprüfung ergänzt sie, ohne historische Genehmigungen umzuschreiben."/>}
+    {overview?<QuotaOverviewContent overview={overview} kind={kind} control={control} preview={preview??undefined}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen historischen Prüfstand liegt noch keine eindeutige Personenübersicht vor. Eine aktuelle Importprüfung ergänzt sie, ohne historische Genehmigungen umzuschreiben."/>}
   </EnterpriseDialog>;
 }
 
