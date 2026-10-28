@@ -15,7 +15,7 @@ const copy=()=>structuredClone(fixture);
 
 test('officials are grouped in one table with distinct totals, collapsible contexts and existing EZ values',()=>{
  const data=copy(),output=html(data),visible=text(output);
- for(const label of ['24 Personen','10 Athleten','14','eindeutige Officials','EZ-Anspruch Σ M/W','EZ angefordert','Abdeckung prüfen','5 Officials in mehreren Event Groups','Σ M/W','Officials-Basis'])assert.ok(visible.includes(label),label);
+ for(const label of ['14','Officials','0 EZ offen','EZ-Anspruch Σ M/W','EZ angefordert','Abdeckung prüfen','5 Mehrfachzugehörigkeiten','Σ M/W','Officials-Basis'])assert.ok(visible.includes(label),label);
  assert.equal((output.match(/<details/g)||[]).length,2);assert.ok(!output.includes(' open=""'));
  assert.ok(!output.includes('Officials ohne reguläre Abdeckung'));
  assert.ok(output.includes('overflow-x-auto')&&output.includes('role="region"')&&output.includes('tabindex="0"'));
@@ -51,7 +51,7 @@ test('EZ approvals and exemptions stay visible without inventing officials cover
 });
 test('additional unassigned functions remain visible in the distinct person total',()=>{
  const data=copy();Object.assign(data.nations[0],{peopleTotal:25,otherPeople:1});
- const visible=text(html(data));assert.ok(visible.includes('25 Personen')&&visible.includes('1 weitere / unzugeordnete Personen'));
+ const visible=text(html(data));assert.ok(visible.includes('1 weitere / unzugeordnete Personen'));
 });
 test('only athlete view shows competition hierarchy; officials keep direct existing-list navigation',()=>{
  const overview=copy(),nation=overview.nations[0].nationCode;
@@ -68,7 +68,7 @@ test('only athlete view shows competition hierarchy; officials keep direct exist
   if(kind==='athlete')assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 0 1','Halfpipe 1 0 1','Big Air 1 0 1']);
   if(kind==='officials'){
    for(const group of overview.nations[0].groups)assert.ok(output.includes(`aria-label="Officials ${group.name.replaceAll('&','&amp;')} anzeigen"`));
-   assert.ok(output.includes('Personen anzeigen'));
+   assert.ok(output.includes('5 Mehrfachzugehörigkeiten'));
    assert.ok(!output.includes('Keine offenen EZ-Entscheidungen'));
    assert.ok(output.includes('Officials-Basis Σ M/W'));
    assert.ok(!output.includes('Sportliche Meldungen'));

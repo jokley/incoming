@@ -1,5 +1,6 @@
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
-import {Fragment,type ReactNode} from 'react';
+import {Fragment,useEffect,useRef,type ReactNode} from 'react';
+import {sportClarifications} from '../services/importHints';
 import type {QuotaPeopleFilter} from '../services/importHints';
 import type {FisImportPreview,FisImportPreviewPerson,ImportControl} from '../types';
 import type {ImportSession} from '../data/importSessions';
@@ -31,13 +32,16 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
 export function ImportPersonDialog({person,preview,session,onClose}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void}) {
  return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
-export function CompetitionDistribution({control,preview,nation,onPeople}:{control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void}) {
+export function CompetitionDistribution({control,preview,nation,onPeople,focusSport}:{control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
+ const tableRef=useRef<HTMLDivElement>(null);
+ useEffect(()=>{if(focusSport)tableRef.current?.querySelector('[data-sport-review="true"]')?.scrollIntoView({block:'center'});},[focusSport,control,nation]);
  if(!control||!preview)return null;
  const athletes=preview.people.filter(p=>p.function?.toLowerCase()==='athlete'&&(!nation||p.nationCode===nation));
  const keys=new Set(athletes.map(p=>p.matchKey));
  const people=control.people.filter(p=>keys.has(p.personKey));
  const competitions=control.competitions.filter(c=>people.some(p=>p.competitions.some(m=>m.id===c.id)));
  if(!competitions.length)return null;
+ const reviewIds=new Set(sportClarifications(control,nation).map(row=>row.id));
  const groups=[...new Set(competitions.map(c=>c.group))];
  const counts=(ids:Set<string>)=>{
   const members=people.filter(p=>p.competitions.some(c=>ids.has(c.id)));
@@ -57,7 +61,7 @@ export function CompetitionDistribution({control,preview,nation,onPeople}:{contr
    {entry&&text?<span title={hint}>{onPeople&&nation?<button type="button" className="text-right" aria-label={`${competition?.name}: ${entry.reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{chip}</button>:chip}</span>:n}
   </td>;
  });
- return <div className="min-w-0 overflow-x-auto" role="region" tabIndex={0} aria-label="Wettbewerbsteilnehmer – Tabelle horizontal scrollbar">
+ return <div ref={tableRef} className="min-w-0 overflow-x-auto" role="region" tabIndex={0} aria-label="Wettbewerbsteilnehmer – Tabelle horizontal scrollbar">
   <table className="w-full text-xs sm:text-sm"><caption className="pb-2 text-left text-xs text-[var(--ops-text-muted)]">Sportliche Meldungen · FIS-Zuteilung nicht bestätigt</caption>
    <thead><tr>{['Disziplin / Wettbewerb','Männer','Frauen','Gesamt'].map((label,i)=><th key={label} scope="col" className={`ops-table-wrap px-1 py-2 sm:px-2 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{groups.map(group=>{
@@ -65,7 +69,7 @@ export function CompetitionDistribution({control,preview,nation,onPeople}:{contr
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
     return <Fragment key={group??'unknown'}>
      <tr className="border-t border-[var(--ops-divider)] font-bold"><th scope="row" className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}</th>{cells(new Set(list.map(c=>c.id)))}</tr>
-     {names.map(name=><tr key={name}><th scope="row" className="ops-table-wrap py-1 pl-3 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)),true)}</tr>)}
+     {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={focusSport&&list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'bg-[var(--ops-tone-warning-surface)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-3 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)),true)}</tr>)}
     </Fragment>;
    })}</tbody>
   </table>

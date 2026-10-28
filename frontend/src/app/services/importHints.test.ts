@@ -59,3 +59,29 @@ test('competition plausibility links filter the exact roster in the existing per
  const filter={nation:'CAN',role:'athletes' as const,personKeys:['one','staff'],competition:'Synthetic Big Air'};
  assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,filter)).map(p=>p.matchKey),['one']);
 });
+
+test('sport summary counts affected competition/gender positions, excluding proved personal titles',async()=>{
+ const {sportClarifications}=await import('./importHints.ts');
+ const competition=(id:string,name:string,unverifiedAdditional:number)=>({id,name,gender:'M',sportEntries:[{nation:'CAN',unverifiedAdditional}]});
+ const control={competitions:[competition('ss','Slopestyle',0),competition('ba','Big Air',1)]} as unknown as import('../types.ts').ImportControl;
+ assert.deepEqual(sportClarifications(control).map(row=>row.id),['ba']);
+ control.competitions[0].sportEntries![0].unverifiedAdditional=5;
+ control.competitions[1].sportEntries![0].unverifiedAdditional=5;
+ assert.equal(sportClarifications(control).length,2); // two positions, not ten athletes
+ control.competitions.push(control.competitions[0]);
+ assert.equal(sportClarifications(control).length,2);
+ assert.equal(sportClarifications(control,'GER').length,0);
+});
+
+test('officials total cannot turn green because EZ decisions are zero; overlaps alone are not an error',async()=>{
+ const {officialsSummary}=await import('./importHints.ts');
+ const nation={ezDecisionsOpen:0,officialsInMultipleGroups:1,groups:[{coverageReviewRequired:true,totals:{singleRoomsPending:0}}]} as unknown as import('../types.ts').QuotaOverview['nations'][number];
+ assert.deepEqual(officialsSummary(nation,true),{label:'Abdeckung prüfen',tone:'warning'});
+ nation.groups[0].coverageReviewRequired=false;
+ assert.deepEqual(officialsSummary(nation,true),{label:'OK',tone:'success'});
+ nation.ezDecisionsOpen=1;
+ assert.equal(officialsSummary(nation,true).label,'Entscheidung offen');
+ nation.groups[0].coverageReviewRequired=true;
+ assert.equal(officialsSummary(nation,true).label,'Entscheidung offen · Abdeckung prüfen');
+ assert.equal(officialsSummary({...nation,ezDecisionsOpen:0},false).tone,'warning');
+});
