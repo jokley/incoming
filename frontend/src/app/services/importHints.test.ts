@@ -52,3 +52,10 @@ test('quota navigation uses exact declared groups and unique officials rather th
  assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,{nation:'ITA',role:'athletes',family:'Snowboard',gender:'F'})).map(p=>p.matchKey),['athlete']);
  assert.equal(people.filter(p=>personMatchesQuotaFilter(p,null)).length,5);
 });
+
+test('competition plausibility links filter the exact roster in the existing person list',async()=>{
+ const {personMatchesQuotaFilter}=await import('./importHints.ts');
+ const people=[{matchKey:'one',nationCode:'CAN',function:'Athlete'},{matchKey:'two',nationCode:'CAN',function:'Athlete'},{matchKey:'staff',nationCode:'CAN',function:'NSA Coach',quotaDisciplines:['Snowboard Park & Pipe']} ] as FisImportPreview['people'];
+ const filter={nation:'CAN',role:'athletes' as const,personKeys:['one','staff'],competition:'Synthetic Big Air'};
+ assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,filter)).map(p=>p.matchKey),['one']);
+});

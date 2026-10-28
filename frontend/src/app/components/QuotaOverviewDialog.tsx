@@ -24,7 +24,7 @@ function AthleteState({row,incomplete}:{row:Family;incomplete:boolean}) {
 function AthleteOverview({nation,fixed,control,preview,onPeople}:{nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate}) {
  const incomplete=nation.incomplete||!fixed;
  return <div className="space-y-3">
-  <CompetitionDistribution control={control} preview={preview} nation={nation.nationCode}/>
+  <CompetitionDistribution control={control} preview={preview} nation={nation.nationCode} onPeople={onPeople}/>
   <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Athletenquoten – gemeldet, erlaubt und Abweichung"><table className="w-full text-xs sm:text-sm">
    <caption className="sr-only">Autoritative Athletenquoten: Gemeldet / erlaubt</caption>
    <thead><tr>{['Familienquote · gemeldet / erlaubt','Männer','Frauen','Gesamt'].map((label,i)=><th scope="col" key={label} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>

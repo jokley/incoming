@@ -1,6 +1,7 @@
 """Hotel HTTP routes; authentication and mutation auditing remain app-wide."""
 from accommodation_scope import event_query, event_get, accommodation_event_id
 
+from stay_window import assess_stay, load_stay_schedule
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
@@ -311,6 +312,8 @@ def get_hotel_reservations(hotel_id):
     if start_date and end_date:
         q = q.filter(RoomAssignment.check_in_date <= end_date, RoomAssignment.check_out_date >= start_date)
 
+    schedule = load_stay_schedule(accommodation_event_id())
+    q = q.options(db.joinedload(RoomAssignment.athlete).selectinload(Athlete.competitions))
     assignments = q.order_by(RoomAssignment.check_in_date.asc().nullslast()).all()
     rows = []
     for a in assignments:
@@ -325,6 +328,7 @@ def get_hotel_reservations(hotel_id):
             'discipline': a.athlete.discipline,
             'checkInDate': a.check_in_date.isoformat() if a.check_in_date else None,
             'checkOutDate': a.check_out_date.isoformat() if a.check_out_date else None,
-            'specialNotes': a.athlete.special_meal
+            'specialNotes': a.athlete.special_meal,
+            'stayWindow': assess_stay(a.check_in_date,a.check_out_date,a.athlete.competitions,schedule,a.athlete.accommodation_requirement)
         })
     return jsonify(rows)

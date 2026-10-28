@@ -34,6 +34,21 @@ test('five shared SS/BA entrants and an EZ champion exemption do not imply sport
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
  const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
  assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 5 0 5','Slopestyle 5 0 5','Big Air 5 0 5']);
- assert.ok(html.includes('FIS-Zuteilung klären')&&html.includes('Startrechte nicht geprüft'));
+ assert.ok(html.includes('FIS-Zuteilung nicht bestätigt')&&html.includes('keine Startfreigabe'));
  for(const unproven of ['5 erlaubt','+1 Weltmeister','Titel vorhanden','Innerhalb'])assert.ok(!html.includes(unproven),unproven);
+});
+
+test('server-projected personal title and unresolved BA extra remain distinct and link to exact people',()=>{
+ const base={nation:'CAN',reported:5,regularMax:4,aboveRegular:1,championStarters:0,unverifiedAdditional:1,personKeys:['m0','m1','m2','m3','m4'],champions:[],sharedPoolReported:5,allocationConfirmed:false};
+ const ss={...competition,id:'ss',name:"Men's Snowboard Slopestyle",sportEntries:[{...base,championStarters:1,unverifiedAdditional:0,champions:[{personKey:'m0',source:'https://example.test/result'}]}]};
+ const ba={...competition,id:'ba',name:"Men's Snowboard Big Air",sportEntries:[base]};
+ const people=base.personKeys.map(matchKey=>({...person,matchKey,function:'Athlete',gender:'M',nationCode:'CAN'}));
+ const view={...control,competitions:[ss,ba],people:people.map(p=>({personKey:p.matchKey,competitions:[ss,ba]}))};
+ const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN',onPeople:()=>{throw Error('render must not navigate');}}));
+ assert.ok(html.includes('5 inkl. WM')&&html.includes('5 / 4 · Zusatzrecht prüfen'));
+ assert.equal((html.match(/data-tone="success"/g)||[]).length,1);
+ assert.equal((html.match(/data-tone="warning"/g)||[]).length,1);
+ assert.ok(html.includes('Gemeinsamer Slopestyle-/Big-Air-Pool: 5 eindeutige Männer.'));
+ assert.ok(html.includes('endgültige FIS-Zuteilung nicht bestätigt'));
+ assert.ok(html.includes('Slopestyle: 5 Athleten anzeigen')&&html.includes('Big Air: 5 Athleten anzeigen'));
 });
