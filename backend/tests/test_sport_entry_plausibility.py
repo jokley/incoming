@@ -58,3 +58,25 @@ def test_title_requires_exact_competition_membership():
     view=project_entries(people,comps,event,[title])
     assert view['1'][0]['reported']==4 and view['1'][0]['championStarters']==0
     assert view['2'][0]['reported']==5 and view['2'][0]['championStarters']==0
+
+
+@pytest.mark.parametrize('count,remaining', [(4, 0), (5, 0), (9, 4)])
+def test_alpine_individual_title_is_not_transferred_or_applied_to_team(count, remaining):
+    people, _, event, title = setup_case(count)
+    comps = {i: NS(id=i, display_name=name, sport='Snowboard', gender=gender,
+        team_competition=team, quota_discipline='Snowboard Alpine')
+        for i, name, gender, team in [(1, 'Parallel Giant Slalom', 'M', False),
+            (2, 'Parallel Slalom', 'M', False), (3, 'Parallel Team', 'A', True)]}
+    for person in people:
+        person['competitionMemberships'].append({'competitionId': 3})
+    title.update(discipline='PGS', eventGroup='Snowboard Alpine')
+    before = deepcopy(people)
+    view = project_entries(people + [deepcopy(people[0])], comps, event, [title])
+    assert set(view) == {'1', '2'}
+    assert view['1'][0]['reported'] == view['2'][0]['reported'] == count
+    assert view['1'][0]['championStarters'] == 1
+    assert view['1'][0]['unverifiedAdditional'] == remaining
+    assert view['2'][0]['championStarters'] == 0
+    assert view['2'][0]['unverifiedAdditional'] == max(0, count - 4)
+    assert all(row[0]['sharedPoolReported'] is None for row in view.values())
+    assert people == before
