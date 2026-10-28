@@ -6,6 +6,7 @@ import type {FisImportPreview,FisImportPreviewPerson,ImportControl} from '../typ
 import type {ImportSession} from '../data/importSessions';
 import {ContentCard,EnterpriseDialog,OpsButton,SectionHeader,StatusChip} from '../design-system';
 import {disciplineDisplayName} from '../services/competitionPresentation';
+import {stayWindowNights} from '../services/stayWindow';
 
 export const visibleControlIssues=(control:ImportControl)=>control.issues.filter(issue=>issue.code!=='MULTIPLE_MEMBERSHIPS');
 const value=(text?:string|null)=>text||'Nicht angegeben';
@@ -17,7 +18,7 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
  const partners=rooms.map(r=>{const key=r.person1Key===person.matchKey?r.person2Key:r.person1Key;const mate=preview.people.find(p=>p.matchKey===key);return mate?`${mate.firstname} ${mate.lastname}`:r.sharedWithRawName?`${r.sharedWithRawName} (nicht zugeordnet)`:null;}).filter(Boolean);
  const issues=control?visibleControlIssues(control).filter(i=>i.kind!=='info'&&i.personKeys.includes(person.matchKey)):[];
  return <div className="space-y-3 [overflow-wrap:anywhere] [&_h2]:text-sm [&_h2]:tracking-normal">
-  {stayWindowText(row?.stayWindow)&&<p className="text-sm text-[var(--ops-warning)]" title={stayWindowDetails(row?.stayWindow)}>{stayWindowText(row?.stayWindow)}</p>}
+  {stayWindowText(row?.stayWindow)&&<p className="text-sm text-[var(--ops-warning)]" title={stayWindowDetails(row?.stayWindow)}>{stayWindowText(row?.stayWindow)}<span className="block text-xs">{stayWindowNights(row?.stayWindow)}</span></p>}
   {issues.map((issue,index)=><p key={index} className="text-sm text-[var(--ops-warning)]">{issue.message}<span className="block text-xs text-[var(--ops-text-muted)]">{issue.source}{issue.row?` · Zeile ${issue.row}`:''}</span></p>)}
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Person"/><dl className="grid gap-2 sm:grid-cols-2"><Fact label="Funktion">{value(person.function)}</Fact><Fact label="Geschlecht">{value(person.gender)}</Fact></dl><h4 className="text-sm font-bold">Wettbewerbe</h4><ul className="text-sm">{row?.competitions.map(c=><li key={c.id}>{c.name}</li>)}</ul></ContentCard>
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><dl className="grid gap-2 sm:grid-cols-2">

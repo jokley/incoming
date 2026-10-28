@@ -24,9 +24,22 @@ def _label(value):
 
 
 def load_stay_schedule(event_id):
-    """One bulk query per projection, scoped to the championship."""
-    from models import AccommodationEvent
-    return AccommodationEvent.query.filter_by(championship_event_id=event_id).all()
+    """One scoped bulk query, including explicit competition-to-period links."""
+    from models import db, AccommodationEvent, EventCompetition
+    from sqlalchemy import and_
+    from types import SimpleNamespace
+    rows = db.session.query(AccommodationEvent, EventCompetition.competition_id).outerjoin(
+        EventCompetition, and_(EventCompetition.accommodation_event_id==AccommodationEvent.id,
+            EventCompetition.event_id==AccommodationEvent.championship_event_id,
+            EventCompetition.active.is_(True))).filter(AccommodationEvent.championship_event_id==event_id).all()
+    periods = {}
+    for period, competition_id in rows:
+        view = periods.setdefault(period.id, SimpleNamespace(id=period.id,
+            championship_event_id=period.championship_event_id, discipline=period.discipline,
+            start_date=period.start_date, end_date=period.end_date, competition_ids=set()))
+        if competition_id is not None:
+            view.competition_ids.add(str(competition_id))
+    return list(periods.values())
 
 
 def assess_stay(arrival, departure, competitions, schedule, requirement='REQUIRED'):
@@ -49,7 +62,8 @@ def assess_stay(arrival, departure, competitions, schedule, requirement='REQUIRE
     for competition in {str(c.id): c for c in competitions}.values():
         exact = [event for event in schedule if event.discipline in
                  {getattr(competition, 'display_name', None), competition.name}]
-        candidates = exact or by_label.get(_label(getattr(competition, 'display_name', '') or competition.name), [])
+        linked = [event for event in schedule if str(competition.id) in getattr(event,'competition_ids',set())]
+        candidates = linked or exact or by_label.get(_label(getattr(competition, 'display_name', '') or competition.name), [])
         if len(candidates) != 1:
             return {**result, 'reason': 'EVENT_DATES_UNCLEAR'}
         left, right = _date(candidates[0].start_date), _date(candidates[0].end_date)

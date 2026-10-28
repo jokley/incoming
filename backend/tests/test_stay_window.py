@@ -145,3 +145,19 @@ def test_isr_style_stay_needs_actual_alpine_dates_not_full_championship_guess():
     dates=[period('Parallel Giant Slalom','2027-03-08','2027-03-08'),period('Parallel Slalom','2027-03-09','2027-03-09')]
     known=assess_stay('2027-03-04','2027-03-22',comps,dates)
     assert (known['allowedStart'],known['allowedEnd'],known['outsideNights'])==('2027-03-06','2027-03-10',14)
+
+
+def test_parallel_planning_block_has_no_proven_membership_link():
+    # Reproduces the maintained planning category found in seed_data.py and
+    # event-isolation fixtures. Its presence is not proof that it covers PGS/PSL.
+    comps=[competition(1,'Parallel Giant Slalom'),competition(2,'Parallel Slalom')]
+    planning=[period('Parallel','2027-03-04','2027-03-11')]
+    value=assess_stay('2027-03-04','2027-03-22',comps,planning)
+    assert value['reason']=='EVENT_DATES_UNCLEAR'
+    assert value['outsideNights'] is None and value['allowedStart'] is None
+    # Explicitly named competition periods resolve without a new calendar or alias.
+    verified=[period('Parallel Giant Slalom','2027-03-04','2027-03-11'),
+              period('Parallel Slalom','2027-03-04','2027-03-11')]
+    checked=assess_stay('2027-03-04','2027-03-22',comps,verified)
+    assert checked['allowedStart']=='2027-03-02' and checked['allowedEnd']=='2027-03-12'
+    assert checked['outsideNights']==10

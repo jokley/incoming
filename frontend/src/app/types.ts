@@ -103,7 +103,9 @@ export interface Competition {
   active: boolean;
 }
 
+export interface PlanningPeriod {id:string;discipline:string;startDate:string;endDate:string;}
 export interface EventCompetitionMapping {
+  accommodationEventId?:string|null;accommodationEvent?:PlanningPeriod|null;
   id: string; eventId: string; competitionId: string; fisCodex: string;
   importCode: string; officialName: string; active: boolean; displayName: string;
   sport: string; gender: string; quotaDiscipline: string; teamCompetition: boolean;
@@ -126,6 +128,7 @@ export interface ChampionshipEvent {
   id: string; name: string; year?: number; active: boolean;
   fisEventId?: string; sectorCode?: string;
   competitionMappings?: EventCompetitionMapping[];
+  planningPeriods?:PlanningPeriod[];
   isWorldChampionship?:boolean;quotaRules?:EventQuotaRules;
 }
 

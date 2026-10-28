@@ -113,7 +113,8 @@ def initialization_preflight(event):
              'versions':[raw(v) for v in ImportSessionVersion.query.filter(ImportSessionVersion.session_id.in_([s.id for s in sessions])).order_by(ImportSessionVersion.id)]}
     from models import AthleteCompetition,EventCompetition
     memberships=[(r.athlete_id,r.competition_id) for r in AthleteCompetition.query.filter(AthleteCompetition.athlete_id.in_([p.id for p in people])).order_by(AthleteCompetition.athlete_id,AthleteCompetition.competition_id)]
-    mappings=[raw(m) for m in EventCompetition.query.filter_by(event_id=event.id).order_by(EventCompetition.id)]
+    # Calendar-only links do not belong to quota evidence.
+    mappings=[{k:v for k,v in raw(m).items() if k!='accommodation_event_id'} for m in EventCompetition.query.filter_by(event_id=event.id).order_by(EventCompetition.id)]
     blockers = ['Bestehende abgeschlossene Genehmigungen ohne fixierten Regelkontext müssen vor Initialisierung geprüft werden.'] if any(a.decision=='APPROVED' for a in approvals) or any(p.single_room_status=='APPROVED_EXTRA' for p in people) else []
     return {'counts': {key:len(value) for key,value in facts.items()}, 'fingerprint':fingerprint({'facts':facts,'memberships':memberships,'mappings':mappings}), 'blockers':blockers}
 
