@@ -20,7 +20,7 @@ export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|
 export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Status',special:'Sondertarif',stay:'Aufenthaltsabweichungen',stayUnclear:'Aufenthalt nicht prüfbar'};
 
 
-import type {FisImportPreview,ImportControl,FisImportPreviewPerson} from '../types.ts';
+import type {FisImportPreview,ImportControl,FisImportPreviewPerson,QuotaOverview} from '../types.ts';
 type Room=FisImportPreview['rooms'][number];
 const partnerCode=(code:string)=>/PARTNER|SHARED_PARTNER/.test(code);
 export function roomNeedsPartner(room:Room,control?:ImportControl) {
@@ -59,4 +59,18 @@ export function personMatchesQuotaFilter(person:FisImportPreviewPerson,filter:Qu
   &&(!filter.personKeys||filter.personKeys.includes(person.matchKey))&&(!filter.group||groups.has(filter.group))&&(!filter.multipleGroups||groups.size>1)
   &&(!filter.family||person.athleteQuotaFamilies?.includes(filter.family))
   &&(!filter.gender||(filter.gender==='F'?['F','W'].includes(person.gender??''):person.gender==='M'));
+}
+
+/** Count table positions, never athletes or additive SS/BA quota excess. */
+export function sportClarifications(control?:ImportControl,nation?:string) {
+ const positions=new Map<string,{id:string;name:string;gender:string|null;nation:string}>();
+ for(const competition of control?.competitions??[])for(const entry of competition.sportEntries??[]){
+  if(entry.unverifiedAdditional>0&&(!nation||entry.nation===nation))positions.set(`${entry.nation}/${competition.id}`,{id:competition.id,name:competition.name,gender:competition.gender,nation:entry.nation});
+ }
+ return [...positions.values()];
+}
+export function officialsSummary(nation:QuotaOverview['nations'][number],fixed:boolean) {
+ const review=!fixed||nation.incomplete||nation.coverageReviewRequired||nation.officialsWithoutContext>0||nation.groups.some(group=>group.coverageReviewRequired);
+ const pending=nation.ezDecisionsOpen>0||nation.groups.some(group=>group.totals.singleRoomsPending>0);
+ return {label:pending?(review?'Entscheidung offen · Abdeckung prüfen':'Entscheidung offen'):review?'Abdeckung prüfen':'OK',tone:pending||review?'warning' as const:'success' as const};
 }

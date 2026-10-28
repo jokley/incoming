@@ -1,6 +1,7 @@
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
 import type {ImportControl,FisImportPreview,QuotaOverview} from '../types';
+import {officialsSummary} from '../services/importHints';
 import type {QuotaPeopleFilter} from '../services/importHints';
 import {EmptyState,EnterpriseDialog,OpsButton,StatusChip} from '../design-system';
 
@@ -21,10 +22,10 @@ function AthleteState({row,incomplete}:{row:Family;incomplete:boolean}) {
  if(row.athleteQuotaStatus==='EXCEEDED')return <StatusChip tone="warning">Fachlich prüfen</StatusChip>;
  return <StatusChip tone="success">Innerhalb der Quote</StatusChip>;
 }
-function AthleteOverview({nation,fixed,control,preview,onPeople}:{nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate}) {
+function AthleteOverview({nation,fixed,control,preview,onPeople,focusSport}:{nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
  const incomplete=nation.incomplete||!fixed;
  return <div className="space-y-3">
-  <CompetitionDistribution control={control} preview={preview} nation={nation.nationCode} onPeople={onPeople}/>
+  <CompetitionDistribution control={control} preview={preview} nation={nation.nationCode} onPeople={onPeople} focusSport={focusSport}/>
   <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Athletenquoten – gemeldet, erlaubt und Abweichung"><table className="w-full text-xs sm:text-sm">
    <caption className="sr-only">Autoritative Athletenquoten: Gemeldet / erlaubt</caption>
    <thead><tr>{['Familienquote · gemeldet / erlaubt','Männer','Frauen','Gesamt'].map((label,i)=><th scope="col" key={label} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
@@ -53,8 +54,10 @@ function AthleteOverview({nation,fixed,control,preview,onPeople}:{nation:Nation;
 }
 function OfficialsOverview({nation,fixed,onPeople}:{nation:Nation;fixed:boolean;onPeople?:Navigate}) {
  const incomplete=nation.incomplete||!fixed;
+ const summary=officialsSummary(nation,fixed);
  return <div className="space-y-3">
-  <p className="text-sm">{nation.peopleTotal} Personen · {nation.athletes} Athleten · <PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials{nation.otherPeople>0?` · ${nation.otherPeople} weitere / unzugeordnete Personen`:''}</p>
+  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis"><span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> Officials</span><span>· {nation.ezDecisionsOpen} EZ offen ·</span>{nation.officialsInMultipleGroups>0&&onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} {nation.officialsInMultipleGroups===1?'Mehrfachzugehörigkeit':'Mehrfachzugehörigkeiten'}</button>:<span>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</span>}<StatusChip tone={summary.tone}>{summary.label}</StatusChip></div>
+  {nation.otherPeople>0&&<p className="text-xs">{nation.otherPeople} weitere / unzugeordnete Personen</p>}
   <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full text-sm">
    <caption className="sr-only">Eindeutige Officials und bestehende EZ-Bewertung</caption>
    <thead><tr>{['Event Group','Officials','Officials-Basis Σ M/W','EZ-Anspruch Σ M/W','EZ angefordert','Ergebnis'].map((label,i)=><th key={label} scope="col" className={`px-3 py-2 ${i>0&&i<5?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
@@ -82,19 +85,19 @@ function OfficialsOverview({nation,fixed,onPeople}:{nation:Nation;fixed:boolean;
     </Fragment>;
    })}</tbody>
   </table></div>
-  {nation.officialsInMultipleGroups>0&&(onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-left text-sm text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} Officials in mehreren Event Groups → Personen anzeigen</button>:<p className="text-sm">{nation.officialsInMultipleGroups} Officials in mehreren Event Groups</p>)}
+
   {nation.officialsWithoutContext>0&&<p className="text-xs text-[var(--ops-warning)]">{nation.officialsWithoutContext} Officials ohne eindeutigen Quotenkontext</p>}
  </div>;
 }
-export function QuotaOverviewContent({overview,kind,control,preview,onPeople}:{overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate}) {
+export function QuotaOverviewContent({overview,kind,control,preview,onPeople,focusSport}:{overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
  return <div className="space-y-4"><div className="flex flex-wrap gap-2 text-xs"><span>{overview.event.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'} · Revision {overview.event.rulesRevision} · {overview.event.rulesFixed?'fixiert':'Entwurf'}</span></div>
-  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview} onPeople={onPeople}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed} onPeople={onPeople}/>}</section>)}
+  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview nation={nation} fixed={overview.event.rulesFixed} onPeople={onPeople}/>}</section>)}
  </div>;
 }
-export function QuotaOverviewDialog({preview,kind,onClose,control,onPeople}:{preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate}) {
+export function QuotaOverviewDialog({preview,kind,onClose,control,onPeople,focusSport}:{preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate;focusSport?:boolean}) {
  const overview=preview?.quotaOverview;
  return <EnterpriseDialog open title={kind==='athlete'?'Athleten-/Disziplinquote':'Officials & EZ-Quote'} description={overview?.event.name||'Gespeicherter Prüfstand'} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}>
-  {overview?<QuotaOverviewContent overview={overview} kind={kind} control={control} preview={preview??undefined} onPeople={preview?onPeople:undefined}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen Prüfstand ist keine Quotenübersicht verfügbar."/>}
+  {overview?<QuotaOverviewContent overview={overview} kind={kind} control={control} preview={preview??undefined} onPeople={preview?onPeople:undefined} focusSport={focusSport}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen Prüfstand ist keine Quotenübersicht verfügbar."/>}
  </EnterpriseDialog>;
 }
 
@@ -107,5 +110,5 @@ export function AthleteQuotaPreviewStatus({preview}:{preview:FisImportPreview}) 
   if(rows.some(q=>q.athleteQuotaStatus==='EXCEEDED'))return <StatusChip tone="warning">Quotenbewertung prüfen</StatusChip>;
   if(!rows.length)return <StatusChip tone="neutral">Keine aktive Athletenquote</StatusChip>;
   if(!preview.quotaOverview?.event.rulesFixed)return <StatusChip tone="neutral">Regelkontext prüfen</StatusChip>;
-  return <StatusChip tone="success">Innerhalb der aktiven Athletenlimits</StatusChip>;
+  return <StatusChip tone="success">Familienquote OK</StatusChip>;
 }
