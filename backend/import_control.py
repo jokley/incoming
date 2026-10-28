@@ -8,6 +8,8 @@ CLARIFY = {'ROOM_PARTNER_NOT_FOUND','ROOM_PERSON_NOT_FOUND','ROOM_DUPLICATE_SING
 
 
 def build_import_control(preview, context):
+    from stay_window import assess_stay, load_stay_schedule
+    schedule = load_stay_schedule(context.event_id) if getattr(context, 'event_id', None) else []
     people=preview.get('people',[]);rooms=preview.get('rooms',[])
     by_key={str(p.get('matchKey')):p for p in people if p.get('matchKey') is not None}
     by_entry={p.get('rowNumber'):str(p['matchKey']) for p in people if p.get('matchKey') is not None}
@@ -39,7 +41,11 @@ def build_import_control(preview, context):
             entry=competitions.setdefault(cid,dict(**membership,people=set(),athletes=set()))
             entry['people'].add(key)
             if is_athlete(p):entry['athletes'].add(key)
+        resolved = [context.competitions_by_id.get(int(m['id'])) if m['id'].isdecimal() else None for m in memberships]
         rows.append(dict(personKey=key,competitions=memberships,
+            stayWindow=assess_stay(p.get('arrivalDate'),p.get('departureDate'),
+                resolved if all(resolved) else [],
+                schedule,p.get('accommodationRequirement')),
             quotaContexts=[dict(nation=n,group=d,gender=g) for n,d,g in sorted(quota_keys(p,allowance_contexts=allowances))],
             internalNote=getattr(existing.get(p.get('existingAthleteId')),'internal_note',None)))
         if len(memberships)>1:add('info','MULTIPLE_MEMBERSHIPS','Mehrere Competition-Zuordnungen. Athleten zählen je Quotenfamilie nur einmal; Staff-Zuordnungen sind keine sportlichen Starts.',[key],'Entry List',p.get('rowNumber'))

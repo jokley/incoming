@@ -6,6 +6,8 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
+from stay_window import assess_stay, load_stay_schedule
+from accommodation_scope import accommodation_event_id
 from accommodation_coverage import person_accommodation_coverage
 
 
@@ -17,13 +19,17 @@ athletes = Blueprint('athletes', __name__)
 @athletes.route('/athletes', methods=['GET'])
 @athletes.route('/athletes/', methods=['GET'])
 def get_athletes():
+    schedule = load_stay_schedule(accommodation_event_id())
     athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions)).all()
 
-    latest_athletes_run = event_query(ImportRun).filter_by(import_type='athletes').order_by(ImportRun.started_at.desc()).first()
-    latest_roomlist_run = event_query(ImportRun).filter_by(import_type='roomlist').order_by(ImportRun.started_at.desc()).first()
-
-    latest_athletes_at = latest_athletes_run.started_at if latest_athletes_run else None
-    latest_roomlist_at = latest_roomlist_run.started_at if latest_roomlist_run else None
+    # One PostgreSQL DISTINCT ON query replaces the two latest-run lookups,
+    # keeping the total read budget unchanged after adding the event schedule.
+    latest = {row.import_type: row.started_at for row in event_query(ImportRun)
+        .filter(ImportRun.import_type.in_(['athletes','roomlist']))
+        .order_by(ImportRun.import_type,ImportRun.started_at.desc())
+        .distinct(ImportRun.import_type).all()}
+    latest_athletes_at = latest.get('athletes')
+    latest_roomlist_at = latest.get('roomlist')
 
     # Assignment summaries belong to the athlete read model.  Eager-loading
     # keeps their query count constant as the number of people and rooms grows.
@@ -75,6 +81,7 @@ def get_athletes():
             a.arrival_date, a.departure_date,
             [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])], a.accommodation_requirement)
         competitions = {competition.id: competition for record in records for competition in record.competitions}
+        data['stayWindow'] = assess_stay(a.arrival_date,a.departure_date,list(competitions.values()),schedule,a.accommodation_requirement)
         data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
         data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
         if not data['disciplines']:
@@ -161,6 +168,7 @@ def get_athlete(athlete_id):
         RoomBookingOccupant.athlete_id == athlete.id).options(
             db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     data = athlete.to_dict()
+    data['stayWindow'] = assess_stay(athlete.arrival_date,athlete.departure_date,athlete.competitions,load_stay_schedule(athlete.event_id),athlete.accommodation_requirement)
     data['accommodationCoverage'] = person_accommodation_coverage(
         athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
     coverage = data['accommodationCoverage']['coverageStatus']
