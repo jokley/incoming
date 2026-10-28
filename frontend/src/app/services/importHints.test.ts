@@ -36,3 +36,19 @@ test('entry-only partner clarifications remain accessible without inventing room
  assert.equal(personMatchesImportFilter(preview.people[0],'clarification',preview,control),true);
  assert.equal(preview.rooms.length,0);
 });
+
+test('quota navigation uses exact declared groups and unique officials rather than For_gender contexts',async()=>{
+ const {personMatchesQuotaFilter}=await import('./importHints.ts');
+ const people=[
+  {matchKey:'one',nationCode:'ITA',function:'NSA Coach',quotaDisciplines:['A','B','A'],forGender:'M'},
+  {matchKey:'two',nationCode:'ITA',function:'NSA Coach',quotaDisciplines:['B'],forGender:'W'},
+  {matchKey:'athlete',nationCode:'ITA',function:'Athlete',quotaDisciplines:['A','B'],athleteQuotaFamilies:['Snowboard'],gender:'W'},
+  {matchKey:'foreign',nationCode:'CAN',function:'NSA Coach',quotaDisciplines:['A','B']},
+  {matchKey:'unmapped',nationCode:'ITA',function:'NSA Coach',quotaDisciplines:[]},
+ ] as FisImportPreview['people'];
+ assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,{nation:'ITA',role:'officials',group:'A'})).map(p=>p.matchKey),['one']);
+ assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,{nation:'ITA',role:'officials',group:'B'})).map(p=>p.matchKey),['one','two']);
+ assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,{nation:'ITA',role:'officials',multipleGroups:true})).map(p=>p.matchKey),['one']);
+ assert.deepEqual(people.filter(p=>personMatchesQuotaFilter(p,{nation:'ITA',role:'athletes',family:'Snowboard',gender:'F'})).map(p=>p.matchKey),['athlete']);
+ assert.equal(people.filter(p=>personMatchesQuotaFilter(p,null)).length,5);
+});
