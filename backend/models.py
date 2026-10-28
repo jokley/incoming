@@ -354,6 +354,7 @@ class AccommodationEvent(db.Model):
     __tablename__ = 'event'
     championship_event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
+    __table_args__ = (db.UniqueConstraint('id','championship_event_id',name='uq_accommodation_event_owner_identity'),)
     id = db.Column(db.Integer, primary_key=True)
     discipline = db.Column(db.String(100), nullable=False)  # Big Air, Moguls, etc.
     start_date = db.Column(db.Date, nullable=False)
@@ -468,7 +469,9 @@ class Event(db.Model):
                   'sectorCode': self.sector_code, 'isWorldChampionship': self.is_world_championship,
                   'quotaRules': rule_projection(self)}
         if include_mappings:
-            result['competitionMappings'] = [mapping.to_dict() for mapping in self.competition_mappings]
+            periods = {period.id:period for period in AccommodationEvent.query.filter_by(championship_event_id=self.id).order_by(AccommodationEvent.start_date,AccommodationEvent.id)}
+            result['planningPeriods'] = [dict(id=str(period.id),discipline=period.discipline,startDate=period.start_date.isoformat(),endDate=period.end_date.isoformat()) for period in periods.values()]
+            result['competitionMappings'] = [mapping.to_dict(periods) for mapping in self.competition_mappings]
         return result
 
 
@@ -563,16 +566,25 @@ class EventCompetition(db.Model):
     import_code = db.Column(db.String(50), nullable=False)
     official_name = db.Column(db.String(120), nullable=False)
     active = db.Column(db.Boolean, nullable=False, default=True)
+    accommodation_event_id = db.Column(db.Integer, nullable=True, index=True)
     __table_args__ = (
+        db.ForeignKeyConstraint(['accommodation_event_id','event_id'],['event.id','event.championship_event_id'],name='fk_event_competition_accommodation_period',ondelete='RESTRICT'),
         db.UniqueConstraint('event_id', 'competition_id', name='uq_event_competition_competition'),
         db.UniqueConstraint('event_id', 'import_code', name='uq_event_competition_import_code'),
     )
     event = db.relationship('Event', back_populates='competition_mappings')
     competition = db.relationship('Competition', back_populates='event_mappings')
 
-    def to_dict(self):
+    def to_dict(self, planning_periods=None):
         competition = self.competition
-        return {'id': str(self.id), 'eventId': str(self.event_id),
+        period = None
+        if planning_periods is not None:
+            period = planning_periods.get(self.accommodation_event_id)
+        elif self.accommodation_event_id is not None:
+            period = AccommodationEvent.query.filter_by(id=self.accommodation_event_id,championship_event_id=self.event_id).first()
+        return {'accommodationEventId':str(self.accommodation_event_id) if self.accommodation_event_id is not None else None,
+                'accommodationEvent':dict(id=str(period.id),discipline=period.discipline,startDate=period.start_date.isoformat(),endDate=period.end_date.isoformat()) if period else None,
+                'id': str(self.id), 'eventId': str(self.event_id),
                 'competitionId': str(self.competition_id), 'fisCodex': self.fis_codex,
                 'importCode': self.import_code, 'officialName': self.official_name,
                 'active': self.active, 'displayName': competition.display_name,

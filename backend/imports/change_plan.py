@@ -62,7 +62,9 @@ def state(event_id, nation):
     sessions = [{k: s[k] for k in ('id','event_id','nation','current_version_id')} for s in sessions]
     versions = [{**{k:v[k] for k in ('id','session_id','version','source_hash','preview_token')},
         'historicalPreviewFingerprint':digest(json.loads(v['preview_json'] or '{}')) if v['id'] not in current_ids else None} for v in versions]
-    mappings = rows(EventCompetition, EventCompetition.event_id == event_id)
+    # Calendar-only references must not invalidate historical import evidence.
+    mappings = [{k:v for k,v in mapping.items() if k!='accommodation_event_id'}
+                for mapping in rows(EventCompetition, EventCompetition.event_id == event_id)]
     competitions = rows(Competition, Competition.id.in_([m['competition_id'] for m in mappings]))
     audits = rows(AuditEvent, sa.and_(AuditEvent.entity_id.in_([str(i) for i in ids]),
         AuditEvent.entity_type.in_(['athletes','athlete','world-champion-status']))) if ids else []

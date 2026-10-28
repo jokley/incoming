@@ -66,8 +66,14 @@ def delete_event(event_id):
     from accommodation_mutations import lock_accommodation_writes
     lock_accommodation_writes()
     event = event_get(AccommodationEvent, event_id, required=True)
+    if EventCompetition.query.filter_by(accommodation_event_id=event.id).first():
+        return jsonify(error='PLANNING_PERIOD_IN_USE',message='Der Zeitblock ist mit Wettbewerben verknüpft.'),409
     db.session.delete(event)
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(error='PLANNING_PERIOD_IN_USE',message='Der Zeitblock wird noch verwendet.'),409
     return '', 204
 
 
@@ -150,6 +156,23 @@ def administer_event(event_id):
     return jsonify(event_record.to_dict(include_mappings=True))
 
 
+def assign_planning_period(mapping, data):
+    if 'accommodationEventId' not in data:
+        return
+    value = data['accommodationEventId']
+    if value is None or value == '':
+        mapping.accommodation_event_id = None
+        return
+    try:
+        identity = normalize_event_id(value)
+    except ImportValidationError:
+        raise ValueError('Gültiger Event-Zeitblock erforderlich.') from None
+    period = AccommodationEvent.query.filter_by(id=identity,championship_event_id=mapping.event_id).with_for_update(read=True,key_share=True).first()
+    if not period:
+        raise ValueError('Der Event-Zeitblock gehört nicht zu dieser WM.')
+    mapping.accommodation_event_id = period.id
+
+
 @events.route('/api/admin/events/<int:event_id>/competitions', methods=['POST'])
 def add_event_competition(event_id):
     Event.query.get_or_404(event_id)
@@ -160,6 +183,10 @@ def add_event_competition(event_id):
         official_name=str(data.get('officialName', '')).strip(), active=bool(data.get('active', True)))
     if not all((mapping.fis_codex, mapping.import_code, mapping.official_name)):
         return jsonify({'error': 'Official Name, Codex und Import Code sind erforderlich.'}), 400
+    try:
+        assign_planning_period(mapping,data)
+    except ValueError as error:
+        return jsonify(error='INVALID_PLANNING_PERIOD',message=str(error)),400
     db.session.add(mapping)
     db.session.commit()
     return jsonify(mapping.to_dict()), 201
@@ -171,6 +198,10 @@ def update_event_competition(event_id, mapping_id):
     data = request.get_json() or {}
     if any(key in data for key in ('quotaRules','quotaRulesJson','quotaRulesFixedAt','quotaRulesRevision','isWorldChampionship')):
         return jsonify(error='USE_QUOTA_RULES_WORKFLOW'),400
+    try:
+        assign_planning_period(mapping,data)
+    except ValueError as error:
+        return jsonify(error='INVALID_PLANNING_PERIOD',message=str(error)),400
     for source, target in (('officialName', 'official_name'), ('fisCodex', 'fis_codex'),
                            ('importCode', 'import_code'), ('active', 'active')):
         if source in data:

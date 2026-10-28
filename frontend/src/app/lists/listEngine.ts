@@ -1,4 +1,4 @@
-import {stayWindowText} from '../services/stayWindow.ts';
+import {stayWindowText,stayWindowHotelNote} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
 import type { Athlete, Hotel, RoomBooking } from '../types';
@@ -22,6 +22,7 @@ export interface ListRow {
   discipline: string;
   role: string;
   stayWindow?: string;
+  hotelStayNote?:string;
   eventPeriod?:string;
   allowedStay?:string;
   assessedStay?:string;
@@ -193,6 +194,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       discipline: value(competitionDisplayList(athlete.disciplines, athlete.discipline)),
       role: value(athlete.function),
       stayWindow: stayWindowText(assessment),
+      hotelStayNote:stayWindowHotelNote(assessment),
       eventPeriod: assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
       allowedStay: assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
       assessedStay: assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:'',

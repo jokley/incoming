@@ -32,3 +32,18 @@ test('unknown dates remain explicit, never a false OK or a new price decision',(
  assert.equal(stayWindowText({...assessment,outsideNights:null,reason:'NO_ROOM'}),'');
  assert.equal(stayWindowText(undefined),'');
 });
+
+test('unknown import dates can be aggregated, and hotel guidance exists only for actual additional nights',async()=>{
+ const {stayWindowRowText,stayWindowNights,stayWindowHotelNote}=await import('./stayWindow.ts');
+ const unknown={...assessment,outsideNights:null,reason:'EVENT_DATES_UNCLEAR'};
+ assert.equal(stayWindowRowText(unknown),'');
+ assert.equal(stayWindowText(unknown),'Eventtermine nicht zuordenbar');
+ assert.equal(stayWindowNights(assessment),'2 davor / 1 danach');
+ const message='3 Nächte außerhalb des vorgesehenen Unterkunftszeitraums. Für diese Nächte kann das Hotel den regulären Hotelpreis verrechnen.';
+ assert.equal(stayWindowHotelNote(assessment),message);
+ for(const value of [undefined,unknown,{...assessment,outsideNights:0},{...assessment,reason:'NO_ROOM'}])assert.equal(stayWindowHotelNote(value),'');
+ const athlete={id:'1',firstname:'Synthetic',lastname:'ISR',stayWindow:assessment} as Athlete;
+ const rows=createListRows([athlete],[]);assert.equal(rows.length,1);assert.equal(rows[0].hotelStayNote,message);
+ assert.ok(personExportColumns.some(([key])=>key==='hotelStayNote'));
+ assert.ok(stayWindowDetails(assessment).includes(message));
+});
