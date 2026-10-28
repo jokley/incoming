@@ -25,3 +25,15 @@ test('compact person dialog has one closed source section and no note workflow',
  assert.ok(!html.includes(' open=""'));
  for(const label of ['textarea','Notiz speichern','Versionshistorie','Existing historical note','Kein Nachweis eines sportlichen Startrechts'])assert.ok(!html.includes(label),label);
 });
+
+test('five shared SS/BA entrants and an EZ champion exemption do not imply sporting permission',()=>{
+ const ss={...competition,id:'ss',name:"Men's Snowboard Slopestyle"};
+ const ba={...competition,id:'ba',name:"Men's Snowboard Big Air"};
+ const people=Array.from({length:5},(_,index)=>({...person,matchKey:`m${index}`,function:'Athlete',gender:'M',nationCode:'CAN',singleRoomQuotaExemptReason:index===0?'WORLD_CHAMPION':null}));
+ const view={...control,competitions:[ss,ba],people:people.map(p=>({personKey:p.matchKey,competitions:[ss,ba]}))};
+ const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
+ const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
+ assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 5 0 5','Slopestyle 5 0 5','Big Air 5 0 5']);
+ assert.ok(html.includes('FIS-Zuteilung klären')&&html.includes('Startrechte nicht geprüft'));
+ for(const unproven of ['5 erlaubt','+1 Weltmeister','Titel vorhanden','Innerhalb'])assert.ok(!html.includes(unproven),unproven);
+});

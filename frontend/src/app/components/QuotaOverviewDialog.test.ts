@@ -15,7 +15,7 @@ const copy=()=>structuredClone(fixture);
 
 test('officials are grouped in one table with distinct totals, collapsible contexts and existing EZ values',()=>{
  const data=copy(),output=html(data),visible=text(output);
- for(const label of ['24 Personen','10 Athleten','14','eindeutige Officials','EZ-Anspruch Σ M/W','EZ angefordert','Fachlich prüfen','5 Officials in mehreren Event Groups','Σ M/W','Officials-Basis'])assert.ok(visible.includes(label),label);
+ for(const label of ['24 Personen','10 Athleten','14','eindeutige Officials','EZ-Anspruch Σ M/W','EZ angefordert','Abdeckung prüfen','5 Officials in mehreren Event Groups','Σ M/W','Officials-Basis'])assert.ok(visible.includes(label),label);
  assert.equal((output.match(/<details/g)||[]).length,2);assert.ok(!output.includes(' open=""'));
  assert.ok(!output.includes('Officials ohne reguläre Abdeckung'));
  assert.ok(output.includes('overflow-x-auto')&&output.includes('role="region"')&&output.includes('tabindex="0"'));
@@ -40,20 +40,20 @@ test('partial approval highlights only violated limits and separates approved fr
 });
 test('draft and incomplete contexts cannot look quota compliant',()=>{
  const data=copy();data.event.isWorldChampionship=false;data.event.rulesFixed=false;data.nations[0].incomplete=true;
- for(const kind of ['athlete','officials']){const visible=text(html(data,kind));assert.ok(visible.includes('Nicht-WM')&&visible.includes('Entwurf')&&visible.includes('Fachlich prüfen'));assert.ok(!visible.includes('Innerhalb der Quote'));}
+ for(const kind of ['athlete','officials']){const visible=text(html(data,kind));assert.ok(visible.includes('Nicht-WM')&&visible.includes('Entwurf')&&visible.includes(kind==='officials'?'Abdeckung prüfen':'Fachlich prüfen'));assert.ok(!visible.includes('Innerhalb der Quote'));}
 });
 test('EZ approvals and exemptions stay visible without inventing officials coverage',()=>{
  const data=copy(),group=data.nations[0].groups[0];
  group.totals.singleRoomsPending=2;group.totals.singleRoomsApproved=1;group.totals.quotaExemptSingleRooms=1;
  const visible=text(html(data));
- for(const label of ['2 EZ offen','1 zusätzliche EZ genehmigt','1 EZ-Ausnahmen','Fachlich prüfen'])assert.ok(visible.includes(label));
+ for(const label of ['2 EZ offen','1 zusätzliche EZ genehmigt','1 EZ-Ausnahmen','Abdeckung prüfen'])assert.ok(visible.includes(label));
  assert.ok(!visible.includes('Officials überschritten'));
 });
 test('additional unassigned functions remain visible in the distinct person total',()=>{
  const data=copy();Object.assign(data.nations[0],{peopleTotal:25,otherPeople:1});
  const visible=text(html(data));assert.ok(visible.includes('25 Personen')&&visible.includes('1 weitere / unzugeordnete Personen'));
 });
-test('both views retain exactly one competition hierarchy and provide existing-list navigation',()=>{
+test('only athlete view shows competition hierarchy; officials keep direct existing-list navigation',()=>{
  const overview=copy(),nation=overview.nations[0].nationCode;
  const halfpipe={id:'1',name:"Men's Snowboard Halfpipe",group:'Snowboard Park & Pipe',gender:'M'};
  const air={...halfpipe,id:'2',name:"Men's Snowboard Big Air"};
@@ -62,13 +62,16 @@ test('both views retain exactly one competition hierarchy and provide existing-l
  const before=structuredClone({overview,preview,control});
  for(const kind of ['athlete','officials']){
   const output=html(overview,kind,{preview,control,onPeople:()=>{throw Error('render must not navigate');}});
-  assert.equal((output.match(/<caption class="sr-only">Wettbewerbsteilnehmer nach Geschlecht/g)||[]).length,1);
-  const hierarchy=output.match(/<table[^>]*><caption class="sr-only">Wettbewerbsteilnehmer nach Geschlecht[\s\S]*?<\/table>/)?.[0]??'';
+  assert.equal((output.match(/Sportliche Meldungen · FIS-Zuteilung klären/g)||[]).length,kind==='athlete'?1:0);
+  const hierarchy=output.match(/<table[^>]*><caption[^>]*>Sportliche Meldungen[\s\S]*?<\/table>/)?.[0]??'';
   const rows=[...hierarchy.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(row=>text(row[1]).trim());
-  assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 0 1','Halfpipe 1 0 1','Big Air 1 0 1']);
+  if(kind==='athlete')assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 0 1','Halfpipe 1 0 1','Big Air 1 0 1']);
   if(kind==='officials'){
    for(const group of overview.nations[0].groups)assert.ok(output.includes(`aria-label="Officials ${group.name.replaceAll('&','&amp;')} anzeigen"`));
    assert.ok(output.includes('Personen anzeigen'));
+   assert.ok(!output.includes('Keine offenen EZ-Entscheidungen'));
+   assert.ok(output.includes('Officials-Basis Σ M/W'));
+   assert.ok(!output.includes('Sportliche Meldungen'));
   }
  }
  assert.deepEqual({overview,preview,control},before);

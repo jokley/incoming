@@ -17,7 +17,7 @@ export function importHintCategories(issues: FisImportIssue[]) {
 }
 
 export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|'singleRoom'|'special';
-export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Entscheidungen',special:'Sondertarif'};
+export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Status',special:'Sondertarif'};
 
 import type {FisImportPreview,ImportControl,FisImportPreviewPerson} from '../types.ts';
 type Room=FisImportPreview['rooms'][number];

@@ -41,19 +41,19 @@ export function CompetitionDistribution({control,preview,nation}:{control?:Impor
   const list=athletes.filter(p=>personKeys.has(p.matchKey));
   return [list.filter(p=>p.gender==='M').length,list.filter(p=>p.gender==='F'||p.gender==='W').length,list.length];
  };
- const cells=(ids:Set<string>)=>counts(ids).map((n,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{n}</td>);
+ const cells=(ids:Set<string>)=>counts(ids).map((n,i)=><td key={i} className="px-1 py-1 text-right tabular-nums sm:px-2">{n}</td>);
  return <div className="min-w-0 overflow-x-auto" role="region" tabIndex={0} aria-label="Wettbewerbsteilnehmer – Tabelle horizontal scrollbar">
-  <table className="w-full text-sm"><caption className="sr-only">Wettbewerbsteilnehmer nach Geschlecht</caption>
-   <thead><tr>{['Disziplin / Wettbewerb','Männer','Frauen','Gesamt'].map((label,i)=><th key={label} scope="col" className={`px-2 py-2 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
+  <table className="w-full text-xs sm:text-sm"><caption className="pb-2 text-left text-xs text-[var(--ops-text-muted)]">Sportliche Meldungen · FIS-Zuteilung klären</caption>
+   <thead><tr>{['Disziplin / Wettbewerb','Männer','Frauen','Gesamt'].map((label,i)=><th key={label} scope="col" className={`ops-table-wrap px-1 py-2 sm:px-2 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{groups.map(group=>{
     const list=competitions.filter(c=>c.group===group);
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
     return <Fragment key={group??'unknown'}>
-     <tr className="border-t border-[var(--ops-divider)] font-bold"><th scope="row" className="px-2 py-2 text-left">{group||'Nicht zugeordnet'}</th>{cells(new Set(list.map(c=>c.id)))}</tr>
-     {names.map(name=><tr key={name}><th scope="row" className="py-1 pl-5 pr-2 text-left font-normal">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
+     <tr className="border-t border-[var(--ops-divider)] font-bold"><th scope="row" className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}</th>{cells(new Set(list.map(c=>c.id)))}</tr>
+     {names.map(name=><tr key={name}><th scope="row" className="ops-table-wrap py-1 pl-3 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
    })}</tbody>
   </table>
-  <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Eindeutige Athleten je Zeile. Mehrfachstarts zählen je Wettbewerb; Unterzeilen sind nicht addierbar. Keine sportliche Startrechtsprüfung.</p>
+  <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Startrechte nicht geprüft · Eindeutige Athleten je Zeile · Wettbewerbe nicht addieren.</p>
  </div>;
 }
