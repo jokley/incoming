@@ -43,3 +43,17 @@ export function roomMatchesImportFilter(room:Room,filter:ImportListFilter,previe
  if(filter==='error')return preview.errors.some(i=>i.code.startsWith('ROOM_')&&(i.details?.row===room.rowNumber||i.details?.rowNumber===room.rowNumber))||Boolean(control?.issues.some(i=>i.kind==='error'&&i.source==='Room List'&&i.row===room.rowNumber));
  return preview.people.some(p=>[room.person1Key,room.person2Key].includes(p.matchKey)&&personMatchesImportFilter(p,filter,preview,control));
 }
+
+/** Scope for direct navigation from existing quota aggregates to the person list. */
+export interface QuotaPeopleFilter {
+ nation:string;role:'officials'|'athletes';group?:string;multipleGroups?:boolean;family?:string;gender?:'M'|'F';
+}
+export function personMatchesQuotaFilter(person:FisImportPreviewPerson,filter:QuotaPeopleFilter|null) {
+ if(!filter)return true;
+ const athlete=person.function?.trim().toLowerCase()==='athlete';
+ const groups=new Set(person.quotaDisciplines??[]);
+ return person.nationCode===filter.nation&&(filter.role==='athletes'?athlete:!athlete&&groups.size>0)
+  &&(!filter.group||groups.has(filter.group))&&(!filter.multipleGroups||groups.size>1)
+  &&(!filter.family||person.athleteQuotaFamilies?.includes(filter.family))
+  &&(!filter.gender||(filter.gender==='F'?['F','W'].includes(person.gender??''):person.gender==='M'));
+}
