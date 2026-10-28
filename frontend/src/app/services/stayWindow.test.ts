@@ -39,7 +39,7 @@ test('unknown import dates can be aggregated, and hotel guidance exists only for
  assert.equal(stayWindowRowText(unknown),'');
  assert.equal(stayWindowText(unknown),'Eventtermine nicht zuordenbar');
  assert.equal(stayWindowNights(assessment),'2 davor / 1 danach');
- const message='3 Nächte außerhalb des vorgesehenen Unterkunftszeitraums. Für diese Nächte kann das Hotel den regulären Hotelpreis verrechnen.';
+ const message='3 Nächte außerhalb des vorgesehenen Unterkunftszeitraums. Für Übernachtungen außerhalb des vorgesehenen Unterkunftszeitraums kann das Hotel den regulären Hotelpreis verrechnen.';
  assert.equal(stayWindowHotelNote(assessment),message);
  for(const value of [undefined,unknown,{...assessment,outsideNights:0},{...assessment,reason:'NO_ROOM'}])assert.equal(stayWindowHotelNote(value),'');
  const athlete={id:'1',firstname:'Synthetic',lastname:'ISR',stayWindow:assessment} as Athlete;
