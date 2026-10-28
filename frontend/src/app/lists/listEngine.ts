@@ -1,3 +1,4 @@
+import {stayWindowText} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
 import type { Athlete, Hotel, RoomBooking } from '../types';
@@ -20,6 +21,10 @@ export interface ListRow {
   nation: string;
   discipline: string;
   role: string;
+  stayWindow?: string;
+  eventPeriod?:string;
+  allowedStay?:string;
+  assessedStay?:string;
   arrival: string;
   departure: string;
   firstMeal: string;
@@ -168,6 +173,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
   return athletes.map((athlete) => {
     const assignment = assignments.get(athlete.id);
     const booking = assignment?.booking;
+    const assessment=booking?.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow;
     const inventory = booking && inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
       item.roomType.id === booking.roomType?.id
       && (!booking.checkInDate || item.availableUntil >= booking.checkInDate.slice(0, 10))
@@ -186,6 +192,10 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       nation: value(athlete.nationCode),
       discipline: value(competitionDisplayList(athlete.disciplines, athlete.discipline)),
       role: value(athlete.function),
+      stayWindow: stayWindowText(assessment),
+      eventPeriod: assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
+      allowedStay: assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
+      assessedStay: assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:'',
       arrival: iso(booking?.checkInDate || athlete.arrivalDate),
       departure: iso(booking?.checkOutDate || athlete.departureDate),
       firstMeal: value(athlete.firstMeal),

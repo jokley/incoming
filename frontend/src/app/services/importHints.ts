@@ -16,8 +16,8 @@ export function importHintCategories(issues: FisImportIssue[]) {
   return [...grouped.values()];
 }
 
-export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|'singleRoom'|'special';
-export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Entscheidungen',special:'Sondertarif'};
+export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|'singleRoom'|'special'|'stay'|'stayUnclear';
+export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Entscheidungen',special:'Sondertarif',stay:'Aufenthaltsabweichungen',stayUnclear:'Aufenthalt nicht prüfbar'};
 
 import type {FisImportPreview,ImportControl,FisImportPreviewPerson} from '../types.ts';
 type Room=FisImportPreview['rooms'][number];
@@ -28,6 +28,8 @@ export function roomNeedsPartner(room:Room,control?:ImportControl) {
 export function personMatchesImportFilter(person:FisImportPreviewPerson,filter:ImportListFilter,preview:FisImportPreview,control?:ImportControl) {
  switch(filter){
   case 'all':return true;
+  case 'stay':return (control?.people.find(p=>p.personKey===person.matchKey)?.stayWindow?.outsideNights??0)>0;
+  case 'stayUnclear':{const reason=control?.people.find(p=>p.personKey===person.matchKey)?.stayWindow?.reason;return Boolean(reason&&reason!=='NO_ROOM');}
   case 'clarification':return Boolean(control?.issues.some(i=>i.kind==='clarification'&&i.personKeys.includes(person.matchKey)&&(!partnerCode(i.code)||!preview.rooms.some(r=>[r.person1Key,r.person2Key].includes(person.matchKey)))));
   case 'noRoom':return person.accommodationRequirement==='NO_ROOM';
   case 'special':return person.accommodationRateCategory==='SPECIAL';

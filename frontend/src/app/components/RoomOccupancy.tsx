@@ -1,3 +1,4 @@
+import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import { useEffect, useMemo, useState } from 'react';
 import { Loader2, Bed, DoorOpen } from 'lucide-react';
 import { api } from '../services/api';
@@ -78,7 +79,7 @@ export function RoomOccupancy() {
       <table className="min-w-full divide-y divide-gray-200">
         <thead><tr><th className="px-4 py-2 text-left">Zimmer</th><th className="px-4 py-2">Typ</th><th className="px-4 py-2">Belegung</th><th className="px-4 py-2">Name</th><th className="px-4 py-2">Von/Bis</th><th className="px-4 py-2">Notiz</th></tr></thead>
         <tbody>
-          {reservations.map((r) => <tr key={r.assignmentId}><td className="px-4 py-2">{r.roomNumber || '-'}</td><td className="px-4 py-2">{r.roomType.name}</td><td className="px-4 py-2 text-center">{r.occupancy}</td><td className="px-4 py-2">{r.guestName}{r.sharedWithName ? ` / ${r.sharedWithName}` : ''}</td><td className="px-4 py-2">{r.checkInDate} - {r.checkOutDate}</td><td className="px-4 py-2">{r.specialNotes || '-'}</td></tr>)}
+          {reservations.map((r) => <tr key={r.assignmentId}><td className="px-4 py-2">{r.roomNumber || '-'}</td><td className="px-4 py-2">{r.roomType.name}</td><td className="px-4 py-2 text-center">{r.occupancy}</td><td className="px-4 py-2">{r.guestName}{r.sharedWithName ? ` / ${r.sharedWithName}` : ''}</td><td className="px-4 py-2">{r.checkInDate} - {r.checkOutDate}</td><td className="px-4 py-2">{r.specialNotes || '-'}<p title={stayWindowDetails(r.stayWindow)}>{stayWindowText(r.stayWindow)}</p></td></tr>)}
         </tbody>
       </table>
     </div>

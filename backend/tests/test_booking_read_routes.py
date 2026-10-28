@@ -68,6 +68,11 @@ class BookingReadRoutesTest(unittest.TestCase):
                     'roomNumber': number, 'checkInDate': '2027-03-01' if dated else None,
                     'checkOutDate': '2027-03-05' if dated else None,
                     'countsAsSingle': dated, 'occupants': occupants})
+            # Additive read-only assessment; all legacy fields remain exact.
+            expected[2]['occupants'][0]['athlete']['stayWindow'] = {
+                'eventStart':None,'eventEnd':None,'allowedStart':None,'allowedEnd':None,
+                'arrivalDate':'2027-03-01','departureDate':'2027-03-05',
+                'nightsBefore':None,'nightsAfter':None,'outsideNights':None,'reason':'EVENT_DATES_UNCLEAR'}
             db.session.commit()
             return [expected[2], expected[3], expected[1], expected[0]]
 

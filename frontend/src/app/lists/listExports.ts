@@ -3,7 +3,7 @@ import type { ContingentRow, HotelContactRow, ListKind, ListRow } from './listEn
 export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['hotel', 'Hotel'], ['room', 'Zimmer'], ['roomType', 'Zimmerart'], ['name', 'Name'],
   ['nation', 'Nation'], ['discipline', 'Disziplin / Event'], ['role', 'Funktion'],
-  ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
+  ['stayWindow','Eventfenster'], ['eventPeriod','Eventzeitraum'], ['allowedStay','Zulässiger Aufenthalt'], ['assessedStay','Bewerteter Aufenthalt'], ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
   ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'], ['roommate', 'Zimmerpartner'],
   ['athleteRemark', 'Bemerkung Athlet'], ['internalNote', 'Bemerkung Intern'],

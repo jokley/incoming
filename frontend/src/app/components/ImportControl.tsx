@@ -1,3 +1,4 @@
+import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import {Fragment,type ReactNode} from 'react';
 import type {FisImportPreview,FisImportPreviewPerson,ImportControl} from '../types';
 import type {ImportSession} from '../data/importSessions';
@@ -14,12 +15,14 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
  const partners=rooms.map(r=>{const key=r.person1Key===person.matchKey?r.person2Key:r.person1Key;const mate=preview.people.find(p=>p.matchKey===key);return mate?`${mate.firstname} ${mate.lastname}`:r.sharedWithRawName?`${r.sharedWithRawName} (nicht zugeordnet)`:null;}).filter(Boolean);
  const issues=control?visibleControlIssues(control).filter(i=>i.kind!=='info'&&i.personKeys.includes(person.matchKey)):[];
  return <div className="space-y-3 [overflow-wrap:anywhere] [&_h2]:text-sm [&_h2]:tracking-normal">
+  {stayWindowText(row?.stayWindow)&&<p className="text-sm text-[var(--ops-warning)]" title={stayWindowDetails(row?.stayWindow)}>{stayWindowText(row?.stayWindow)}</p>}
   {issues.map((issue,index)=><p key={index} className="text-sm text-[var(--ops-warning)]">{issue.message}<span className="block text-xs text-[var(--ops-text-muted)]">{issue.source}{issue.row?` · Zeile ${issue.row}`:''}</span></p>)}
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Person"/><dl className="grid gap-2 sm:grid-cols-2"><Fact label="Funktion">{value(person.function)}</Fact><Fact label="Geschlecht">{value(person.gender)}</Fact></dl><h4 className="text-sm font-bold">Wettbewerbe</h4><ul className="text-sm">{row?.competitions.map(c=><li key={c.id}>{c.name}</li>)}</ul></ContentCard>
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><dl className="grid gap-2 sm:grid-cols-2">
    <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':'Unterkunft benötigt'}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
    <Fact label="Zimmerpartner">{partners.length?[...new Set(partners)].join('; '):person.sharedWithName||(/^double/i.test(person.roomType??'')?'Zimmerpartner fehlt':'Nicht angegeben')}</Fact>
    <Fact label="Aufenthalt">{value(person.arrivalDate)} – {value(person.departureDate)}</Fact><Fact label="Unterkunftstarif">{person.accommodationRateCategory==='SPECIAL'?'Sondertarif':'Standard'}</Fact><Fact label="EZ-Status">{entitlement(person.singleRoomEntitlement)}{person.singleRoomQuotaExemptReason?` · ${person.singleRoomQuotaExemptReason==='WORLD_CHAMPION'?'Weltmeister-EZ-Ausnahme':'EZ-Ausnahme'}`:''}</Fact>
+   {row?.stayWindow?.eventStart&&<Fact label="Eventzeitraum / zulässige An- und Abreise">{row.stayWindow.eventStart} – {row.stayWindow.eventEnd}<br/>{row.stayWindow.allowedStart} – {row.stayWindow.allowedEnd}</Fact>}
   </dl></ContentCard>
   <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer font-bold">Technische Details und Quellen</summary><p className="mt-2">Entry List · Zeile {person.rowNumber} · For_gender: {value(person.forGender)}</p><p>Quotenkontexte: {row?.quotaContexts.map(c=>`${c.group} · ${c.gender}`).join('; ')||'Nicht hinterlegt'}</p><p>Unterkunft: {value(person.accommodationRequirementSource)} · Tarif: {value(person.accommodationRateSource)}</p>{rooms.map((r,i)=><p key={i}>Room List · Zeile {r.rowNumber}: {r.roomType} · {value(r.checkInDate)} – {value(r.checkOutDate)} · Partnerangabe: {value(r.sharedWithRawName)}</p>)}</details>
  </div>;
