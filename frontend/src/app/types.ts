@@ -150,7 +150,15 @@ export interface AccommodationCoverage {
   coverageStatus: 'UNASSIGNED' | 'PARTIALLY_ASSIGNED' | 'FULLY_ASSIGNED' | 'CONFLICT' | 'NO_ROOM';
 }
 
+/** Read-only server assessment; allowedEnd is the exclusive checkout boundary. */
+export interface StayWindow {
+ eventStart:string|null;eventEnd:string|null;allowedStart:string|null;allowedEnd:string|null;
+ arrivalDate:string|null;departureDate:string|null;nightsBefore:number|null;nightsAfter:number|null;
+ outsideNights:number|null;reason:string|null;
+}
+
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
+  stayWindow?:StayWindow;
   accommodationCoverage?: AccommodationCoverage;
   id: string;
   function?: string;
@@ -460,6 +468,7 @@ export interface HotelCapacityOverview {
 }
 
 export interface HotelReservationRow {
+  stayWindow?:StayWindow;
   assignmentId: string;
   roomNumber?: string | null;
   roomType: RoomType;
@@ -481,9 +490,9 @@ export interface FisImportIssue {
 
 export type ImportControlKind = 'error'|'clarification'|'info';
 export interface ImportControl {
-  people:Array<{personKey:string;competitions:Array<{id:string;name:string;group:string|null;gender:string|null}>;quotaContexts:Array<{nation:string;group:string;gender:string}>;internalNote?:string|null}>;
+  people:Array<{personKey:string;stayWindow?:StayWindow;competitions:Array<{id:string;name:string;group:string|null;gender:string|null}>;quotaContexts:Array<{nation:string;group:string;gender:string}>;internalNote?:string|null}>;
   issues:Array<{kind:ImportControlKind;code:string;message:string;personKeys:string[];source?:string|null;row?:number|null}>;
-  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;people:number;athletes:number}>;
+  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;people:number;athletes:number;sportEntries?:Array<{nation:string;reported:number;regularMax:number;aboveRegular:number;championStarters:number;unverifiedAdditional:number;personKeys:string[];champions:Array<{personKey:string;source:string}>;sharedPoolReported:number|null;allocationConfirmed:false}>}>;
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {

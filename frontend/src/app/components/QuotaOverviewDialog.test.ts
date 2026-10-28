@@ -62,7 +62,7 @@ test('only athlete view shows competition hierarchy; officials keep direct exist
  const before=structuredClone({overview,preview,control});
  for(const kind of ['athlete','officials']){
   const output=html(overview,kind,{preview,control,onPeople:()=>{throw Error('render must not navigate');}});
-  assert.equal((output.match(/Sportliche Meldungen · FIS-Zuteilung klären/g)||[]).length,kind==='athlete'?1:0);
+  assert.equal((output.match(/Sportliche Meldungen · FIS-Zuteilung nicht bestätigt/g)||[]).length,kind==='athlete'?1:0);
   const hierarchy=output.match(/<table[^>]*><caption[^>]*>Sportliche Meldungen[\s\S]*?<\/table>/)?.[0]??'';
   const rows=[...hierarchy.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(row=>text(row[1]).trim());
   if(kind==='athlete')assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 0 1','Halfpipe 1 0 1','Big Air 1 0 1']);

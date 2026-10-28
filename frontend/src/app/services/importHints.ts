@@ -16,8 +16,9 @@ export function importHintCategories(issues: FisImportIssue[]) {
   return [...grouped.values()];
 }
 
-export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|'singleRoom'|'special';
-export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Status',special:'Sondertarif'};
+export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|'singleRoom'|'special'|'stay'|'stayUnclear';
+export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Status',special:'Sondertarif',stay:'Aufenthaltsabweichungen',stayUnclear:'Aufenthalt nicht prüfbar'};
+
 
 import type {FisImportPreview,ImportControl,FisImportPreviewPerson} from '../types.ts';
 type Room=FisImportPreview['rooms'][number];
@@ -28,6 +29,8 @@ export function roomNeedsPartner(room:Room,control?:ImportControl) {
 export function personMatchesImportFilter(person:FisImportPreviewPerson,filter:ImportListFilter,preview:FisImportPreview,control?:ImportControl) {
  switch(filter){
   case 'all':return true;
+  case 'stay':return (control?.people.find(p=>p.personKey===person.matchKey)?.stayWindow?.outsideNights??0)>0;
+  case 'stayUnclear':{const reason=control?.people.find(p=>p.personKey===person.matchKey)?.stayWindow?.reason;return Boolean(reason&&reason!=='NO_ROOM');}
   case 'clarification':return Boolean(control?.issues.some(i=>i.kind==='clarification'&&i.personKeys.includes(person.matchKey)&&(!partnerCode(i.code)||!preview.rooms.some(r=>[r.person1Key,r.person2Key].includes(person.matchKey)))));
   case 'noRoom':return person.accommodationRequirement==='NO_ROOM';
   case 'special':return person.accommodationRateCategory==='SPECIAL';
@@ -46,14 +49,14 @@ export function roomMatchesImportFilter(room:Room,filter:ImportListFilter,previe
 
 /** Scope for direct navigation from existing quota aggregates to the person list. */
 export interface QuotaPeopleFilter {
- nation:string;role:'officials'|'athletes';group?:string;multipleGroups?:boolean;family?:string;gender?:'M'|'F';
+ nation:string;role:'officials'|'athletes';group?:string;multipleGroups?:boolean;family?:string;gender?:'M'|'F';personKeys?:string[];competition?:string;
 }
 export function personMatchesQuotaFilter(person:FisImportPreviewPerson,filter:QuotaPeopleFilter|null) {
  if(!filter)return true;
  const athlete=person.function?.trim().toLowerCase()==='athlete';
  const groups=new Set(person.quotaDisciplines??[]);
  return person.nationCode===filter.nation&&(filter.role==='athletes'?athlete:!athlete&&groups.size>0)
-  &&(!filter.group||groups.has(filter.group))&&(!filter.multipleGroups||groups.size>1)
+  &&(!filter.personKeys||filter.personKeys.includes(person.matchKey))&&(!filter.group||groups.has(filter.group))&&(!filter.multipleGroups||groups.size>1)
   &&(!filter.family||person.athleteQuotaFamilies?.includes(filter.family))
   &&(!filter.gender||(filter.gender==='F'?['F','W'].includes(person.gender??''):person.gender==='M'));
 }
