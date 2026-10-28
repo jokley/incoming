@@ -4,22 +4,12 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer} from 'vite';
 const server=await createServer({server:{middlewareMode:true,hmr:false,ws:false,watch:null},optimizeDeps:{noDiscovery:true,entries:[],include:[]},appType:'custom'});
-const {PersonControlDetails,ControlIssues,CompetitionDistribution,visibleControlIssues}=await server.ssrLoadModule('/src/app/components/ImportControl.tsx');
+const {PersonControlDetails,CompetitionDistribution}=await server.ssrLoadModule('/src/app/components/ImportControl.tsx');
 await server.close();
 const person={matchKey:'a',firstname:'Synthetic',lastname:'Person',function:'NSA Coach',gender:'W',forGender:'W',rowNumber:2,roomType:'Double shared',accommodationRequirement:'REQUIRED',accommodationRequirementSource:'MANUAL',accommodationRateCategory:'STANDARD',singleRoomQuotaExemptReason:'WORLD_CHAMPION',singleRoomExemptionSource:'MANUAL_SET'};
 const competition={id:'1',name:'Halfpipe Men',group:'Snowboard Park & Pipe',gender:'M'};
 const control={people:[{personKey:'a',competitions:[competition],quotaContexts:[{nation:'X',group:competition.group,gender:'M'}]}],issues:[{kind:'clarification',code:'PARTNER',message:'Partner nicht zugeordnet',personKeys:['a'],source:'Room List',row:5},{kind:'info',code:'EMPTY',message:'Leere Room List',personKeys:[],source:'Room List',row:8}],competitions:[{...competition,people:1,athletes:0}]};
 const preview={people:[person],rooms:[{rowNumber:5,person1Key:'a',person1Name:'Synthetic Person',roomType:'Double shared',sharedWithRawName:'Source partner'}],warnings:[]};
-test('details distinguish source roommate evidence, actual quota gender and WC accommodation exemption',()=>{
- const html=renderToStaticMarkup(createElement(PersonControlDetails,{person,preview,control}));
- for(const text of ['Halfpipe Men','Snowboard Park &amp; Pipe · M','For_gender','Manuell festgelegt','Source partner','Angegeben, nicht eindeutig zugeordnet','Keine eindeutige Titel-/Disziplinreferenz','Kein Nachweis eines sportlichen Startrechts'])assert.ok(html.includes(text),text);
- assert.ok(!html.includes('Synthetic Person · eindeutig zugeordnet'));
-});
-test('clarifications link only known people without introducing a block',()=>{
- const html=renderToStaticMarkup(createElement(ControlIssues,{control,preview,filter:'all',onPerson:()=>{throw Error('render must not act');}}));
- assert.match(html,/Klärungsbedarf/);assert.match(html,/Informationen/);assert.match(html,/Keine zusätzliche Importsperre/);
- assert.equal((html.match(/→ Details/g)||[]).length,1);assert.match(html,/Zeile 8/);
-});
 test('hierarchy counts unique athletes per group and competition, combining genders and excluding staff',()=>{
  const male={...competition,name:"Men's Snowboard Halfpipe"},female={...competition,id:'2',name:"Women's Snowboard Halfpipe",gender:'W'},air={...competition,id:'3',name:"Men's Snowboard Big Air"};
  const people=[{...person,matchKey:'m',function:'Athlete',gender:'M',nationCode:'CAN'},{...person,matchKey:'f',function:'Athlete',gender:'W',nationCode:'CAN'},person,{...person,matchKey:'other',function:'Athlete',gender:'M',nationCode:'USA'}];
@@ -28,18 +18,10 @@ test('hierarchy counts unique athletes per group and competition, combining gend
  const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
  assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 1 2','Halfpipe 1 1 2','Big Air 1 0 1']);
 });
-test('routine memberships are hidden and every issue list starts collapsed',()=>{
- const view={...control,issues:[...control.issues,{kind:'info',code:'MULTIPLE_MEMBERSHIPS',message:'Routine membership',personKeys:['a']}]};
- assert.equal(visibleControlIssues(view).length,2);
- for(const filter of ['all','clarification','info']){
-  const html=renderToStaticMarkup(createElement(ControlIssues,{control:view,preview,filter,onPerson:()=>{}}));
-  assert.ok(!html.includes(' open=""'));assert.ok(!html.includes('Routine membership'));
- }
-});
-test('ordinary person has no general exemption advice or expanded technical sections',()=>{
- const html=renderToStaticMarkup(createElement(PersonControlDetails,{person:{...person,singleRoomQuotaExemptReason:null},preview,control}));
- assert.ok(!html.includes('Kein Nachweis eines sportlichen Startrechts'));
- assert.ok(!html.includes('Athletenquoten nachvollziehen'));
+test('compact person dialog has one closed source section and no note workflow',()=>{
+ const html=renderToStaticMarkup(createElement(PersonControlDetails,{person,preview,control}));
+ for(const label of ['Funktion','Geschlecht','Halfpipe Men','Zimmerpartner','Source partner','Partner nicht zugeordnet','Room List','Zeile 5','EZ-Status','Weltmeister-EZ-Ausnahme'])assert.ok(html.includes(label),label);
+ assert.equal((html.match(/<details/g)||[]).length,1);
  assert.ok(!html.includes(' open=""'));
- assert.ok(html.includes('Partner nicht zugeordnet'));
+ for(const label of ['textarea','Notiz speichern','Versionshistorie','Existing historical note','Kein Nachweis eines sportlichen Startrechts'])assert.ok(!html.includes(label),label);
 });

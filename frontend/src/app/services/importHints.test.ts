@@ -1,4 +1,5 @@
 import test from 'node:test';
+import type {FisImportPreview} from '../types.ts';
 import assert from 'node:assert/strict';
 import { importHintCategories } from './importHints.ts';
 
@@ -13,4 +14,25 @@ test('hint categories preserve the existing count without making Officials a dec
   assert.deepEqual(categories[0],{code:'INFO_OFFICIALS_OVER_BASIS',label:'Officials über Basis (informativ)',count:2});
   assert.equal(categories[2].label,'Aufenthalt außerhalb des gemeldeten Zeitraums');
   assert.deepEqual(importHintCategories([]),[]);
+});
+
+test('direct filters count people and room rows without treating missing partners as import errors',async()=>{
+ const {personMatchesImportFilter,roomMatchesImportFilter}=await import('./importHints.ts');
+ const people=[{matchKey:'a',rowNumber:2,accommodationRequirement:'NO_ROOM'},{matchKey:'b',rowNumber:3,accommodationRateCategory:'SPECIAL'}];
+ const rooms=[{rowNumber:4,person1Key:'b',roomType:'Double shared'},{rowNumber:5,person1Key:'a',person2Key:'b',roomType:'Double shared'}];
+ const preview={people,rooms,errors:[]} as unknown as FisImportPreview;
+ assert.equal(preview.people.filter(p=>personMatchesImportFilter(p,'noRoom',preview)).length,1);
+ assert.equal(preview.people.filter(p=>personMatchesImportFilter(p,'special',preview)).length,1);
+ assert.equal(preview.rooms.filter(r=>roomMatchesImportFilter(r,'partner',preview)).length,1);
+ assert.equal(preview.rooms.filter(r=>roomMatchesImportFilter(r,'error',preview)).length,0);
+ assert.equal(preview.rooms.filter(r=>roomMatchesImportFilter(r,'noRoom',preview)).length,1);
+});
+
+
+test('entry-only partner clarifications remain accessible without inventing room rows',async()=>{
+ const {personMatchesImportFilter}=await import('./importHints.ts');
+ const preview={people:[{matchKey:'a'}],rooms:[],errors:[]} as unknown as FisImportPreview;
+ const control={issues:[{kind:'clarification',code:'SHARED_PARTNER_NOT_EVIDENCED',personKeys:['a']}]} as unknown as import('../types.ts').ImportControl;
+ assert.equal(personMatchesImportFilter(preview.people[0],'clarification',preview,control),true);
+ assert.equal(preview.rooms.length,0);
 });
