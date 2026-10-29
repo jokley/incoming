@@ -262,7 +262,8 @@ def approval_event_matches(approval, event_id, *, require_current_rules=True):
         return False
     details = json.loads(approval.quota_details_json or '{}')
     from models import Event
-    policy=db.session.get(Event,int(event_id))
+    from quota_rules import accommodation_rule_event
+    policy=accommodation_rule_event(db.session.get(Event,int(event_id)))
     if require_current_rules and policy and policy.quota_rules_revision>1 and details.get('rulesRevision')!=policy.quota_rules_revision:
         return False
     saved_event = details.get('eventId')

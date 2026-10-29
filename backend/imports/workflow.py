@@ -63,9 +63,9 @@ def refresh_plan(session, preview=None, *, read_context=None, recalculate=True):
 
 def require_review(session, *, approved=False):
     preview=load_version_preview(session.current_version)
-    from quota_rules import rules_for_event, fingerprint
+    from quota_rules import rules_for_event, fingerprint, accommodation_rule_event
     from models import Event
-    event=db.session.get(Event,session.event_id)
+    event=accommodation_rule_event(db.session.get(Event,session.event_id))
     if preview.get('quotaRulesDigest') and (preview['quotaRulesDigest']!=fingerprint(rules_for_event(session.event_id)) or preview.get('quotaRulesRevision',1)!=event.quota_rules_revision):
         raise ImportValidationError('QUOTA_RULES_CHANGED','Quotenregeln wurden geändert – bitte erneut prüfen.')
     workflow=preview.get('_workflow') or {}

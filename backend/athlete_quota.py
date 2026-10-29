@@ -1,6 +1,6 @@
 """Athlete admission review on existing ImportApproval evidence; no person writes."""
 import json
-from quota_rules import fingerprint, rules_for_event
+from quota_rules import fingerprint, rules_for_event, accommodation_rule_event
 from quota_service import evaluate_athlete_quota_usage,normalize_gender
 from competitions import athlete_top_level_discipline
 
@@ -41,7 +41,7 @@ def quota_rows(people, rules, event_id, approvals=(), revision=1):
 def project_preview(preview, read_context=None):
     from models import Event,ImportApproval,ImportSession,ImportSessionVersion,ImportSessionEvent,db
     rules=rules_for_event(preview['eventId'])
-    event=db.session.get(Event,preview['eventId'])
+    event=accommodation_rule_event(db.session.get(Event,preview['eventId']))
     nations={p.get('nationCode') for p in preview.get('people',[])}
     superseded=db.select(ImportSessionEvent.approval_id).where(ImportSessionEvent.event_type=='QUOTA_DECISION_REVISED_FROM',ImportSessionEvent.approval_id.isnot(None),ImportSessionEvent.session_id.in_(db.select(ImportSession.id).where(ImportSession.event_id==preview['eventId'])))
     approvals=ImportApproval.query.join(ImportSession).join(ImportSessionVersion,(ImportSessionVersion.id==ImportApproval.version_id)&(ImportSessionVersion.session_id==ImportApproval.session_id)).filter(ImportSession.event_id==preview['eventId'],ImportSession.nation.in_(nations),

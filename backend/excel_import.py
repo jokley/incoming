@@ -917,9 +917,9 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
         'details': {'personKey': person.get('matchKey'), 'quotaDisciplines': person.get('quotaDisciplines')}}
         for person in people if normalize_string(person.get('function')) != 'athlete'
         and person.get('quotaDisciplines') and not quota_keys(person, roster))
-    from quota_rules import fingerprint
+    from quota_rules import fingerprint, accommodation_rule_event
     owner=import_event_id(read_context.event_id if read_context else None)
-    event_record=db.session.get(Event,owner)
+    event_record=accommodation_rule_event(db.session.get(Event,owner))
     for warning in warnings:
         if warning.get('code') in {'QUOTA_SINGLE_ROOMS_EXCEEDED','INFO_OFFICIALS_OVER_BASIS'}:
             warning['details'].update(eventId=owner,rulesSnapshot=rules,rulesDigest=fingerprint(rules),rulesRevision=event_record.quota_rules_revision)

@@ -1,4 +1,4 @@
-from quota_rules import rules_for_event
+from quota_rules import rules_for_event, accommodation_rule_event
 from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object, event_audit_refs
 from accommodation_requirements import requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
@@ -2240,7 +2240,7 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
                     compared.pop('quotaRulesRevision', None)
                 try:verify_plan(compared,plan)
                 except ImportValidationError:preview['planStale']=True
-            preview['quotaRulesChanged']=session.status!='IMPORTED' and saved.get('quotaRulesRevision',1)!=db.session.get(Event,session.event_id).quota_rules_revision
+            preview['quotaRulesChanged']=session.status!='IMPORTED' and saved.get('quotaRulesRevision',1)!=accommodation_rule_event(db.session.get(Event,session.event_id)).quota_rules_revision
             payload['preview'] = preview
     if include_preview and payload.get('preview') and read_context is not None:
         from import_control import build_import_control
@@ -2815,7 +2815,7 @@ def recheck_import_session(session_id):
     session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
     if not session.current_version:return jsonify(error='IMPORT_REVIEW_REQUIRED'),409
     preview=load_version_preview(session.current_version)
-    active_revision=db.session.get(Event,session.event_id).quota_rules_revision
+    active_revision=accommodation_rule_event(db.session.get(Event,session.event_id)).quota_rules_revision
     if session.status in {'IMPORTED','ARCHIVED','REPLACED','CANCELLED'} or preview.get('quotaRulesRevision',1)!=active_revision:
         from imports.workflow import fork_review_version
         preview=fork_review_version(session,preview,current_user().username)

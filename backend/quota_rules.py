@@ -66,6 +66,59 @@ def rule_projection(event):
             'fixedBy': event.quota_rules_fixed_by}
 
 
+def accommodation_rule_event(event):
+    """Read accommodation evidence from existing revisions; never change an Event.
+
+    Only the reserved sportEntryRules section may be irrelevant to this evidence.
+    Admin validation/activation remains unchanged and still rejects that section.
+    """
+    if not event or not getattr(event, 'quota_rules_json', None) or not event.quota_rules_fixed_at:
+        return event
+    config = json.loads(event.quota_rules_json)
+    if event.quota_rules_revision <= 1 and 'sportEntryRules' not in config:
+        return event
+    from flask import g, has_request_context
+    key = (event.id, event.quota_rules_json, event.quota_rules_revision,
+           event.quota_rules_fixed_at, event.quota_rules_fixed_by, event.is_world_championship)
+    cache = g.setdefault('_accommodation_rule_events', {}) if has_request_context() else {}
+    if key in cache:
+        return cache[key] or event
+    from models import Event, EventQuotaRevision
+    from types import SimpleNamespace
+    def accommodation(config):
+        return {k: v for k, v in config.items() if k != 'sportEntryRules'}
+    selected = None
+    revision = event.quota_rules_revision
+    history = EventQuotaRevision.query.filter(
+            EventQuotaRevision.event_id == event.id,
+            EventQuotaRevision.revision < revision).order_by(EventQuotaRevision.revision.desc()).all()
+    from imports.event_context import ImportValidationError
+    if not history and revision > 1 and 'sportEntryRules' in config:
+        raise ImportValidationError('QUOTA_RULE_HISTORY_MISSING', 'Vorherige fixierte Regelhistorie fehlt.')
+    for previous in history:
+        if previous.revision != revision - 1:
+            if 'sportEntryRules' in config:
+                raise ImportValidationError('QUOTA_RULE_HISTORY_MISSING', 'Vorherige fixierte Regelhistorie fehlt.')
+            break
+        prior = json.loads(previous.config_json)
+        if (previous.is_world_championship != event.is_world_championship
+                or accommodation(prior) != accommodation(config)
+                or ('sportEntryRules' not in prior and 'sportEntryRules' not in config)):
+            break
+        selected, config, revision = previous, prior, previous.revision
+    if selected is None and 'sportEntryRules' not in config:
+        cache[key] = None  # Do not retain a mutable ORM object under an old revision key.
+        return event
+    data = {column.name: getattr(event, column.name) for column in Event.__table__.columns}
+    raw = selected.config_json if selected else event.quota_rules_json
+    data.update(quota_rules_json=raw if 'sportEntryRules' not in config else json.dumps(accommodation(config), sort_keys=True),
+                quota_rules_revision=revision,
+                quota_rules_fixed_at=selected.activated_at if selected else event.quota_rules_fixed_at,
+                quota_rules_fixed_by=selected.activated_by if selected else event.quota_rules_fixed_by)
+    cache[key] = SimpleNamespace(**data)
+    return cache[key]
+
+
 def rules_for_event(event_id=None):
     from models import Event, db
     from imports.event_context import import_event_id, ImportValidationError
@@ -75,7 +128,7 @@ def rules_for_event(event_id=None):
     event = cached if cached is not None and cached.id==owner else db.session.get(Event,owner)
     if not event or not event.quota_rules_fixed_at or not event.quota_rules_json:
         raise ImportValidationError('EVENT_QUOTA_RULES_NOT_FIXED', 'Quotenregeln sind noch nicht verbindlich festgelegt.')
-    return validate_rules(json.loads(event.quota_rules_json))
+    return validate_rules(json.loads(accommodation_rule_event(event).quota_rules_json))
 
 
 def evaluation_rules(rules=None):
