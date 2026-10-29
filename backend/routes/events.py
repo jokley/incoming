@@ -237,7 +237,8 @@ def active_quota_rules():
     from accommodation_scope import accommodation_event_id
     from quota_rules import rule_projection, examples
     event = db.session.get(Event, accommodation_event_id())
-    result = rule_projection(event)
+    from quota_rules import accommodation_rule_event
+    result = rule_projection(accommodation_rule_event(event))
     result.update(eventId=str(event.id), eventName=event.name, isWorldChampionship=event.is_world_championship)
     if result['status']=='FIXED':
         result['examples']=examples(result['config'])
@@ -330,7 +331,8 @@ def live_athlete_quotas():
     if quota_gender_errors(roster):return jsonify(error='QUOTA_GENDER_REVIEW_REQUIRED'),409
     superseded=db.select(ImportSessionEvent.approval_id).where(ImportSessionEvent.event_type=='QUOTA_DECISION_REVISED_FROM',ImportSessionEvent.approval_id.isnot(None),ImportSessionEvent.session_id.in_(db.select(ImportSession.id).where(ImportSession.event_id==owner)))
     approvals=ImportApproval.query.join(ImportSession).join(ImportSessionVersion,(ImportSessionVersion.id==ImportApproval.version_id)&(ImportSessionVersion.session_id==ImportApproval.session_id)).filter(ImportSession.event_id==owner,ImportApproval.decision=='APPROVED',~ImportApproval.id.in_(superseded)).order_by(ImportApproval.id).all()
-    return jsonify(quota_rows(roster,rules,owner,approvals,db.session.get(Event,owner).quota_rules_revision))
+    from quota_rules import accommodation_rule_event
+    return jsonify(quota_rows(roster,rules,owner,approvals,accommodation_rule_event(db.session.get(Event,owner)).quota_rules_revision))
 
 
 @events.route('/api/admin/events/<int:event_id>/quota-rules/revision-preview',methods=['POST'])

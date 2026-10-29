@@ -68,10 +68,16 @@ def state(event_id, nation):
     competitions = rows(Competition, Competition.id.in_([m['competition_id'] for m in mappings]))
     audits = rows(AuditEvent, sa.and_(AuditEvent.entity_id.in_([str(i) for i in ids]),
         AuditEvent.entity_type.in_(['athletes','athlete','world-champion-status']))) if ids else []
+    from quota_rules import accommodation_rule_event
+    event_rows = rows(Event, Event.id == event_id)
+    for row in event_rows:
+        policy = accommodation_rule_event(SimpleNamespace(**row))
+        for field in ('quota_rules_json', 'quota_rules_revision', 'quota_rules_fixed_at', 'quota_rules_fixed_by'):
+            row[field] = getattr(policy, field)
     return dict(people=people, partners=partners, memberships=rows(AthleteCompetition, AthleteCompetition.athlete_id.in_(ids)) if ids else [],
         bookings=bookings, occupants=occupants, legacy=legacy, fis=fis, sessions=sessions, versions=versions,
         approvals=approvals, approvalHistory=approval_history, mappings=mappings, competitions=competitions,
-        event=rows(Event, Event.id == event_id), champions=rows(WorldChampion, sa.or_(WorldChampion.event_id == event_id,WorldChampion.id.in_(sa.select(WorldChampionRecognition.title_id).where(WorldChampionRecognition.event_id==event_id)))), recognitions=rows(WorldChampionRecognition, WorldChampionRecognition.event_id==event_id), audits=audits)
+        event=event_rows, champions=rows(WorldChampion, sa.or_(WorldChampion.event_id == event_id,WorldChampion.id.in_(sa.select(WorldChampionRecognition.title_id).where(WorldChampionRecognition.event_id==event_id)))), recognitions=rows(WorldChampionRecognition, WorldChampionRecognition.event_id==event_id), audits=audits)
 
 
 def input_fingerprint(preview):
