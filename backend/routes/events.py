@@ -260,7 +260,7 @@ def event_quota_rules(event_id):
         if data.get('expectedDigest') != rule_projection(event)['digest']:
             return jsonify(error='STALE_QUOTA_RULES'),409
         try:
-            rules=validate_rules(data.get('config'))
+            rules=validate_rules(data.get('config'), event.id)
         except ValueError as exc:
             return jsonify(error='INVALID_QUOTA_RULES',message=str(exc)),400
         event.quota_rules_json=json.dumps(rules,sort_keys=True)
@@ -272,7 +272,8 @@ def event_quota_rules(event_id):
         audit_rules(event,'Quotenregelentwurf gespeichert')
         db.session.commit()
     result=rule_projection(event)
-    result.update(isWorldChampionship=event.is_world_championship,preflight=initialization_preflight(event), standardProposal=standard_rules())
+    from quota_rules import sport_rule_options
+    result.update(isWorldChampionship=event.is_world_championship,preflight=initialization_preflight(event), standardProposal=standard_rules(), sportRuleOptions=sport_rule_options(event.id))
     if result['config']:result['examples']=examples(result['config'])
     return jsonify(result)
 
@@ -290,13 +291,13 @@ def fix_event_quota_rules(event_id):
     if event.quota_rules_fixed_at:return jsonify(error='QUOTA_RULES_FIXED'),409
     data=request.get_json() or {}
     if not event.quota_rules_json:return jsonify(error='INVALID_QUOTA_RULES'),400
-    try:config=validate_rules(json.loads(event.quota_rules_json))
+    try:config=validate_rules(json.loads(event.quota_rules_json), event.id)
     except (ValueError,TypeError):return jsonify(error='INVALID_QUOTA_RULES'),400
     preflight=initialization_preflight(event)
     if (data.get('confirm') is not True or data.get('expectedDigest')!=rule_projection(event)['digest']
             or data.get('preflightFingerprint')!=preflight['fingerprint']):
         return jsonify(error='QUOTA_FIX_CONFIRMATION_REQUIRED',preflight=preflight),409
-    if preflight['blockers'] or (any(preflight['counts'].values()) and config!=standard_rules()):
+    if preflight['blockers'] or (any(preflight['counts'].values()) and {k:v for k,v in config.items() if k!='sportEntryRules'}!=standard_rules()):
         return jsonify(error='QUOTA_INITIALIZATION_BLOCKED',preflight=preflight,
                        message='Bestand erfordert eine geprüfte Initialisierung; keine Daten wurden bereinigt.'),409
     event.quota_rules_fixed_at=datetime.utcnow()

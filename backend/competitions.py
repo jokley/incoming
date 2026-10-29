@@ -127,3 +127,22 @@ COMPETITIONS = (
 )
 
 COMPETITION_BY_IMPORT_CODE = {row.import_code: row for row in COMPETITIONS}
+
+# Exact catalogue identities for the discipline codes used by title references.
+# Metadata only: no starter limits or sport allocation rules are inferred here.
+_TITLE_DISCIPLINES = {
+    'PGS': ('6170', '6172'), 'PSL': ('6177', '6178'),
+    'HP': ('6174', '6175', '8171', '8172'),
+    'BA': ('6182', '6183', '8178', '8181'),
+    'SS': ('6188', '6190', '8196', '8197'),
+    'SBX': ('6191', '6192'), 'SX': ('8180', '8184'),
+    'MO': ('8179', '8183'), 'DM': ('8186', '8187'), 'AE': ('8193', '8194'),
+}
+
+
+def competition_title_discipline(competition):
+    definition = next((c for c in COMPETITIONS if c.code == competition.code), None)
+    if not definition or any(getattr(competition, field) != getattr(definition, field)
+            for field in ('sport', 'gender', 'quota_discipline', 'team_competition')):
+        return None
+    return next((key for key, codes in _TITLE_DISCIPLINES.items() if definition.code in codes), None)

@@ -112,8 +112,18 @@ export interface EventCompetitionMapping {
 }
 
 export type QuotaExtent = {total:number;M:number;F:number};
+export interface SportTitleReference {
+  id:string;fisCode:string;nation:string;gender:string;discipline:string;eventGroup:string;
+  championship:string;championshipYear:number;titleType:'INDIVIDUAL';source:string;sourceVerified:boolean;
+}
+export interface SportEntryRules {
+  schemaVersion:1;enabled:boolean;titleEdition:{championship:string;year:number}|null;
+  competitions:Array<{competitionId:string;enabled:boolean;regularLimit:number|null;titleReferences:SportTitleReference[];poolId:string|null}>;
+  pools:Array<{id:string;regularLimit:number}>;
+}
 export interface QuotaRuleConfig {
   schemaVersion:1;
+  sportEntryRules?:SportEntryRules;
   athletes: Record<'Snowboard'|'Freestyle',{enabled:boolean;totalLimit:number;genderLimit:number}>;
   officials:{model:'ATHLETES_PLUS';allowance:number};
   singleRooms:Array<{upTo:number|null;rooms:number}>;
@@ -121,6 +131,7 @@ export interface QuotaRuleConfig {
 export interface EventQuotaRules {
   status:'DRAFT'|'FIXED';config:QuotaRuleConfig|null;digest:string;revision:number;fixedAt:string|null;fixedBy:string|null;
   eventId?:string;eventName?:string;isWorldChampionship?:boolean;
+  sportRuleOptions?:{competitions:Array<Competition & {titleDiscipline:string|null}>;titles:Array<Omit<SportTitleReference,'sourceVerified'> & {name:string}>};
   preflight?:{counts:Record<string,number>;fingerprint:string;blockers:string[]};standardProposal?:QuotaRuleConfig;
   examples?:{athletes:number;officials:number;singleRooms:number;scale:string[];rows:Array<{name:string;used:number;covered:boolean;progress:number;label:string}>};
 }
