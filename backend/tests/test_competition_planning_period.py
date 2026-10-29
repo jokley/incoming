@@ -22,9 +22,12 @@ def prepare(owner):
     return period,[m for m in mappings if m.import_code in {'WSC_PGS_W_6172','WSC_PSL_W_6178'}]
 
 
-def test_calendar_link_reprojects_isr_without_invalidating_any_review(events):
+@pytest.mark.parametrize("historical_status", [None, "IMPORTED"])
+def test_calendar_link_reprojects_isr_without_invalidating_any_review(events, historical_status):
     owner,_=events;period,mappings=prepare(owner);payload=upload_pair('ISR',owner)
     session=db.session.get(ImportSession,int(payload['session']['id']));saved=session.current_version.preview_json
+    if historical_status:
+        session.status=historical_status;db.session.commit()
     approvals={a.id:a.quota_details_json for a in ImportApproval.query.all()}
     assert all('accommodation_event_id' not in row for row in state(owner.id,'ISR')['mappings'])
     before=digest(state(owner.id,'ISR'));preflight=initialization_preflight(owner)['fingerprint']

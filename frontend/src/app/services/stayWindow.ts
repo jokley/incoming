@@ -19,5 +19,5 @@ export function stayWindowNights(value?:StayWindow):string {
 }
 export function stayWindowHotelNote(value?:StayWindow):string {
  if(!value||value.reason||!(value.outsideNights&&value.outsideNights>0))return '';
- return `${value.outsideNights} ${value.outsideNights===1?'Nacht':'Nächte'} außerhalb des vorgesehenen Unterkunftszeitraums. Für diese ${value.outsideNights===1?'Nacht':'Nächte'} kann das Hotel den regulären Hotelpreis verrechnen.`;
+ return `${value.outsideNights} ${value.outsideNights===1?'Nacht':'Nächte'} außerhalb des vorgesehenen Unterkunftszeitraums. Für Übernachtungen außerhalb des vorgesehenen Unterkunftszeitraums kann das Hotel den regulären Hotelpreis verrechnen.`;
 }
