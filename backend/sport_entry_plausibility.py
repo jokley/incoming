@@ -1,4 +1,4 @@
-"""Read-only numerical SB Park & Pipe plausibility for WSC 2027.
+"""Read-only numerical Snowboard individual plausibility for WSC 2027.
 
 Not FIS allocation/qualification, not accommodation quota or approval evidence.
 Exact verified 2025 individual titles apply only to the event won (WSC 8.2).
@@ -10,7 +10,8 @@ from pathlib import Path
 from imports.normalization import canonical_fis_code
 from quota_service import is_athlete
 
-EVENTS = {'Snowboard Halfpipe': 'HP', 'Snowboard Slopestyle': 'SS', 'Snowboard Big Air': 'BA'}
+EVENTS = {'Snowboard Halfpipe': 'HP', 'Snowboard Slopestyle': 'SS', 'Snowboard Big Air': 'BA',
+          'Parallel Giant Slalom': 'PGS', 'Parallel Slalom': 'PSL'}
 
 
 @lru_cache(maxsize=1)
