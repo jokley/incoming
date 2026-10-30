@@ -294,6 +294,8 @@ def validate_sport_entry_rules(value, event_id):
         if pool is not None:
             if not isinstance(pool, str) or pool not in pools:
                 raise ValueError('Unbekannter Zuteilungspool.')
+            if not rule['enabled']:
+                raise ValueError('Deaktivierte Wettbewerbsregeln dürfen keinem Pool angehören; Poolzuordnung entfernen.')
             pools[pool].append(comp)
         refs = rule['titleReferences']
         if not isinstance(refs, list) or len(refs) > len(titles):

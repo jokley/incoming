@@ -91,3 +91,13 @@ Keine Originalmeldungen oder Browserfixtures werden veröffentlicht.
 
 Nach diesem PR anhalten. Keine Umstellung der sportlichen Prüfung (PR 3), keine
 neuen Freestyle-/Freeski-/Cross-Bewertungen und keine produktive Aktivierung.
+
+## Abschließende Poolsemantik
+
+Ein Pool enthält mindestens zwei aktivierte Wettbewerbsregeln derselben Sportart
+und desselben Geschlechts. Deaktivierte Wettbewerbsregeln dürfen keine Poolzuordnung
+haben, auch bei global deaktivierter Sportprüfung. Vor dem Deaktivieren ist die
+Poolzuordnung zu entfernen; verbleibende Einzelmitglied-Pools sind ebenfalls ungültig.
+Der globale Schalter deaktiviert die gesamte gültige Konfiguration, ohne deren
+Mitgliedschaften zu verändern. Er umgeht keine Strukturvalidierung.
+Gespeicherte und fixierte Sportregeln bleiben bis PR 3 ohne operative Wirkung.
