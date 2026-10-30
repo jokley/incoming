@@ -174,7 +174,7 @@ def test_sport_section_removal_and_world_flag_are_not_confused(events):
     assert accommodation_rule_event(owner).is_world_championship is True
 
 
-def test_no_sport_configuration_api_or_weakening_of_unknown_parameter_validation(events):
+def test_invalid_sport_placeholder_does_not_weaken_unknown_parameter_validation(events):
     owner, _ = events
     config = standard_rules()
     config['sportEntryRules'] = {'syntheticLimit': 4}

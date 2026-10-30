@@ -16,14 +16,15 @@ def fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), default=str).encode()).hexdigest()
 
 
-def validate_rules(value):
+def validate_rules(value, event_id=None):
     def keys(obj, expected):
         if not isinstance(obj, dict) or set(obj) != set(expected):
             raise ValueError('Unvollständige oder unbekannte Quotenparameter.')
     def number(value):
         if type(value) is not int or not 0 <= value <= 10000:
             raise ValueError('Quotenwerte müssen ganze Zahlen von 0 bis 10000 sein.')
-    keys(value, ('schemaVersion', 'athletes', 'officials', 'singleRooms'))
+    keys(value, ('schemaVersion', 'athletes', 'officials', 'singleRooms',
+                 *(['sportEntryRules'] if isinstance(value, dict) and 'sportEntryRules' in value else [])))
     if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1:
         raise ValueError('Unbekannte Regelversion.')
     keys(value['athletes'], FAMILIES)
@@ -55,7 +56,10 @@ def validate_rules(value):
             if tier['upTo'] <= previous or index == len(tiers)-1:
                 raise ValueError('EZ-Schwellen müssen steigen und mit einer offenen Stufe enden.')
             previous = tier['upTo']
-    return copy.deepcopy(value)
+    result = copy.deepcopy(value)
+    if 'sportEntryRules' in result:
+        result['sportEntryRules'] = validate_sport_entry_rules(result['sportEntryRules'], event_id)
+    return result
 
 
 def rule_projection(event):
@@ -70,7 +74,7 @@ def accommodation_rule_event(event):
     """Read accommodation evidence from existing revisions; never change an Event.
 
     Only the reserved sportEntryRules section may be irrelevant to this evidence.
-    Admin validation/activation remains unchanged and still rejects that section.
+    Administration validates the sport section separately; this reader never evaluates it.
     """
     if not event or not getattr(event, 'quota_rules_json', None) or not event.quota_rules_fixed_at:
         return event
@@ -200,7 +204,7 @@ def revision_proposal(event,data):
         raise ValueError('Zuerst die ursprüngliche Revision fixieren.')
     if data.get('expectedDigest')!=rule_projection(event)['digest'] or data.get('expectedRevision')!=event.quota_rules_revision:
         raise ValueError('Quotenregeln wurden inzwischen geändert – bitte erneut laden.')
-    config=validate_rules(data.get('config'))
+    config=validate_rules(data.get('config'), event.id)
     if type(data.get('isWorldChampionship')) is not bool or not isinstance(data.get('reason'),str) or not data['reason'].strip() or len(data['reason'])>2000:
         raise ValueError('WM-Kennzeichen und Änderungsbegründung erforderlich (maximal 2000 Zeichen).')
     before={'config':json.loads(event.quota_rules_json),'isWorldChampionship':event.is_world_championship}
@@ -208,3 +212,108 @@ def revision_proposal(event,data):
     if before==after:raise ValueError('Keine Regeländerung vorhanden.')
     proposal={'eventId':event.id,'previousRevision':event.quota_rules_revision,'before':before,'after':after,'reason':data['reason'].strip()}
     return {**proposal,'confirmationDigest':fingerprint(proposal)}
+
+
+_TITLE_FIELDS = ('id', 'fisCode', 'nation', 'gender', 'discipline', 'eventGroup',
+                 'championship', 'championshipYear', 'titleType', 'source')
+
+
+def sport_rule_options(event_id):
+    from urllib.parse import urlparse
+    from models import Competition, EventCompetition, WorldChampion
+    from competitions import competition_title_discipline
+    competitions = Competition.query.join(EventCompetition).filter(
+        EventCompetition.event_id == event_id, EventCompetition.active.is_(True),
+        Competition.active.is_(True)).order_by(Competition.id).all()
+    titles = [t for t in WorldChampion.query.filter_by(active=True, title_type='INDIVIDUAL').order_by(WorldChampion.id)
+              if urlparse(t.source).scheme == 'https' and urlparse(t.source).netloc]
+    return dict(competitions=[{**c.to_dict(), 'titleDiscipline': competition_title_discipline(c)} for c in competitions],
+                titles=[{**{key: t.to_dict()[key] for key in _TITLE_FIELDS}, 'name': t.name} for t in titles])
+
+
+def validate_sport_entry_rules(value, event_id):
+    """Small event-owned configuration validator, not a sporting evaluation."""
+    from urllib.parse import urlparse
+    from models import db, Event
+    def keys(obj, expected):
+        if not isinstance(obj, dict) or set(obj) != set(expected):
+            raise ValueError('Unvollständige oder unbekannte Quotenparameter (Sport).')
+    def flag(value):
+        if type(value) is not bool:
+            raise ValueError('Sport-Aktivierung muss boolesch sein.')
+    def limit(value):
+        if type(value) is not int or not 0 <= value <= 10000:
+            raise ValueError('Starterlimit muss eine ganze Zahl von 0 bis 10000 sein.')
+    keys(value, ('schemaVersion', 'enabled', 'titleEdition', 'competitions', 'pools'))
+    if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1:
+        raise ValueError('Unbekannte Sportregelversion.')
+    flag(value['enabled'])
+    if not event_id or not db.session.get(Event, event_id):
+        raise ValueError('Sportregeln benötigen ein zugehöriges Event.')
+    options = sport_rule_options(event_id)
+    competitions = {c['id']: c for c in options['competitions']}
+    titles = {t['id']: t for t in options['titles']}
+    edition = value['titleEdition']
+    if edition is not None:
+        keys(edition, ('championship', 'year'))
+        if not isinstance(edition['championship'], str) or not edition['championship'].strip():
+            raise ValueError('Titel-WM fehlt.')
+        if type(edition['year']) is not int or not 1900 <= edition['year'] <= 2200:
+            raise ValueError('Ungültiges Titeljahr.')
+        year = db.session.get(Event, event_id).year
+        if not year or edition['year'] >= year:
+            raise ValueError('Titelgrundlage muss vor dem datierten Ziel-Event liegen.')
+        if not any(t['championship'] == edition['championship'] and t['championshipYear'] == edition['year'] for t in titles.values()):
+            raise ValueError('Titel-WM ist nicht im vorhandenen Referenzkatalog enthalten.')
+    if not isinstance(value['competitions'], list) or len(value['competitions']) > len(competitions):
+        raise ValueError('Ungültige Competition-Regeln.')
+    if not isinstance(value['pools'], list) or len(value['pools']) > len(competitions):
+        raise ValueError('Ungültige Zuteilungspools.')
+    pools = {}
+    for pool in value['pools']:
+        keys(pool, ('id', 'regularLimit'))
+        key = pool['id']
+        if not isinstance(key, str) or not key.strip() or key != key.strip() or len(key) > 80 or key in pools:
+            raise ValueError('Poolbezeichnung fehlt oder ist doppelt.')
+        limit(pool['regularLimit'])
+        pools[key] = []
+    seen = set()
+    for rule in value['competitions']:
+        keys(rule, ('competitionId', 'enabled', 'regularLimit', 'titleReferences', 'poolId'))
+        key = rule['competitionId']
+        if not isinstance(key, str) or key not in competitions or key in seen:
+            raise ValueError('Competition fehlt, ist doppelt oder gehört nicht zu diesem Event.')
+        seen.add(key)
+        comp = competitions[key]
+        if comp['teamCompetition'] or comp['gender'] not in {'M', 'W', 'F'}:
+            raise ValueError('Keine automatische Einzelstarterregel für Teamwettbewerbe.')
+        flag(rule['enabled'])
+        if rule['regularLimit'] is not None or rule['enabled']:
+            limit(rule['regularLimit'])
+        pool = rule['poolId']
+        if pool is not None:
+            if not isinstance(pool, str) or pool not in pools:
+                raise ValueError('Unbekannter Zuteilungspool.')
+            pools[pool].append(comp)
+        refs = rule['titleReferences']
+        if not isinstance(refs, list) or len(refs) > len(titles):
+            raise ValueError('Ungültige Titelreferenzen.')
+        used_titles = set()
+        for ref in refs:
+            keys(ref, (*_TITLE_FIELDS, 'sourceVerified'))
+            title = titles.get(ref['id']) if isinstance(ref['id'], str) else None
+            if not title or ref['id'] in used_titles or ref['sourceVerified'] is not True:
+                raise ValueError('Verifizierte individuelle Titelquelle erforderlich.')
+            used_titles.add(ref['id'])
+            if any(ref[field] != title[field] or type(ref[field]) is not type(title[field]) for field in _TITLE_FIELDS):
+                raise ValueError('Titelreferenz wurde geändert; Grundlage erneut auswählen.')
+            if (not edition or title['championship'] != edition['championship'] or title['championshipYear'] != edition['year']
+                    or not comp['titleDiscipline'] or title['discipline'] != comp['titleDiscipline']
+                    or title['eventGroup'] != comp['quotaDiscipline'] or title['gender'] != comp['gender']
+                    or not title['fisCode'] or not title['nation']
+                    or urlparse(title['source']).scheme != 'https' or not urlparse(title['source']).netloc):
+                raise ValueError('Titel passt nicht exakt zu Wettbewerb, Geschlecht oder WM-Ausgabe.')
+    for members in pools.values():
+        if len(members) < 2 or len({(c['sport'], c['gender']) for c in members}) != 1:
+            raise ValueError('Pool benötigt mindestens zwei Wettbewerbe derselben Sportart und desselben Geschlechts.')
+    return copy.deepcopy(value)
