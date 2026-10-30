@@ -212,3 +212,39 @@ def test_reading_options_does_not_adopt_or_enable_sport_rules(events):
     assert owner.quota_rules_json == original
     assert EventQuotaRevision.query.count() == 0
     assert WorldChampionRecognition.query.count() == 0
+
+
+@pytest.mark.parametrize('global_enabled', [True, False])
+@pytest.mark.parametrize('disabled_members', [1, 2])
+def test_disabled_rules_cannot_be_pool_members(events, global_enabled, disabled_members):
+    owner, other = events
+    sport, _ = prepare(owner, other)
+    sport['enabled'] = global_enabled
+    for rule in sport['competitions'][:disabled_members]:
+        rule['enabled'] = False
+    current = rule_projection(owner)
+    response = app.test_client().put(endpoint(owner), json={
+        'config':{**standard_rules(),'sportEntryRules':sport}, 'expectedDigest':current['digest']})
+    assert response.status_code == 400
+    assert 'Deaktivierte Wettbewerbsregeln' in response.json['message']
+    assert owner.quota_rules_json is None and EventQuotaRevision.query.count() == 0
+
+
+@pytest.mark.parametrize('global_enabled', [True, False])
+def test_disabled_standalone_rule_and_global_switch_preserve_valid_pool(events, global_enabled):
+    owner, other = events
+    sport, _ = prepare(owner, other)
+    sport['enabled'] = global_enabled
+    sport['competitions'][2].update(enabled=False, regularLimit=None)
+    saved = draft(owner, {**standard_rules(),'sportEntryRules':sport})
+    assert saved['config']['sportEntryRules'] == sport
+    assert fix(owner, saved).status_code == 200
+    invalid = deepcopy(sport)
+    invalid['competitions'][0].update(enabled=False, poolId=None)
+    current = rule_projection(owner)
+    response = app.test_client().post(endpoint(owner)+'/revision-preview', json={
+        'config':{**standard_rules(),'sportEntryRules':invalid},'expectedDigest':current['digest'],
+        'expectedRevision':current['revision'],'isWorldChampionship':True,'reason':'Invalid singleton pool'})
+    assert response.status_code == 409
+    assert owner.quota_rules_revision == 1
+    assert json.loads(owner.quota_rules_json)['sportEntryRules'] == sport
