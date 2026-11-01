@@ -212,10 +212,27 @@ class ImportSessionEvent(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
+        from import_control import clarification_document
+        document = clarification_document(self)
+        description = document['comment'] if document else self.description
+        if document:
+            subject = document.get('subject') or {}
+            names = ', '.join(subject.get('people') or [])
+            stay = (subject.get('facts') or {}).get('stay')
+            if stay:
+                description = f"Aufenthalt {stay.get('arrivalDate') or '—'} – {stay.get('departureDate') or '—'}; Fenster {stay.get('allowedStart') or '—'} – {stay.get('allowedEnd') or '—'} · {description}"
+            rooms = (subject.get('facts') or {}).get('rooms') or []
+            if rooms:
+                description = '; '.join(f"{r.get('roomType') or 'Zimmer'}: {r.get('person1Name') or '—'} / {r.get('person2Name') or r.get('sharedWithRawName') or 'Partner fehlt'}" for r in rooms) + ' · ' + description
+            if names:
+                description = names + ' · ' + description
+        if document and document.get('contactMethod'):
+            method = {'EMAIL':'E-Mail', 'PHONE':'Telefon', 'OTHER':'Sonstiges'}.get(document['contactMethod'], document['contactMethod'])
+            description = f"{method} · {document['contactDate']} · {description}"
         return {'id': str(self.id), 'versionId': str(self.version_id) if self.version_id else None,
                 'decisionId': str(self.approval_id) if self.approval_id else None,
                 'type': self.event_type, 'title': self.title,
-                'description': self.description, 'user': self.username,
+                'description': description, 'user': self.username,
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
 
