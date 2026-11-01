@@ -1,4 +1,4 @@
-"""Deterministic, server-owned FULL_NATION import plans, not a rule engine."""
+"""Deterministic server-owned replacement plans, scoped to nation or sport family."""
 import hashlib
 import json
 from datetime import date, datetime
@@ -81,9 +81,9 @@ def state(event_id, nation):
 
 
 def input_fingerprint(preview):
-    return digest({k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
+    return digest({**({'replacementScope':preview['replacementScope']} if 'replacementScope' in preview else {}), **{k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
         'quotaRulesDigest','quotaRulesRevision','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
-        'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')})
+        'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')}})
 
 
 def build_plan(preview, read_context, *, version=None):
@@ -95,12 +95,21 @@ def build_plan(preview, read_context, *, version=None):
     nation = version.session.nation if version else next(iter(nations)) if len(nations)==1 else None
     if nation is None or nations - {nation}:
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ein Snapshot benötigt genau eine ausdrücklich gewählte Nation.')
+    from competitions import competition_athlete_family
+    scope = preview.get('replacementScope') or {'kind':'FULL_NATION'}  # Historical snapshots retain their original meaning.
+    family = scope.get('family') if scope.get('kind') == 'SPORT_FAMILY' else None
+    if scope.get('kind') not in {'FULL_NATION','SPORT_FAMILY'} or (scope['kind']=='SPORT_FAMILY' and family not in {'Snowboard','Freestyle'}):
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Sportbereich nicht eindeutig. Ersetzungsbereich ausdrücklich wählen; kein Import durchgeführt.')
     snapshot = state(event_id, nation)
     old = {p['id']:p for p in snapshot['people']}
     memberships = {i:set() for i in old}
     for m in snapshot['memberships']:memberships[m['athlete_id']].add(m['competition_id'])
+    in_scope = {cid for cid, c in read_context.competitions_by_id.items() if not family or competition_athlete_family(c) == family}
     people = {k:[] for k in ('create','update','unchanged','remove','conflicts')}
     member_changes = {'add':[], 'remove':[], 'unchanged':[]}
+    single_bookings = {b['id'] for b in snapshot['bookings'] if b['counts_as_single']}
+    protected_people = {p['id'] for p in snapshot['people'] if p.get('single_room_decision_id') or p.get('accommodation_rate_approval_id') or (p.get('room_type') or '').strip().lower() in {'single','double single'}}
+    protected_people |= {o['athlete_id'] for o in snapshot['occupants'] if o['room_booking_id'] in single_bookings}
     matched = set()
     roster=[preview_approval_person(p,competitions_by_id=read_context.competitions_by_id) for p in preview['people']]
     for p in preview['people']:
@@ -112,6 +121,8 @@ def build_plan(preview, read_context, *, version=None):
         if existing and existing.nation_code!=nation:
             raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_CONFLICT','Nationswechsel benötigt eine gesonderte Identitätsprüfung.')
         before = memberships.get(existing.id,set()) if existing else set()
+        if family:
+            incoming |= before - in_scope
         for category, values in (('add',incoming-before),('remove',before-incoming),('unchanged',before&incoming)):
             member_changes[category] += [{**identity,'competitionId':i} for i in sorted(values)]
         if not existing:
@@ -128,8 +139,25 @@ def build_plan(preview, read_context, *, version=None):
             if k not in {'athletes_last_seen_at','roomlist_last_seen_at'} and getattr(clone,k)!=v]
         identity.update(changes=changes, approvalId=existing.single_room_decision_id,
             approvalApplicability='APPLICABLE' if existing.single_room_decision_id and applicable_approval_groups(existing.single_room_decision,preview_approval_person(p,competitions_by_id=read_context.competitions_by_id),p['matchKey'],roster) else 'REVIEW_REQUIRED' if existing.single_room_decision_id else 'NONE')
+        if family and (before - in_scope or not before):
+            conflicts = [change for change in changes if change['field'] != 'discipline']
+            if conflicts or (existing.id in protected_people and before-incoming):
+                raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Gemeinsame Person in SB/FS mit widersprüchlichen Daten. Gemeinsamen Datenstand klären; kein stilles Überschreiben.', details={'personId':existing.id,'fields':[c['field'] for c in conflicts] or ['competitionIds']})
         people['update' if changes or incoming!=before else 'unchanged'].append(identity)
-    removed = set(old)-matched
+
+    absent = set(old)-matched
+    if family and any(not memberships[i] or any(cid not in read_context.competitions_by_id or competition_athlete_family(read_context.competitions_by_id[cid]) is None for cid in memberships[i]) for i in absent):
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Fehlende bestehende Personen ohne eindeutigen Sportbereich; Teilersatz nicht sicher prüfbar.')
+    removed = {i for i in absent if not family or memberships[i] <= in_scope}
+    for i in sorted(absent-removed):
+        person = old[i]
+        drop = memberships[i] & in_scope if family else set()
+        if drop and i in protected_people:
+            raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Gemeinsame Person mit EZ-/Genehmigungsbezug: Competition-Entfernung im vollständigen gemeinsamen Prüfstand klären.')
+        identity = dict(personId=i,personKey=str(i),name=f"{person['firstname']} {person['lastname']}",fisCode=person['fis_code'],competitorId=person['competitor_id'],changes=[])
+        people['update' if drop else 'unchanged'].append(identity)
+        member_changes['remove'] += [{**identity,'competitionId':cid} for cid in sorted(drop)]
+        member_changes['unchanged'] += [{**identity,'competitionId':cid} for cid in sorted(memberships[i]-drop)]
     affected_bookings = {o['room_booking_id'] for o in snapshot['occupants'] if o['athlete_id'] in removed}
     empty_bookings = {bid for bid in affected_bookings if all(o['athlete_id'] in removed for o in snapshot['occupants'] if o['room_booking_id']==bid)}
     removed_occupants = [o for o in snapshot['occupants'] if o['athlete_id'] in removed]
@@ -150,7 +178,7 @@ def build_plan(preview, read_context, *, version=None):
     legacy = [{'id':r['id'],'action':'DELETE' if r['athlete_id'] in removed else 'CLEAR_PARTNER'} for r in snapshot['legacy'] if r['athlete_id'] in removed or r['shared_with_athlete_id'] in removed]
     fis = [{'id':r['id'],'action':'DELETE' if r['person1_id'] in removed and (not r['person2_id'] or r['person2_id'] in removed) else 'RETAIN_SURVIVOR',
         'survivorId':next((i for i in (r['person1_id'],r['person2_id']) if i and i not in removed),None)} for r in snapshot['fis'] if r['person1_id'] in removed or r['person2_id'] in removed]
-    plan = dict(formatVersion=1,eventId=event_id,nation=nation,snapshotScope='FULL_NATION',
+    plan = dict(formatVersion=1,eventId=event_id,nation=nation,snapshotScope=scope['kind'],**({'sourceFamily':family} if family else {}),
         sessionId=version.session_id if version else None,versionId=version.id if version else None,
         importVersion=version.version if version else None,stateFingerprint=digest(snapshot),inputFingerprint=input_fingerprint(preview),people=people,
         memberships=member_changes,operations=dict(bookingIds=sorted(affected_bookings),
@@ -168,13 +196,27 @@ def verify_plan(preview, plan):
         raise ImportValidationError('IMPORT_REVIEW_REQUIRED', 'Änderungsplan fehlt. Bitte erneut prüfen.')
     if input_fingerprint(preview)!=plan.get('inputFingerprint'):
         raise ImportValidationError('STALE_PREVIEW','Die geparsten Fakten oder Review-Entscheidungen wurden geändert. Erneut prüfen.')
-    if digest(state(plan['eventId'],plan['nation'])) != plan['stateFingerprint']:
+    current = state(plan['eventId'],plan['nation'])
+    if digest(current) != plan['stateFingerprint']:
         raise ImportValidationError('STALE_PREVIEW', 'Der Datenstand hat sich geändert. Bitte erneut prüfen und freigeben.')
+    if 'replacementScope' not in preview and plan.get('requiresDestructiveConfirmation'):
+        # Do not execute an old implicit full-nation plan that demonstrably
+        # removes the other family. Preserve its JSON/digests; require new review.
+        from competitions import competition_athlete_family
+        families = {c['id']:competition_athlete_family(SimpleNamespace(**c)) for c in current['competitions']}
+        source = {families.get(m['competition_id']) for m in current['mappings'] if m['import_code'] in preview.get('entriesColumns', [])}
+        if len(source)==1 and None not in source and any(families.get(m['competitionId']) not in source for m in plan['memberships']['remove']):
+            raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Alter Prüfstand würde einen anderen Sportbereich entfernen. Dateien mit eindeutigem Ersetzungsbereich erneut prüfen.')
+
 
 
 def apply_removals(plan):
     """Apply only reviewed stable IDs; preserve surviving booking fields/evidence."""
     removed={p['personId'] for p in plan['people']['remove']}
+    # Membership withdrawal of a shared person must not delete that person.
+    for item in plan['memberships']['remove']:
+        if item.get('personId') and item['personId'] not in removed:
+            db.session.execute(sa.delete(AthleteCompetition).where(AthleteCompetition.athlete_id==item['personId'],AthleteCompetition.athlete_id.in_(sa.select(Athlete.id).where(Athlete.event_id==plan['eventId'])),AthleteCompetition.competition_id==item['competitionId']))
     if not removed:return
     event_id=plan['eventId']
     if db.session.query(Athlete.id).filter(Athlete.id.in_(removed),Athlete.event_id!=event_id).first():

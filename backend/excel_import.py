@@ -15,7 +15,7 @@ from accommodation_rates import apply_preview_rates, resolve_rate
 from quota_history import approval_event_matches, applicable_approval_groups, historical_approval_groups, preview_approval_person, quota_person
 from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
 from models import Athlete, Competition, Event, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSession, ImportSessionEvent, ImportSessionVersion, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
-from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids, athlete_top_level_discipline
+from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids, athlete_top_level_discipline, competition_athlete_family
 
 # Compatibility exports retained for existing callers and tests.
 from imports.normalization import (DAY_COLUMN_PATTERN, DATETIME_FORMATS,
@@ -1591,7 +1591,7 @@ def cleanup_preview_store():
         PREVIEW_STORE.pop(token, None)
 
 
-def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_context=None):
+def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_context=None, snapshot_scope=None):
     cleanup_preview_store()
     entries_df = load_first_sheet(entries_path)
     room_df = load_first_sheet(roomlist_path)
@@ -1604,6 +1604,11 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
     if event is not None:
         mapping = active_competition_mapping(event)
     people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None, event.id if event else None)
+    families = {competition_athlete_family(mapping[column]) for column in entries_df.columns if column in mapping}
+    if snapshot_scope not in {None, 'AUTO', 'FULL_NATION'}:
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ungültiger Ersetzungsbereich.')
+    replacement = ({'kind':'FULL_NATION'} if snapshot_scope == 'FULL_NATION' else
+        {'kind':'SPORT_FAMILY','family':next(iter(families))} if len(families)==1 and None not in families else {'kind':'UNCONFIRMED'})
     room_result = parse_room_list(room_df, people_result['people'])
     requirement_issues = apply_preview_requirements(people_result['people'], room_result['rooms'], read_context=read_context)
     apply_preview_rates(people_result['people'], read_context=read_context)
@@ -1650,6 +1655,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'roomColumns': list(room_df.columns),
         'dayColumns': room_result['dayColumns'],
         'detectedDiscipline': None,
+        'replacementScope': replacement,
         'errors': blocking_errors,
         'warnings': people_result['warnings'] + room_result['warnings'] + quota_warnings,
         'quotaChecks': quota_checks,
@@ -1693,6 +1699,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'roomColumns': preview['roomColumns'],
         'dayColumns': preview['dayColumns'],
         'detectedDiscipline': preview.get('detectedDiscipline'),
+        'replacementScope': preview['replacementScope'],
         'people': [_serialize_person_preview(person) for person in people_result['people']],
         'rooms': [_serialize_room_preview(room) for room in room_result['rooms']],
         'errors': preview['errors'],
@@ -2017,6 +2024,9 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     if athlete_errors:
         raise ImportValidationError('ATHLETE_QUOTA_UNREVIEWED', 'Athletenquote benötigt eine anwendbare Genehmigung vor Confirm.',details={'requirements':athlete_errors})
 
+    if (preview.get('replacementScope') or {}).get('kind') == 'UNCONFIRMED':
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ersetzungsbereich ist nicht bestätigt.')
+
     # Legacy internal callers cannot bypass explicit destructive review.
     imported_nations = {p.get('nationCode') for p in preview['people'] if p.get('nationCode')}
     matched_ids = {a.id for p in preview['people'] if (a := _find_existing_athlete(p, athlete_maps))}
@@ -2133,6 +2143,15 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             else:
                 updated += 1
 
+            family = (preview.get('replacementScope') or {}).get('family')
+            if family and existing_before is not None and any(competition_athlete_family(c) != family for c in athlete.competitions):
+                # The reviewed plan rejects conflicting shared fields. Do not
+                # rewrite accommodation/approval state owned by the other part.
+                outside = {c.id:c for c in athlete.competitions if competition_athlete_family(c) != family}
+                athlete.competitions = list({**outside, **{competitions_by_import_code[code].id:competitions_by_import_code[code]
+                    for code in person.get('competitionImportCodes', [])}}.values())
+                persisted_people[person['matchKey']] = athlete
+                continue
             rate_override = (preview.get('accommodationRateOverrides') or {}).get(person.get('matchKey'))
             if rate_override and athlete.id is not None:
                 # Persist earlier records before populate_existing can refresh an identity

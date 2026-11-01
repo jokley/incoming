@@ -1969,7 +1969,7 @@ def preview_fis_import():
         ).hexdigest()
         from imports.read_context import ImportReadContext
         read_context=ImportReadContext(event_context.id)
-        result = create_fis_import_preview(entries_path, room_path, event_context,read_context=read_context)
+        result = create_fis_import_preview(entries_path, room_path, event_context,read_context=read_context,snapshot_scope=request.form.get('snapshotScope'))
         session_id = request.form.get('sessionId')
         if request.form.get('createSession') == 'true' or session_id:
             nations = sorted({person.get('nationCode') for person in result['people'] if person.get('nationCode')})
@@ -2695,11 +2695,11 @@ def approve_import_session(session_id):
     try:stored,workflow,plan=require_review(session)
     except ImportValidationError as exc:return jsonify({**exc.to_dict(),'validationErrors':[{'code':exc.code,'message':str(exc)}]}),409
     data=request.get_json(silent=True) or {}
-    if data.get('planDigest')!=plan['digest'] or data.get('snapshotScope','FULL_NATION')!='FULL_NATION':
-        return jsonify(error='IMPORT_SCOPE_CONFIRMATION_REQUIRED',message='Vollständigen Nationen-Snapshot und aktuellen Änderungsplan bestätigen.'),409
+    if data.get('planDigest')!=plan['digest'] or data.get('snapshotScope',plan['snapshotScope'])!=plan['snapshotScope']:
+        return jsonify(error='IMPORT_SCOPE_CONFIRMATION_REQUIRED',message='Aktuellen Ersetzungsbereich und Änderungsplan bestätigen.'),409
     if plan['requiresDestructiveConfirmation'] and data.get('confirmDestructiveChanges') is not True:
         return jsonify(error='IMPORT_DELETION_CONFIRMATION_REQUIRED',message='Entfernungen einschließlich Buchungsfolgen ausdrücklich bestätigen.'),409
-    workflow.update(state='APPROVED',approvedDigest=plan['digest'],confirmedScope='FULL_NATION',
+    workflow.update(state='APPROVED',approvedDigest=plan['digest'],confirmedScope=plan['snapshotScope'],
         destructiveConfirmed=data.get('confirmDestructiveChanges') is True)
     stored['_workflow']=workflow
     session.current_version.preview_json=encoded(stored)
