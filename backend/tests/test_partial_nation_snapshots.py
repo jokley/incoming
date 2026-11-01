@@ -21,12 +21,13 @@ def rows(part):
         Arrival_date='04.03.2027',Departure_date='22.03.2027') for i in range(count)]
 
 
-def upload(owner,part,data=None,scope=None,expected=200):
+def upload(owner,part,data=None,scope=None,expected=200,session_id=None):
     records=rows(part) if data is None else data
     a,b=io.BytesIO(),io.BytesIO()
     pd.DataFrame(records,columns=list(records[0]) if records else list(rows(part)[0])).to_excel(a,index=False,sheet_name='Data')
     pd.DataFrame(columns=['no data available']).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
-    payload=dict(eventId=str(owner.id),createSession='true',entriesList=(a,'same-uninformative-name.xlsx'),roomListDetailed=(b,'rooms.xlsx'))
+    payload=dict(eventId=str(owner.id),files=[(a,'same-uninformative-name.xlsx'),(b,'rooms.xlsx')])
+    payload.update({'sessionId':str(session_id)} if session_id else {'createSession':'true'})
     if scope:payload['snapshotScope']=scope
     response=app.test_client().post('/api/import/fis/preview',data=payload)
     assert response.status_code==expected, response.json
@@ -44,11 +45,18 @@ def snapshot(people):
 
 
 @pytest.mark.parametrize('first,second',[('SB','FS'),('FS','SB')])
-def test_union_in_both_orders_with_unchanged_foreign_data_and_identical_reimport(owner,first,second):
+@pytest.mark.parametrize('selected',[False,True])
+def test_union_in_both_orders_with_unchanged_foreign_data_and_identical_reimport(owner,first,second,selected):
     initial=upload(owner,first);run(initial,owner)
     original=Athlete.query.all();before=snapshot(original)
     room=booking(original[:2]);room_id=room.id
-    following=upload(owner,second);plan=following['session']['preview']['changePlan']
+    following=upload(owner,second,session_id=initial['session']['id'] if selected else None);plan=following['session']['preview']['changePlan']
+    assert following['session']['id']==initial['session']['id']  # One nation session, two partial-file versions.
+    assert following['session']['currentVersionId']!=initial['session']['currentVersionId']
+    assert following['session']['version']==2
+    assert following['replacementScope']=={'kind':'SPORT_FAMILY','family':'Snowboard' if second=='SB' else 'Freestyle'}
+    assert len(plan['people']['create'])==len(rows(second))
+    assert not following['dispositionAnalysis']['categories']['removedAthletes']['records']
     assert plan['snapshotScope']=='SPORT_FAMILY' and not plan['people']['remove']
     assert len(plan['people']['unchanged'])==len(original)
     run(following,owner)
@@ -56,7 +64,11 @@ def test_union_in_both_orders_with_unchanged_foreign_data_and_identical_reimport
     assert Athlete.query.filter_by(function='Athlete').count()==7
     assert snapshot(Athlete.query.filter(Athlete.id.in_(before)).all())==before
     assert db.session.get(type(room),room_id) is not None
-    again=upload(owner,first);assert not again['session']['preview']['changePlan']['people']['remove']
+    current=app.test_client().get(f"/api/import/sessions/{following['session']['id']}?eventId={owner.id}").json
+    assert len(current['preview']['people'])==len(rows(second))  # Dateivorschau, not the combined nation roster.
+    assert current['preview']['changePlan']['digest']==plan['digest']
+    assert not current['preview']['dispositionAnalysis']['categories']['removedAthletes']['records']
+    again=upload(owner,first,session_id=following['session']['id'] if selected else None);assert not again['session']['preview']['changePlan']['people']['remove']
     run(again,owner);assert Athlete.query.count()==11
 
 

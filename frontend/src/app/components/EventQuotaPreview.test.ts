@@ -47,3 +47,15 @@ test('family tile surfaces CAN one and GER two unresolved positions without summ
  control.competitions[0].sportEntries[0].unverifiedAdditional=5;control.competitions[1].sportEntries[0].unverifiedAdditional=5;
  const ger=render();assert.ok(ger.includes('2 Wettbewerbspositionen prüfen'));assert.ok(!ger.includes('10 Wettbewerbspositionen'));
 });
+
+
+test('partial preview labels the file roster, not the combined nation population',()=>{
+ for(const [family,label,count] of [['Snowboard','Snowboard (SB)',4],['Freestyle','Freestyle/Freeski (FS)',7]] as const){
+  const data={...preview,replacementScope:{kind:'SPORT_FAMILY',family},people:Array.from({length:count},()=>({firstname:'Synthetic',lastname:'Person'}))};
+  const html=renderToStaticMarkup(createElement(Preview,{preview:data,peopleRows:[],roomRows:[],onOpen:()=>{}}));
+  assert.ok(html.includes(`Teilmeldung · ${label}`));
+  assert.ok(html.includes(`${count} Personen`));assert.ok(html.includes('aus diesen Dateien'));
+ }
+ const full=renderToStaticMarkup(createElement(Preview,{preview:{...preview,replacementScope:{kind:'FULL_NATION'}},peopleRows:[],roomRows:[],onOpen:()=>{}}));
+ assert.ok(full.includes('Vollständige Nationsmeldung'));assert.ok(!full.includes('aus diesen Dateien'));
+});

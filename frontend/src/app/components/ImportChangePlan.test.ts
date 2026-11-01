@@ -50,3 +50,16 @@ test('sport-family plan labels its actual scope and confirms exactly that server
  assert.equal(importReviewRequest(partial,true).snapshotScope,'SPORT_FAMILY');
  assert.equal(importReviewRequest(plan,true).snapshotScope,'FULL_NATION');
 });
+
+
+test('partial plans distinguish the resulting nation total without counting removed people or memberships twice',()=>{
+ const partial={...structuredClone(plan),snapshotScope:'SPORT_FAMILY',sourceFamily:'Freestyle'};
+ partial.people.create=[{personKey:'new',personId:null,name:'New'}];
+ partial.people.update=[{personId:2,name:'Shared person'}];
+ partial.people.unchanged=[{personId:3,name:'Preserved SB'}];
+ const props={plan:partial,editable:true,destructiveConfirmed:false,onDestructive:()=>{},onRecheck:()=>{},busy:false};
+ const html=renderToStaticMarkup(createElement(Component,props));
+ assert.ok(html.includes('Nationsbestand nach diesem Import: 3 Personen'));
+ assert.ok(!renderToStaticMarkup(createElement(Component,{...props,stale:true})).includes('Nationsbestand nach diesem Import:'));
+ assert.ok(!renderToStaticMarkup(createElement(Component,{...props,plan})).includes('Nationsbestand nach diesem Import:'));
+});
