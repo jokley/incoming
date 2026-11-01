@@ -38,3 +38,15 @@ test('stale plans visibly require new review and disable confirmation controls',
   assert.ok(html.includes('Erneut prüfen / Reimport vorbereiten'));
   assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,1);
 });
+
+
+test('sport-family plan labels its actual scope and confirms exactly that server scope',()=>{
+ const partial={...structuredClone(plan),snapshotScope:'SPORT_FAMILY' as const,sourceFamily:'Snowboard' as const};
+ partial.people.unchanged=[{personId:8,name:'Preserved other-family person'}];
+ const html=renderToStaticMarkup(createElement(Component,{plan:partial,stale:false,editable:true,destructiveConfirmed:true,onDestructive:()=>{},onRecheck:()=>{},busy:false}));
+ assert.ok(html.includes('Unverändert erhaltene Personen (1)')&&html.includes('Preserved other-family person'));
+ assert.ok(html.includes('Teilmeldung')&&html.includes('Snowboard (SB)'));
+ assert.ok(html.includes('Personen und Mitgliedschaften des anderen Bereichs bleiben erhalten'));
+ assert.equal(importReviewRequest(partial,true).snapshotScope,'SPORT_FAMILY');
+ assert.equal(importReviewRequest(plan,true).snapshotScope,'FULL_NATION');
+});

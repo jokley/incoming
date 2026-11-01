@@ -71,7 +71,7 @@ def require_review(session, *, approved=False):
     workflow=preview.get('_workflow') or {}
     plan=workflow.get('plan')
     verify_plan(preview,plan)
-    if approved and (workflow.get('approvedDigest')!=plan['digest'] or workflow.get('confirmedScope')!='FULL_NATION'
+    if approved and (workflow.get('approvedDigest')!=plan['digest'] or workflow.get('confirmedScope')!=plan['snapshotScope']
             or (plan['requiresDestructiveConfirmation'] and not workflow.get('destructiveConfirmed'))):
         raise ImportValidationError('IMPORT_REVIEW_REQUIRED','Änderungsplan wurde nicht ausdrücklich freigegeben.')
     return preview,workflow,plan

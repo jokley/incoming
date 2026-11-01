@@ -34,7 +34,7 @@ def review(payload,event,destructive=False):
     response=app.test_client().get(f'/api/import/sessions/{sid}?eventId={event.id}')
     assert response.status_code==200,response.json
     p=response.json['preview']
-    return app.test_client().post(f'/api/import/sessions/{sid}/approve?eventId={event.id}',json=dict(snapshotScope='FULL_NATION',planDigest=p['changePlan']['digest'],confirmDestructiveChanges=destructive))
+    return app.test_client().post(f'/api/import/sessions/{sid}/approve?eventId={event.id}',json=dict(snapshotScope=p['changePlan']['snapshotScope'],planDigest=p['changePlan']['digest'],confirmDestructiveChanges=destructive))
 
 
 def run(payload,event,destructive=False):
@@ -85,7 +85,7 @@ def test_string_configured_event_approval_has_no_operational_writes(events, monk
     sql_event.listen(Session, 'before_flush', capture, insert=True)
     try:
         approved = client.post(f'/api/import/sessions/{sid}/approve{suffix}', json=dict(
-            snapshotScope='FULL_NATION', planDigest=current.json['preview']['changePlan']['digest'],
+            snapshotScope=current.json['preview']['changePlan']['snapshotScope'], planDigest=current.json['preview']['changePlan']['digest'],
             confirmDestructiveChanges=False))
     finally:
         sql_event.remove(Session, 'before_flush', capture)
