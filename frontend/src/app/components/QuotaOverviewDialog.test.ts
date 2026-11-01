@@ -15,7 +15,7 @@ const copy=()=>structuredClone(fixture);
 
 test('officials are grouped in one table with distinct totals, collapsible contexts and existing EZ values',()=>{
  const data=copy(),output=html(data),visible=text(output);
- for(const label of ['14','Officials','0 EZ offen','EZ-Anspruch Σ M/W','EZ angefordert','Abdeckung prüfen','5 Mehrfachzugehörigkeiten','Σ M/W','Officials-Basis'])assert.ok(visible.includes(label),label);
+ for(const label of ['14','Officials','0 offene EZ-Kontexte','EZ-Anspruch Σ M/W','EZ angefordert','Abdeckung prüfen','5 Mehrfachzugehörigkeiten','Σ M/W','Berechnungsbasis EZ'])assert.ok(visible.includes(label),label);
  assert.equal((output.match(/<details/g)||[]).length,2);assert.ok(!output.includes(' open=""'));
  assert.ok(!output.includes('Officials ohne reguläre Abdeckung'));
  assert.ok(output.includes('overflow-x-auto')&&output.includes('role="region"')&&output.includes('tabindex="0"'));
@@ -70,9 +70,20 @@ test('only athlete view shows competition hierarchy; officials keep direct exist
    for(const group of overview.nations[0].groups)assert.ok(output.includes(`aria-label="Officials ${group.name.replaceAll('&','&amp;')} anzeigen"`));
    assert.ok(output.includes('5 Mehrfachzugehörigkeiten'));
    assert.ok(!output.includes('Keine offenen EZ-Entscheidungen'));
-   assert.ok(output.includes('Officials-Basis Σ M/W'));
+   assert.ok(output.includes('Berechnungsbasis EZ Σ M/W'));
    assert.ok(!output.includes('Sportliche Meldungen'));
   }
  }
  assert.deepEqual({overview,preview,control},before);
+});
+
+
+test('personal EZ summary separates one open context from several open people and uses existing people buttons',()=>{
+ const overview=copy(),nation=overview.nations[0];nation.ezDecisionsOpen=1;
+ const preview={people:[['one','COVERED'],['two','APPROVED_EXTRA'],['three','EXEMPT'],['four','PENDING'],['five','PENDING']].map(([matchKey,status])=>({
+  matchKey,nationCode:nation.nationCode,function:'NSA Coach',singleRoomAllocation:{identity:matchKey,status,context:[nation.nationCode,'Ski Cross','M']}})),rooms:[]};
+ const output=html(overview,'officials',{preview,onPeople:()=>{throw Error('render must not navigate');}}),visible=text(output);
+ for(const label of ['1 offener EZ-Kontext','5 EZ angefordert','1 regulär gedeckt','1 zusätzliche EZ genehmigt','1 EZ-Ausnahmen','2 EZ offen'])assert.ok(visible.includes(label),label);
+ for(const label of ['Angeforderte EZ-Personen anzeigen','regulär gedeckt: Personen anzeigen','EZ offen: Personen anzeigen'])assert.ok(output.includes(`aria-label="${label}"`));
+ assert.ok(!visible.includes('Zulässige Officials'));
 });

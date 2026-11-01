@@ -41,3 +41,8 @@ export function competitionDisplayList(names?: Array<string | null> | null, fall
     .map(competitionDisplayName)
     .join(' • ');
 }
+
+/** Concrete memberships only: no fallback from an Event Group or legacy label. */
+export function competitionMembershipList(memberships?: ReadonlyArray<{name:string;displayName?:string}>) {
+  return [...new Set((memberships??[]).map(c=>disciplineDisplayName(c.displayName||c.name)).filter(Boolean))].join(' · ');
+}

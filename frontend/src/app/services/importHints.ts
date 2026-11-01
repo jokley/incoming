@@ -49,13 +49,13 @@ export function roomMatchesImportFilter(room:Room,filter:ImportListFilter,previe
 
 /** Scope for direct navigation from existing quota aggregates to the person list. */
 export interface QuotaPeopleFilter {
- nation:string;role:'officials'|'athletes';group?:string;multipleGroups?:boolean;family?:string;gender?:'M'|'F';personKeys?:string[];competition?:string;
+ nation?:string;role:'officials'|'athletes'|'people';group?:string;multipleGroups?:boolean;family?:string;gender?:'M'|'F';personKeys?:string[];competition?:string;
 }
 export function personMatchesQuotaFilter(person:FisImportPreviewPerson,filter:QuotaPeopleFilter|null) {
  if(!filter)return true;
  const athlete=person.function?.trim().toLowerCase()==='athlete';
  const groups=new Set(person.quotaDisciplines??[]);
- return person.nationCode===filter.nation&&(filter.role==='athletes'?athlete:!athlete&&groups.size>0)
+ return (!filter.nation||person.nationCode===filter.nation)&&(filter.role==='people'||(filter.role==='athletes'?athlete:!athlete&&groups.size>0))
   &&(!filter.personKeys||filter.personKeys.includes(person.matchKey))&&(!filter.group||groups.has(filter.group))&&(!filter.multipleGroups||groups.size>1)
   &&(!filter.family||person.athleteQuotaFamilies?.includes(filter.family))
   &&(!filter.gender||(filter.gender==='F'?['F','W'].includes(person.gender??''):person.gender==='M'));
@@ -73,4 +73,39 @@ export function officialsSummary(nation:QuotaOverview['nations'][number],fixed:b
  const review=!fixed||nation.incomplete||nation.coverageReviewRequired||nation.officialsWithoutContext>0||nation.groups.some(group=>group.coverageReviewRequired);
  const pending=nation.ezDecisionsOpen>0||nation.groups.some(group=>group.totals.singleRoomsPending>0);
  return {label:pending?(review?'Entscheidung offen · Abdeckung prüfen':'Entscheidung offen'):review?'Abdeckung prüfen':'OK',tone:pending||review?'warning' as const:'success' as const};
+}
+
+/** Counts the existing personal allocation; never assigns entitlement or quota. */
+export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
+ const people=preview.people.filter(p=>!nation||p.nationCode===nation);
+ const categories={COVERED:[] as string[],APPROVED_EXTRA:[] as string[],EXEMPT:[] as string[],PENDING:[] as string[]};
+ const byKey=new Map(people.map(p=>[p.matchKey,p]));
+ const members=new Map<string,{keys:Set<string>;statuses:Set<string>}>();
+ let available=people.every(p=>'singleRoomAllocation' in p);
+ let complete=available;
+ for(const person of people){
+  const allocation=person.singleRoomAllocation;
+  if(!allocation)continue;
+  const identity=person.existingAthleteId!=null?`persisted:${person.existingAthleteId}`:allocation.identity??person.matchKey;
+  if(!identity){available=false;continue;}
+  const member=members.get(`${person.nationCode}:${identity}`)??{keys:new Set<string>(),statuses:new Set<string>()};
+  if(person.matchKey)member.keys.add(person.matchKey);else available=false;
+  member.statuses.add(allocation.status??'');members.set(`${person.nationCode}:${identity}`,member);
+  if(!allocation.context)complete=false;
+ }
+ const counts={COVERED:0,APPROVED_EXTRA:0,EXEMPT:0,PENDING:0};
+ for(const member of members.values()){
+  const status=[...member.statuses][0];
+  if(member.statuses.size!==1||!(status in categories)){available=false;continue;}
+  counts[status as keyof typeof counts]++;
+  categories[status as keyof typeof categories].push(...member.keys);
+ }
+ for(const room of preview.rooms??[]){
+  if(room.roomType.trim().toLowerCase()!=='single')continue;
+  for(const key of [room.person1Key,room.person2Key].filter(Boolean)){
+   const person=byKey.get(key);
+   if(person&&person.accommodationRequirement!=='NO_ROOM'&&!person.singleRoomAllocation)available=false;
+  }
+ }
+ return {requested:members.size,counts,personKeys:categories,allPersonKeys:[...new Set([...members.values()].flatMap(m=>[...m.keys]))],complete:complete&&available,available};
 }

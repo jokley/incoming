@@ -5,7 +5,7 @@ import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
 import { isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation.ts';
 import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus.ts';
-import { competitionDisplayList } from '../services/competitionPresentation.ts';
+import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel } from '../services/competitionPresentation.ts';
 
 export type ListKind = 'none' | 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
@@ -20,6 +20,8 @@ export interface ListRow {
   name: string;
   nation: string;
   discipline: string;
+  eventGroups?: string;
+  competitionNames?: string;
   role: string;
   stayWindow?: string;
   hotelStayNote?:string;
@@ -192,6 +194,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
       discipline: value(competitionDisplayList(athlete.disciplines, athlete.discipline)),
+      eventGroups: previewEventGroupLabel(athlete.quotaDisciplines),
+      competitionNames: competitionMembershipList(athlete.competitions),
       role: value(athlete.function),
       stayWindow: stayWindowText(assessment),
       hotelStayNote:stayWindowHotelNote(assessment),

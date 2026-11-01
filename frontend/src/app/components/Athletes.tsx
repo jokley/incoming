@@ -29,7 +29,7 @@ import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
 import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
-import { competitionDisplayList, competitionDisplayName } from '../services/competitionPresentation';
+import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel, competitionDisplayName } from '../services/competitionPresentation';
 import { accommodationSurcharge } from '../services/accommodationSurcharge';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
@@ -388,8 +388,8 @@ export function Athletes() {
             </label>
           </div>
         </div>
-        <div className="min-h-[24rem] overflow-x-hidden overflow-y-auto xl:min-h-0 xl:flex-1">
-          <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
+        <div className="min-h-[24rem] overflow-x-auto overflow-y-auto xl:min-h-0 xl:flex-1">
+          <table className="w-full min-w-[1050px] table-fixed border-separate border-spacing-0 text-left text-sm">
             <colgroup><col className="w-[16%]"/><col className="w-[6%]"/><col className="w-[13%]"/><col className="w-[8%]"/><col className="w-[8%]"/><col className="w-[13%]"/><col className="w-[7%]"/><col className="w-[9%]"/><col className="w-[12%]"/><col className="w-[8%]"/></colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
               <tr>{['Name', 'Nation', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
@@ -398,7 +398,7 @@ export function Athletes() {
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><AccommodationRateChip category={athlete.accommodationRateCategory}/><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell>
-                <Cell><div className="min-w-0"><b className="block truncate font-bold text-[var(--ops-text)]" title={competitionDisplayList(athlete.disciplines, athlete.discipline) || undefined}>{competitionDisplayList(athlete.disciplines, athlete.discipline) || '—'}</b><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
+                <Cell><div className="min-w-0"><b className="ops-table-wrap block font-bold text-[var(--ops-text)]" title={previewEventGroupLabel(athlete.quotaDisciplines)}>{previewEventGroupLabel(athlete.quotaDisciplines)}</b><span className="ops-table-wrap block text-xs text-[var(--ops-text-muted)]">{competitionMembershipList(athlete.competitions)}</span><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell><span className="block truncate" title={personAccommodation(athlete).details || personAccommodation(athlete).hotelLabel}>{personAccommodation(athlete).hotelLabel==='—' ? '—' : <InlineActionLink onClick={event=>{event.stopPropagation();navigate(personAccommodation(athlete).segments.length>1 ? assignmentWorkspaceHref({personId:athlete.id}) : `/hotels?hotelId=${personAccommodation(athlete).segments[0]?.hotelId || athlete.assignment?.hotelId || ''}`);}}>{personAccommodation(athlete).hotelLabel}</InlineActionLink>}</span></Cell>
                 <Cell><span title={personAccommodation(athlete).details}><InlineActionLink className="ops-table-wrap text-xs" onClick={event=>{event.stopPropagation();navigate(assignmentWorkspaceHref({personId:athlete.id}));}}>{roomTypeLabel(athlete)}</InlineActionLink></span></Cell>
