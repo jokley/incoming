@@ -85,3 +85,32 @@ test('officials total cannot turn green because EZ decisions are zero; overlaps 
  assert.equal(officialsSummary(nation,true).label,'Entscheidung offen · Abdeckung prüfen');
  assert.equal(officialsSummary({...nation,ezDecisionsOpen:0},false).tone,'warning');
 });
+
+
+test('EZ summary partitions existing personal allocations and navigates all roles without duplicate group counts',async()=>{
+ const {singleRoomSummary,personMatchesQuotaFilter}=await import('./importHints.ts');
+ const people=[['covered','COVERED'],['approved','APPROVED_EXTRA'],['exempt','EXEMPT'],['pending-a','PENDING'],['pending-b','PENDING']].map(([key,status])=>({
+  matchKey:key,nationCode:'ITA',function:key==='exempt'?'Athlete':'NSA Coach',quotaDisciplines:['Ski Cross','Freeski Park & Pipe'],
+  singleRoomAllocation:{identity:key,status,context:['ITA','Ski Cross','M']},accommodationRequirement:'REQUIRED'}));
+ const preview={people:[...people,{...people[0],matchKey:'same-person-second-source'}, {...people[0],matchKey:'foreign',nationCode:'JPN'}],rooms:[]} as unknown as FisImportPreview;
+ const original=structuredClone(preview),summary=singleRoomSummary(preview,'ITA');
+ assert.equal(summary.requested,5);
+ assert.deepEqual(summary.counts,{COVERED:1,APPROVED_EXTRA:1,EXEMPT:1,PENDING:2});
+ assert.equal(summary.complete,true);
+ const filter={nation:'ITA',role:'people' as const,personKeys:summary.personKeys.PENDING};
+ assert.deepEqual(preview.people.filter(p=>personMatchesQuotaFilter(p,filter)).map(p=>p.matchKey),['pending-a','pending-b']);
+ assert.deepEqual(preview.people.filter(p=>personMatchesQuotaFilter(p,{nation:'ITA',role:'people',personKeys:summary.personKeys.EXEMPT})).map(p=>p.matchKey),['exempt']);
+ assert.equal(singleRoomSummary(preview).requested,6); // Distinct nations never share an allocation count.
+ assert.deepEqual(preview,original);
+});
+
+test('missing contexts, legacy allocation data and conflicting statuses cannot imply full EZ coverage',async()=>{
+ const {singleRoomSummary}=await import('./importHints.ts');
+ const person={matchKey:'a',nationCode:'ISR',function:'Athlete',singleRoomAllocation:{identity:'a',status:'PENDING',context:null}};
+ assert.equal(singleRoomSummary({people:[person],rooms:[]} as unknown as FisImportPreview).complete,false);
+ assert.equal(singleRoomSummary({people:[{matchKey:'old'}],rooms:[]} as unknown as FisImportPreview).complete,false);
+ const conflict={people:[{...person,existingAthleteId:1},{...person,existingAthleteId:1,singleRoomAllocation:{...person.singleRoomAllocation,status:'COVERED'}}],rooms:[]} as unknown as FisImportPreview;
+ const summary=singleRoomSummary(conflict);assert.equal(summary.requested,1);assert.equal(summary.complete,false);assert.equal(summary.counts.PENDING+summary.counts.COVERED,0);
+ const missing={people:[{...person,singleRoomAllocation:null}],rooms:[{person1Key:'a',roomType:'Single'}]} as unknown as FisImportPreview;
+ assert.equal(singleRoomSummary(missing).complete,false);assert.equal(singleRoomSummary(missing).available,false);
+});

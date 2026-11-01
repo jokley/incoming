@@ -183,6 +183,7 @@ export interface Athlete extends AccommodationRateFields, AccommodationRequireme
   approvedQuotaDisciplines?: string[];
   approvedQuotaContexts?: Array<{ nationCode: string; discipline: string; gender: string }>;
   disciplines?: string[];
+  quotaDisciplines?: string[];
   competitions?: Competition[];
   stays?: Array<{ arrivalDate?: string | null; departureDate?: string | null; discipline?: string | null }>;
   lastname: string;
@@ -513,7 +514,7 @@ export interface FisImportPreviewPerson extends AccommodationRateFields, Accommo
   existingAthleteId?:number|null;
   arrivalDate?:string|null;departureDate?:string|null;
   singleRoomExemptionSource?:string|null;
-  singleRoomAllocation?:{context?:[string,string,string]|null;status?:string}|null;
+  singleRoomAllocation?:{identity?:string;context?:[string,string,string]|null;status?:string}|null;
   worldChampionReferences?:Array<{id?:string;discipline?:string;championship?:string;championshipYear?:number;eventGroup?:string;source?:string}>;
   importAccommodationRequirement?: AccommodationRequirement | null;
   accommodationRequirementReviewRequired?: boolean;

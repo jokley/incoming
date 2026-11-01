@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { disciplineDisplayName, matchesDisciplineAndGender, matchesDisciplineMembership } from './competitionPresentation.ts';
+import { competitionMembershipList, disciplineDisplayName, matchesDisciplineAndGender, matchesDisciplineMembership } from './competitionPresentation.ts';
 
 test('discipline labels omit competition gender and redundant sport qualifiers', () => {
   assert.equal(disciplineDisplayName("Men's Snowboard Big Air"), 'Big Air');
@@ -34,4 +34,12 @@ test('discipline and gender filters select the matching quota member together', 
 test('quota filters never infer membership from legacy display discipline', () => {
   assert.equal(matchesDisciplineMembership('TestGroup', undefined, 'TestGroup'), false);
   assert.equal(matchesDisciplineMembership('Legacy', ['TestGroup'], 'TestGroup'), true);
+});
+
+
+test('concrete memberships are compact, gender-neutral and duplicate-free',()=>{
+ assert.equal(competitionMembershipList([{name:"Men's Snowboard Slopestyle"},{name:"Women's Snowboard Slopestyle"},{name:'Snowboard Big Air'},{name:'Halfpipe'}]),'Slopestyle · Big Air · Halfpipe');
+ assert.equal(competitionMembershipList([{name:'Moguls'},{name:'Dual Moguls'}]),'Moguls · Dual Moguls');
+ assert.equal(competitionMembershipList(), '');
+ assert.equal(competitionMembershipList([]), '');
 });
