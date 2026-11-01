@@ -85,6 +85,7 @@ def shared_fs():
     records=rows('FS');base=rows('SB')[0]
     for key in ('Firstname','Fiscode','Competitorid/Staff ID'):
         records[0][key]=base[key]
+    records[0]['Lastupdate']='01.11.2026 12:00'  # A different source export timestamp is not a housing conflict.
     return records
 
 

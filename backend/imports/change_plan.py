@@ -140,7 +140,9 @@ def build_plan(preview, read_context, *, version=None):
         identity.update(changes=changes, approvalId=existing.single_room_decision_id,
             approvalApplicability='APPLICABLE' if existing.single_room_decision_id and applicable_approval_groups(existing.single_room_decision,preview_approval_person(p,competitions_by_id=read_context.competitions_by_id),p['matchKey'],roster) else 'REVIEW_REQUIRED' if existing.single_room_decision_id else 'NONE')
         if family and (before - in_scope or not before):
-            conflicts = [change for change in changes if change['field'] != 'discipline']
+            conflicts = [change for change in changes if change['field'] not in {'discipline','entry_date','last_update','entries_sent_date'}]
+            if before - in_scope:
+                changes[:] = conflicts  # Other-source export metadata is not applied to a shared person.
             if conflicts or (existing.id in protected_people and before-incoming):
                 raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Gemeinsame Person in SB/FS mit widersprüchlichen Daten. Gemeinsamen Datenstand klären; kein stilles Überschreiben.', details={'personId':existing.id,'fields':[c['field'] for c in conflicts] or ['competitionIds']})
         people['update' if changes or incoming!=before else 'unchanged'].append(identity)
