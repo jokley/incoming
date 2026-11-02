@@ -511,6 +511,7 @@ export interface ImportControl {
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  sourceRows?:Array<{versionId:number;version:number;row?:number}>;
   existingAthleteId?:number|null;
   arrivalDate?:string|null;departureDate?:string|null;
   singleRoomExemptionSource?:string|null;
@@ -540,6 +541,7 @@ export interface FisImportPreviewPerson extends AccommodationRateFields, Accommo
 }
 
 export interface FisImportPreviewRoom {
+  sourceRows?:Array<{versionId:number;version:number;row?:number}>;
   person1Key?: string;
   person2Key?: string | null;
   rowNumber: number;
@@ -554,7 +556,7 @@ export interface FisImportPreviewRoom {
 }
 
 export interface ImportChangePlan {
-  digest: string; eventId: number; nation: string; importVersion: number; snapshotScope: 'FULL_NATION'|'SPORT_FAMILY'; sourceFamily?:'Snowboard'|'Freestyle';
+  digest: string; eventId: number; nation: string; importVersion: number; snapshotScope: 'FULL_NATION'|'SPORT_FAMILY'; sourceFamily?:'Snowboard'|'Freestyle'; sourceFamilies?:Array<'Snowboard'|'Freestyle'>;
   requiresDestructiveConfirmation: boolean;
   people: Record<'create'|'update'|'unchanged'|'remove', Array<{personId:number|null;personKey?:string;name:string;fisCode?:string;competitorId?:string;competitionIds?:number[];competitions?:Array<{id:number;name:string;importCode:string}>;bookingIds?:number[];approvalId?:number;approvalApplicability?:string;changes?:Array<{field:string;old:unknown;new:unknown}>;before?:Record<string,string|null>}>>;
   memberships: Record<'add'|'remove'|'unchanged',Array<{personId?:number;personKey?:string;competitionId:number}>>;
@@ -562,7 +564,8 @@ export interface ImportChangePlan {
 }
 
 export interface FisImportPreview {
-  replacementScope?:{kind:'FULL_NATION'|'SPORT_FAMILY'|'UNCONFIRMED';family?:'Snowboard'|'Freestyle'};
+  replacementScope?:{kind:'FULL_NATION'|'SPORT_FAMILY'|'UNCONFIRMED';family?:'Snowboard'|'Freestyle';families?:Array<'Snowboard'|'Freestyle'>};
+  submissionSources?:Record<string,number>;
   quotaOverview?: QuotaOverview;
   changePlan?: ImportChangePlan | null;
   planStale?: boolean;

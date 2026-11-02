@@ -18,6 +18,8 @@ export type ApprovalMethod = 'EMAIL'|'PHONE';
 export interface ImportApproval { id: string; sessionId: string; nation: string; type: string; description: string; decision: 'PENDING'|'APPROVED'|'NEW_LIST_ANNOUNCED'; comment?: string; user: string; timestamp: string; approvalType?: ApprovalType|null; approvalMethod?: ApprovalMethod|null; approvalBy?: string|null; approvalDate?: string|null; contactSubject?: string|null; costCoverage?: string|null; deadlineAt?: string|null; approvedPersonKeys?: string[]; quotaDetails?: { decisionKind?: 'SINGLE_ROOM'|'ATHLETE_QUOTA'; family?:string; tariffEffect?:'NONE'|'SPECIAL_SELECTED'; approvedExtent?:import('../types').QuotaExtent; uncoveredExtent?:import('../types').QuotaExtent; required?:import('../types').QuotaExtent; candidates?:Array<{personKey:string;name?:string;gender?:string}>; ezRequested?: number; ezEntitlement?: number; ezExcess?: number; officialsBasis?: number; officialsReported?: number; athletesEntered?: number; singleRoomsRequested?: number; discipline?: string; gender?: string; excessCount?: number; importedSingleRooms?: number; singleRoomsAllowed?: number; quotaExemptSingleRooms?: number; importedOfficials?: number; officialQuota?: number; singleRoomCandidates?: Array<{personKey:string;name:string;function?:string;singleRoomQuotaExemptReason?:SingleRoomQuotaExemptReason}>; singleRoomReviewPeople?: Array<{personKey:string;name:string;function?:string;singleRoomQuotaExemptReason?:SingleRoomQuotaExemptReason}> }; }
 export interface ImportDecision extends ImportApproval { discipline?: string|null; gender?: string|null; importVersion?: number|null; importSession:{id:string;nation:string}; people:Array<{id:string;name:string;nation:string;singleRoomStatus:string}>; }
 export interface ImportSession {
+  submissions?:Array<{family:string;versionId:string;version:number;people:number;athletes:number;status:ImportSessionStatus;errors:number}>;
+  submissionTotal?:{people:number|null;athletes?:number;retainedPeople?:number;conflict?:string};
   importControl?:import('../types').ImportControl;
   id: string; nation: string; discipline?: string; uploadedAt: string; uploadedBy: string;
   status: ImportSessionStatus; warnings: number; errors: number; version: number;
@@ -29,3 +31,5 @@ export interface ImportSession {
 }
 
 export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED']);
+
+export const hasOpenSubmissions = (session:{submissions?:ReadonlyArray<{status:string}>}) => Boolean(session.submissions?.some(s=>s.status!=='IMPORTED'));

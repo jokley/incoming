@@ -59,3 +59,15 @@ test('partial preview labels the file roster, not the combined nation population
  const full=renderToStaticMarkup(createElement(Preview,{preview:{...preview,replacementScope:{kind:'FULL_NATION'}},peopleRows:[],roomRows:[],onOpen:()=>{}}));
  assert.ok(full.includes('Vollständige Nationsmeldung'));assert.ok(!full.includes('aus diesen Dateien'));
 });
+
+
+test('combined nation uses the same four tiles and keeps a partial imported session operationally open',async()=>{
+ const {hasOpenSubmissions}=await import('../data/importSessions.ts');
+ const combined={...preview,replacementScope:{kind:'SPORT_FAMILY',families:['Snowboard','Freestyle']},submissionSources:{Snowboard:1,Freestyle:2},people:Array.from({length:11},()=>({firstname:'Synthetic',lastname:'Person'}))};
+ const html=renderToStaticMarkup(createElement(Preview,{preview:combined,peopleRows:[],roomRows:[],onOpen:()=>{}}));
+ assert.ok(html.includes('Gemeinsamer Nationsprüfstand')&&html.includes('11 Personen'));
+ assert.ok(!html.includes('aus diesen Dateien'));
+ const session={status:'IMPORTED',submissions:[{status:'IMPORTED'},{status:'PROFESSIONALLY_REVIEWED'}]};
+ assert.equal(hasOpenSubmissions(session),true);
+ session.submissions[1].status='IMPORTED';assert.equal(hasOpenSubmissions(session),false);
+});

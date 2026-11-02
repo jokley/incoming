@@ -12,6 +12,7 @@ class ImportReadContext:
         self.competitions_by_id = {c.id: c for c in Competition.query.all()}
         owner = self.event_id
         self.athletes = Athlete.query.filter_by(event_id=owner).options(
+            selectinload(Athlete.competitions),
             with_loader_criteria(Athlete, Athlete.event_id == owner, include_aliases=True),
             with_loader_criteria(RoomBooking, RoomBooking.event_id == owner, include_aliases=True),
             with_loader_criteria(ImportApproval, ImportApproval.session_id.in_(

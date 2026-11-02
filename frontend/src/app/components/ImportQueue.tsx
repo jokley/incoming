@@ -6,7 +6,7 @@ import { AlertCircle, Clock3, Plus, Search } from 'lucide-react';
 import { clsx } from 'clsx';
 import { ContentCard, EmptyState, SectionHeader, StatusChip } from '../design-system';
 import { competitionDisplayName } from '../services/competitionPresentation';
-import { completedImportStatuses, IMPORT_SESSION_STATUS, ImportSession, ImportSessionStatus } from '../data/importSessions';
+import { completedImportStatuses, hasOpenSubmissions, IMPORT_SESSION_STATUS, ImportSession, ImportSessionStatus } from '../data/importSessions';
 
 const statusTone: Record<ImportSessionStatus, 'neutral' | 'primary' | 'success' | 'warning' | 'error' | 'info'> = {
   EXCEPTION_APPROVED:'success', CANCELLED:'neutral', DRAFT:'neutral', TECHNICALLY_REVIEWED:'primary', PROFESSIONALLY_REVIEWED:'info', WAITING_FOR_NATION:'warning', NEW_LIST_RECEIVED:'primary', RECHECK_REQUIRED:'warning', PREVIEW_CREATED:'primary', READY_FOR_IMPORT:'info', NATION_CLARIFICATION:'warning', APPROVED:'success', IMPORTED:'success', REPLACED:'neutral', ARCHIVED:'neutral', ERROR:'error',
@@ -15,8 +15,8 @@ const statusTone: Record<ImportSessionStatus, 'neutral' | 'primary' | 'success' 
 export function ImportQueue({ sessions, selectedId, isCreating, onCreate, onSelect }: { sessions: ImportSession[]; selectedId: string | null; isCreating: boolean; onCreate: () => void; onSelect: (session: ImportSession) => void }) {
   const [search, setSearch] = useState('');
   const filtered = sessions.filter(session => `${session.id} ${session.nation} ${session.discipline} ${session.uploadedBy}`.toLowerCase().includes(search.toLowerCase()));
-  const openSessions = filtered.filter(session => !completedImportStatuses.has(session.status));
-  const completedSessions = filtered.filter(session => completedImportStatuses.has(session.status));
+  const openSessions = filtered.filter(session => (!completedImportStatuses.has(session.status)||hasOpenSubmissions(session)));
+  const completedSessions = filtered.filter(session => completedImportStatuses.has(session.status)&&!hasOpenSubmissions(session));
   return <ContentCard surface="raised" className="flex shrink-0 flex-col overflow-hidden xl:min-h-0 xl:w-[23rem]">
     <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
       <SectionHeader title={`Importwarteschlange (${sessions.length})`} subtitle="Offene Arbeit zuerst · Sitzung auswählen" />
@@ -43,7 +43,7 @@ function SessionGroup({ title, sessions, selectedId, onSelect, className = '' }:
     <div className="mb-2 flex items-center justify-between px-1 text-[11px] font-extrabold uppercase tracking-[0.14em] text-[var(--ops-text-subtle)]"><span>{title}</span><span>{sessions.length}</span></div>
     <div className="space-y-2">
       {sessions.map(session => { const needsAction = session.errors > 0 || session.approvals.some(approval => approval.decision === 'PENDING'); return <div key={session.id} className="relative"><button type="button" onClick={() => onSelect(session)} className={clsx('w-full rounded-xl border p-3 text-left transition-colors hover:bg-[var(--ops-surface-elevated)]', selectedId === session.id ? 'border-[var(--ops-primary)] bg-[var(--ops-tone-primary-surface)] ring-1 ring-[var(--ops-primary)]' : needsAction ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-surface)]' : 'border-[var(--ops-border)] bg-[var(--ops-surface)]')}>
-        <div className="flex items-start justify-between gap-2"><div><div className="font-extrabold">{session.nation} · {competitionDisplayName(session.discipline) || '—'}</div><div className="mt-0.5 font-mono text-[11px] text-[var(--ops-text-subtle)]">IS-{session.id} · v{session.currentVersion?.version ?? 0}</div></div><StatusChip tone={statusTone[session.status]}>{IMPORT_SESSION_STATUS[session.status]}</StatusChip></div>
+        <div className="flex items-start justify-between gap-2"><div><div className="font-extrabold">{session.nation} · {competitionDisplayName(session.discipline) || '—'}</div><div className="mt-0.5 font-mono text-[11px] text-[var(--ops-text-subtle)]">IS-{session.id} · v{session.currentVersion?.version ?? 0}</div></div><StatusChip tone={statusTone[session.status]}>{session.status==='IMPORTED'&&hasOpenSubmissions(session)?'Teilweise importiert':IMPORT_SESSION_STATUS[session.status]}</StatusChip></div>
         <div className="mt-3 flex flex-col gap-2 text-xs text-[var(--ops-text-muted)]"><div className="space-y-1"><div className="flex items-center gap-1.5"><Clock3 className="h-3.5 w-3.5" />{session.uploadedAt}</div><div>von {session.uploadedBy}</div></div><div className="flex flex-wrap gap-1.5 pr-5"><StatusChip tone="info">{session.warnings} Hinweise</StatusChip><StatusChip tone={session.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'neutral'}>{session.approvals.filter(a => a.decision === 'PENDING').length} offen</StatusChip><StatusChip tone={session.errors ? 'error' : 'neutral'}>{session.errors} Fehler</StatusChip></div></div>
       </button><QueueHintDetails session={session}/></div>})}
     </div>
