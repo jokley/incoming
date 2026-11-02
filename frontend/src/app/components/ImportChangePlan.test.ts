@@ -69,8 +69,14 @@ test('combined scope preserves partial replacement wording and one resulting per
  const combined:ImportChangePlan={...structuredClone(plan),snapshotScope:'SPORT_FAMILY',sourceFamilies:['Snowboard','Freestyle']};
  combined.people.create=[{personId:null,personKey:'shared',name:'One shared person'}];combined.people.remove=[];
  const html=renderToStaticMarkup(createElement(Component,{plan:combined,editable:true,destructiveConfirmed:false,onDestructive:()=>{},onRecheck:()=>{},busy:false}));
- assert.ok(html.includes('Gemeinsamer Nationsprüfstand'));
+ assert.ok(html.includes('Erfasster Nationsentwurf'));
  assert.ok(html.includes('Nationsbestand nach diesem Import: 1 Personen'));
  assert.ok(!html.includes('Vollständiger Nationen-Snapshot'));
  assert.equal(importReviewRequest(combined,true).snapshotScope,'SPORT_FAMILY');
+});
+
+test('guided workflow owns recheck without a competing change-plan action',()=>{
+ const html=renderToStaticMarkup(createElement(Component,{plan,stale:true,editable:true,destructiveConfirmed:false,onDestructive:()=>{},busy:false}));
+ assert.ok(html.includes('Prüfstand veraltet'));assert.ok(!html.includes('<button'));
+ assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,1);
 });
