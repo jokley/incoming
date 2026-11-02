@@ -140,3 +140,11 @@ test('used EZ exceptions are grouped by recorded reason, not by champion status 
  preview.people[4].singleRoomQuotaExemptReason='OTHER';
  const conflicted=singleRoomSummary(preview,'JPN');assert.equal(conflicted.exemptions.WORLD_CHAMPION.count,0);assert.equal(conflicted.exemptions.UNKNOWN.count,2);
 });
+
+test('contradictory personal allocation contexts retain one person but cannot imply complete coverage',async()=>{
+ const {singleRoomSummary}=await import('./importHints.ts');
+ const person={matchKey:'one',nationCode:'ITA',singleRoomAllocation:{identity:'same',status:'COVERED',context:['ITA','Snowboard Alpine','M']}};
+ const preview={people:[person,{...person,matchKey:'another-source',singleRoomAllocation:{...person.singleRoomAllocation,context:['ITA','Snowboard Cross','M']}}],rooms:[]} as unknown as FisImportPreview;
+ const before=structuredClone(preview),summary=singleRoomSummary(preview,'ITA');
+ assert.equal(summary.requested,1);assert.equal(summary.counts.COVERED,1);assert.equal(summary.complete,false);assert.deepEqual(preview,before);
+});

@@ -13,7 +13,7 @@ const familyName=(value:string)=>value==='Freestyle'?'Freestyle / Freeski':value
 const genderName=(value:string)=>value==='M'?'Männer':['W','F'].includes(value)?'Frauen':`Unbekannt (${value||'—'})`;
 
 function PeopleCount({count,filter,onPeople,label}:{count:number;filter:QuotaPeopleFilter;onPeople?:Navigate;label:string}) {
- return onPeople?<button type="button" onClick={()=>onPeople(filter)} aria-label={label} className="font-bold text-[var(--ops-primary)] underline decoration-dotted underline-offset-4">{count}</button>:<strong>{count}</strong>;
+ return onPeople?<button type="button" onClick={()=>onPeople(filter)} aria-label={label} style={{fontSize:'inherit'}} className="font-bold text-[var(--ops-primary)] underline decoration-dotted underline-offset-4">{count}</button>:<strong>{count}</strong>;
 }
 function AthleteState({row,incomplete}:{row:Family;incomplete:boolean}) {
  if(incomplete||row.athleteQuotaStatus==='INCOMPLETE')return <StatusChip tone="warning">Fachlich prüfen</StatusChip>;
@@ -56,38 +56,46 @@ function OfficialsOverview({nation,fixed,onPeople,preview,control}:{nation:Natio
  const incomplete=nation.incomplete||!fixed;
 
  const ez=preview?singleRoomSummary(preview,nation.nationCode):null;
+ const breakdown=(summary:ReturnType<typeof singleRoomSummary>|null,scope?:string)=>{
+  if(!summary?.available)return <StatusChip tone="neutral">EZ-Bewertung unvollständig</StatusChip>;
+  if(summary.requested===0)return <span className="text-xs text-[var(--ops-text-muted)]">Keine EZ angefordert</span>;
+  const ready=summary.complete&&Boolean(ez?.complete)&&!incomplete&&summary.exemptions.UNKNOWN.count===0;
+  const open=summary.counts.PENDING>0;
+  const parts=[
+   {count:summary.counts.COVERED,keys:summary.personKeys.COVERED,label:'regulär',action:'regulär gedeckt'},
+   {count:summary.counts.APPROVED_EXTRA,keys:summary.personKeys.APPROVED_EXTRA,label:'zusätzlich genehmigt',action:'zusätzliche EZ genehmigt'},
+   {count:summary.exemptions.WORLD_CHAMPION.count,keys:summary.exemptions.WORLD_CHAMPION.personKeys,label:'WM-Ausnahme',action:'WM-EZ-Ausnahme'},
+   {count:summary.exemptions.OTHER.count,keys:summary.exemptions.OTHER.personKeys,label:'allgemeine Ausnahme',action:'Allgemeine EZ-Ausnahme'},
+   {count:summary.exemptions.UNKNOWN.count,keys:summary.exemptions.UNKNOWN.personKeys,label:'Ausnahme (Grund unklar)',action:'EZ-Ausnahme mit unklarem Grund'},
+  ].filter(part=>part.count>0);
+  return <StatusChip tone={open?'warning':ready?'success':'neutral'}><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">
+   {!scope&&<>{ready&&!open?'Alle ':''}<PeopleCount count={summary.requested} filter={{nation:nation.nationCode,role:'people',personKeys:summary.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/> EZ{ready&&!open?' gedeckt':''}: </>}
+   {parts.map((part,i)=><Fragment key={part.action}>{i>0?' + ':''}<PeopleCount count={part.count} filter={{nation:nation.nationCode,role:'people',personKeys:part.keys}} onPeople={onPeople} label={`${part.action}: Personen anzeigen${scope?` · ${scope}`:''}`}/> {part.label}</Fragment>)}
+   {open&&<>{parts.length?', ':''}<PeopleCount count={summary.counts.PENDING} filter={{nation:nation.nationCode,role:'people',personKeys:summary.personKeys.PENDING}} onPeople={onPeople} label={`EZ offen: Personen anzeigen${scope?` · ${scope}`:''}`}/> noch offen</>}
+   {!ready&&<span className="block">Zuordnung oder Evidenz unvollständig</span>}
+  </span></StatusChip>;
+ };
  const withoutContext=preview?.people.filter(p=>p.nationCode===nation.nationCode&&p.function?.trim().toLowerCase()!=='athlete'&&control?.people.some(row=>row.personKey===p.matchKey&&row.quotaContexts?.length===0)).map(p=>p.matchKey!)??[];
  return <div className="space-y-3">
   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis">
    <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials</span>
-   {ez?.available&&<span><PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/> EZ angefordert</span>}
+
   </div>
-  {ez?.available&&<div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="EZ-Gesamtbewertung">
-   {([['COVERED','regulär gedeckt'],['APPROVED_EXTRA','zusätzliche EZ genehmigt']] as const).map(([status,label])=><span key={status}><PeopleCount count={ez.counts[status]} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys[status]}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}</span>)}
-   {ez.counts.EXEMPT===0?<span>0 EZ-Ausnahmen</span>:Object.entries(ez.exemptions).filter(([,value])=>value.count>0).map(([reason,value])=>{
-    const label=reason==='WORLD_CHAMPION'?'WM-EZ-Ausnahme':reason==='OTHER'?'Allgemeine EZ-Ausnahme':'EZ-Ausnahmen · Grund nicht eindeutig';
-    return <span key={reason}><PeopleCount count={value.count} filter={{nation:nation.nationCode,role:'people',personKeys:value.personKeys}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}{reason!=='UNKNOWN'&&value.count!==1?'n':''}</span>;
-   })}
-   {ez.counts.PENDING>0?<span className="text-[var(--ops-warning)]"><PeopleCount count={ez.counts.PENDING} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys.PENDING}} onPeople={onPeople} label="EZ offen: Personen anzeigen"/> EZ offen</span>:<StatusChip tone={ez.complete&&!incomplete?'success':'neutral'}>{ez.complete&&!incomplete?'EZ abgedeckt':'EZ-Zuordnung unvollständig'}</StatusChip>}
-  </div>}
-  {!ez?.available&&<StatusChip tone="neutral">EZ-Gesamtbewertung nicht sicher verfügbar</StatusChip>}
+  <div className="text-sm" aria-label="EZ-Gesamtbewertung">{breakdown(ez)}</div>
   {nation.otherPeople>0&&<p className="text-xs">{nation.otherPeople} weitere / unzugeordnete Personen</p>}
-  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full text-xs sm:text-sm">
+  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full table-fixed text-[11px] sm:table-auto sm:text-sm">
    <caption className="sr-only">Eindeutige Officials und bestehende EZ-Bewertung</caption>
-   <thead><tr>{['Event Group','Officials¹','EZ-Anfragen','EZ-Status'].map((label,i)=><th key={label} scope="col" title={i===1?'Eindeutige Personen je Event Group; nicht über Gruppen addieren.':undefined} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i>0&&i<3?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
+   <thead><tr>{['Event Group','Officials¹','EZ-Anfragen','EZ-Status'].map((label,i)=><th key={label} scope="col" title={i===1?'Eindeutige Personen je Event Group; nicht über Gruppen addieren.':undefined} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i>0&&i<3?'w-[18%] text-right':i===0?'w-[32%] text-left':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{nation.groups.map(group=>{
-    const review=incomplete||!group.contexts.length;
     const totals=group.totals;
+    const assigned=preview?singleRoomSummary({...preview,people:preview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null;
+    const consistent=assigned&&assigned.requested===totals.singleRoomsRequested&&assigned.counts.PENDING===totals.singleRoomsPending&&assigned.counts.APPROVED_EXTRA===totals.singleRoomsApproved&&assigned.counts.EXEMPT===totals.quotaExemptSingleRooms;
     return <Fragment key={group.name}>
-     <tr className="border-t border-[var(--ops-divider)]">
+     <tr className={`border-t border-[var(--ops-divider)] ${totals.singleRoomsPending?'border-l-2 border-l-[var(--ops-warning)]':''}`}>
       <th scope="row" className="ops-table-wrap px-1 py-2 sm:px-3 text-left">{group.name}</th>
       <td className={numberCell}><PeopleCount count={group.officials} filter={{nation:nation.nationCode,role:'officials',group:group.name}} onPeople={onPeople} label={`Officials ${group.name} anzeigen`}/></td>
       <td className={numberCell}>{totals.singleRoomsRequested}</td>
-      <td className="ops-table-wrap px-1 py-2 sm:px-3"><StatusChip tone={totals.singleRoomsPending?'warning':review?'neutral':'success'}>{totals.singleRoomsPending?'EZ offen':review?'Nicht sicher bewertbar':'Keine EZ offen'}</StatusChip>
-       {totals.singleRoomsPending>0&&<span className="block text-xs">{totals.singleRoomsPending} EZ offen</span>}
-       {totals.singleRoomsApproved>0&&<span className="block text-xs">{totals.singleRoomsApproved} zusätzliche EZ genehmigt</span>}
-       {totals.quotaExemptSingleRooms>0&&<span className="block text-xs">{totals.quotaExemptSingleRooms} EZ-Ausnahmen</span>}
-      </td>
+      <td className="ops-table-wrap px-1 py-2 sm:px-3 [&_svg]:hidden sm:[&_svg]:block">{breakdown(consistent?assigned:null,group.name)}{!consistent&&totals.singleRoomsPending>0&&<span className="block text-xs">{totals.singleRoomsPending} EZ offen</span>}</td>
      </tr>
      <tr><td colSpan={4} className="ops-table-wrap px-1 pb-2 sm:px-3"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Geschlechteraufteilung</summary>
       <div className="w-0 min-w-full overflow-x-auto"><table className="mt-2 w-full text-xs"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>

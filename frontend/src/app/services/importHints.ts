@@ -80,7 +80,7 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
  const people=preview.people.filter(p=>!nation||p.nationCode===nation);
  const categories={COVERED:[] as string[],APPROVED_EXTRA:[] as string[],EXEMPT:[] as string[],PENDING:[] as string[]};
  const byKey=new Map(people.map(p=>[p.matchKey,p]));
- const members=new Map<string,{keys:Set<string>;statuses:Set<string>;reasons:Set<string>}>();
+ const members=new Map<string,{keys:Set<string>;statuses:Set<string>;reasons:Set<string>;contexts:Set<string>}>();
  let available=people.every(p=>'singleRoomAllocation' in p);
  let complete=available;
  for(const person of people){
@@ -88,9 +88,10 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
   if(!allocation)continue;
   const identity=person.existingAthleteId!=null?`persisted:${person.existingAthleteId}`:allocation.identity??person.matchKey;
   if(!identity){available=false;continue;}
-  const member=members.get(`${person.nationCode}:${identity}`)??{keys:new Set<string>(),statuses:new Set<string>(),reasons:new Set<string>()};
+  const member=members.get(`${person.nationCode}:${identity}`)??{keys:new Set<string>(),statuses:new Set<string>(),reasons:new Set<string>(),contexts:new Set<string>()};
   if(person.matchKey)member.keys.add(person.matchKey);else available=false;
   member.reasons.add(person.singleRoomQuotaExemptReason??'');
+  member.contexts.add(JSON.stringify(allocation.context));
   member.statuses.add(allocation.status??'');members.set(`${person.nationCode}:${identity}`,member);
   if(!allocation.context)complete=false;
  }
@@ -98,6 +99,7 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
  const exemptions={WORLD_CHAMPION:{count:0,personKeys:[] as string[]},OTHER:{count:0,personKeys:[] as string[]},UNKNOWN:{count:0,personKeys:[] as string[]}};
  for(const member of members.values()){
   const status=[...member.statuses][0];
+  if(member.contexts.size!==1)complete=false;
   if(member.statuses.size!==1||!(status in categories)){available=false;continue;}
   counts[status as keyof typeof counts]++;
   categories[status as keyof typeof categories].push(...member.keys);
