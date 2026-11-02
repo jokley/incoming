@@ -3,13 +3,13 @@ import { InfoPanel, OpsButton } from '../design-system';
 
 export function ImportChangePlan({ plan, stale, editable, destructiveConfirmed, onDestructive, onRecheck, busy }: {
   plan?: Plan | null; stale?: boolean; editable: boolean; destructiveConfirmed: boolean;
-  onDestructive: (value: boolean) => void; onRecheck: () => void; busy: boolean;
+  onDestructive: (value: boolean) => void; onRecheck?: () => void; busy: boolean;
 }) {
   return <section aria-labelledby="import-change-plan" className="space-y-3 rounded-xl border border-[var(--ops-border)] p-4">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="import-change-plan" className="font-bold">Änderungsplan</h3><OpsButton onClick={onRecheck} disabled={busy}>Erneut prüfen / Reimport vorbereiten</OpsButton></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 id="import-change-plan" className="font-bold">Änderungsplan</h3>{onRecheck&&<OpsButton onClick={onRecheck} disabled={busy}>Erneut prüfen / Reimport vorbereiten</OpsButton>}</div>
     {stale && <InfoPanel tone="warning" title="Prüfstand veraltet">Der relevante Datenstand wurde geändert. Erneut prüfen und anschließend neu freigeben.</InfoPanel>}
     {!plan ? <p className="text-sm">Vor der Freigabe ist eine erneute Prüfung erforderlich.</p> : <>
-      <p className="text-sm">{plan.nation} · Event {plan.eventId} · Version {plan.importVersion} · {plan.snapshotScope==='SPORT_FAMILY'?plan.sourceFamilies?.length ? 'Gemeinsamer Nationsprüfstand' : `Teilmeldung · ${plan.sourceFamily==='Snowboard'?'Snowboard (SB)':'Freestyle/Freeski (FS)'}`:'Vollständiger Nationen-Snapshot'}</p>
+      <p className="text-sm">{plan.nation} · {plan.snapshotScope==='SPORT_FAMILY'?plan.sourceFamilies?.length ? 'Erfasster Nationsentwurf' : `Teilmeldung · ${plan.sourceFamily==='Snowboard'?'Snowboard (SB)':'Freestyle/Freeski (FS)'}`:'Vollständiger Nationen-Snapshot'}</p>
       <p className="text-sm">{plan.people.create.length} neu · {plan.people.update.length} aktualisiert · {plan.people.unchanged.length} unverändert · <strong>{plan.people.remove.length} zu entfernen</strong></p>
       {plan.snapshotScope==='SPORT_FAMILY'&&!stale&&<p className="text-sm font-bold">Nationsbestand nach diesem Import: {plan.people.create.length + plan.people.update.length + plan.people.unchanged.length} Personen</p>}
       <p className="text-xs text-[var(--ops-text-muted)]">Competitions: {plan.memberships.add.length} hinzufügen · {plan.memberships.remove.length} entfernen. Buchungen: {plan.operations.bookingIds.length} betroffen · {plan.operations.deleteEmptyBookingIds.length} werden leer und entfernt.</p>
