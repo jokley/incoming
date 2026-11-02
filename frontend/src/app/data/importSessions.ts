@@ -19,10 +19,11 @@ export interface ImportApproval { id: string; sessionId: string; nation: string;
 export interface ImportDecision extends ImportApproval { discipline?: string|null; gender?: string|null; importVersion?: number|null; importSession:{id:string;nation:string}; people:Array<{id:string;name:string;nation:string;singleRoomStatus:string}>; }
 export interface NationClarificationSubject {
   key:string;digest:string;label:string;personKeys:string[];people:string[];
+  coverage?:{schemaVersion:number;eventId:number;nation:string;families:string[];sourceVersionIds:Record<string,number>};
   facts?:{stay?:{arrivalDate?:string;departureDate?:string;allowedStart?:string;allowedEnd?:string;outsideNights?:number}};
 }
 export interface NationClarification {
- id:string;versionId:string;subject:NationClarificationSubject;required:boolean;state:'OPEN'|'RESOLVED'|'CORRECTED';changed:boolean;
+ id:string;versionId:string;subject:NationClarificationSubject;required:boolean;state:'OPEN'|'RESOLVED'|'CORRECTED';changed:boolean;relevant?:boolean;covered?:boolean;
  comment:string;contactMethod?:string;contactDate?:string;user:string;createdAt:string;result?:string;resolutionComment?:string;
  replies:Array<{comment:string;user:string;timestamp:string}>;
 }

@@ -284,11 +284,10 @@ def require_review(session, *, approved=False):
     if any(e.event_type == 'NATION_QUESTION' for e in session.history):
         from import_control import build_import_control, nation_clarifications
         control = build_import_control(preview, ImportReadContext(session.event_id))
-        pending = [i for i in nation_clarifications(session, preview, control)['items'] if i['required'] and i['state'] == 'OPEN']
+        pending = [i for i in nation_clarifications(session, preview, control)['items'] if i['required'] and i['state'] == 'OPEN' and i['relevant']]
         if pending:
             raise ImportValidationError('NATION_CLARIFICATION_REQUIRED', 'Verbindliche Rückfrage an die Nation ist noch offen.')
     if approved and (workflow.get('approvedDigest')!=plan['digest'] or workflow.get('confirmedScope')!=plan['snapshotScope']
-
             or (plan['requiresDestructiveConfirmation'] and not workflow.get('destructiveConfirmed'))):
         raise ImportValidationError('IMPORT_REVIEW_REQUIRED','Änderungsplan wurde nicht ausdrücklich freigegeben.')
     return preview,workflow,plan

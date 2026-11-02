@@ -115,8 +115,8 @@ def clarification_subjects(preview, control):
                      requirement=people.get(key, {}).get('accommodationRequirement')))
     for comp in control.get('competitions', []):
         for entry in comp.get('sportEntries', []):
-            if entry.get('unverifiedAdditional', 0) > 0:
-                keys = entry['personKeys']
+            if entry.get('reported', 1)>0 and (entry.get('status') in {'REVIEW_REQUIRED','INCOMPLETE'} or entry.get('unverifiedAdditional',0)>0 or entry.get('sharedPoolUnverifiedAdditional',0)>0):
+                keys = entry.get('poolPersonKeys',entry['personKeys']) if entry.get('sharedPoolUnverifiedAdditional') else entry['personKeys']
                 add('sport', f"SPORT_{comp['id']}_{entry['nation']}", f"Sportliche Plausibilität: {comp['name']}", keys,
                     dict(people=person_facts(keys), competition=comp['id'], assessment=entry), scope=[comp['id'], entry['nation']])
     for issue in control.get('issues', []):
@@ -152,8 +152,94 @@ def clarification_subjects(preview, control):
     return list(subjects.values())
 
 
+def _clarification_source_views(session, preview, control):
+    """Read current sources, plus the existing merge, without changing a version."""
+    from imports.workflow import submission_heads, load_version_preview, merge_submission_previews
+    from imports.read_context import ImportReadContext
+    from imports.event_context import ImportValidationError, validate_session_event
+    from excel_import import resolve_saved_quota_memberships
+    from types import SimpleNamespace
+    # Upload has flushed the new version before the relationship is reloaded.
+    versions = {v.id:v for v in session.versions}
+    if session.current_version:versions[session.current_version_id]=session.current_version
+    heads = submission_heads(SimpleNamespace(versions=list(versions.values())))
+    if not heads or (preview.get('replacementScope') or {}).get('kind')=='FULL_NATION':
+        return [dict(families={'*'}, sources={'*':session.current_version_id}, preview=preview,
+            subjects=clarification_subjects(preview, control), valid=not preview.get('errors'), shared=set())]
+    context = ImportReadContext(session.event_id)
+    views = []
+    selections = [({family:version}, False) for family,version in sorted(heads.items())]
+    if len(heads)>1:selections.append((heads, True))
+    for selected, combined in selections:
+        data = {}
+        try:
+            data = merge_submission_previews(list(selected.values()), read_context=context) if combined else load_version_preview(next(iter(selected.values())))
+            validate_session_event(session, data)
+            for person in data.get('people', []):
+                resolve_saved_quota_memberships(person, read_context=context)
+            projected = build_import_control(data, context)
+            valid = not data.get('errors') and all(not load_version_preview(v).get('errors') for v in selected.values())
+            subjects = clarification_subjects(data, projected)
+            shared = {p['matchKey'] for p in data.get('people', []) if len({r['versionId'] for r in p.get('sourceRows', [])})>1}
+        except (ImportValidationError, ValueError, TypeError):
+            subjects, valid, shared = [], False, None
+        views.append(dict(families=set(selected), sources={f:v.id for f,v in selected.items()},
+            preview=data, subjects=subjects, valid=valid, shared=shared))
+    return views
+
+
+def _clarification_rebind(subject, origin, view, session):
+    """Recover a changed import key using the unchanged exact identity matcher."""
+    from types import SimpleNamespace
+    from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
+    from imports.event_context import ImportValidationError
+    import json
+    old = list(origin.get('people', []))
+    ids = set((subject.get('coverage') or {}).get('sourceVersionIds', {}).values())
+    old += [p for version in session.versions if version.id in ids for p in json.loads(version.preview_json or '{}').get('people', [])]
+    refs = [p for p in old if str(p.get('matchKey')) in subject.get('personKeys', [])]
+    records = [SimpleNamespace(id=str(p['matchKey']),event_id=session.event_id,fis_code=p.get('fisCode'),competitor_id=p.get('competitorId'),
+        firstname=p.get('firstname'),lastname=p.get('lastname'),nation_code=p.get('nationCode')) for p in view['preview'].get('people', []) if p.get('matchKey')]
+    try:
+        maps = _build_existing_athlete_maps(records,event_id=session.event_id)
+        keys = {hit.id for p in refs if (hit := _find_existing_athlete(p,maps))}
+    except (ImportValidationError,ValueError,TypeError):
+        return None, False
+    candidates = [s for s in view['subjects'] if keys and s['code']==subject.get('code') and s['kind']==subject.get('kind') and set(s['personKeys'])==keys]
+    return (candidates[0] if len(candidates)==1 else None), len(candidates)<=1
+
+
 def nation_clarifications(session, preview, control):
-    subjects = clarification_subjects(preview, control)
+    import json
+    views = _clarification_source_views(session, preview, control)
+    selected = preview.get('replacementScope') or {}
+    selected_families = set(selected.get('families') or [selected.get('family')]) if selected.get('kind')=='SPORT_FAMILY' else {'*'}
+
+    def view_for(subject, origin):
+        saved = subject.get('coverage') or {}
+        scope = origin.get('replacementScope') or {}
+        families = set(saved.get('families') or scope.get('families') or ([scope['family']] if scope.get('family') else []))
+        if not families:
+            families = {f for p in origin.get('people', []) if str(p.get('matchKey')) in subject.get('personKeys', []) for f in p.get('athleteQuotaFamilies', []) if f} or {'*'}
+        shared = subject.get('kind')=='stay' or any(token in subject.get('code','') for token in ('ROOM','PARTNER','SHARED'))
+        joint = next((v for v in views if len(v['families'])>1), None)
+        if shared and joint and (joint['shared'] is None or set(subject.get('personKeys',[])) & joint['shared']):
+            families |= joint['families']
+        candidates = [v for v in views if '*' in v['families'] or families <= v['families']]
+        view = min(candidates,key=lambda v:len(v['families'])) if candidates else None
+        return view, dict(schemaVersion=1,eventId=session.event_id,nation=session.nation,
+            families=sorted(families),sourceVersionIds=view['sources'] if view else {})
+
+    subjects = {}
+    for base in views:
+        if len(base['families'])>1:continue
+        for candidate in base['subjects']:
+            candidate = {**candidate, 'coverage':dict(families=sorted(base['families']))}
+            view, coverage = view_for(candidate,base['preview'])
+            found = next((s for s in view['subjects'] if s['key']==candidate['key']),None) if view else None
+            if found or not view or not view['valid']:
+                subjects[candidate['key']] = {**(found or candidate),'coverage':coverage}
+    subjects = list(subjects.values())
     current = {s['key']: s for s in subjects}
     events = sorted(session.history, key=lambda e: e.id)
     documents = [(e, clarification_document(e)) for e in events]
@@ -161,19 +247,34 @@ def nation_clarifications(session, preview, control):
     for event, doc in documents:
         if not doc or event.event_type != 'NATION_QUESTION':
             continue
-        subject = current.get(doc['subject']['key'])
+        original = doc['subject']
+        version = next((v for v in session.versions if v.id==event.version_id),None)
+        origin = json.loads(version.preview_json or '{}') if version else {}
+        view, coverage = view_for(original,origin)
+        subject = next((s for s in view['subjects'] if s['key']==original['key']),None) if view else None
+        covered = bool(view and view['valid'])
+        if not subject and covered and original.get('personKeys'):
+            subject, identified = _clarification_rebind(original,origin,view,session)
+            covered = covered and identified
+        if subject:
+            current.pop(subject['key'],None)
+            subject={**subject,'key':original['key'],'coverage':coverage}
+            current[subject['key']]=subject
         replies = [(e, d) for e, d in documents if d and str(d.get('questionId')) == str(event.id)]
-        resolved = next(((e, d) for e, d in reversed(replies) if e.event_type == 'NATION_RESOLVED' and subject and
-                         d.get('subject', {}).get('digest') == subject['digest'] and d.get('result') != 'CORRECTED'), None)
-        changed = bool(subject and subject['digest'] != doc['subject']['digest'])
-        items.append(dict(id=str(event.id), versionId=str(event.version_id), subject=subject or doc['subject'],
-            originalSubject=doc['subject'], required=doc['required'], state='CORRECTED' if not subject else 'RESOLVED' if resolved else 'OPEN',
+        last = next(((e,d) for e,d in reversed(replies) if e.event_type=='NATION_RESOLVED'),None)
+        resolved = last if last and last[1].get('result')!='CORRECTED' and (not view or (covered and subject and last[1].get('subject',{}).get('digest')==subject['digest'])) else None
+        corrected = (covered and not subject) or (not view and last and last[1].get('result')=='CORRECTED')
+        baseline = last[1].get('subject', {}).get('digest') if last else original['digest']
+        changed = bool(subject and (subject['digest'] != baseline or (last and last[1].get('result')=='CORRECTED')))
+        relevant = '*' in selected_families or '*' in coverage['families'] or bool(selected_families & set(coverage['families']))
+        items.append(dict(id=str(event.id), versionId=str(event.version_id), subject=subject or {**original,'coverage':coverage},
+            originalSubject=original, required=doc['required'], relevant=relevant, covered=covered, state='CORRECTED' if corrected else 'RESOLVED' if resolved else 'OPEN',
             changed=changed, comment=doc['comment'], contactMethod=doc.get('contactMethod'), contactDate=doc.get('contactDate'),
             user=event.username, createdAt=event.created_at.isoformat()+'Z',
-            result=resolved[1]['result'] if resolved else 'CORRECTED' if not subject else None,
+            result=resolved[1]['result'] if resolved else 'CORRECTED' if corrected else None,
             resolutionComment=resolved[1]['comment'] if resolved else None,
             replies=[dict(comment=d['comment'], user=e.username, timestamp=e.created_at.isoformat()+'Z') for e, d in replies if e.event_type == 'NATION_REPLY']))
-    return dict(subjects=subjects, items=items)
+    return dict(subjects=list(current.values()), items=items)
 
 
 def document_nation_clarification(session, data, preview, control, username):
@@ -210,6 +311,8 @@ def document_nation_clarification(session, data, preview, control, username):
         if action == 'REPLY':
             kind, title = 'NATION_REPLY', 'Rückmeldung dokumentiert: '+item['subject']['label']
         else:
+            if not item['covered']:
+                raise ValueError('Aktuelle Quelldaten decken den Sachverhalt nicht gültig ab; bitte zuerst prüfen.')
             if data.get('result') not in {'CLARIFIED', 'IRRELEVANT'}:
                 raise ValueError('Durch Korrektur erledigt wird ausschließlich aus der aktuellen Liste abgeleitet.')
             doc['result'] = data['result']
@@ -234,4 +337,4 @@ def record_clarification_corrections(session, preview, control, username, *, new
             continue
         db.session.add(ImportSessionEvent(session_id=session.id, version_id=session.current_version_id, event_type='NATION_RESOLVED',
             title='Durch korrigierte Liste erledigt' if new_list else 'Sachverhalt im aktuellen Prüfstand nicht mehr vorhanden', description=json.dumps(dict(format=CLARIFICATION_FORMAT, schemaVersion=1,
-                questionId=item['id'], subject=item['originalSubject'], result='CORRECTED', comment='Der ursprüngliche Hinweis besteht im aktuellen Prüfstand nicht mehr.'), ensure_ascii=False, default=str), username=username))
+                questionId=item['id'], subject=item['originalSubject'], correctionSources=item['subject'].get('coverage'), result='CORRECTED', comment='Der ursprüngliche Hinweis besteht im aktuellen Prüfstand nicht mehr.'), ensure_ascii=False, default=str), username=username))
