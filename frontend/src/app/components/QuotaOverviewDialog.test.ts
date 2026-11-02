@@ -119,3 +119,20 @@ test('role names alone never produce an EZ exemption or a special tariff',()=>{
  const before=structuredClone(preview),visible=text(html(overview,'officials',{preview}));
  assert.ok(visible.includes('3 regulär gedeckt'));assert.ok(visible.includes('0 EZ-Ausnahmen'));assert.deepEqual(preview,before);
 });
+
+test('JPN two title holders use only the single-room exemption; ITA retains reason-specific person navigation',()=>{
+ for(const nationCode of ['JPN','ITA']){
+  const overview=copy();overview.nations[0].nationCode=nationCode;
+  const people=[
+   {matchKey:'title-single',nationCode,singleRoomQuotaExemptReason:'WORLD_CHAMPION',roomType:'Single',singleRoomAllocation:{identity:'one',status:'EXEMPT',context:[nationCode,'Snowboard Alpine','W']}},
+   {matchKey:'title-double',nationCode,singleRoomQuotaExemptReason:'WORLD_CHAMPION',roomType:'Double shared',singleRoomAllocation:null},
+   {matchKey:'general',nationCode,singleRoomQuotaExemptReason:'OTHER',roomType:'Single',singleRoomAllocation:{identity:'two',status:'EXEMPT',context:[nationCode,'Snowboard Alpine','W']}},
+  ];
+  const preview={people,rooms:[]},before=structuredClone(preview);
+  const output=html(overview,'officials',{preview,onPeople:()=>{}}),visible=text(output);
+  for(const label of ['2 EZ angefordert','1 WM-EZ-Ausnahme','1 Allgemeine EZ-Ausnahme'])assert.ok(visible.includes(label),label);
+  assert.ok(!visible.includes('2 WM-EZ-Ausnahmen'));
+  for(const label of ['WM-EZ-Ausnahme: Personen anzeigen','Allgemeine EZ-Ausnahme: Personen anzeigen'])assert.ok(output.includes(`aria-label="${label}"`));
+  assert.deepEqual(preview,before);
+ }
+});

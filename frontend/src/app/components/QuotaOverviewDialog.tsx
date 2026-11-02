@@ -63,7 +63,11 @@ function OfficialsOverview({nation,fixed,onPeople,preview,control}:{nation:Natio
    {ez?.available&&<span><PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/> EZ angefordert</span>}
   </div>
   {ez?.available&&<div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="EZ-Gesamtbewertung">
-   {([['COVERED','regulär gedeckt'],['APPROVED_EXTRA','zusätzliche EZ genehmigt'],['EXEMPT','EZ-Ausnahmen']] as const).map(([status,label])=><span key={status}><PeopleCount count={ez.counts[status]} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys[status]}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}</span>)}
+   {([['COVERED','regulär gedeckt'],['APPROVED_EXTRA','zusätzliche EZ genehmigt']] as const).map(([status,label])=><span key={status}><PeopleCount count={ez.counts[status]} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys[status]}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}</span>)}
+   {ez.counts.EXEMPT===0?<span>0 EZ-Ausnahmen</span>:Object.entries(ez.exemptions).filter(([,value])=>value.count>0).map(([reason,value])=>{
+    const label=reason==='WORLD_CHAMPION'?'WM-EZ-Ausnahme':reason==='OTHER'?'Allgemeine EZ-Ausnahme':'EZ-Ausnahmen · Grund nicht eindeutig';
+    return <span key={reason}><PeopleCount count={value.count} filter={{nation:nation.nationCode,role:'people',personKeys:value.personKeys}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}{reason!=='UNKNOWN'&&value.count!==1?'n':''}</span>;
+   })}
    {ez.counts.PENDING>0?<span className="text-[var(--ops-warning)]"><PeopleCount count={ez.counts.PENDING} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys.PENDING}} onPeople={onPeople} label="EZ offen: Personen anzeigen"/> EZ offen</span>:<StatusChip tone={ez.complete&&!incomplete?'success':'neutral'}>{ez.complete&&!incomplete?'EZ abgedeckt':'EZ-Zuordnung unvollständig'}</StatusChip>}
   </div>}
   {!ez?.available&&<StatusChip tone="neutral">EZ-Gesamtbewertung nicht sicher verfügbar</StatusChip>}
