@@ -2184,7 +2184,8 @@ def _current_session_preview(session, *, read_context=None):
         validate_session_event(session, preview)
         if read_context is not None and read_context.event_id != session.event_id:
             raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Fremder ReadContext für Importsession.')
-        preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
+        from imports.workflow import review_approvals
+        preview['_currentApprovalIds'] = [a.id for a in review_approvals(session,preview)]
         if session.status == 'IMPORTED':
             # Reviewed tariffs have already been applied; read the current live
             # person state rather than replaying an obsolete manual override.
@@ -2737,6 +2738,7 @@ def import_approved_session(session_id):
             raise ImportValidationError('QUOTA_REQUIREMENTS_UNREVIEWED','Aktuelle Validierung benötigt eine neue Prüfung.',details={'requirements':requirements})
         decisions={key:a.id for a in session.current_approvals if a.decision=='APPROVED' and a.approval_type in {
             'NATION_APPROVED','ORGANIZER_APPROVED','PRESERVED_APPROVED_EXTRA'} for key in json.loads(a.approved_person_keys_json or '[]') if json.loads(a.quota_details_json or '{}').get('decisionKind')!='ATHLETE_QUOTA'}
+        decisions.update({key:value['decisionId'] for key,value in preview.get('preservedSingleRoomApprovals',{}).items()})
         token=session.current_version.preview_token
         result=confirm_fis_import(token,decisions,confirmer=current_user().username,persisted_preview=preview,change_plan=plan)
         session.status,session.imported_at='IMPORTED',datetime.utcnow()
@@ -2790,22 +2792,24 @@ def cancel_import_session(session_id):
     preview=load_version_preview(current)
     preview.setdefault('_workflow',{})['state']='CANCELLED'
     current.preview_json=encoded(preview)
+    from imports.workflow import submission_heads
     imported_version_ids={h.version_id for h in session.history if h.event_type=='IMPORTED'}
-    previous=[v for v in session.versions if v.id!=current.id and
-        ((json.loads(v.preview_json or '{}').get('_workflow') or {}).get('state')=='IMPORTED'
-         or v.id in imported_version_ids)]
+    previous=list(submission_heads(session).values())
+    if not previous:
+        previous=[v for v in session.versions if v.id!=current.id and v.id in imported_version_ids]
     db.session.add(ImportSessionEvent(session_id=session.id,version_id=current.id,event_type='CANCELLED',
         title='Aktuelle Prüfversion abgebrochen',description='Frühere Versionen, Genehmigungen und operative Daten bleiben erhalten.',username=current_user().username))
     if previous:
         session.current_version=max(previous,key=lambda v:v.version)
-        session.status='IMPORTED'
+        prior=json.loads(session.current_version.preview_json or '{}')
+        session.status='IMPORTED' if (prior.get('_workflow') or {}).get('state')=='IMPORTED' or session.current_version.id in imported_version_ids else 'DRAFT' if prior.get('errors') else 'PROFESSIONALLY_REVIEWED'
     else:
         session.status='CANCELLED'
     session.approved_at=session.approved_by=None
     session.error_message=None
     db.session.commit()
     PREVIEW_STORE.pop(current.preview_token,None)
-    return jsonify(session.to_dict(include_preview=True))
+    return jsonify(_current_session_payload(session,include_preview=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/recheck',methods=['POST'])
@@ -2814,16 +2818,36 @@ def recheck_import_session(session_id):
     db.session.expire_all()
     session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
     if not session.current_version:return jsonify(error='IMPORT_REVIEW_REQUIRED'),409
-    preview=load_version_preview(session.current_version)
+    data=request.get_json(silent=True) or {}
+    source_version=None
+    composed=None
+    if data.get('sourceVersionIds') is not None:
+        from imports.workflow import submission_heads, merge_submission_previews
+        identities=data['sourceVersionIds']
+        heads={str(v.id):v for v in submission_heads(session).values()}
+        if not isinstance(identities,list) or not identities or len(set(map(str,identities)))!=len(identities) or any(str(i) not in heads for i in identities):
+            return jsonify(error='STALE_PREVIEW',message='Nur aktuelle Teilmeldungen dieser Nation auswählen.'),409
+        versions=[heads[str(i)] for i in identities]
+        composed=merge_submission_previews(versions)
+        source_version=versions[0]
+    if data.get('sourceVersionId') is not None:
+        from imports.workflow import submission_heads
+        source_version=next((v for v in submission_heads(session).values() if str(v.id)==str(data['sourceVersionId'])),None)
+        if source_version is None:
+            return jsonify(error='STALE_PREVIEW',message='Teilmeldung ist nicht mehr aktuell oder gehört zu einer anderen Session.'),409
+    preview=composed or load_version_preview(source_version or session.current_version)
     active_revision=accommodation_rule_event(db.session.get(Event,session.event_id)).quota_rules_revision
-    if session.status in {'IMPORTED','ARCHIVED','REPLACED','CANCELLED'} or preview.get('quotaRulesRevision',1)!=active_revision:
-        from imports.workflow import fork_review_version
-        preview=fork_review_version(session,preview,current_user().username)
+    if source_version or session.status in {'IMPORTED','ARCHIVED','REPLACED','CANCELLED'} or preview.get('quotaRulesRevision',1)!=active_revision:
+        from imports.workflow import fork_review_version, imported_submission_ids
+        preview=fork_review_version(session,preview,current_user().username,source_version=source_version,
+            preserve_overrides=bool(source_version and (composed or source_version.id not in imported_submission_ids(session))))
     session.status='PROFESSIONALLY_REVIEWED'
     preview=refresh_plan(session,preview)
     # Existing quota applicability checks remain authoritative. Regenerate pending tasks.
     reconcile_single_room_tasks(session)
     refresh_plan(session)
+    if source_version and not session.current_approvals:
+        session.status='PROFESSIONALLY_REVIEWED'
     db.session.add(ImportSessionEvent(session_id=session.id,version_id=session.current_version_id,event_type='RECHECKED',
         title='Geparste Meldung erneut geprüft',description='Aktueller Datenstand, keine Personenänderung. Excel wird nicht erneut geparst.',username=current_user().username))
     db.session.commit()

@@ -81,7 +81,7 @@ def state(event_id, nation):
 
 
 def input_fingerprint(preview):
-    return digest({**({'replacementScope':preview['replacementScope']} if 'replacementScope' in preview else {}), **{k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
+    return digest({**{k:preview[k] for k in ('replacementScope','submissionSources','submissionSourceDigests','reviewSourceVersionId','evaluationPeople') if k in preview}, **{k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
         'quotaRulesDigest','quotaRulesRevision','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
         'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')}})
 
@@ -97,14 +97,14 @@ def build_plan(preview, read_context, *, version=None):
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ein Snapshot benötigt genau eine ausdrücklich gewählte Nation.')
     from competitions import competition_athlete_family
     scope = preview.get('replacementScope') or {'kind':'FULL_NATION'}  # Historical snapshots retain their original meaning.
-    family = scope.get('family') if scope.get('kind') == 'SPORT_FAMILY' else None
-    if scope.get('kind') not in {'FULL_NATION','SPORT_FAMILY'} or (scope['kind']=='SPORT_FAMILY' and family not in {'Snowboard','Freestyle'}):
+    family = set(scope.get('families') or [scope.get('family')]) if scope.get('kind') == 'SPORT_FAMILY' else set()
+    if scope.get('kind') not in {'FULL_NATION','SPORT_FAMILY'} or (scope['kind']=='SPORT_FAMILY' and (not family or not family <= {'Snowboard','Freestyle'})):
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Sportbereich nicht eindeutig. Ersetzungsbereich ausdrücklich wählen; kein Import durchgeführt.')
     snapshot = state(event_id, nation)
     old = {p['id']:p for p in snapshot['people']}
     memberships = {i:set() for i in old}
     for m in snapshot['memberships']:memberships[m['athlete_id']].add(m['competition_id'])
-    in_scope = {cid for cid, c in read_context.competitions_by_id.items() if not family or competition_athlete_family(c) == family}
+    in_scope = {cid for cid, c in read_context.competitions_by_id.items() if not family or competition_athlete_family(c) in family}
     people = {k:[] for k in ('create','update','unchanged','remove','conflicts')}
     member_changes = {'add':[], 'remove':[], 'unchanged':[]}
     single_bookings = {b['id'] for b in snapshot['bookings'] if b['counts_as_single']}
@@ -132,7 +132,7 @@ def build_plan(preview, read_context, *, version=None):
         clone = SimpleNamespace(**old[existing.id])
         _apply_person_record(clone, p, clone.athletes_last_seen_at,
             rate_override=(preview.get('accommodationRateOverrides') or {}).get(p['matchKey']),
-            preserve_missing_roomlist=bool(preview.get('roomListHasNoData')))
+            preserve_missing_roomlist=bool(p.get('roomListHasNoData',preview.get('roomListHasNoData'))))
         clone.accommodation_requirement=p['accommodationRequirement']
         clone.accommodation_requirement_source=p['accommodationRequirementSource']
         changes = [{'field':k,'old':v,'new':getattr(clone,k)} for k,v in old[existing.id].items()
@@ -180,7 +180,7 @@ def build_plan(preview, read_context, *, version=None):
     legacy = [{'id':r['id'],'action':'DELETE' if r['athlete_id'] in removed else 'CLEAR_PARTNER'} for r in snapshot['legacy'] if r['athlete_id'] in removed or r['shared_with_athlete_id'] in removed]
     fis = [{'id':r['id'],'action':'DELETE' if r['person1_id'] in removed and (not r['person2_id'] or r['person2_id'] in removed) else 'RETAIN_SURVIVOR',
         'survivorId':next((i for i in (r['person1_id'],r['person2_id']) if i and i not in removed),None)} for r in snapshot['fis'] if r['person1_id'] in removed or r['person2_id'] in removed]
-    plan = dict(formatVersion=1,eventId=event_id,nation=nation,snapshotScope=scope['kind'],**({'sourceFamily':family} if family else {}),
+    plan = dict(formatVersion=1,eventId=event_id,nation=nation,snapshotScope=scope['kind'],**({'sourceFamily':next(iter(family))} if len(family)==1 else {'sourceFamilies':sorted(family)} if family else {}),
         sessionId=version.session_id if version else None,versionId=version.id if version else None,
         importVersion=version.version if version else None,stateFingerprint=digest(snapshot),inputFingerprint=input_fingerprint(preview),people=people,
         memberships=member_changes,operations=dict(bookingIds=sorted(affected_bookings),

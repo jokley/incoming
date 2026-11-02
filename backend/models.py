@@ -170,6 +170,27 @@ class ImportSession(db.Model):
         }
         if include_preview:
             result['preview'] = preview
+            from imports.workflow import submission_heads, merge_submission_previews
+            from imports.event_context import ImportValidationError
+            heads=submission_heads(self)
+            if heads:
+                try:
+                    from imports.read_context import ImportReadContext
+                    from imports.identity import _find_existing_athlete
+                    from competitions import competition_athlete_family
+                    context=ImportReadContext(self.event_id)
+                    combined=merge_submission_previews(list(heads.values()),read_context=context)
+                    people=combined['people']
+                    matched={a.id for p in people if (a:=_find_existing_athlete(p,context.athlete_maps))}
+                    retained=[a for a in context.athletes if a.nation_code==self.nation and a.id not in matched
+                        and (not a.competitions or any(competition_athlete_family(c) not in heads for c in a.competitions))]
+                    result['submissionTotal']={'people':len(people)+len(retained),
+                        'athletes':sum((p.get('function') or '').lower()=='athlete' for p in people)+sum((a.function or '').lower()=='athlete' for a in retained),
+                        **({'retainedPeople':len(retained)} if retained else {})}
+                except ImportValidationError as exc:
+                    result['submissionTotal']={'people':None,'conflict':str(exc)}
+        from imports.workflow import submission_summary
+        result['submissions'] = submission_summary(self)
         return result
 
 
