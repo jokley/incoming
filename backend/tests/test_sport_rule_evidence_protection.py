@@ -1,4 +1,5 @@
-"""Future sport-only revisions simulated in disposable DB; no new config API."""
+"""Sport-only revisions preserve accommodation evidence in a disposable DB."""
+from copy import deepcopy
 from datetime import timedelta
 import json
 import pytest
@@ -99,7 +100,13 @@ def test_sport_only_revision_keeps_seven_nations_grants_fingerprints_and_reimpor
     assert fresh['preview'] == before['preview']
     assert not fresh['preview']['planStale'] and not fresh['preview']['quotaRulesChanged']
     assert fresh['approvals'] == before['approvals']
-    assert fresh['importControl'] == before['importControl']  # WM-2027 sport code unchanged
+    # Sport-only revisions may change the informative sport projection, never
+    # the other control data or the approval/fingerprint evidence below.
+    controls = [deepcopy(response['importControl']) for response in (before, fresh)]
+    for control in controls:
+        for competition in control['competitions']:
+            competition.pop('sportEntries', None)
+    assert controls[0] == controls[1]
     assert digest(state(owner.id, nation_code)) == evidence
     assert session.current_version.preview_json == saved
     assert input_fingerprint(json.loads(saved)) == fingerprint

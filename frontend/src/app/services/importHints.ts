@@ -65,7 +65,7 @@ export function personMatchesQuotaFilter(person:FisImportPreviewPerson,filter:Qu
 export function sportClarifications(control?:ImportControl,nation?:string) {
  const positions=new Map<string,{id:string;name:string;gender:string|null;nation:string}>();
  for(const competition of control?.competitions??[])for(const entry of competition.sportEntries??[]){
-  if(entry.unverifiedAdditional>0&&(!nation||entry.nation===nation))positions.set(`${entry.nation}/${competition.id}`,{id:competition.id,name:competition.name,gender:competition.gender,nation:entry.nation});
+  if((entry.reported??1)>0&&(entry.status==='REVIEW_REQUIRED'||entry.status==='INCOMPLETE'||entry.unverifiedAdditional>0)&&(!nation||entry.nation===nation))positions.set(`${entry.nation}/${competition.id}`,{id:competition.id,name:competition.name,gender:competition.gender,nation:entry.nation});
  }
  return [...positions.values()];
 }
@@ -80,7 +80,7 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
  const people=preview.people.filter(p=>!nation||p.nationCode===nation);
  const categories={COVERED:[] as string[],APPROVED_EXTRA:[] as string[],EXEMPT:[] as string[],PENDING:[] as string[]};
  const byKey=new Map(people.map(p=>[p.matchKey,p]));
- const members=new Map<string,{keys:Set<string>;statuses:Set<string>}>();
+ const members=new Map<string,{keys:Set<string>;statuses:Set<string>;reasons:Set<string>;contexts:Set<string>}>();
  let available=people.every(p=>'singleRoomAllocation' in p);
  let complete=available;
  for(const person of people){
@@ -88,17 +88,26 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
   if(!allocation)continue;
   const identity=person.existingAthleteId!=null?`persisted:${person.existingAthleteId}`:allocation.identity??person.matchKey;
   if(!identity){available=false;continue;}
-  const member=members.get(`${person.nationCode}:${identity}`)??{keys:new Set<string>(),statuses:new Set<string>()};
+  const member=members.get(`${person.nationCode}:${identity}`)??{keys:new Set<string>(),statuses:new Set<string>(),reasons:new Set<string>(),contexts:new Set<string>()};
   if(person.matchKey)member.keys.add(person.matchKey);else available=false;
+  member.reasons.add(person.singleRoomQuotaExemptReason??'');
+  member.contexts.add(JSON.stringify(allocation.context));
   member.statuses.add(allocation.status??'');members.set(`${person.nationCode}:${identity}`,member);
   if(!allocation.context)complete=false;
  }
  const counts={COVERED:0,APPROVED_EXTRA:0,EXEMPT:0,PENDING:0};
+ const exemptions={WORLD_CHAMPION:{count:0,personKeys:[] as string[]},OTHER:{count:0,personKeys:[] as string[]},UNKNOWN:{count:0,personKeys:[] as string[]}};
  for(const member of members.values()){
   const status=[...member.statuses][0];
+  if(member.contexts.size!==1)complete=false;
   if(member.statuses.size!==1||!(status in categories)){available=false;continue;}
   counts[status as keyof typeof counts]++;
   categories[status as keyof typeof categories].push(...member.keys);
+  if(status==='EXEMPT'){
+   const reason=[...member.reasons][0];
+   const group=member.reasons.size===1&&(reason==='WORLD_CHAMPION'||reason==='OTHER')?reason:'UNKNOWN';
+   exemptions[group].count++;exemptions[group].personKeys.push(...member.keys);
+  }
  }
  for(const room of preview.rooms??[]){
   if(room.roomType.trim().toLowerCase()!=='single')continue;
@@ -107,5 +116,5 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
    if(person&&person.accommodationRequirement!=='NO_ROOM'&&!person.singleRoomAllocation)available=false;
   }
  }
- return {requested:members.size,counts,personKeys:categories,allPersonKeys:[...new Set([...members.values()].flatMap(m=>[...m.keys]))],complete:complete&&available,available};
+ return {requested:members.size,counts,exemptions,personKeys:categories,allPersonKeys:[...new Set([...members.values()].flatMap(m=>[...m.keys]))],complete:complete&&available,available};
 }

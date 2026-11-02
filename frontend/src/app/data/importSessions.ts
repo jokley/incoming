@@ -27,7 +27,10 @@ export interface NationClarification {
  replies:Array<{comment:string;user:string;timestamp:string}>;
 }
 export interface ImportSession {
+  submissions?:Array<{family:string;versionId:string;version:number;people:number;athletes:number;status:ImportSessionStatus;errors:number}>;
+  submissionTotal?:{people:number|null;athletes?:number;retainedPeople?:number;conflict?:string};
   nationClarifications?:{subjects:NationClarificationSubject[];items:NationClarification[]};
+
   importControl?:import('../types').ImportControl;
   id: string; nation: string; discipline?: string; uploadedAt: string; uploadedBy: string;
   status: ImportSessionStatus; warnings: number; errors: number; version: number;
@@ -39,3 +42,5 @@ export interface ImportSession {
 }
 
 export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED']);
+
+export const hasOpenSubmissions = (session:{submissions?:ReadonlyArray<{status:string}>}) => Boolean(session.submissions?.some(s=>s.status!=='IMPORTED'));

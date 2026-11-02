@@ -11,7 +11,7 @@ def build_import_control(preview, context):
     from stay_window import assess_stay, load_stay_schedule
     schedule = load_stay_schedule(context.event_id) if getattr(context, 'event_id', None) else []
     from models import db, Event
-    from sport_entry_plausibility import project_entries
+    from sport_entry_plausibility import project_entries, active_competitions
     event = db.session.get(Event, context.event_id) if getattr(context, 'event_id', None) else None
     sport = project_entries(preview.get('people', []), context.competitions_by_id, event)
     people=preview.get('people',[]);rooms=preview.get('rooms',[])
@@ -66,6 +66,9 @@ def build_import_control(preview, context):
             refs=p.get('worldChampionReferences') or []
             if not refs or any(not r.get('discipline') for r in refs):
                 add('clarification','TITLE_REFERENCE_UNCLEAR','Weltmeister-EZ-Ausnahme vorhanden; eindeutige Titel-/Disziplinreferenz ist in diesem Prüfstand nicht hinterlegt. Kein sportliches Startrecht daraus ableiten.',[key],'Bestehende Bewertung')
+    # Include active zero-entry counterparts for an explicit 0 / rule-value.
+    for cid,c in active_competitions(event,context.competitions_by_id).items() if event else []:
+        competitions.setdefault(cid,dict(id=cid,name=c.name,group=c.quota_discipline,gender=c.gender,people=set(),athletes=set()))
     return dict(people=rows,issues=issues,competitions=[{**{k:v for k,v in c.items() if k not in {'people','athletes'}},'people':len(c['people']),'athletes':len(c['athletes']),'sportEntries':sport.get(c['id'],[])} for c in sorted(competitions.values(),key=lambda c:(c['group'] or '',c['name']))])
 
 

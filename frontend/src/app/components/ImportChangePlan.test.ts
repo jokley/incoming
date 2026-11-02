@@ -38,3 +38,45 @@ test('stale plans visibly require new review and disable confirmation controls',
   assert.ok(html.includes('Erneut prüfen / Reimport vorbereiten'));
   assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,1);
 });
+
+
+test('sport-family plan labels its actual scope and confirms exactly that server scope',()=>{
+ const partial={...structuredClone(plan),snapshotScope:'SPORT_FAMILY' as const,sourceFamily:'Snowboard' as const};
+ partial.people.unchanged=[{personId:8,name:'Preserved other-family person'}];
+ const html=renderToStaticMarkup(createElement(Component,{plan:partial,stale:false,editable:true,destructiveConfirmed:true,onDestructive:()=>{},onRecheck:()=>{},busy:false}));
+ assert.ok(html.includes('Unverändert erhaltene Personen (1)')&&html.includes('Preserved other-family person'));
+ assert.ok(html.includes('Teilmeldung')&&html.includes('Snowboard (SB)'));
+ assert.ok(html.includes('Personen und Mitgliedschaften des anderen Bereichs bleiben erhalten'));
+ assert.equal(importReviewRequest(partial,true).snapshotScope,'SPORT_FAMILY');
+ assert.equal(importReviewRequest(plan,true).snapshotScope,'FULL_NATION');
+});
+
+
+test('partial plans distinguish the resulting nation total without counting removed people or memberships twice',()=>{
+ const partial={...structuredClone(plan),snapshotScope:'SPORT_FAMILY',sourceFamily:'Freestyle'};
+ partial.people.create=[{personKey:'new',personId:null,name:'New'}];
+ partial.people.update=[{personId:2,name:'Shared person'}];
+ partial.people.unchanged=[{personId:3,name:'Preserved SB'}];
+ const props={plan:partial,editable:true,destructiveConfirmed:false,onDestructive:()=>{},onRecheck:()=>{},busy:false};
+ const html=renderToStaticMarkup(createElement(Component,props));
+ assert.ok(html.includes('Nationsbestand nach diesem Import: 3 Personen'));
+ assert.ok(!renderToStaticMarkup(createElement(Component,{...props,stale:true})).includes('Nationsbestand nach diesem Import:'));
+ assert.ok(!renderToStaticMarkup(createElement(Component,{...props,plan})).includes('Nationsbestand nach diesem Import:'));
+});
+
+
+test('combined scope preserves partial replacement wording and one resulting person count',()=>{
+ const combined:ImportChangePlan={...structuredClone(plan),snapshotScope:'SPORT_FAMILY',sourceFamilies:['Snowboard','Freestyle']};
+ combined.people.create=[{personId:null,personKey:'shared',name:'One shared person'}];combined.people.remove=[];
+ const html=renderToStaticMarkup(createElement(Component,{plan:combined,editable:true,destructiveConfirmed:false,onDestructive:()=>{},onRecheck:()=>{},busy:false}));
+ assert.ok(html.includes('Erfasster Nationsentwurf'));
+ assert.ok(html.includes('Nationsbestand nach diesem Import: 1 Personen'));
+ assert.ok(!html.includes('Vollständiger Nationen-Snapshot'));
+ assert.equal(importReviewRequest(combined,true).snapshotScope,'SPORT_FAMILY');
+});
+
+test('guided workflow owns recheck without a competing change-plan action',()=>{
+ const html=renderToStaticMarkup(createElement(Component,{plan,stale:true,editable:true,destructiveConfirmed:false,onDestructive:()=>{},busy:false}));
+ assert.ok(html.includes('Prüfstand veraltet'));assert.ok(!html.includes('<button'));
+ assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,1);
+});

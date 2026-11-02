@@ -933,10 +933,11 @@ class ApiService {
     return this.request(`/admin/world-champions${value.id ? '/' + value.id : ''}`, { method: value.id ? 'PUT' : 'POST', body: JSON.stringify(value) });
   }
 
-  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; message?: string }> {
+  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string, snapshotScope:'AUTO'|'FULL_NATION'='AUTO'): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; message?: string }> {
     const selected = this.eventScope.eventId;
     if (!selected || (eventId && eventId !== selected)) throw new Error('Importsession und aktiver Eventkontext müssen übereinstimmen.');
     const formData = new FormData();
+    formData.append('snapshotScope',snapshotScope);
     files.forEach((file) => formData.append('files', file));
     if (createSession) formData.append('createSession', 'true');
     if (sessionId) formData.append('sessionId', sessionId);
@@ -962,8 +963,8 @@ class ApiService {
       body: JSON.stringify(payload),
     });
   }
-  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION';confirmDestructiveChanges:boolean}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
-  async recheckImportSession(id:string):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST'}); }
+  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION'|'SPORT_FAMILY';confirmDestructiveChanges:boolean}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
+  async recheckImportSession(id:string,selection?:{sourceVersionId?:string;sourceVersionIds?:string[]}):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST',body:JSON.stringify(selection??{})}); }
   async importSession(id: string, versionId?:string|null): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST',body:JSON.stringify({versionId}) })); }
   async cancelImportSession(id: string, versionId?:string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST',body:JSON.stringify({versionId}) }); }
   async documentImportClarification(id:string,data:unknown):Promise<ImportSession> {return this.request(`/import/sessions/${id}/history`,{method:'POST',body:JSON.stringify(data)});}
