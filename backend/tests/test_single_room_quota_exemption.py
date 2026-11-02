@@ -40,3 +40,23 @@ class SingleRoomQuotaExemptionTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_jpn_style_title_single_and_double_use_only_operational_exemptions():
+    from copy import deepcopy
+    from quota_service import allocate_single_rooms
+    people=[dict(matchKey='single-title',nationCode='JPN',gender='W',function='Athlete',
+        quotaDisciplines=['Snowboard Alpine','Snowboard Park & Pipe'],roomType='Single',countsAsSingle=True,singleRoomQuotaExemptReason='WORLD_CHAMPION'),
+        dict(matchKey='double-title',nationCode='JPN',gender='W',function='Athlete',
+        quotaDisciplines=['Snowboard Park & Pipe'],roomType='Double shared',countsAsSingle=False,singleRoomQuotaExemptReason='WORLD_CHAMPION')]
+    before=deepcopy(people)
+    rows=evaluate_quota_usage(people,people)
+    assert sum(r['quotaExemptSingleRooms'] for r in rows)==1
+    assert people==before
+    capacities={('JPN',group,'W'):0 for group in ['Snowboard Alpine','Snowboard Park & Pipe']}
+    assert len(allocate_single_rooms(people,capacities))==1
+    people[1]['roomType']='Single'  # Display label cannot override the operative flag.
+    assert len(allocate_single_rooms(people,capacities))==1
+    people[1]['countsAsSingle']=True  # Existing recalculation of a changed request.
+    assert len(allocate_single_rooms(people,capacities))==2
+    assert sum(r['quotaExemptSingleRooms'] for r in evaluate_quota_usage(people,people))==2

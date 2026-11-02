@@ -121,3 +121,22 @@ test('sport clarification includes incomplete mappings and pool reviews but not 
  const control={competitions:[competition('pool','REVIEW_REQUIRED'),competition('mapping','INCOMPLETE'),competition('team','TEAM_RULE'),competition('empty','INCOMPLETE',0),competition('ok','NUMERIC_OK'),competition('title','TITLE_COVERED')]} as unknown as import('../types.ts').ImportControl;
  assert.deepEqual(sportClarifications(control,'X').map(c=>c.id),['pool','mapping']);
 });
+
+test('used EZ exceptions are grouped by recorded reason, not by champion status or room label',async()=>{
+ const {singleRoomSummary,personMatchesQuotaFilter}=await import('./importHints.ts');
+ const allocation=(identity:string)=>({identity,status:'EXEMPT',context:['JPN','Snowboard Alpine','W']});
+ const people=[
+  {matchKey:'single',nationCode:'JPN',singleRoomQuotaExemptReason:'WORLD_CHAMPION',roomType:'Single',singleRoomAllocation:allocation('one')},
+  {matchKey:'double',nationCode:'JPN',singleRoomQuotaExemptReason:'WORLD_CHAMPION',roomType:'Double shared',singleRoomAllocation:null},
+  {matchKey:'general',nationCode:'JPN',singleRoomQuotaExemptReason:'OTHER',singleRoomAllocation:allocation('two')},
+  {matchKey:'legacy',nationCode:'JPN',singleRoomAllocation:allocation('three')},
+ ];
+ const preview={people:[...people,{...people[0],matchKey:'single-second-group'}],rooms:[]} as unknown as FisImportPreview;
+ const before=structuredClone(preview),summary=singleRoomSummary(preview,'JPN');
+ assert.equal(summary.counts.EXEMPT,3);assert.equal(summary.requested,3);
+ assert.deepEqual(summary.exemptions,{WORLD_CHAMPION:{count:1,personKeys:['single','single-second-group']},OTHER:{count:1,personKeys:['general']},UNKNOWN:{count:1,personKeys:['legacy']}});
+ assert.deepEqual(preview.people.filter(p=>personMatchesQuotaFilter(p,{nation:'JPN',role:'people',personKeys:summary.exemptions.WORLD_CHAMPION.personKeys})).map(p=>p.matchKey),['single','single-second-group']);
+ assert.deepEqual(preview,before);
+ preview.people[4].singleRoomQuotaExemptReason='OTHER';
+ const conflicted=singleRoomSummary(preview,'JPN');assert.equal(conflicted.exemptions.WORLD_CHAMPION.count,0);assert.equal(conflicted.exemptions.UNKNOWN.count,2);
+});
