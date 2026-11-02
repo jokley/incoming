@@ -156,3 +156,23 @@ def test_preview_approval_confirm_and_reimport_keep_current_overview_and_plan(ev
     repeated=upload(a)
     assert repeated['quotaOverview']['nations'][0]['athletes']==2
     assert run(repeated,a)['summary']['peopleCreated']==0
+
+
+def test_documented_registration_role_gap_does_not_imply_ez_or_tariff_exemption(reference):
+    """Characterize existing behavior; FIS 9.1.5 correction is outside this UI PR."""
+    event, _, _, _ = reference
+    group='Snowboard Alpine'
+    people=[dict(matchKey='athlete',nationCode='ITA',function='Athlete',gender='M',quotaDisciplines=[group])]
+    people += [dict(matchKey=f'role-{i}',nationCode='ITA',function=role,gender='M',quotaDisciplines=[group],
+                    countsAsSingle=True,accommodationRateCategory='STANDARD')
+               for i,role in enumerate(('NSA President','NSA Secretary General'))]
+    before=deepcopy(people)
+    rows=evaluate_quota_usage(people,people)
+    assert rows[0]['officialQuota']==3  # Athletes + 2; no role-dependent increase.
+    assert rows[0]['assignedOfficials']==2
+    assert rows[0]['singleRoomsAllowed']==1
+    assert rows[0]['singleRoomsCovered']==1 and rows[0]['singleRoomsPending']==1
+    assert rows[0]['quotaExemptSingleRooms']==0
+    view=build_quota_overview(people,rows,[],event)['nations'][0]
+    assert view['officials']==2
+    assert people==before

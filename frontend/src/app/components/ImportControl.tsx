@@ -50,30 +50,39 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
   const list=athletes.filter(p=>personKeys.has(p.matchKey));
   return [list.filter(p=>p.gender==='M').length,list.filter(p=>p.gender==='F'||p.gender==='W').length,list.length];
  };
- const cells=(ids:Set<string>,sport=false)=>counts(ids).map((n,i)=>{
-  const competition=sport&&i<2?competitions.find(c=>ids.has(c.id)&&(i===0?c.gender==='M':['F','W'].includes(c.gender??''))):undefined;
-  const entry=competition?.sportEntries?.find(row=>row.nation===nation&&row.reported===n);
-  const tone=entry?.unverifiedAdditional?'warning':'success';
-  const text=entry?(entry.aboveRegular>0?(entry.unverifiedAdditional>0?`${entry.reported} / ${entry.regularMax} · Zusatzrecht prüfen`:`${entry.reported} inkl. WM`):`${entry.reported} / ${entry.regularMax} · OK`):null;
-  const shortText=entry?(entry.aboveRegular>0?(entry.unverifiedAdditional>0?`${entry.reported}/${entry.regularMax} · prüfen`:`${entry.reported} WM`):`${entry.reported}/${entry.regularMax}`):null;
-  const chip=<StatusChip tone={tone}><span className="sm:hidden">{shortText}</span><span className="hidden sm:inline">{text}</span></StatusChip>;
-  const hint=entry?`Numerische Plausibilität; endgültige FIS-Zuteilung nicht bestätigt.${entry.sharedPoolReported!==null?` Gemeinsamer Slopestyle-/Big-Air-Pool: ${entry.sharedPoolReported} eindeutige ${i===0?'Männer':'Frauen'}.`:''}${entry.champions.length?` Titelquelle: ${entry.champions.map(c=>c.source).join(', ')}`:''}`:undefined;
-  return <td key={i} className="px-1 py-1 text-right tabular-nums sm:px-2 [&_[data-tone]]:px-1 sm:[&_[data-tone]]:px-2">
-   {entry&&text?<span title={hint}>{onPeople&&nation?<button type="button" className="text-right" aria-label={`${competition?.name}: ${entry.reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{chip}</button>:chip}</span>:n}
-  </td>;
+ const entries=(ids:Set<string>)=>[0,1].map(i=>{
+  const competition=competitions.find(c=>ids.has(c.id)&&(i===0?c.gender==='M':['F','W'].includes(c.gender??'')));
+  const reported=counts(ids)[i];
+  return {competition,reported,entry:competition?.sportEntries?.find(row=>row.nation===nation&&row.reported===reported)};
  });
+ const cells=(ids:Set<string>)=>{
+  const genders=entries(ids);
+  const assessed=genders.filter(row=>row.reported>0);
+  const missing=!assessed.length||assessed.some(row=>!row.entry);
+  const review=assessed.some(row=>(row.entry?.unverifiedAdditional??0)>0);
+  const champion=assessed.some(row=>(row.entry?.aboveRegular??0)>0&&(row.entry?.championStarters??0)>0);
+  const hint=genders.map(({entry})=>entry?`Numerische Plausibilität; endgültige FIS-Zuteilung nicht bestätigt.${entry.sharedPoolReported!==null?` Gemeinsamer Slopestyle-/Big-Air-Pool: ${entry.sharedPoolReported} eindeutige Personen dieses Geschlechts.`:''}${entry.champions.length?` Titelquelle: ${entry.champions.map(c=>c.source).join(', ')}`:''}`:'Keine gespeicherte Einzelwettbewerbsprüfung.').join(' ');
+  return <>
+   {genders.map(({competition,reported,entry},i)=><td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2" title={hint}>
+    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}{entry&&entry.aboveRegular>0&&entry.unverifiedAdditional===0&&<span className="text-xs"> + WM</span>}
+   </td>)}
+   <td className="ops-table-wrap px-1 py-1 sm:px-2" title={hint}><StatusChip tone={review?'warning':missing?'neutral':'success'}>{missing&&!review?'Nicht geprüft':<><span className="sm:hidden">{review?'Prüfen':champion?'WM':'OK'}</span><span className="hidden sm:inline">{review?'Zusatzrecht prüfen':champion?'WM berücksichtigt':'Numerisch OK'}</span></>}</StatusChip></td>
+  </>;
+ };
+
  return <div ref={tableRef} className="min-w-0 overflow-x-auto" role="region" tabIndex={0} aria-label="Wettbewerbsteilnehmer – Tabelle horizontal scrollbar">
-  <table className="w-full text-xs sm:text-sm"><caption className="pb-2 text-left text-xs text-[var(--ops-text-muted)]">Sportliche Meldungen · FIS-Zuteilung nicht bestätigt</caption>
-   <thead><tr>{['Disziplin / Wettbewerb','Männer','Frauen','Gesamt'].map((label,i)=><th key={label} scope="col" className={`ops-table-wrap px-1 py-2 sm:px-2 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
+  <table className="w-full text-[11px] sm:text-sm"><caption className="pb-2 text-left text-xs text-[var(--ops-text-muted)]">Sportliche Meldungen · FIS-Zuteilung nicht bestätigt</caption>
+   <thead><tr>{['Wettbewerb','Männer¹','Frauen¹','Prüfstatus'].map((label,i)=><th key={label} scope="col" className={`ops-table-wrap px-1 py-2 sm:px-2 ${i===1||i===2?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{groups.map(group=>{
     const list=competitions.filter(c=>c.group===group);
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
+    const groupCounts=counts(new Set(list.map(c=>c.id)));
     return <Fragment key={group??'unknown'}>
-     <tr className="border-t border-[var(--ops-divider)] font-bold"><th scope="row" className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}</th>{cells(new Set(list.map(c=>c.id)))}</tr>
-     {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={focusSport&&list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'bg-[var(--ops-tone-warning-surface)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-3 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)),true)}</tr>)}
+     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span></th></tr>
+     {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={focusSport&&list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'bg-[var(--ops-tone-warning-surface)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-3 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
    })}</tbody>
   </table>
-  <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Numerische Plausibilität, keine Startfreigabe · Eindeutige Athleten je Zeile · Wettbewerbe nicht addieren.</p>
+  <p className="mt-2 text-xs text-[var(--ops-text-muted)]">¹ Gemeldet / gespeicherter Wettkampf-Regelwert; keine Trainingsgrenze. Keine Startfreigabe. Wettbewerbe nicht addieren.</p>
  </div>;
 }

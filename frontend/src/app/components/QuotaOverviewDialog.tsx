@@ -1,7 +1,7 @@
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
 import type {ImportControl,FisImportPreview,QuotaOverview} from '../types';
-import {officialsSummary,singleRoomSummary} from '../services/importHints';
+import {singleRoomSummary} from '../services/importHints';
 import type {QuotaPeopleFilter} from '../services/importHints';
 import {EmptyState,EnterpriseDialog,OpsButton,StatusChip} from '../design-system';
 
@@ -54,44 +54,53 @@ function AthleteOverview({nation,fixed,control,preview,onPeople,focusSport}:{nat
 }
 function OfficialsOverview({nation,fixed,onPeople,preview,control}:{nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
  const incomplete=nation.incomplete||!fixed;
- const summary=officialsSummary(nation,fixed);
+
  const ez=preview?singleRoomSummary(preview,nation.nationCode):null;
  const withoutContext=preview?.people.filter(p=>p.nationCode===nation.nationCode&&p.function?.trim().toLowerCase()!=='athlete'&&control?.people.some(row=>row.personKey===p.matchKey&&row.quotaContexts?.length===0)).map(p=>p.matchKey!)??[];
  return <div className="space-y-3">
-  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis"><span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> Officials</span><span>· {nation.ezDecisionsOpen} {nation.ezDecisionsOpen===1?'offener EZ-Kontext':'offene EZ-Kontexte'} ·</span>{nation.officialsInMultipleGroups>0&&onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} {nation.officialsInMultipleGroups===1?'Mehrfachzugehörigkeit':'Mehrfachzugehörigkeiten'}</button>:<span>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</span>}<StatusChip tone={ez&&!ez.complete?'warning':summary.tone}>{ez&&!ez.complete?'Abdeckung prüfen':summary.label}</StatusChip></div>
+  <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis">
+   <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials</span>
+   {ez?.available&&<span><PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/> EZ angefordert</span>}
+  </div>
   {ez?.available&&<div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="EZ-Gesamtbewertung">
-   <span><PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/> EZ angefordert</span>
-   {([['COVERED','regulär gedeckt'],['APPROVED_EXTRA','zusätzliche EZ genehmigt'],['EXEMPT','EZ-Ausnahmen'],['PENDING','EZ offen']] as const).map(([status,label])=><span key={status}><PeopleCount count={ez.counts[status]} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys[status]}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}</span>)}
+   {([['COVERED','regulär gedeckt'],['APPROVED_EXTRA','zusätzliche EZ genehmigt'],['EXEMPT','EZ-Ausnahmen']] as const).map(([status,label])=><span key={status}><PeopleCount count={ez.counts[status]} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys[status]}} onPeople={onPeople} label={`${label}: Personen anzeigen`}/> {label}</span>)}
+   {ez.counts.PENDING>0?<span className="text-[var(--ops-warning)]"><PeopleCount count={ez.counts.PENDING} filter={{nation:nation.nationCode,role:'people',personKeys:ez.personKeys.PENDING}} onPeople={onPeople} label="EZ offen: Personen anzeigen"/> EZ offen</span>:<StatusChip tone={ez.complete&&!incomplete?'success':'neutral'}>{ez.complete&&!incomplete?'EZ abgedeckt':'EZ-Zuordnung unvollständig'}</StatusChip>}
   </div>}
-  {ez&&!ez.available&&<p className="text-xs text-[var(--ops-warning)]">EZ-Gesamtbewertung unvollständig</p>}
+  {!ez?.available&&<StatusChip tone="neutral">EZ-Gesamtbewertung nicht sicher verfügbar</StatusChip>}
   {nation.otherPeople>0&&<p className="text-xs">{nation.otherPeople} weitere / unzugeordnete Personen</p>}
-  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full text-sm">
+  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full text-xs sm:text-sm">
    <caption className="sr-only">Eindeutige Officials und bestehende EZ-Bewertung</caption>
-   <thead><tr>{['Event Group','Officials','Berechnungsbasis EZ Σ M/W','EZ-Anspruch Σ M/W','EZ angefordert','Ergebnis'].map((label,i)=><th key={label} scope="col" className={`px-3 py-2 ${i>0&&i<5?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
+   <thead><tr>{['Event Group','Officials¹','EZ-Anfragen','EZ-Status'].map((label,i)=><th key={label} scope="col" title={i===1?'Eindeutige Personen je Event Group; nicht über Gruppen addieren.':undefined} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i>0&&i<3?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{nation.groups.map(group=>{
-    const review=incomplete||group.coverageReviewRequired;
+    const review=incomplete||!group.contexts.length;
     const totals=group.totals;
     return <Fragment key={group.name}>
      <tr className="border-t border-[var(--ops-divider)]">
-      <th scope="row" className="ops-table-wrap px-3 py-2 text-left">{group.name}</th>
+      <th scope="row" className="ops-table-wrap px-1 py-2 sm:px-3 text-left">{group.name}</th>
       <td className={numberCell}><PeopleCount count={group.officials} filter={{nation:nation.nationCode,role:'officials',group:group.name}} onPeople={onPeople} label={`Officials ${group.name} anzeigen`}/></td>
-      <td className={numberCell} title="Summe der Geschlechterkontexte; keine gruppenübergreifende Abdeckung">{totals.officialQuota}</td>
-      <td className={numberCell} title="Summe der bestehenden Geschlechterkontexte; kein übertragbares Kontingent">{totals.singleRoomsAllowed}</td><td className={numberCell}>{totals.singleRoomsRequested}</td>
-      <td className="ops-table-wrap px-3 py-2"><StatusChip tone={review||totals.singleRoomsPending?'warning':'success'}>{review?'Abdeckung prüfen':totals.singleRoomsPending?'EZ-Entscheidung offen':'OK'}</StatusChip>
+      <td className={numberCell}>{totals.singleRoomsRequested}</td>
+      <td className="ops-table-wrap px-1 py-2 sm:px-3"><StatusChip tone={totals.singleRoomsPending?'warning':review?'neutral':'success'}>{totals.singleRoomsPending?'EZ offen':review?'Nicht sicher bewertbar':'Keine EZ offen'}</StatusChip>
        {totals.singleRoomsPending>0&&<span className="block text-xs">{totals.singleRoomsPending} EZ offen</span>}
        {totals.singleRoomsApproved>0&&<span className="block text-xs">{totals.singleRoomsApproved} zusätzliche EZ genehmigt</span>}
        {totals.quotaExemptSingleRooms>0&&<span className="block text-xs">{totals.quotaExemptSingleRooms} EZ-Ausnahmen</span>}
       </td>
      </tr>
-     <tr><td colSpan={6} className="px-3 pb-2"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Geschlechteraufteilung</summary>
-      <table className="mt-2 w-full"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
+     <tr><td colSpan={4} className="ops-table-wrap px-1 pb-2 sm:px-3"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Geschlechteraufteilung</summary>
+      <div className="w-0 min-w-full overflow-x-auto"><table className="mt-2 w-full text-xs"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
        {group.contexts.map(row=><tr key={row.gender}><th scope="row" className="px-2 py-1 text-left font-normal">{genderName(row.gender)}</th>{[row.athletes,row.officialQuota,row.singleRoomsAllowed,row.singleRoomsRequested,row.singleRoomsApproved,row.singleRoomsPending,row.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>)}
        <tr className="font-bold"><th scope="row" className="px-2 py-1 text-left">Σ M/W</th>{[group.athletes,totals.officialQuota,totals.singleRoomsAllowed,totals.singleRoomsRequested,totals.singleRoomsApproved,totals.singleRoomsPending,totals.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>
-      </tbody></table>
+      </tbody></table></div>
      </details></td></tr>
     </Fragment>;
    })}</tbody>
   </table></div>
+
+  <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer">Zuordnungen und Bewertungsgrundlage</summary><div className="mt-2 space-y-1">
+   <p>¹ Eindeutige Officials je Event Group; Gruppenwerte nicht addieren. EZ-Anspruch in den Details: Summe der M/W-Kontexte, kein übertragbares Kontingent.</p>
+   {nation.officialsInMultipleGroups>0&&(onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten · Personen anzeigen</button>:<p>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</p>)}
+   <p>{nation.ezDecisionsOpen} {nation.ezDecisionsOpen===1?'offener EZ-Kontext':'offene EZ-Kontexte'} · Kontexte sind keine Personenzahl.</p>
+   {nation.coverageReviewRequired&&<p>Officials-Abdeckung nicht abschließend bewertet; keine bestätigte Quotenverletzung.</p>}
+  </div></details>
 
   {nation.officialsWithoutContext>0&&<p className="text-xs text-[var(--ops-warning)]"><PeopleCount count={nation.officialsWithoutContext} filter={{nation:nation.nationCode,role:'people',personKeys:withoutContext}} onPeople={control?onPeople:undefined} label="Officials ohne Quotenkontext anzeigen"/> Officials ohne eindeutigen Quotenkontext</p>}
  </div>;
