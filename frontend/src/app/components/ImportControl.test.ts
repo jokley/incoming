@@ -16,7 +16,7 @@ test('hierarchy counts unique athletes per group and competition, combining gend
  const view={...control,competitions:[male,female,air],people:[{personKey:'m',competitions:[male,air]},{personKey:'f',competitions:[female]},{personKey:'a',competitions:[male]},{personKey:'other',competitions:[air]}]};
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
  const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
- assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 1 2','Halfpipe 1 1 2','Big Air 1 0 1']);
+ assert.deepEqual(rows,['Wettbewerb Männer¹ Frauen¹ Prüfstatus','Snowboard Park &amp; Pipe 2 eindeutige Athleten · 1 Männer · 1 Frauen','Halfpipe 1 / — 1 / — Nicht geprüft','Big Air 1 / — 0 / — Nicht geprüft']);
 });
 test('compact person dialog has one closed source section and no note workflow',()=>{
  const html=renderToStaticMarkup(createElement(PersonControlDetails,{person,preview,control}));
@@ -33,8 +33,8 @@ test('five shared SS/BA entrants and an EZ champion exemption do not imply sport
  const view={...control,competitions:[ss,ba],people:people.map(p=>({personKey:p.matchKey,competitions:[ss,ba]}))};
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
  const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
- assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 5 0 5','Slopestyle 5 0 5','Big Air 5 0 5']);
- assert.ok(html.includes('FIS-Zuteilung nicht bestätigt')&&html.includes('keine Startfreigabe'));
+ assert.deepEqual(rows,['Wettbewerb Männer¹ Frauen¹ Prüfstatus','Snowboard Park &amp; Pipe 5 eindeutige Athleten · 5 Männer · 0 Frauen','Slopestyle 5 / — 0 / — Nicht geprüft','Big Air 5 / — 0 / — Nicht geprüft']);
+ assert.ok(html.includes('FIS-Zuteilung nicht bestätigt')&&html.includes('Keine Startfreigabe'));
  for(const unproven of ['5 erlaubt','+1 Weltmeister','Titel vorhanden','Innerhalb'])assert.ok(!html.includes(unproven),unproven);
 });
 
@@ -45,10 +45,22 @@ test('server-projected personal title and unresolved BA extra remain distinct an
  const people=base.personKeys.map(matchKey=>({...person,matchKey,function:'Athlete',gender:'M',nationCode:'CAN'}));
  const view={...control,competitions:[ss,ba],people:people.map(p=>({personKey:p.matchKey,competitions:[ss,ba]}))};
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN',onPeople:()=>{throw Error('render must not navigate');}}));
- assert.ok(html.includes('5 inkl. WM')&&html.includes('5 / 4 · Zusatzrecht prüfen'));
+ assert.ok(html.includes('5</button> / 4')&&html.includes('+ WM')&&html.includes('WM berücksichtigt')&&html.includes('Zusatzrecht prüfen'));
  assert.equal((html.match(/data-tone="success"/g)||[]).length,1);
  assert.equal((html.match(/data-tone="warning"/g)||[]).length,1);
- assert.ok(html.includes('Gemeinsamer Slopestyle-/Big-Air-Pool: 5 eindeutige Männer.'));
+ assert.ok(html.includes('Gemeinsamer Slopestyle-/Big-Air-Pool: 5 eindeutige Personen dieses Geschlechts.'));
  assert.ok(html.includes('endgültige FIS-Zuteilung nicht bestätigt'));
  assert.ok(html.includes('Slopestyle: 5 Athleten anzeigen')&&html.includes('Big Air: 5 Athleten anzeigen'));
+});
+
+test('one row uses one status for both genders and keeps unchecked disciplines neutral',()=>{
+ const base={nation:'ITA',reported:1,regularMax:4,aboveRegular:0,championStarters:0,unverifiedAdditional:0,personKeys:['m'],champions:[],sharedPoolReported:null,allocationConfirmed:false};
+ const male={...competition,id:'m',name:"Men's Snowboard Halfpipe",sportEntries:[base]};
+ const female={...competition,id:'w',name:"Women's Snowboard Halfpipe",gender:'W',sportEntries:[{...base,personKeys:['w']}]};
+ const people=['m','w'].map((matchKey,i)=>({...person,matchKey,function:'Athlete',gender:i?'W':'M',nationCode:'ITA'}));
+ const props={nation:'ITA',control:{...control,competitions:[male,female],people:people.map((p,i)=>({personKey:p.matchKey,competitions:[i?female:male]}))},preview:{...preview,people}};
+ const html=renderToStaticMarkup(createElement(CompetitionDistribution,props));
+ assert.equal((html.match(/data-tone="success"/g)||[]).length,1);assert.equal((html.match(/1 \/ 4/g)||[]).length,2);assert.ok(html.includes('Numerisch OK'));
+ delete female.sportEntries;
+ const partial=renderToStaticMarkup(createElement(CompetitionDistribution,props));assert.ok(partial.includes('Nicht geprüft'));assert.ok(!partial.includes('Numerisch OK'));
 });

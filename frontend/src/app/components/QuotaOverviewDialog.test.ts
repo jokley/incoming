@@ -15,8 +15,8 @@ const copy=()=>structuredClone(fixture);
 
 test('officials are grouped in one table with distinct totals, collapsible contexts and existing EZ values',()=>{
  const data=copy(),output=html(data),visible=text(output);
- for(const label of ['14','Officials','0 offene EZ-Kontexte','EZ-Anspruch Σ M/W','EZ angefordert','Abdeckung prüfen','5 Mehrfachzugehörigkeiten','Σ M/W','Berechnungsbasis EZ'])assert.ok(visible.includes(label),label);
- assert.equal((output.match(/<details/g)||[]).length,2);assert.ok(!output.includes(' open=""'));
+ for(const label of ['14','Officials','0 offene EZ-Kontexte','EZ-Anspruch','EZ-Anfragen','nicht abschließend bewertet','5 Mehrfachzugehörigkeiten','Σ M/W','Berechnungsbasis EZ'])assert.ok(visible.includes(label),label);
+ assert.equal((output.match(/<details/g)||[]).length,3);assert.ok(!output.includes(' open=""'));
  assert.ok(!output.includes('Officials ohne reguläre Abdeckung'));
  assert.ok(output.includes('overflow-x-auto')&&output.includes('role="region"')&&output.includes('tabindex="0"'));
  for(const group of data.nations[0].groups)assert.ok(output.includes(group.name.replaceAll('&','&amp;')));
@@ -40,13 +40,13 @@ test('partial approval highlights only violated limits and separates approved fr
 });
 test('draft and incomplete contexts cannot look quota compliant',()=>{
  const data=copy();data.event.isWorldChampionship=false;data.event.rulesFixed=false;data.nations[0].incomplete=true;
- for(const kind of ['athlete','officials']){const visible=text(html(data,kind));assert.ok(visible.includes('Nicht-WM')&&visible.includes('Entwurf')&&visible.includes(kind==='officials'?'Abdeckung prüfen':'Fachlich prüfen'));assert.ok(!visible.includes('Innerhalb der Quote'));}
+ for(const kind of ['athlete','officials']){const visible=text(html(data,kind));assert.ok(visible.includes('Nicht-WM')&&visible.includes('Entwurf')&&visible.includes(kind==='officials'?'Nicht sicher bewertbar':'Fachlich prüfen'));assert.ok(!visible.includes('Innerhalb der Quote'));}
 });
 test('EZ approvals and exemptions stay visible without inventing officials coverage',()=>{
  const data=copy(),group=data.nations[0].groups[0];
  group.totals.singleRoomsPending=2;group.totals.singleRoomsApproved=1;group.totals.quotaExemptSingleRooms=1;
  const visible=text(html(data));
- for(const label of ['2 EZ offen','1 zusätzliche EZ genehmigt','1 EZ-Ausnahmen','Abdeckung prüfen'])assert.ok(visible.includes(label));
+ for(const label of ['2 EZ offen','1 zusätzliche EZ genehmigt','1 EZ-Ausnahmen','nicht abschließend bewertet'])assert.ok(visible.includes(label));
  assert.ok(!visible.includes('Officials überschritten'));
 });
 test('additional unassigned functions remain visible in the distinct person total',()=>{
@@ -65,12 +65,12 @@ test('only athlete view shows competition hierarchy; officials keep direct exist
   assert.equal((output.match(/Sportliche Meldungen · FIS-Zuteilung nicht bestätigt/g)||[]).length,kind==='athlete'?1:0);
   const hierarchy=output.match(/<table[^>]*><caption[^>]*>Sportliche Meldungen[\s\S]*?<\/table>/)?.[0]??'';
   const rows=[...hierarchy.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(row=>text(row[1]).trim());
-  if(kind==='athlete')assert.deepEqual(rows,['Disziplin / Wettbewerb Männer Frauen Gesamt','Snowboard Park &amp; Pipe 1 0 1','Halfpipe 1 0 1','Big Air 1 0 1']);
+  if(kind==='athlete')assert.deepEqual(rows,['Wettbewerb Männer¹ Frauen¹ Prüfstatus','Snowboard Park &amp; Pipe 1 eindeutige Athleten · 1 Männer · 0 Frauen','Halfpipe 1 / — 0 / — Nicht geprüft','Big Air 1 / — 0 / — Nicht geprüft']);
   if(kind==='officials'){
    for(const group of overview.nations[0].groups)assert.ok(output.includes(`aria-label="Officials ${group.name.replaceAll('&','&amp;')} anzeigen"`));
    assert.ok(output.includes('5 Mehrfachzugehörigkeiten'));
    assert.ok(!output.includes('Keine offenen EZ-Entscheidungen'));
-   assert.ok(output.includes('Berechnungsbasis EZ Σ M/W'));
+   assert.ok(output.includes('Berechnungsbasis EZ'));
    assert.ok(!output.includes('Sportliche Meldungen'));
   }
  }
@@ -86,4 +86,36 @@ test('personal EZ summary separates one open context from several open people an
  for(const label of ['1 offener EZ-Kontext','5 EZ angefordert','1 regulär gedeckt','1 zusätzliche EZ genehmigt','1 EZ-Ausnahmen','2 EZ offen'])assert.ok(visible.includes(label),label);
  for(const label of ['Angeforderte EZ-Personen anzeigen','regulär gedeckt: Personen anzeigen','EZ offen: Personen anzeigen'])assert.ok(output.includes(`aria-label="${label}"`));
  assert.ok(!visible.includes('Zulässige Officials'));
+});
+
+test('ITA personal acceptance: 25 officials, 8 requests, 7 covered and 1 exempt across three groups',()=>{
+ const overview=copy(),nation=overview.nations[0];nation.officials=25;nation.officialsInMultipleGroups=5;
+ nation.groups=[
+  {name:'Snowboard Alpine',athletes:14,officials:11,values:[[9,11,3,3,0],[5,7,3,1,0]]},
+  {name:'Snowboard Cross',athletes:7,officials:12,values:[[4,6,2,1,1],[3,5,2,1,0]]},
+  {name:'Snowboard Park & Pipe',athletes:4,officials:11,values:[[2,4,2,2,0],[2,4,2,0,0]]},
+ ].map(group=>{
+  const contexts=group.values.map(([athletes,officialQuota,singleRoomsAllowed,singleRoomsRequested,quotaExemptSingleRooms],i)=>({nationCode:'ITA',discipline:group.name,gender:i?'W':'M',athletes,officialQuota,officials:group.officials,singleRoomsAllowed,singleRoomsRequested,quotaExemptSingleRooms,singleRooms:singleRoomsRequested-quotaExemptSingleRooms,singleRoomsPending:0,singleRoomsApproved:0,officialsExceeded:true,singleRoomsExceeded:false}));
+  return {name:group.name,athletes:group.athletes,officials:group.officials,contexts,coverageReviewRequired:true,totals:{officialQuota:contexts.reduce((n,c)=>n+c.officialQuota,0),singleRoomsAllowed:contexts.reduce((n,c)=>n+c.singleRoomsAllowed,0),singleRoomsRequested:contexts.reduce((n,c)=>n+c.singleRoomsRequested,0),quotaExemptSingleRooms:contexts.reduce((n,c)=>n+c.quotaExemptSingleRooms,0),singleRoomsPending:0,singleRoomsApproved:0}};
+ });
+ const people=Array.from({length:25},(_,i)=>({matchKey:`staff-${i}`,nationCode:'ITA',function:'NSA Coach',singleRoomAllocation:i<8?{identity:`staff-${i}`,status:i===7?'EXEMPT':'COVERED',context:['ITA',nation.groups[i%3].name,'M']}:null}));
+ people.push({...people[0],matchKey:'same-person-second-group'});
+ const preview={people,rooms:[]};const before=structuredClone({overview,preview});
+ const output=html(overview,'officials',{preview,onPeople:()=>{}}),visible=text(output);
+ for(const label of ['25 eindeutige Officials','8 EZ angefordert','7 regulär gedeckt','1 EZ-Ausnahmen','0 zusätzliche EZ genehmigt','EZ abgedeckt','5 Mehrfachzugehörigkeiten'])assert.ok(visible.includes(label),label);
+ assert.ok(!visible.includes('Abdeckung prüfen'));assert.ok(!visible.includes('Officials überschritten'));
+ const header=output.match(/<thead>([\s\S]*?)<\/thead>/)?.[1]??'';assert.ok(!header.includes('Berechnungsbasis'));assert.ok(output.includes('Berechnungsbasis EZ'));
+ assert.deepEqual({overview,preview},before);
+});
+test('missing personal evidence is neutral, while existing pending EZ persons remain explicit',()=>{
+ const overview=copy();const missing=html(overview,'officials',{preview:{people:[{matchKey:'old',nationCode:'ITA'}],rooms:[]}});
+ assert.ok(missing.includes('EZ-Gesamtbewertung nicht sicher verfügbar'));assert.ok(missing.includes('data-tone="neutral"'));
+ assert.ok(!missing.includes('Quotenverletzung bestätigt'));
+ const pending=html(overview,'officials',{preview:{people:[{matchKey:'p',nationCode:'ITA',singleRoomAllocation:{identity:'p',status:'PENDING',context:null}}],rooms:[]}});
+ assert.ok(text(pending).includes('1 EZ offen'));assert.ok(!pending.includes('EZ abgedeckt'));
+});
+test('role names alone never produce an EZ exemption or a special tariff',()=>{
+ const overview=copy();const preview={people:['NSA President','NSA Secretary General','Unknown role'].map((functionName,i)=>({matchKey:`role-${i}`,function:functionName,nationCode:'ITA',accommodationRateCategory:i===1?'SPECIAL':'STANDARD',singleRoomAllocation:{identity:`role-${i}`,status:'COVERED',context:['ITA','Ski Cross','M']}})),rooms:[]};
+ const before=structuredClone(preview),visible=text(html(overview,'officials',{preview}));
+ assert.ok(visible.includes('3 regulär gedeckt'));assert.ok(visible.includes('0 EZ-Ausnahmen'));assert.deepEqual(preview,before);
 });
