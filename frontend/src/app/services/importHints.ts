@@ -65,7 +65,7 @@ export function personMatchesQuotaFilter(person:FisImportPreviewPerson,filter:Qu
 export function sportClarifications(control?:ImportControl,nation?:string) {
  const positions=new Map<string,{id:string;name:string;gender:string|null;nation:string}>();
  for(const competition of control?.competitions??[])for(const entry of competition.sportEntries??[]){
-  if(entry.unverifiedAdditional>0&&(!nation||entry.nation===nation))positions.set(`${entry.nation}/${competition.id}`,{id:competition.id,name:competition.name,gender:competition.gender,nation:entry.nation});
+  if((entry.reported??1)>0&&(entry.status==='REVIEW_REQUIRED'||entry.status==='INCOMPLETE'||entry.unverifiedAdditional>0)&&(!nation||entry.nation===nation))positions.set(`${entry.nation}/${competition.id}`,{id:competition.id,name:competition.name,gender:competition.gender,nation:entry.nation});
  }
  return [...positions.values()];
 }

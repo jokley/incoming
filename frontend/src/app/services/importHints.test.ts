@@ -114,3 +114,10 @@ test('missing contexts, legacy allocation data and conflicting statuses cannot i
  const missing={people:[{...person,singleRoomAllocation:null}],rooms:[{person1Key:'a',roomType:'Single'}]} as unknown as FisImportPreview;
  assert.equal(singleRoomSummary(missing).complete,false);assert.equal(singleRoomSummary(missing).available,false);
 });
+
+test('sport clarification includes incomplete mappings and pool reviews but not neutral teams or empty rows',async()=>{
+ const {sportClarifications}=await import('./importHints.ts');
+ const competition=(id:string,status:string,reported=4)=>({id,sportEntries:[{nation:'X',reported,status,unverifiedAdditional:0}]});
+ const control={competitions:[competition('pool','REVIEW_REQUIRED'),competition('mapping','INCOMPLETE'),competition('team','TEAM_RULE'),competition('empty','INCOMPLETE',0),competition('ok','NUMERIC_OK'),competition('title','TITLE_COVERED')]} as unknown as import('../types.ts').ImportControl;
+ assert.deepEqual(sportClarifications(control,'X').map(c=>c.id),['pool','mapping']);
+});

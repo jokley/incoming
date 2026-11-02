@@ -149,7 +149,13 @@ def test_real_sport_revision_preserves_seven_nations_underlying_grants_and_finge
     assert rule_projection(accommodation_rule_event(owner)) == original_rule
     fresh=client.get(f'/api/import/sessions/{sid}').json
     assert fresh['preview'] == baseline['preview']
-    assert fresh['importControl'] == baseline['importControl']
+    # Sport-only revisions may change the informative sport projection, never
+    # the other control data or the approval/fingerprint evidence below.
+    controls = [deepcopy(response['importControl']) for response in (baseline, fresh)]
+    for control in controls:
+        for competition in control['competitions']:
+            competition.pop('sportEntries', None)
+    assert controls[0] == controls[1]
     assert digest(state(owner.id,session.nation)) == original_state
     assert session.current_version.preview_json == saved
     assert {a.id:(a.quota_details_json,a.decision,a.approved_person_keys_json) for a in ImportApproval.query.all()} == approvals

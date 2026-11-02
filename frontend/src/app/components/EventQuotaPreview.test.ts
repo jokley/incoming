@@ -43,7 +43,7 @@ test('family tile surfaces CAN one and GER two unresolved positions without summ
  const control={competitions:[competition('ss',"Men's Slopestyle",0),competition('ba',"Men's Big Air",1)],people:[],issues:[]};
  const data={...preview,athleteQuotaChecks:[{...check,athleteQuotaUsed:14,athleteQuotaStatus:'WITHIN_QUOTA',decisionStatus:null}],quotaOverview:{event:{rulesFixed:true},nations:[]}};
  const render=()=>renderToStaticMarkup(createElement(Preview,{preview:data,control,peopleRows:[],roomRows:[],onOpen:()=>{}}));
- const can=render();assert.ok(can.includes('14 / 36')&&can.includes('Familienquote OK')&&can.includes('1 Zusatzrecht prüfen')&&can.includes('Big Air Männer'));
+ const can=render();assert.ok(can.includes('14 / 36')&&can.includes('Familienquote OK')&&can.includes('1 Sportliche Prüfung offen')&&can.includes('Big Air Männer'));
  control.competitions[0].sportEntries[0].unverifiedAdditional=5;control.competitions[1].sportEntries[0].unverifiedAdditional=5;
  const ger=render();assert.ok(ger.includes('2 Wettbewerbspositionen prüfen'));assert.ok(!ger.includes('10 Wettbewerbspositionen'));
 });
