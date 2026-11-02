@@ -507,7 +507,7 @@ export type ImportControlKind = 'error'|'clarification'|'info';
 export interface ImportControl {
   people:Array<{personKey:string;stayWindow?:StayWindow;competitions:Array<{id:string;name:string;group:string|null;gender:string|null}>;quotaContexts:Array<{nation:string;group:string;gender:string}>;internalNote?:string|null}>;
   issues:Array<{kind:ImportControlKind;code:string;message:string;personKeys:string[];source?:string|null;row?:number|null}>;
-  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;people:number;athletes:number;sportEntries?:Array<{nation:string;reported:number;regularMax:number;aboveRegular:number;championStarters:number;unverifiedAdditional:number;personKeys:string[];champions:Array<{personKey:string;source:string}>;sharedPoolReported:number|null;allocationConfirmed:false}>}>;
+  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;people:number;athletes:number;sportEntries?:Array<{nation:string;reported:number;regularMax:number|null;status?:'NUMERIC_OK'|'TITLE_COVERED'|'REVIEW_REQUIRED'|'INCOMPLETE'|'TEAM_RULE';reason?:string;sharedPoolRegularMax?:number;sharedPoolChampionStarters?:number;sharedPoolUnverifiedAdditional?:number;poolPersonKeys?:string[];aboveRegular:number;championStarters:number;unverifiedAdditional:number;personKeys:string[];champions:Array<{personKey:string;source:string}>;sharedPoolReported:number|null;allocationConfirmed:false}>}>;
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {

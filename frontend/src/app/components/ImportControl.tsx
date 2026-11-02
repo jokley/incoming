@@ -40,7 +40,9 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
  const athletes=preview.people.filter(p=>p.function?.toLowerCase()==='athlete'&&(!nation||p.nationCode===nation));
  const keys=new Set(athletes.map(p=>p.matchKey));
  const people=control.people.filter(p=>keys.has(p.personKey));
- const competitions=control.competitions.filter(c=>people.some(p=>p.competitions.some(m=>m.id===c.id)));
+ const participating=control.competitions.filter(c=>people.some(p=>p.competitions.some(m=>m.id===c.id)));
+ // Pair display rows only; rule values and assessments remain server-owned.
+ const competitions=control.competitions.filter(c=>participating.some(p=>p.group===c.group&&disciplineDisplayName(p.name)===disciplineDisplayName(c.name)));
  if(!competitions.length)return null;
  const reviewIds=new Set(sportClarifications(control,nation).map(row=>row.id));
  const groups=[...new Set(competitions.map(c=>c.group))];
@@ -52,21 +54,25 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
  };
  const entries=(ids:Set<string>)=>[0,1].map(i=>{
   const competition=competitions.find(c=>ids.has(c.id)&&(i===0?c.gender==='M':['F','W'].includes(c.gender??'')));
-  const reported=counts(ids)[i];
-  return {competition,reported,entry:competition?.sportEntries?.find(row=>row.nation===nation&&row.reported===reported)};
+  const entry=competition?.sportEntries?.find(row=>row.nation===nation);
+  return {competition,reported:entry?.reported??counts(ids)[i],entry};
  });
  const cells=(ids:Set<string>)=>{
   const genders=entries(ids);
+  const team=competitions.filter(c=>ids.has(c.id)).flatMap(c=>c.sportEntries??[]).find(row=>row.nation===nation&&row.status==='TEAM_RULE');
   const assessed=genders.filter(row=>row.reported>0);
-  const missing=!assessed.length||assessed.some(row=>!row.entry);
-  const review=assessed.some(row=>(row.entry?.unverifiedAdditional??0)>0);
-  const champion=assessed.some(row=>(row.entry?.aboveRegular??0)>0&&(row.entry?.championStarters??0)>0);
-  const hint=genders.map(({entry})=>entry?`Numerische Plausibilität; endgültige FIS-Zuteilung nicht bestätigt.${entry.sharedPoolReported!==null?` Gemeinsamer Slopestyle-/Big-Air-Pool: ${entry.sharedPoolReported} eindeutige Personen dieses Geschlechts.`:''}${entry.champions.length?` Titelquelle: ${entry.champions.map(c=>c.source).join(', ')}`:''}`:'Keine gespeicherte Einzelwettbewerbsprüfung.').join(' ');
+  const review=assessed.some(row=>row.entry?.status==='REVIEW_REQUIRED');
+  const missing=!assessed.length||assessed.some(row=>!row.entry?.status||row.entry.status==='INCOMPLETE');
+  const champion=assessed.some(row=>row.entry?.status==='TITLE_COVERED');
+  const label=team?'Teamwettbewerb – gesonderte Regel':review?'Zusatzrecht prüfen':missing?'Bewertung unvollständig':champion?'Zusatzrecht berücksichtigt':'Numerisch OK';
+  const hint=[...(team?[team]:[]),...genders.flatMap(row=>row.entry?[row.entry]:[])].map(entry=>`${entry.reason??'Gespeicherte Sportbewertung.'} Endgültige FIS-Zuteilung nicht bestätigt.${entry.sharedPoolReported!==null?` Gemeinsamer Slopestyle-/Big-Air-Pool: ${entry.sharedPoolReported} eindeutige Personen dieses Geschlechts / ${entry.sharedPoolRegularMax??'—'} regulär.`:''}${entry.champions.length?` Titelquelle: ${entry.champions.map(c=>c.source).join(', ')}`:''}`).join(' ')||'Keine eindeutige gespeicherte Wettbewerbsbewertung.';
+  const chip=<StatusChip tone={team||missing&&!review?'neutral':review?'warning':'success'}><span className="sm:hidden">{team?'Team':review?'Prüfen':missing?'Unklar':champion?'WM':'OK'}</span><span className="hidden sm:inline">{label}</span></StatusChip>;
+  const affected=[...new Set(genders.filter(({entry})=>review?entry?.status==='REVIEW_REQUIRED':missing?entry?.status==='INCOMPLETE':champion?entry?.status==='TITLE_COVERED':true).flatMap(({entry})=>entry?(entry.sharedPoolUnverifiedAdditional?entry.poolPersonKeys??entry.personKeys:entry.personKeys):[]))];
   return <>
    {genders.map(({competition,reported,entry},i)=><td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2" title={hint}>
-    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}{entry&&entry.aboveRegular>0&&entry.unverifiedAdditional===0&&<span className="text-xs"> + WM</span>}
+    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}{entry?.status==='TITLE_COVERED'&&<span className="text-xs"> + WM</span>}
    </td>)}
-   <td className="ops-table-wrap px-1 py-1 sm:px-2" title={hint}><StatusChip tone={review?'warning':missing?'neutral':'success'}>{missing&&!review?'Nicht geprüft':<><span className="sm:hidden">{review?'Prüfen':champion?'WM':'OK'}</span><span className="hidden sm:inline">{review?'Zusatzrecht prüfen':champion?'WM berücksichtigt':'Numerisch OK'}</span></>}</StatusChip></td>
+   <td className="ops-table-wrap px-1 py-1 sm:px-2" title={hint}>{onPeople&&nation&&affected.length>0&&!team?<button type="button" className="text-left" aria-label={`${label}: betroffene Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:affected})}>{chip}</button>:chip}</td>
   </>;
  };
 
@@ -83,6 +89,6 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
     </Fragment>;
    })}</tbody>
   </table>
-  <p className="mt-2 text-xs text-[var(--ops-text-muted)]">¹ Gemeldet / gespeicherter Wettkampf-Regelwert; keine Trainingsgrenze. Keine Startfreigabe. Wettbewerbe nicht addieren.</p>
+  <p className="mt-2 text-xs text-[var(--ops-text-muted)]">¹ Gemeldet / maßgeblicher Wettkampf-Regelwert; keine Trainingsgrenze. Keine Startfreigabe. Wettbewerbe nicht addieren.</p>
  </div>;
 }
