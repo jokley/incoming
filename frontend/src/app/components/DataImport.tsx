@@ -21,7 +21,7 @@ import { canonicalSessionState, currentPreviewDetail } from '../services/importP
 import { importConfirmationMessage, reloadImportSession } from '../services/importConfirmation';
 import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange } from '../types';
-import { IMPORT_SESSION_STATUS, type ImportSession, type NationClarification } from '../data/importSessions';
+import { closedImportStatuses, IMPORT_SESSION_STATUS, type ImportSession, type NationClarification } from '../data/importSessions';
 import { ContentCard, EmptyState, EnterpriseDialog, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, type OperationsTask } from './OperationsDecisionDialog';
@@ -51,6 +51,7 @@ function importScopeLabel(preview: FisImportPreview | null): string {
 
 /** Opening an up-to-date joint review must preserve its approvals and version. */
 export function nationReviewSelection(session: ImportSession, force = false) {
+  if (closedImportStatuses.has(session.status)) return undefined;
   const sources = session.submissions ?? [];
   if (!sources.length || session.preview?.replacementScope?.kind === 'FULL_NATION') return undefined; // Historical FULL_NATION reviews retain their scope.
   const selected = session.preview?.submissionSources;
@@ -63,6 +64,8 @@ export function nationReviewSelection(session: ImportSession, force = false) {
 export function DataImport() {
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<ImportSession | null>(null);
+  const [closingSession,setClosingSession]=useState<ImportSession|null>(null);
+  const [closeError,setCloseError]=useState<string|null>(null);
   const [sessions, setSessions] = useState<ImportSession[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [fullReplacement,setFullReplacement]=useState(false);
@@ -102,7 +105,7 @@ export function DataImport() {
       setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);
       const selection = nationReviewSelection(full);
       const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
-      setSelected(draft); setPreview(draft.preview ?? null);
+      setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
       if (selection) await refreshSessions();
     } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) setError(e instanceof Error ? e.message : 'Importsession konnte nicht geladen werden.'); }
     finally { setLoading(false); }
@@ -120,6 +123,15 @@ export function DataImport() {
       const selection = fullReplacement ? undefined : nationReviewSelection(uploaded);
       const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : uploaded;
       setSelected(draft); setPreview(draft.preview ?? null); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+  const closeSession = async () => {
+    if(!closingSession)return;setConfirming(true);setCloseError(null);
+    try {await api.archiveImportSession(closingSession.id,closingSession.currentVersionId);
+      setSessions(rows=>rows.map(row=>row.id===closingSession.id?{...row,status:'ARCHIVED',submissions:[]}:row));
+      if(selected?.id===closingSession.id){setSelected(null);setPreview(null);setFiles([]);setDetail(null);setActiveTask(null);setQuestion(null);setError(null);setSuccess(null);}
+      setClosingSession(null);await refreshSessions();
+    }catch(e){setCloseError(e instanceof Error?e.message:'Importsession konnte nicht geschlossen werden.');}
+    finally{setConfirming(false);}
+  };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
       if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);} setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
   const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale))); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
@@ -247,18 +259,19 @@ export function DataImport() {
   return <div className="min-h-full xl:h-full xl:min-h-0 bg-[var(--ops-background)] text-[var(--ops-text)]">
     <input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple disabled={loading||confirming||savingTask} className="hidden" onChange={e=>handleFiles(e.target.files)}/>
     <SplitPageLayout className="flex min-h-full flex-col gap-5 space-y-0 xl:h-full xl:min-h-0">
-      <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="Nationen prüfen, freigeben und kontrolliert importieren." meta={selected ? <><StatusChip tone={!preview||preview.planStale||preview.quotaRulesChanged ? 'warning' : selected.errors ? 'error' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'success'}>{!preview||preview.planStale||preview.quotaRulesChanged?'Prüfung erforderlich':IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">{selected.nation} · {importScopeLabel(preview) || 'Nationsentwurf'}</span></> : <StatusChip tone="primary">Dateien hinzufügen</StatusChip>} />
+      <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="Nationen prüfen, freigeben und kontrolliert importieren." meta={selected ? <><StatusChip tone={!preview||preview.planStale||preview.quotaRulesChanged ? 'warning' : selected.errors ? 'error' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'success'}>{closedImportStatuses.has(selected.status)?IMPORT_SESSION_STATUS[selected.status]:!preview||preview.planStale||preview.quotaRulesChanged?'Prüfung erforderlich':IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">{selected.nation} · {importScopeLabel(preview) || 'Nationsentwurf'}</span></> : <StatusChip tone="primary">Dateien hinzufügen</StatusChip>} />
     {files.length>0&&<details className="mx-5 mb-3 text-sm"><summary className="cursor-pointer">Sonderaktion: vollständige Nation ersetzen</summary><label className="mt-2 flex gap-2"><input type="checkbox" checked={fullReplacement} onChange={e=>setFullReplacement(e.target.checked)} disabled={loading||confirming}/>Diese Dateien bilden die vollständige Nation. Fehlende Personen können nach Prüfung und Bestätigung entfernt werden.</label></details>}
       <div className="flex flex-col gap-5 xl:min-h-0 xl:flex-1 xl:flex-row">
-        <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} onSelect={selectSession} busy={loading||confirming||savingTask} />
+        <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} onSelect={selectSession} onClose={selectedEvent?.canWrite?session=>{setCloseError(null);setClosingSession(session);}:undefined} busy={loading||confirming||savingTask||questionBusy} />
         <ContentCard surface="raised" className="min-w-0 shrink-0 overflow-hidden xl:min-h-0 xl:flex-1">
           <div className="xl:h-full xl:overflow-y-auto"><div className="border-b border-[var(--ops-divider)] p-5"><span className="text-sm text-[var(--ops-text-muted)]">Veranstaltung: <strong className="text-[var(--ops-text)]">{selectedEvent?.name}</strong></span></div>
             {!selected ? <NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel} /> : <>
             <div className="sticky top-0 z-10 flex flex-wrap items-start justify-between gap-3 border-b border-[var(--ops-divider)] bg-[var(--ops-surface-raised)] px-5 py-4">
-              <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} – {importScopeLabel(preview) || 'Nationsentwurf'}</h2><p className="text-xs text-[var(--ops-text-muted)]">{preview ? `${preview.people.length} eindeutige Personen · ${preview.people.filter(p=>(p.function??'').toLowerCase()==='athlete').length} Athleten · ${preview.people.filter(p=>(p.function??'').toLowerCase()!=='athlete').length} Officials` : files.length ? 'Nation wird anhand der Dateien erkannt.' : 'Nationsentwurf wird geprüft.'}</p></div>
+              <div><SectionHeader title="Importprüfung" /><h2 className="mt-1 text-xl font-extrabold">{selected.nation} – {importScopeLabel(preview) || 'Nationsentwurf'}</h2><p className="text-xs text-[var(--ops-text-muted)]">{closedImportStatuses.has(selected.status) ? 'Workflow geschlossen · Historie bleibt erhalten.' : preview ? `${preview.people.length} eindeutige Personen · ${preview.people.filter(p=>(p.function??'').toLowerCase()==='athlete').length} Athleten · ${preview.people.filter(p=>(p.function??'').toLowerCase()!=='athlete').length} Officials` : files.length ? 'Nation wird anhand der Dateien erkannt.' : 'Nationsentwurf wird geprüft.'}</p></div>
               <StatusChip tone={!preview||preview.planStale||preview.quotaRulesChanged ? 'warning' : selected.status === 'IMPORTED' ? 'success' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'primary'}>{!preview||preview.planStale||preview.quotaRulesChanged?'Prüfung erforderlich':IMPORT_SESSION_STATUS[selected.status]}</StatusChip>
             </div>
             <div className="space-y-4 p-5">
+              {closedImportStatuses.has(selected.status)?<><InfoPanel tone="info" title="Importsession geschlossen">Historische Entscheidungen bleiben erhalten. Für eine neue Prüfung Dateien erneut hochladen.</InfoPanel><NewSessionWorkspace files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel}/></>:<>
               {Boolean(selected.submissions?.length)&&<section aria-label="Erfasste Meldungen" className="text-sm">
                 <div className="flex flex-wrap gap-x-5 gap-y-1">{selected.submissions?.map(part=><span key={part.versionId}>{part.family==='Snowboard'?'Snowboard':'Freestyle/Freeski'} · {part.people} Personen · {IMPORT_SESSION_STATUS[part.status]}</span>)}</div>
                 {selected.submissionTotal?.conflict&&<p className="mt-1 text-[var(--ops-warning)]">{selected.submissionTotal.conflict}</p>}
@@ -287,6 +300,7 @@ export function DataImport() {
                 {selected.nationClarifications.items.length>0&&!selected.nationClarifications.items.some(i=>i.state==='OPEN')&&<p className="text-sm">Keine offenen Rückfragen · Ergebnisse in der Historie.</p>}
               </section>}
 
+              </>}
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
             </div>
@@ -297,6 +311,10 @@ export function DataImport() {
     </SplitPageLayout>
     <DetailDialog detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:roomRows.filter((_,index)=>{const room=preview?.rooms[index];return room?roomMatchesImportFilter(room,personFilter,preview!,selected?.importControl)&&`${room.person1Name} ${room.person2Name??''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')):personFilter==='all'&&!personSearch;}), quota:quotaRows(preview),athleteQuota:athleteQuotaRows(preview)})} preview={preview} control={selected?.importControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
     {activePerson&&preview&&<ImportPersonDialog key={activePerson.matchKey} person={activePerson} preview={preview} session={selected} onClose={()=>setPersonKey(null)} />}
+    {closingSession&&<EnterpriseDialog open title="Importsession schließen?" size="medium" onClose={()=>{if(!confirming)setClosingSession(null);}} actions={<><OpsButton disabled={confirming} onClick={()=>setClosingSession(null)}>Abbrechen</OpsButton><OpsButton disabled={confirming} onClick={()=>void closeSession()}>Importsession schließen</OpsButton></>}>
+      <p className="text-sm">Der aktuelle Importworkflow und alle offenen Prüfungen dieser Nation werden beendet. Die Nationsmeldung verschwindet aus der aktiven Importwarteschlange. Bereits importierte Personen, Zimmer und Genehmigungen bleiben unverändert.</p>
+      <p className="mt-3 font-bold">{closingSession.nation}</p>{closeError&&<p role="alert" className="mt-3 text-[var(--ops-error)]">{closeError}</p>}
+    </EnterpriseDialog>}
     {question&&<EnterpriseDialog open title={question.clarificationAction==='OPEN'?'Rückfrage dokumentieren':question.clarificationAction==='REPLY'?'Rückmeldung dokumentieren':'Rückfrage erledigen'} size="medium" onClose={()=>{if(!questionBusy)setQuestion(null);}} actions={<><OpsButton disabled={questionBusy} onClick={()=>setQuestion(null)}>Abbrechen</OpsButton><OpsButton disabled={questionBusy||!question.comment.trim()} onClick={async()=>{
       if(!selected)return;setQuestionBusy(true);setQuestionError('');try{const saved=await api.documentImportClarification(selected.id,question);setSelected(saved);setPreview(saved.preview??null);setSessions(rows=>rows.map(row=>row.id===saved.id?saved:row));setQuestion(null);}catch(e){setQuestionError(e instanceof Error?e.message:'Dokumentation fehlgeschlagen');}finally{setQuestionBusy(false);}
     }}>Speichern</OpsButton></>}>

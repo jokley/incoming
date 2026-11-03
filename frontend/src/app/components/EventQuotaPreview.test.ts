@@ -4,10 +4,10 @@ import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
 import {createServer,type ViteDevServer} from 'vite';
 import {fileURLToPath} from 'node:url';
-let server:ViteDevServer;let Preview:any;let rows:any;let nationReviewSelection:any;let PrimaryAction:any;
+let server:ViteDevServer;let Preview:any;let rows:any;let nationReviewSelection:any;let PrimaryAction:any;let Queue:any;
 before(async()=>{
   server=await createServer({configFile:false,cacheDir:fileURLToPath(new URL('../../../../node_modules/.vite-quota-preview',import.meta.url)),root:fileURLToPath(new URL('../../..',import.meta.url)),optimizeDeps:{noDiscovery:true,include:[]},server:{middlewareMode:true,hmr:false,ws:false,watch:null},esbuild:{jsx:'automatic'}});
-  const mod=await server.ssrLoadModule('/src/app/components/DataImport.tsx');Preview=mod.PreviewCard;rows=mod.athleteQuotaRows;nationReviewSelection=mod.nationReviewSelection;PrimaryAction=mod.SessionPrimaryAction;
+  const mod=await server.ssrLoadModule('/src/app/components/DataImport.tsx');Preview=mod.PreviewCard;rows=mod.athleteQuotaRows;nationReviewSelection=mod.nationReviewSelection;PrimaryAction=mod.SessionPrimaryAction;Queue=(await server.ssrLoadModule('/src/app/components/ImportQueue.tsx')).ImportQueue;
 });
 after(async()=>{await server?.close()});
 const check={topLevelDiscipline:'Snowboard',athleteQuotaUsed:40,athleteQuotaLimit:36,athleteGenderUsed:{M:21,F:19},athleteGenderLimit:20,athleteQuotaStatus:'EXCEEDED',decisionStatus:'PENDING',approvedExtent:{total:2,M:1,F:0},uncoveredExtent:{total:2,M:0,F:0}};
@@ -116,4 +116,29 @@ test('mandatory questions guide only the relevant review; unrelated and optional
   const output=renderToStaticMarkup(createElement(PrimaryAction,{session,preview:data,files:[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}}));
   assert.ok(output.includes(expected));assert.ok(!output.includes('disabled=""'));assert.equal((output.match(/<button/g)||[]).length,1);
  }
+});
+
+
+test('closed sessions ignore historical open submissions and never auto-recheck',async()=>{
+ const {hasOpenSubmissions}=await import('../data/importSessions.ts');
+ for(const status of ['ARCHIVED','CANCELLED']){
+  const session={...sourceSession,status,submissions:[{status:'PROFESSIONALLY_REVIEWED'}]};
+  assert.equal(hasOpenSubmissions(session),false);
+  assert.equal(nationReviewSelection(session,true),undefined);
+ }
+});
+
+test('queue excludes closed sessions from normal count and keeps collapsed history',()=>{
+ const sessions=['PROFESSIONALLY_REVIEWED','IMPORTED','ARCHIVED','CANCELLED'].map((status,i)=>({...sourceSession,id:String(i),nation:['ARG','ITA','JPN','CAN'][i],status,submissions:[],errors:0,warnings:0}));
+ const html=renderToStaticMarkup(createElement(Queue,{sessions,selectedId:null,onSelect:()=>{},onClose:()=>{}}));
+ assert.ok(html.includes('Importwarteschlange (2)'));
+ const open=html.slice(html.indexOf('Offene Nationen'),html.indexOf('Importierte Nationen'));
+ assert.ok(open.includes('ARG')&&!open.includes('JPN')&&!open.includes('CAN'));
+ const imported=html.slice(html.indexOf('Importierte Nationen'),html.indexOf('<details'));
+ assert.ok(imported.includes('ITA')&&!imported.includes('JPN')&&!imported.includes('CAN'));
+ assert.match(html,/<details class="mt-5 text-sm"><summary/);
+ assert.ok(html.includes('Geschlossene Importsessions (2)'));
+ assert.equal((html.match(/title="Importsession aus Warteschlange entfernen"/g)??[]).length,2);
+ const readonly=renderToStaticMarkup(createElement(Queue,{sessions,selectedId:null,onSelect:()=>{}}));
+ assert.ok(!readonly.includes('Importsession aus Warteschlange entfernen'));
 });

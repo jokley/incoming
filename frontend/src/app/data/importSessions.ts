@@ -44,4 +44,5 @@ export interface ImportSession {
 
 export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED']);
 
-export const hasOpenSubmissions = (session:{submissions?:ReadonlyArray<{status:string}>}) => Boolean(session.submissions?.some(s=>s.status!=='IMPORTED'));
+export const closedImportStatuses = new Set<string>(['ARCHIVED', 'CANCELLED']);
+export const hasOpenSubmissions = (session:{status?:string;submissions?:ReadonlyArray<{status:string}>}) => !closedImportStatuses.has(session.status ?? '') && Boolean(session.submissions?.some(s=>s.status!=='IMPORTED'));
