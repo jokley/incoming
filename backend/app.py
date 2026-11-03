@@ -1886,6 +1886,7 @@ def _save_uploaded_excel(file_storage):
 @app.route('/api/import/fis/preview/', methods=['POST'])
 def preview_fis_import():
     lock_accommodation_writes()
+    db.session.expire_all()
     raw_event_id = request.form.get('eventId') or request.headers.get('X-Championship-Event-ID')
     if not raw_event_id:
         return jsonify({'error': 'EVENT_REQUIRED', 'message': 'Bitte ein Event für den Import auswählen.'}), 400
@@ -1989,7 +1990,15 @@ def preview_fis_import():
             if not session:
                 # There is exactly one durable workflow per nation, including completed workflows.
                 session = ImportSession.query.filter_by(event_id=event_context.id, nation=nation).first()
-            if session and session.current_version:
+            if session and session.status == 'ARCHIVED' and not any(h.event_type == 'ARCHIVED' for h in session.history):
+                # Older archive calls had no history marker. Preserve their source boundary on first reuse.
+                boundary = max(session.versions, key=lambda v: v.version, default=None)
+                db.session.add(ImportSessionEvent(session_id=session.id, version_id=boundary.id if boundary else None,
+                    event_type='ARCHIVED', title='Früheren Sessionabschluss übernommen',
+                    description='Historische Quellen bleiben geschlossen; neue Dateien beginnen eine neue Prüfung.', username=user.username))
+                db.session.flush()
+                db.session.expire(session, ['history'])
+            if session and session.current_version and session.status != 'ARCHIVED':
                 previous_preview = json.loads(session.current_version.preview_json or '{}')
                 keys = {p.get('matchKey') for p in result['people']}
                 commands = {key: value for key, value in previous_preview.get('singleRoomQuotaExemptOverrides', {}).items()
@@ -2035,6 +2044,7 @@ def preview_fis_import():
             # In particular, an unchanged valid list has no open decision and
             # can proceed directly to professional approval.
             session.status = status
+            session.archived_at = None
             session.approved_at = session.approved_by = None
             version = ImportSessionVersion(session_id=session.id, version=next_version,
                 preview_token=result['previewToken'], preview_json=json.dumps(result, ensure_ascii=False),
@@ -2498,7 +2508,10 @@ def get_import_approval(approval_id):
 @app.route('/api/import/sessions/<int:session_id>/approvals/<int:approval_id>', methods=['PATCH'])
 def decide_import_approval(session_id, approval_id):
     lock_accommodation_writes()
+    db.session.expire_all()
     session = ImportSession.query.get_or_404(session_id)
+    if session.status == 'ARCHIVED':
+        return jsonify(error='IMPORT_SESSION_CLOSED', message='Importsession geschlossen. Dateien erneut hochladen, um eine neue Prüfung zu beginnen.'), 409
     approval = ImportApproval.query.filter_by(
         id=approval_id, session_id=session.id,
         version_id=session.current_version_id,
@@ -2776,11 +2789,25 @@ def import_approved_session(session_id):
 
 @app.route('/api/import/sessions/<int:session_id>/archive', methods=['POST'])
 def archive_import_session(session_id):
-    session = ImportSession.query.get_or_404(session_id)
-    if session.status not in {'IMPORTED', 'REPLACED', 'ERROR'}:
-        return jsonify({'error': 'Nur abgeschlossene Sessions können archiviert werden.'}), 409
+    lock_accommodation_writes()
+    db.session.expire_all()
+    session = ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    data = request.get_json(silent=True) or {}
+    if str(data.get('versionId')) != str(session.current_version_id):
+        return jsonify(error='STALE_PREVIEW', message='Die aktuelle Importsession muss ausdrücklich bestätigt werden.'), 409
+    if session.status == 'ARCHIVED':
+        return jsonify(session.to_dict())
     session.status, session.archived_at = 'ARCHIVED', datetime.utcnow()
+    session.approved_at = session.approved_by = None
+    # Keep every saved preview and approval immutable; end the entire source set.
+    boundary = max(session.versions, key=lambda v: v.version, default=None)
+    db.session.add(ImportSessionEvent(session_id=session.id, version_id=boundary.id if boundary else None,
+        event_type='ARCHIVED', title='Importsession geschlossen',
+        description='Gesamter Nationsworkflow beendet. Bereits importierte Daten und historische Entscheidungen bleiben unverändert.',
+        username=current_user().username))
     db.session.commit()
+    for version in session.versions:
+        PREVIEW_STORE.pop(version.preview_token, None)
     return jsonify(session.to_dict())
 
 
@@ -2798,11 +2825,11 @@ def cancel_import_session(session_id):
     preview=load_version_preview(current)
     preview.setdefault('_workflow',{})['state']='CANCELLED'
     current.preview_json=encoded(preview)
-    from imports.workflow import submission_heads
+    from imports.workflow import submission_heads, versions_after_archive
     imported_version_ids={h.version_id for h in session.history if h.event_type=='IMPORTED'}
     previous=list(submission_heads(session).values())
     if not previous:
-        previous=[v for v in session.versions if v.id!=current.id and v.id in imported_version_ids]
+        previous=[v for v in versions_after_archive(session) if v.id!=current.id and v.id in imported_version_ids]
     db.session.add(ImportSessionEvent(session_id=session.id,version_id=current.id,event_type='CANCELLED',
         title='Aktuelle Prüfversion abgebrochen',description='Frühere Versionen, Genehmigungen und operative Daten bleiben erhalten.',username=current_user().username))
     if previous:
@@ -2823,6 +2850,8 @@ def recheck_import_session(session_id):
     lock_accommodation_writes()
     db.session.expire_all()
     session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    if session.status == 'ARCHIVED':
+        return jsonify(error='IMPORT_SESSION_CLOSED', message='Importsession geschlossen. Dateien erneut hochladen, um eine neue Prüfung zu beginnen.'), 409
     if not session.current_version:return jsonify(error='IMPORT_REVIEW_REQUIRED'),409
     data=request.get_json(silent=True) or {}
     source_version=None

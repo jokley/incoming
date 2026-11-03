@@ -11,6 +11,13 @@ DATE_FIELDS={'arrivalDate','departureDate','tvPictureDate','checkInDate','checkO
 DATETIME_FIELDS={'entryDate','lastUpdate','entriesSentDate'}
 
 
+def versions_after_archive(session):
+    """An explicit session close is a source boundary, never a history deletion."""
+    closed = {h.version_id for h in session.history if h.event_type == 'ARCHIVED'}
+    boundary = max((v.version for v in session.versions if v.id in closed), default=0)
+    return [v for v in session.versions if v.version > boundary]
+
+
 def submission_heads(session):
     """Latest accepted source per mapped family, including invalid corrections.
 
@@ -19,7 +26,9 @@ def submission_heads(session):
     expose the preceding source; an imported full replacement starts a new set.
     """
     heads = {}
-    for version in sorted(session.versions, key=lambda v: v.version):
+    if session.status == 'ARCHIVED':
+        return heads
+    for version in sorted(versions_after_archive(session), key=lambda v: v.version):
         preview = json.loads(version.preview_json or '{}')
         state = (preview.get('_workflow') or {}).get('state')
         if state == 'CANCELLED' or preview.get('submissionSources'):
@@ -270,6 +279,8 @@ def refresh_plan(session, preview=None, *, read_context=None, recalculate=True):
 
 
 def require_review(session, *, approved=False):
+    if session.status == 'ARCHIVED':
+        raise ImportValidationError('IMPORT_SESSION_CLOSED', 'Importsession geschlossen. Für eine neue Prüfung Dateien erneut hochladen.')
     preview=load_version_preview(session.current_version)
     require_submission_sources(session,preview)
     require_submission_consistency(session,preview)

@@ -162,7 +162,7 @@ def _clarification_source_views(session, preview, control):
     # Upload has flushed the new version before the relationship is reloaded.
     versions = {v.id:v for v in session.versions}
     if session.current_version:versions[session.current_version_id]=session.current_version
-    heads = submission_heads(SimpleNamespace(versions=list(versions.values())))
+    heads = submission_heads(SimpleNamespace(versions=list(versions.values()), history=session.history, status=session.status))
     if not heads or (preview.get('replacementScope') or {}).get('kind')=='FULL_NATION':
         return [dict(families={'*'}, sources={'*':session.current_version_id}, preview=preview,
             subjects=clarification_subjects(preview, control), valid=not preview.get('errors'), shared=set())]
