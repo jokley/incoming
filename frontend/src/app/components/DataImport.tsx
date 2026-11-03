@@ -18,7 +18,7 @@ import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, F
 
 import { api } from '../services/api';
 import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
-import { importConfirmationMessage, reloadImportSession } from '../services/importConfirmation';
+import { archiveImportSessionChecked, importConfirmationMessage, reloadImportSession } from '../services/importConfirmation';
 import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange } from '../types';
 import { closedImportStatuses, IMPORT_SESSION_STATUS, type ImportSession, type NationClarification } from '../data/importSessions';
@@ -66,6 +66,7 @@ export function DataImport() {
   const [selected, setSelected] = useState<ImportSession | null>(null);
   const [closingSession,setClosingSession]=useState<ImportSession|null>(null);
   const [closeError,setCloseError]=useState<string|null>(null);
+  const [closeRefreshWarning,setCloseRefreshWarning]=useState<string|null>(null);
   const [sessions, setSessions] = useState<ImportSession[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [fullReplacement,setFullReplacement]=useState(false);
@@ -102,7 +103,7 @@ export function DataImport() {
     try {
       const full = await api.getImportSession(session.id);
       if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
-      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);
+      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);setCloseRefreshWarning(null);
       const selection = nationReviewSelection(full);
       const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
       setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
@@ -119,17 +120,20 @@ export function DataImport() {
     if(input)input.value=''; // The same file pair may be selected again for a reimport.
   };
   const cancel = () => { setFiles([]); setPreview(selected?.preview ?? null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null);setCloseRefreshWarning(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
       const selection = fullReplacement ? undefined : nationReviewSelection(uploaded);
       const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : uploaded;
       setSelected(draft); setPreview(draft.preview ?? null); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const closeSession = async () => {
-    if(!closingSession)return;setConfirming(true);setCloseError(null);
-    try {await api.archiveImportSession(closingSession.id,closingSession.currentVersionId);
-      setSessions(rows=>rows.map(row=>row.id===closingSession.id?{...row,status:'ARCHIVED',submissions:[]}:row));
-      if(selected?.id===closingSession.id){setSelected(null);setPreview(null);setFiles([]);setDetail(null);setActiveTask(null);setQuestion(null);setError(null);setSuccess(null);}
-      setClosingSession(null);await refreshSessions();
-    }catch(e){setCloseError(e instanceof Error?e.message:'Importsession konnte nicht geschlossen werden.');}
+    if(!closingSession)return;setConfirming(true);setCloseError(null);setCloseRefreshWarning(null);
+    let archived: ImportSession;
+    try {archived=await archiveImportSessionChecked(closingSession,api);}
+    catch(e){setCloseError(e instanceof Error?e.message:'Importsession konnte nicht geschlossen werden.');setConfirming(false);return;}
+    setSessions(rows=>rows.map(row=>row.id===archived.id?archived:row));
+    if(selected?.id===archived.id){setSelected(null);setPreview(null);setFiles([]);setDetail(null);setActiveTask(null);setQuestion(null);setError(null);setSuccess(null);}
+    setClosingSession(null);
+    try {await refreshSessions();}
+    catch {setCloseRefreshWarning(`${archived.nation}: Importsession ist geschlossen. Die Warteschlange konnte nicht neu geladen werden. Bitte die Seite zur Aktualisierung erneut laden.`);}
     finally{setConfirming(false);}
   };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
@@ -260,6 +264,7 @@ export function DataImport() {
     <input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple disabled={loading||confirming||savingTask} className="hidden" onChange={e=>handleFiles(e.target.files)}/>
     <SplitPageLayout className="flex min-h-full flex-col gap-5 space-y-0 xl:h-full xl:min-h-0">
       <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="Nationen prüfen, freigeben und kontrolliert importieren." meta={selected ? <><StatusChip tone={!preview||preview.planStale||preview.quotaRulesChanged ? 'warning' : selected.errors ? 'error' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'success'}>{closedImportStatuses.has(selected.status)?IMPORT_SESSION_STATUS[selected.status]:!preview||preview.planStale||preview.quotaRulesChanged?'Prüfung erforderlich':IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">{selected.nation} · {importScopeLabel(preview) || 'Nationsentwurf'}</span></> : <StatusChip tone="primary">Dateien hinzufügen</StatusChip>} />
+      {closeRefreshWarning&&<InfoPanel tone="warning" title="Aktualisierung ausstehend">{closeRefreshWarning}</InfoPanel>}
     {files.length>0&&<details className="mx-5 mb-3 text-sm"><summary className="cursor-pointer">Sonderaktion: vollständige Nation ersetzen</summary><label className="mt-2 flex gap-2"><input type="checkbox" checked={fullReplacement} onChange={e=>setFullReplacement(e.target.checked)} disabled={loading||confirming}/>Diese Dateien bilden die vollständige Nation. Fehlende Personen können nach Prüfung und Bestätigung entfernt werden.</label></details>}
       <div className="flex flex-col gap-5 xl:min-h-0 xl:flex-1 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} onSelect={selectSession} onClose={selectedEvent?.canWrite?session=>{setCloseError(null);setClosingSession(session);}:undefined} busy={loading||confirming||savingTask||questionBusy} />
