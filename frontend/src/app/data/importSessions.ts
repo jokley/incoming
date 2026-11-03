@@ -19,18 +19,21 @@ export interface ImportApproval { id: string; sessionId: string; nation: string;
 export interface ImportDecision extends ImportApproval { discipline?: string|null; gender?: string|null; importVersion?: number|null; importSession:{id:string;nation:string}; people:Array<{id:string;name:string;nation:string;singleRoomStatus:string}>; }
 export interface NationClarificationSubject {
   key:string;digest:string;label:string;personKeys:string[];people:string[];
+  targetType?:'PEOPLE'|'FINDING'|'SPORT'|'NATION'; automatic?:boolean;
   coverage?:{schemaVersion:number;eventId:number;nation:string;families:string[];sourceVersionIds:Record<string,number>};
   facts?:{stay?:{arrivalDate?:string;departureDate?:string;allowedStart?:string;allowedEnd?:string;outsideNights?:number}};
 }
 export interface NationClarification {
- id:string;versionId:string;subject:NationClarificationSubject;required:boolean;state:'OPEN'|'RESOLVED'|'CORRECTED';changed:boolean;relevant?:boolean;covered?:boolean;
+ id:string;versionId:string;subject:NationClarificationSubject;required:boolean;state:'OPEN'|'RESOLVED'|'CORRECTED';changed:boolean;relevant?:boolean;covered?:boolean;correctedParts?:number;totalParts?:number;
  comment:string;contactMethod?:string;contactDate?:string;user:string;createdAt:string;result?:string;resolutionComment?:string;
  replies:Array<{comment:string;user:string;timestamp:string}>;
 }
 export interface ImportSession {
   submissions?:Array<{family:string;versionId:string;version:number;people:number;athletes:number;status:ImportSessionStatus;errors:number}>;
   submissionTotal?:{people:number|null;athletes?:number;retainedPeople?:number;conflict?:string};
-  nationClarifications?:{subjects:NationClarificationSubject[];items:NationClarification[]};
+  nationClarifications?:{subjects:NationClarificationSubject[];items:NationClarification[];selectionDigest?:string;
+    people?:Array<{personKey:string;name:string;families:string[];disciplines:string[]}>;
+    groups?:Array<{key:string;label:string;families?:string[];personKeys:string[];subjects:Array<{key:string;digest:string}>}>};
 
   importControl?:import('../types').ImportControl;
   id: string; nation: string; discipline?: string; uploadedAt: string; uploadedBy: string;
