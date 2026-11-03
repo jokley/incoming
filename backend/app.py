@@ -2098,9 +2098,13 @@ def preview_fis_import():
             result['planStale']=False
             from import_control import build_import_control
             control = build_import_control(reviewed,read_context)
+            from import_control import record_clarification_corrections
+            record_clarification_corrections(session, reviewed, control, user.username, new_list=True)
             db.session.commit()
             result['session'] = session.to_dict(include_preview=True)
             result['session']['importControl'] = control
+            from import_control import nation_clarifications
+            result['session']['nationClarifications'] = nation_clarifications(session, reviewed, control)
         return jsonify(result), 200
     except ImportValidationError as exc:
         db.session.rollback()
@@ -2246,6 +2250,8 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
     if include_preview and payload.get('preview') and read_context is not None:
         from import_control import build_import_control
         payload['importControl'] = build_import_control(payload['preview'],read_context)
+        from import_control import nation_clarifications
+        payload['nationClarifications'] = nation_clarifications(session, payload['preview'], payload['importControl'])
     return payload
 
 
@@ -2848,6 +2854,11 @@ def recheck_import_session(session_id):
     refresh_plan(session)
     if source_version and not session.current_approvals:
         session.status='PROFESSIONALLY_REVIEWED'
+    from import_control import build_import_control, record_clarification_corrections
+    from imports.read_context import ImportReadContext
+    control = build_import_control(preview, ImportReadContext(session.event_id))
+    record_clarification_corrections(session, preview, control, current_user().username)
+
     db.session.add(ImportSessionEvent(session_id=session.id,version_id=session.current_version_id,event_type='RECHECKED',
         title='Geparste Meldung erneut geprüft',description='Aktueller Datenstand, keine Personenänderung. Excel wird nicht erneut geparst.',username=current_user().username))
     db.session.commit()
@@ -2856,8 +2867,24 @@ def recheck_import_session(session_id):
 
 @app.route('/api/import/sessions/<int:session_id>/history', methods=['POST'])
 def add_import_session_history(session_id):
-    session = ImportSession.query.get_or_404(session_id)
+    lock_accommodation_writes()
+    session = ImportSession.query.filter_by(id=session_id).populate_existing().with_for_update().first_or_404()
     data = request.get_json(silent=True) or {}
+    if 'clarificationAction' in data:
+        if not session.current_version:
+            return jsonify(error='IMPORT_REVIEW_REQUIRED'),409
+        from import_control import build_import_control, document_nation_clarification
+        from imports.read_context import ImportReadContext
+        context = ImportReadContext(session.event_id)
+        preview = _current_session_preview(session, read_context=context)
+        try:
+            document_nation_clarification(session, data, preview, build_import_control(preview, context), current_user().username)
+        except (ValueError, TypeError) as exc:
+            return jsonify(error='INVALID_NATION_CLARIFICATION', message=str(exc)), 409
+        db.session.commit()
+        return jsonify(_current_session_payload(session, include_preview=True)), 201
+    if data.get('waitingForNation') and session.status in {'APPROVED','IMPORTED','REPLACED','ARCHIVED','CANCELLED'}:
+        return jsonify(error='IMPORT_SESSION_LOCKED'),409
     description = str(data.get('description') or '').strip()
     if not description:
         return jsonify({'error': 'description is required'}), 400

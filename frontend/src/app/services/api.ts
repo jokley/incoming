@@ -967,6 +967,7 @@ class ApiService {
   async recheckImportSession(id:string,selection?:{sourceVersionId?:string;sourceVersionIds?:string[]}):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST',body:JSON.stringify(selection??{})}); }
   async importSession(id: string, versionId?:string|null): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST',body:JSON.stringify({versionId}) })); }
   async cancelImportSession(id: string, versionId?:string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST',body:JSON.stringify({versionId}) }); }
+  async documentImportClarification(id:string,data:unknown):Promise<ImportSession> {return this.request(`/import/sessions/${id}/history`,{method:'POST',body:JSON.stringify(data)});}
   async addImportSessionNote(id: string, description: string, waitingForNation = false): Promise<ImportSession> { return this.request(`/import/sessions/${id}/history`, { method: 'POST', body: JSON.stringify({ description, waitingForNation }) }); }
 
   async confirmFisImport(previewToken: string): Promise<FisImportConfirmResult> {

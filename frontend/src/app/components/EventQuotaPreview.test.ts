@@ -108,3 +108,12 @@ test('exactly one next action; stale approval never offers import',()=>{
   if(item.stale||item.missing)assert.ok(!html.includes('Importieren'));
  }
 });
+
+test('mandatory questions guide only the relevant review; unrelated and optional questions preserve release',()=>{
+ const data={...preview,isValid:true,errors:[],changePlan:{digest:'current'}};
+ for(const [required,relevant,expected] of [[true,true,'Rückfrage klären'],[true,false,'Freigeben'],[false,true,'Freigeben']] as const){
+  const session={...sourceSession,status:'PROFESSIONALLY_REVIEWED',approvals:[],nationClarifications:{subjects:[],items:[{id:'q',required,relevant,state:'OPEN'}]}};
+  const output=renderToStaticMarkup(createElement(PrimaryAction,{session,preview:data,files:[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}}));
+  assert.ok(output.includes(expected));assert.ok(!output.includes('disabled=""'));assert.equal((output.match(/<button/g)||[]).length,1);
+ }
+});
