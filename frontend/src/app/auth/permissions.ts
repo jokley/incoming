@@ -39,7 +39,9 @@ export function buildPermissions(user: AuthenticatedUser | null): Permissions {
   const isAdmin = groups.includes(AUTH_GROUPS.admin) || hasWildcard || user?.isSuperadmin === true;
   const isEditor = groups.includes(AUTH_GROUPS.editor) || permissions.includes('data.write');
   const isViewer = groups.includes(AUTH_GROUPS.viewer) || (!isAdmin && !isEditor);
-  const canWrite = isAdmin || isEditor;
+  // Functional capabilities come from the server; group labels do not grant actions.
+  const has = (permission: string) => hasWildcard || permissions.includes(permission);
+  const canWrite = has('data.write');
 
   return {
     groups,
@@ -52,9 +54,9 @@ export function buildPermissions(user: AuthenticatedUser | null): Permissions {
     canCreate: canWrite,
     canManageHotels: canWrite,
     canManageRoomTypes: canWrite,
-    canManageAssignments: canWrite,
-    canManageImports: isAdmin || isEditor || permissions.includes('imports.write'),
-    canReadAudit: isAdmin || isEditor || permissions.includes('audit.read'),
+    canManageAssignments: has('assignments.write'),
+    canManageImports: has('imports.write'),
+    canReadAudit: has('audit.read'),
     roleLabel: isAdmin ? 'Admin' : isEditor ? 'Editor' : 'Viewer',
     isReadOnly: !canWrite,
   };
