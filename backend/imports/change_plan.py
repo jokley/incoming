@@ -153,7 +153,12 @@ def build_plan(preview, read_context, *, version=None):
             conflicts = [change for change in changes if change['field'] not in {'discipline','entry_date','last_update','entries_sent_date'}]
             if before - in_scope:
                 changes[:] = conflicts  # Other-source export metadata is not applied to a shared person.
-            if conflicts or (existing.id in protected_people and before-incoming):
+            linked=p.get('confirmedOfficialLinkId') in {link['id'] for link in read_context.official_links}
+            if (conflicts or (existing.id in protected_people and before-incoming)) and linked:
+                problem=dict(code='IMPORT_SHARED_ACCOMMODATION_CONFLICT',message='Bestand einer gemeinsamen Person würde geändert. Gemeinsamen Quellenstand und Unterkunft ausdrücklich klären.',details={'personId':existing.id,'fields':[c['field'] for c in conflicts] or ['competitionIds'],'singleScopeReview':True})
+                if problem not in preview.setdefault('errors',[]):preview['errors'].append(problem)
+                preview['isValid']=False
+            elif conflicts or (existing.id in protected_people and before-incoming):
                 raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Gemeinsame Person in SB/FS mit widersprüchlichen Daten. Gemeinsamen Datenstand klären; kein stilles Überschreiben.', details={'personId':existing.id,'fields':[c['field'] for c in conflicts] or ['competitionIds']})
         people['update' if changes or incoming!=before else 'unchanged'].append(identity)
 

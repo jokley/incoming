@@ -373,7 +373,7 @@ def wsc_membership_errors(people, event_id=None):
     return errors
 
 
-def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=None, event_id=None):
+def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=None, event_id=None, *, official_links=None):
     competition_mapping = COMPETITION_BY_IMPORT_CODE if competition_mapping is None else competition_mapping
     errors = []
     warnings = []
@@ -401,6 +401,8 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
         })
         return {'people': [], 'errors': errors, 'warnings': warnings}
 
+    source_families = {competition_athlete_family(competition_mapping[c]) for c in competition_columns if c in competition_mapping}
+    source_family = next(iter(source_families)) if len(source_families)==1 else None
     for index, row in df.iterrows():
         row_number = index + 2
         lastname = normalize_whitespace(row.get('Lastname'))
@@ -508,6 +510,10 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             'tvPictureDate': parse_date(row.get('tv_picture_date')),
             'stance': normalize_whitespace(row.get('Stance')) or None,
         }
+        if official_links:
+            from imports.official_links import canonicalize
+            canonicalize(person,source_family,official_links,athlete_maps)
+            unique_key=person.get('matchKey',unique_key)
         existing = _find_existing_athlete(person, athlete_maps)
         if existing and any(p.get('existingAthleteId') == existing.id for p in people):
             raise ImportValidationError('IMPORT_IDENTITY_CONFLICT', 'Mehrere Importzeilen passen zur selben Person.', event_id=event_id)
@@ -1614,7 +1620,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
     mapping = None
     if event is not None:
         mapping = active_competition_mapping(event)
-    people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None, event.id if event else None)
+    people_result = parse_entries_list(entries_df, athlete_maps, mapping, event.name if event else None, event.id if event else None, official_links=read_context.official_links)
     families = {competition_athlete_family(mapping[column]) for column in entries_df.columns if column in mapping}
     if snapshot_scope not in {None, 'AUTO', 'FULL_NATION'}:
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ungültiger Ersetzungsbereich.')
@@ -1624,6 +1630,16 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         cancelled['sourceFamily'] = next(iter(families)) if len(families) == 1 else None
     room_result = parse_room_list(room_df, people_result['people'])
     requirement_issues = apply_preview_requirements(people_result['people'], room_result['rooms'], read_context=read_context)
+    # A missing request inherits the person's existing accommodation, never an
+    # invented No room. Preserve the absent source evidence separately.
+    for person in people_result['people']:
+        if person.get('importAccommodationRequirement') is None and not person.get('roomType') and not any(r.get('roomType') for r in room_result['rooms'] if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}):
+            person['sourceAccommodationEvidence']=dict(requirement=None,roomType=person.get('roomType'),arrivalDate=person.get('arrivalDate').isoformat() if person.get('arrivalDate') else None,departureDate=person.get('departureDate').isoformat() if person.get('departureDate') else None)
+            existing=_find_existing_athlete(person,athlete_maps)
+            if existing:
+                for field,attribute in (('roomType','room_type'),('sharedWithName','shared_with_name'),('arrivalDate','arrival_date'),('departureDate','departure_date')):
+                    person[field]=getattr(existing,attribute)
+
     apply_preview_rates(people_result['people'], read_context=read_context)
     apply_single_room_quota_exemptions(people_result['people'], event_id=event.id if event else None, read_context=read_context)
     quota_checks = []

@@ -178,7 +178,7 @@ def _clarification_source_views(session, preview, control):
             for person in data.get('people', []):
                 resolve_saved_quota_memberships(person, read_context=context)
             projected = build_import_control(data, context)
-            valid = not data.get('errors') and all(not load_version_preview(v).get('errors') for v in selected.values())
+            valid = not data.get('errors') and all(not [e for e in load_version_preview(v).get('errors',[]) if not (combined and (e.get('details') or {}).get('singleScopeReview'))] for v in selected.values())
             subjects = clarification_subjects(data, projected)
             shared = {p['matchKey'] for p in data.get('people', []) if len({r['versionId'] for r in p.get('sourceRows', [])})>1}
         except (ImportValidationError, ValueError, TypeError):

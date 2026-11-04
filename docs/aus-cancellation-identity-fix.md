@@ -107,3 +107,93 @@ und Screenshots verbleiben ausschließlich lokal.
 
 Keine produktiven Datenänderungen, kein Merge oder Deployment. Unabhängig von
 PR #371; PR #370 wird nicht verändert.
+
+## AUT: sportbereichsbezogene Staff-IDs und gemeinsame Unterkunft
+
+Nachtrag auf Basis von `main` nach den zusammengeführten PRs #371 und #372.
+Die vier unveränderten AUT-Originaldateien vom 4. November 2026 enthalten
+56 aktive SB- und 45 aktive FS-Meldungen. Sechs Officials haben in beiden
+Sportbereichen denselben vollständigen Namen und dieselbe Nation, aber
+unterschiedliche Staff-IDs. Das ist ein Prüfvorschlag, kein Identitätsnachweis.
+Erst nach einzeln ausdrücklich bestätigter Zuordnung ergeben sich 95 eindeutige
+Personen mit ihren jeweiligen Competition-Memberships.
+
+### Datenstruktur und sichere Zuordnung
+
+Die vorhandenen Event-Personen, Memberships, unveränderlichen Quellversionen und
+die append-only `ImportSessionEvent`-Historie reichen für diesen Fall aus.
+Keine neue Identitätstabelle oder Migration: `OFFICIAL_SOURCE_LINK` dokumentiert
+Event, Nation, beide Sportbereiche, ursprüngliche Staff-IDs, Quellzeilen,
+vorhandene Quellversion, Uploadhash und bestätigenden Benutzer. Die bestehende
+primäre Staff-ID bleibt die technische Personenidentität; alle Original-IDs
+bleiben mit ihrem Quellenbezug sichtbar und bei Reimport wiederverwendbar.
+Je nach Erstimport kann die technische primäre ID unterschiedlich sein; Anzahl,
+Memberships und fachliches Unterkunftsergebnis sind reihenfolgeunabhängig.
+
+Der kleine Bestätigungsdialog startet ohne ausgewählte Personen und zeigt die
+beiden Staff-IDs samt Funktion und Quellenbezug. Vorschläge gelten ausschließlich
+für eindeutig gleichnamige Officials ohne FIS-Code aus verschiedenen
+Sportbereichen. Athleten, widersprüchliche FIS-Codes, Staff-ID-Kollisionen mit
+anderen Personen und Änderungen innerhalb desselben Sportbereichs behalten die
+starken Identitätsprüfungen. Bestätigungen sind an Event, Nation, aktuellen
+Quellstand und Datenbestand gebunden, kurzlebig und gegen Wiederholung geschützt.
+Ein später nicht mehr passender starker Personenbestand sperrt auch gespeicherte
+Zuordnungen erneut. Es werden keine zwei bereits getrennten SQL-Personen
+ungeprüft vereinigt.
+
+### Unterkunft bleibt personenbezogen
+
+Fehlende Zimmerangaben sind keine ausdrückliche `NO_ROOM`-Meldung. Nur tatsächlich
+fehlende Evidenz darf die konkrete Meldung der anderen Quelle übernehmen;
+unbekannte oder widersprüchliche ausdrückliche Werte bleiben klärungspflichtig.
+Der ursprüngliche fehlende Quellenbefund und seine Aufenthaltsdaten bleiben
+erhalten. Identische Zimmermeldungen werden einmal gezählt und behalten beide
+Quellenbezüge. Dokumentation und Identitätsbestätigung ändern weder manuelle
+Unterkunftsentscheidungen noch Tarife, Genehmigungen oder Quoten.
+
+Die Originale enthalten vier echte Widersprüche: ausdrücklich „No room“ in SB
+gegen drei Double-shared- und eine Single-Meldung in FS. Ein weiterer Official
+hat getrennte Abschnitte (FS 9.–15. März, SB 16.–21. März). Bestehende
+`RoomBooking`-Segmente allein lösen dies nicht: Der personenbezogene Bedarf und
+die Deckungsprüfung beruhen auf einem einzigen An-/Abreisefenster. Dessen
+stilles Aufspannen würde Unterkunft in der Lücke erfinden. Daher wird dieser
+Fall gesondert gesperrt, statt ohne nachgewiesenen Bedarf ein neues
+Mehrfachaufenthaltsmodell einzuführen. Auch fehlende Zimmerangaben dürfen einen
+bekannten getrennten Aufenthalt nicht verdecken.
+
+**Ergebnis mit den Originalen:** Nach sechs bewussten Zuordnungen ist ein
+95-Personen-Entwurf prüfbar, aber wegen dieser fünf Unterkunftsfälle nicht
+importierbar. Keine Unterkunftsentscheidung wird erfunden. SB hat zusätzlich
+21 männliche Athleten gegenüber einer Grenze von 20; die vorhandene formale
+Quotenentscheidung bleibt separat erforderlich. Ein Test eines bereits
+importierten SB-Bestands setzt diese Entscheidung ausschließlich im isolierten
+Test ausdrücklich und prüft ihren Erhalt. Die Originalprüfung ohne vorhandenen
+Import erzeugt keine SQL-Personen oder Genehmigungen.
+
+### Validierung des AUT-Nachtrags
+
+Abschließende Regression: 205 Backendtests bestanden, drei optionale
+JPN-Originaltests mangels Dateien übersprungen; darunter 23 gezielte
+Officials-/Unterkunftsfälle sowie die AUS-Original- und ARG-Regressionen.
+250 Frontendtests, Typecheck, Produktionsbuild und Diff-Prüfung bestanden.
+
+Die gezielten Tests verwenden beide Importreihenfolgen, sowohl zwei Entwürfe
+als auch einen bereits importierten ersten Sportbereich. Konsistente kontrollierte
+Meldungen erzeugen genau eine Person mit zwei Memberships; spätere Reimporte
+verwenden die bestätigten Quellen-IDs erneut. Gegenbeispiele prüfen fehlende,
+unbekannte und explizit widersprüchliche Unterkunft, identische Zimmermeldungen,
+getrennte Aufenthalte, manuelle Entscheidungen, bestehende Genehmigungen,
+fremde Sportzugehörigkeiten, starke ID-Kollisionen, veraltete Bestätigungen,
+Event-Isolation und fehlende Schreibberechtigung.
+
+Die AUT-Originaltests lassen sich mit `AUT_SB_ENTRIES`, `AUT_SB_ROOMS`,
+`AUT_FS_ENTRIES` und `AUT_FS_ROOMS` sowie der oben beschriebenen abgesicherten
+Testdatenbank über `backend/tests/test_confirmed_official_links.py` ausführen.
+Originaldateien und personenbezogene Diagnoseartefakte werden nicht eingecheckt.
+
+Lokale Chromium-Prüfung mit den Originalen: Desktop 1440×1000 und Mobil 390×844,
+jeweils SB→FS und FS→SB. Sechs anfangs unmarkierte Vorschläge, ausdrückliche
+Bestätigung, 95-Personen-Entwurf mit fünf offenen Unterkunftsfällen, gesperrter
+Import und Reimport ohne erneute Zuordnung. Keine Browserfehler und kein
+horizontaler Überlauf. Alle Schreibvorgänge betreffen ausschließlich die
+dedizierte lokale Testdatenbank; kein Merge, Deployment oder Produktionseingriff.

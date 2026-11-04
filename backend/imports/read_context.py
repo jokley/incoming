@@ -38,6 +38,8 @@ class ImportReadContext:
                 raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Eventfremder Buchungsbezug.')
             if any(o.athlete is None for m in athlete.room_booking_memberships for o in m.room_booking.occupants):
                 raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Gemischte Eventbelegung.')
+        from .official_links import load_links
+        self.official_links = load_links(owner)
         self.athlete_maps = _build_existing_athlete_maps(self.athletes, event_id=self.event_id)
         self.by_fis_code = {}
         for athlete in self.athletes:
