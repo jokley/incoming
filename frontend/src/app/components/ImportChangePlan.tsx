@@ -17,6 +17,7 @@ export function ImportChangePlan({ plan, stale, editable, destructiveConfirmed, 
       {plan.people.remove.map(person => <details key={person.personId} className="rounded-lg border border-[var(--ops-border)] p-2 text-sm">
         <summary className="cursor-pointer font-semibold">{person.name} · Person {person.personId} · FIS {person.fisCode ?? '—'} · Staff {person.competitorId ?? '—'}</summary>
         <div className="mt-2 space-y-1 break-words text-xs">
+          {person.removalReason&&<p className="font-bold">{person.removalReason}</p>}
           <p>Competitions: {person.competitions?.map(c=>c.name).join(', ') || person.competitionIds?.join(', ') || '—'}. Buchungen: {person.bookingIds?.join(', ') || '—'}.</p>
           <p>Unterkunft: {person.before?.accommodation_requirement} ({person.before?.accommodation_requirement_source}) · Tarif: {person.before?.accommodation_rate_category} ({person.before?.accommodation_rate_source})</p>
           <p>EZ-Status: {person.before?.single_room_status} · Ausnahme: {person.before?.single_room_quota_exempt_reason ?? '—'} · Entscheidung: {person.approvalId ?? '—'}</p>
@@ -25,7 +26,7 @@ export function ImportChangePlan({ plan, stale, editable, destructiveConfirmed, 
       </details>)}
       {(plan.people.update.length > 0 || plan.memberships.remove.length > 0) && <details className="text-sm"><summary className="cursor-pointer">Änderungen und Competition-Zuordnungen anzeigen</summary>
         {plan.people.update.map(person => <div key={person.personId} className="my-2 break-words"><strong>{person.name}</strong>{person.changes?.map(change => <p key={change.field} className="text-xs">{change.field}: {String(change.old ?? '—')} → {String(change.new ?? '—')}</p>)}<p className="text-xs">Bisherige Genehmigung: {person.approvalApplicability ?? '—'}</p></div>)}
-        {plan.memberships.remove.map((m,i) => <p key={i} className="text-xs">Person {m.personId ?? m.personKey}: Competition {m.competitionId} entfernen</p>)}
+        {plan.memberships.remove.map((m,i) => <p key={i} className="text-xs">Person {m.personId ?? m.personKey}: Competition {m.competitionId} entfernen{m.reason?` · ${m.reason}`:''}</p>)}
       </details>}
       {[...plan.people.update,...plan.people.unchanged].some(p=>p.approvalId) && <details className="text-sm"><summary className="cursor-pointer">Bestehende Genehmigungen und Anwendbarkeit</summary>{[...plan.people.update,...plan.people.unchanged].filter(p=>p.approvalId).map(p=><p key={p.personId} className="break-words text-xs">{p.name} · Entscheidung {p.approvalId}: {p.approvalApplicability==='APPLICABLE'?'weiterhin anwendbar':'erneut zu prüfen; historische Evidence bleibt erhalten'}</p>)}</details>}
       {plan.operations.bookings.map(booking => <p key={booking.id} className="break-words text-xs">Buchung {booking.id} · {booking.check_in_date}–{booking.check_out_date} · Als EZ werten: {booking.counts_as_single ? 'Ja' : 'Nein'} · {plan.operations.deleteEmptyBookingIds.includes(booking.id) ? 'Nach Entfernung leer: löschen' : 'Verbleibende Belegung und Einstellungen erhalten'}</p>)}

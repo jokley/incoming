@@ -558,12 +558,13 @@ export interface FisImportPreviewRoom {
 export interface ImportChangePlan {
   digest: string; eventId: number; nation: string; importVersion: number; snapshotScope: 'FULL_NATION'|'SPORT_FAMILY'; sourceFamily?:'Snowboard'|'Freestyle'; sourceFamilies?:Array<'Snowboard'|'Freestyle'>;
   requiresDestructiveConfirmation: boolean;
-  people: Record<'create'|'update'|'unchanged'|'remove', Array<{personId:number|null;personKey?:string;name:string;fisCode?:string;competitorId?:string;competitionIds?:number[];competitions?:Array<{id:number;name:string;importCode:string}>;bookingIds?:number[];approvalId?:number;approvalApplicability?:string;changes?:Array<{field:string;old:unknown;new:unknown}>;before?:Record<string,string|null>}>>;
-  memberships: Record<'add'|'remove'|'unchanged',Array<{personId?:number;personKey?:string;competitionId:number}>>;
+  people: Record<'create'|'update'|'unchanged'|'remove', Array<{personId:number|null;personKey?:string;name:string;fisCode?:string;competitorId?:string;competitionIds?:number[];competitions?:Array<{id:number;name:string;importCode:string}>;bookingIds?:number[];approvalId?:number;approvalApplicability?:string;changes?:Array<{field:string;old:unknown;new:unknown}>;before?:Record<string,string|null>;removalReason?:string}>>;
+  memberships: Record<'add'|'remove'|'unchanged',Array<{personId?:number;personKey?:string;competitionId:number;reason?:string}>>;
   operations: {legacy?:Array<{id:number;action:string}>;fis?:Array<{id:number;action:string;survivorId?:number}>;clearPartnerFields?:number[];bookingIds:number[];deleteEmptyBookingIds:number[];partnerIds:number[];partners?:Array<{id:number;name:string}>;bookings:Array<{id:number;check_in_date:string;check_out_date:string;counts_as_single:boolean}>};
 }
 
 export interface FisImportPreview {
+  cancelledPeople?:Array<{rowNumber:number;firstname:string;lastname:string;nationCode:string;fisCode?:string|null;competitorId?:string|null;present:'CANCELLED';sourceFamily?:string|null;sourceVersionId?:number}>;
   replacementScope?:{kind:'FULL_NATION'|'SPORT_FAMILY'|'UNCONFIRMED';family?:'Snowboard'|'Freestyle';families?:Array<'Snowboard'|'Freestyle'>};
   submissionSources?:Record<string,number>;
   quotaOverview?: QuotaOverview;
