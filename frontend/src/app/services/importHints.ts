@@ -1,4 +1,5 @@
 import type { FisImportIssue } from '../types.ts';
+import {importFindings,personFamilies,type ImportFinding} from './importFindings.ts';
 
 const labels: Record<string,string> = {
   INFO_OFFICIALS_OVER_BASIS: 'Officials über Basis (informativ)',
@@ -16,8 +17,8 @@ export function importHintCategories(issues: FisImportIssue[]) {
   return [...grouped.values()];
 }
 
-export type ImportListFilter = 'all'|'error'|'clarification'|'partner'|'noRoom'|'singleRoom'|'special'|'stay'|'stayUnclear';
-export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Importfehler',clarification:'Klärungsbedarf',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Status',special:'Sondertarif',stay:'Aufenthaltsabweichungen',stayUnclear:'Aufenthalt nicht prüfbar'};
+export type ImportListFilter = 'all'|'error'|'clarification'|'housing'|'withoutRoom'|'shared'|'partner'|'noRoom'|'singleRoom'|'special'|'stay'|'stayUnclear';
+export const importListFilters:Record<ImportListFilter,string>={all:'Alle Einträge',error:'Blockierende Importfehler',clarification:'Klärungsbedarf',housing:'Offene Unterkunftsfragen',withoutRoom:'Unterkunft benötigt · ohne Zimmerangabe',shared:'Gemeinsame SB-/FS-Personen',partner:'Zimmerpartner fehlt oder unklar',noRoom:'No Room',singleRoom:'Einzelzimmer / EZ-Status',special:'Sondertarif',stay:'Aufenthaltsabweichungen',stayUnclear:'Aufenthalt nicht prüfbar'};
 
 
 import type {FisImportPreview,ImportControl,FisImportPreviewPerson,QuotaOverview} from '../types.ts';
@@ -26,17 +27,20 @@ const partnerCode=(code:string)=>/PARTNER|SHARED_PARTNER/.test(code);
 export function roomNeedsPartner(room:Room,control?:ImportControl) {
  return Boolean((/^double/i.test(room.roomType)&&!room.person2Key)||control?.issues.some(i=>partnerCode(i.code)&&i.source==='Room List'&&i.row===room.rowNumber));
 }
-export function personMatchesImportFilter(person:FisImportPreviewPerson,filter:ImportListFilter,preview:FisImportPreview,control?:ImportControl) {
+export function personMatchesImportFilter(person:FisImportPreviewPerson,filter:ImportListFilter,preview:FisImportPreview,control?:ImportControl,findings?:ImportFinding[]) {
  switch(filter){
   case 'all':return true;
   case 'stay':return (control?.people.find(p=>p.personKey===person.matchKey)?.stayWindow?.outsideNights??0)>0;
   case 'stayUnclear':{const reason=control?.people.find(p=>p.personKey===person.matchKey)?.stayWindow?.reason;return Boolean(reason&&reason!=='NO_ROOM');}
-  case 'clarification':return Boolean(control?.issues.some(i=>i.kind==='clarification'&&i.personKeys.includes(person.matchKey)&&(!partnerCode(i.code)||!preview.rooms.some(r=>[r.person1Key,r.person2Key].includes(person.matchKey)))));
+  case 'clarification':return (findings??importFindings(preview,control)).some(i=>i.kind!=='info'&&i.personKeys.includes(person.matchKey));
+  case 'housing':return (findings??importFindings(preview,control)).some(i=>i.kind!=='info'&&i.category!=='technical'&&i.personKeys.includes(person.matchKey));
+  case 'shared':return personFamilies(person,preview).includes('Snowboard')&&personFamilies(person,preview).includes('Freestyle');
+  case 'withoutRoom':return person.accommodationRequirement==='REQUIRED'&&!preview.rooms.some(r=>[r.person1Key,r.person2Key].includes(person.matchKey));
   case 'noRoom':return person.accommodationRequirement==='NO_ROOM';
   case 'special':return person.accommodationRateCategory==='SPECIAL';
   case 'singleRoom':return ['IN_QUOTA','APPROVED_EXTRA','APPROVAL_REQUIRED','QUOTA_EXEMPT'].includes(person.singleRoomEntitlement??'')||preview.rooms.some(r=>[r.person1Key,r.person2Key].includes(person.matchKey)&&r.roomType.toLowerCase()==='single');
   case 'partner':return Boolean(control?.issues.some(i=>partnerCode(i.code)&&i.personKeys.includes(person.matchKey)))||preview.rooms.some(r=>[r.person1Key,r.person2Key].includes(person.matchKey)&&roomNeedsPartner(r,control));
-  case 'error':return Boolean(control?.issues.some(i=>i.kind==='error'&&i.personKeys.includes(person.matchKey)))||preview.errors.some(i=>!i.code.startsWith('ROOM_')&&(i.details?.personKey===person.matchKey||i.details?.row===person.rowNumber||i.details?.rowNumber===person.rowNumber));
+  case 'error':return (findings??importFindings(preview,control)).some(i=>i.kind==='error'&&i.personKeys.includes(person.matchKey));
  }
 }
 export function roomMatchesImportFilter(room:Room,filter:ImportListFilter,preview:FisImportPreview,control?:ImportControl) {

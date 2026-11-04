@@ -7,6 +7,8 @@ import type {ImportSession} from '../data/importSessions';
 import {ContentCard,EnterpriseDialog,OpsButton,SectionHeader,StatusChip} from '../design-system';
 import {disciplineDisplayName} from '../services/competitionPresentation';
 import {stayWindowNights} from '../services/stayWindow';
+import {importFindings} from '../services/importFindings';
+import {FindingEvidence} from './ImportClarifications';
 
 export const visibleControlIssues=(control:ImportControl)=>control.issues.filter(issue=>issue.code!=='MULTIPLE_MEMBERSHIPS');
 const value=(text?:string|null)=>text||'Nicht angegeben';
@@ -16,10 +18,10 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
  const row=control?.people.find(r=>r.personKey===person.matchKey);
  const rooms=preview.rooms.filter(r=>r.person1Key===person.matchKey||r.person2Key===person.matchKey);
  const partners=rooms.map(r=>{const key=r.person1Key===person.matchKey?r.person2Key:r.person1Key;const mate=preview.people.find(p=>p.matchKey===key);return mate?`${mate.firstname} ${mate.lastname}`:r.sharedWithRawName?`${r.sharedWithRawName} (nicht zugeordnet)`:null;}).filter(Boolean);
- const issues=control?visibleControlIssues(control).filter(i=>i.kind!=='info'&&i.personKeys.includes(person.matchKey)):[];
+ const issues=importFindings(preview,control).filter(i=>i.kind!=='info'&&i.personKeys.includes(person.matchKey));
  return <div className="space-y-3 [overflow-wrap:anywhere] [&_h2]:text-sm [&_h2]:tracking-normal">
   {stayWindowText(row?.stayWindow)&&<p className="text-sm text-[var(--ops-warning)]" title={stayWindowDetails(row?.stayWindow)}>{stayWindowText(row?.stayWindow)}<span className="block text-xs">{stayWindowNights(row?.stayWindow)}</span></p>}
-  {issues.map((issue,index)=><p key={index} className="text-sm text-[var(--ops-warning)]">{issue.message}<span className="block text-xs text-[var(--ops-text-muted)]">{issue.source}{issue.row?` · Zeile ${issue.row}`:''}</span></p>)}
+  {issues.map(issue=><section key={issue.id} className="space-y-2 rounded border border-[var(--ops-border)] p-2"><p className="text-sm font-bold">{issue.kind==='error'?'Blockierend · ':''}{issue.message}</p><FindingEvidence finding={issue} preview={preview}/></section>)}
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Person"/><dl className="grid gap-2 sm:grid-cols-2"><Fact label="Funktion">{value(person.function)}</Fact><Fact label="Geschlecht">{value(person.gender)}</Fact></dl><h4 className="text-sm font-bold">Wettbewerbe</h4><ul className="text-sm">{row?.competitions.map(c=><li key={c.id}>{c.name}</li>)}</ul></ContentCard>
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><dl className="grid gap-2 sm:grid-cols-2">
    <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':'Unterkunft benötigt'}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
@@ -30,8 +32,8 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
   <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer font-bold">Technische Details und Quellen</summary><p className="mt-2">{person.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Entry List · Zeile ${person.rowNumber}`} · For_gender: {value(person.forGender)}</p>{person.sourceIdentities?.map((i,index)=><p key={index}>{i.family==='Freestyle'?'Freestyle/Freeski':i.family} · Staff-ID {i.staffId} · {i.function} · Quellzeile {i.row??'—'}</p>)}<p>Quotenkontexte: {row?.quotaContexts.map(c=>`${c.group} · ${c.gender}`).join('; ')||'Nicht hinterlegt'}</p><p>Unterkunft: {value(person.accommodationRequirementSource)} · Tarif: {value(person.accommodationRateSource)}</p>{rooms.map((r,i)=><p key={i}>Room List · {r.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Zeile ${r.rowNumber}`}: {r.roomType} · {value(r.checkInDate)} – {value(r.checkOutDate)} · Partnerangabe: {value(r.sharedWithRawName)}</p>)}</details>
  </div>;
 }
-export function ImportPersonDialog({person,preview,session,onClose}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void}) {
- return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
+export function ImportPersonDialog({person,preview,session,onClose,canWrite=false,onPeople,onQuestion}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void;canWrite?:boolean;onPeople?:()=>void;onQuestion?:()=>void}) {
+ return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<>{onPeople&&<OpsButton onClick={onPeople}>In Personenliste anzeigen</OpsButton>}{onQuestion&&<OpsButton disabled={!canWrite} onClick={onQuestion}>Rückfrage dokumentieren</OpsButton>}<OpsButton onClick={onClose}>Schließen</OpsButton></>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
 export function CompetitionDistribution({control,preview,nation,onPeople,focusSport}:{control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
  const tableRef=useRef<HTMLDivElement>(null);
