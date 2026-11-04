@@ -1,0 +1,105 @@
+# Compose >= 2.24.4: !override replaces collections instead of appending to PROD.
+# Use only with: -p incoming-test --env-file .env.test -f compose.yml -f compose.test.yml
+# .env.test is interpolation input only; no service loads incoming.env or .env.
+x-test-database: &test-database
+  POSTGRES_DB: incoming_test
+  POSTGRES_USER: incoming_test
+  POSTGRES_PASSWORD: ${TEST_POSTGRES_PASSWORD:?Set a unique URL-safe TEST_POSTGRES_PASSWORD in .env.test}
+
+x-test-app: &test-app
+  <<: *test-database
+  DATABASE_URL: postgresql://incoming_test:${TEST_POSTGRES_PASSWORD:?Set TEST_POSTGRES_PASSWORD}@postgres:5432/incoming_test
+  FLASK_ENV: production
+  AUTH_PROXY_SECRET: ${TEST_AUTH_PROXY_SECRET:?Set a unique TEST_AUTH_PROXY_SECRET in .env.test}
+  SUPERADMIN_USERNAME: ${TEST_SUPERADMIN_USERNAME:-}
+  LOG_LEVEL: INFO
+  DATABASE_MAINTENANCE_MODE: "false"
+  BACKUP_DIR: /backups
+  BACKUP_SERVICE_URL: http://backup:8080
+
+services:
+  backend:
+    container_name: incoming-test-backend
+    env_file: !reset []
+    environment: !override
+      <<: *test-app
+    ports: !reset []
+    volumes: !override
+      - test-postgres-backups:/backups:ro
+    networks: !override
+      incoming-test-net: {}
+      dev-net:
+        aliases: [incoming-test-backend]
+
+  postgres:
+    container_name: incoming-test-postgres
+    env_file: !reset []
+    environment: !override
+      <<: *test-database
+    ports: !reset []
+    volumes: !override
+      - test-postgres-data:/var/lib/postgresql/data
+    networks: !override
+      incoming-test-net: {}
+
+  # Required restore coordinator: keep the existing health/dependency contract,
+  # but disable scheduled backups and use exclusively TEST storage/credentials.
+  backup:
+    container_name: incoming-test-backup
+    env_file: !reset []
+    environment: !override
+      <<: *test-app
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: "5432"
+      BACKUP_ENABLED: "false"
+    ports: !reset []
+    volumes: !override
+      - test-postgres-backups:/backups
+    networks: !override
+      incoming-test-net: {}
+
+  # The existing opt-in ETL tool must not inherit a PROD snapshot or report mount.
+  etl:
+    container_name: incoming-test-etl
+    env_file: !reset []
+    environment: !override
+      <<: *test-app
+    ports: !reset []
+    volumes: !reset []
+    networks: !override
+      incoming-test-net: {}
+
+  frontend:
+    container_name: incoming-test-frontend
+    env_file: !reset []
+    environment: !override {}
+    ports: !reset []
+    volumes: !reset []
+    networks: !override
+      incoming-test-net: {}
+
+  incoming-nginx:
+    container_name: incoming-test-nginx
+    env_file: !reset []
+    environment: !override {}
+    ports: !reset []
+    volumes: !override
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks: !override
+      incoming-test-net: {}
+      dev-net:
+        aliases: [incoming-test-nginx]
+
+networks: !override
+  incoming-test-net:
+    name: incoming-test-net
+    internal: true
+  dev-net:
+    name: dev-net
+    external: true
+
+volumes: !override
+  test-postgres-data:
+    name: incoming-test-postgres-data
+  test-postgres-backups:
+    name: incoming-test-postgres-backups

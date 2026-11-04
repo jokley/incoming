@@ -4,6 +4,7 @@ dist
 .env
 .env.*
 !.env.test.example
+!.env.test.compose.example
 !.env.local.example
 /.local-dev/
 /.local-test/
