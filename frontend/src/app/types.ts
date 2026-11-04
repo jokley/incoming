@@ -500,6 +500,7 @@ export interface HotelReservationRow {
 export interface FisImportIssue {
   code: string;
   message: string;
+  sourceVersionId?:number;
   details?: Record<string, unknown>;
 }
 

@@ -13,12 +13,13 @@ export interface ClarificationDraft {
 export const suggestedPeople = (keys:readonly string[], people:readonly {personKey:string}[]) =>
   people.filter(p=>keys.includes(p.personKey)).map(p=>p.personKey);
 
-export function NationClarificationDialog({session,action,item,onSave,onClose,onBusy}:{
+export function NationClarificationDialog({session,action,item,initialPersonKeys=[],onSave,onClose,onBusy}:{
   session:ImportSession;action:'OPEN'|'REPLY'|'RESOLVE';item?:NationClarification;
+  initialPersonKeys?:string[];
   onSave:(data:ClarificationDraft)=>Promise<void>;onClose:()=>void;onBusy:(busy:boolean)=>void;
 }) {
   const [draft,setDraft]=useState<ClarificationDraft>(()=>({clarificationAction:action,versionId:session.currentVersionId??'',
-    targetType:'PEOPLE',selectionDigest:session.nationClarifications?.selectionDigest,personKeys:[],groupKey:'',sport:'',
+    targetType:'PEOPLE',selectionDigest:session.nationClarifications?.selectionDigest,personKeys:suggestedPeople(initialPersonKeys,session.nationClarifications?.people??[]),groupKey:'',sport:'',
     questionId:item?.id,subjectDigest:item?.subject.digest,comment:'',required:false,
     contactMethod:'EMAIL',contactDate:new Date().toLocaleDateString('sv-SE'),result:'CLARIFIED'}));
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[search,setSearch]=useState('');
