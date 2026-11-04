@@ -379,6 +379,7 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
     warnings = []
     people = []
     seen_keys = {}
+    cancelled = []
 
     competition_columns = [column for column in df.columns if str(column).upper().startswith('WSC_')]
     unknown_columns = sorted(set(competition_columns) - set(competition_mapping))
@@ -426,6 +427,13 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
             })
             continue
         seen_keys[unique_key] = row_number
+        # Presence is not an identity signal. Only the explicit cancellation status
+        # withdraws an entry; missing/NO keep their historical meaning.
+        if normalize_string(row.get('Present')) == 'cancelled':
+            cancelled.append(dict(rowNumber=row_number, firstname=firstname, lastname=lastname,
+                nationCode=nation_code, fisCode=fis_code, competitorId=competitor_id,
+                matchKey=unique_key, present='CANCELLED'))
+            continue
 
         arrival_date = parse_date(row.get('Arrival_date'))
         departure_date = parse_date(row.get('Departure_date'))
@@ -514,9 +522,12 @@ def parse_entries_list(df, athlete_maps, competition_mapping=None, event_name=No
                 'details': {'personKey': unique_key, 'row': row_number}})
         people.append(person)
 
-    validate_people_identities(people, athlete_maps)
+    validate_people_identities(people + cancelled, athlete_maps)
+    if cancelled:
+        warnings.append(dict(code='ENTRY_CANCELLED', message=f'{len(cancelled)} stornierte Meldung(en) werden nicht als aktive Meldungen dieses Importumfangs berücksichtigt.',
+            details=dict(rows=[p['rowNumber'] for p in cancelled])))
     errors.extend(wsc_membership_errors(people, event_id))
-    return {'people': people, 'errors': errors, 'warnings': warnings}
+    return {'people': people, 'errors': errors, 'warnings': warnings, 'cancelledPeople': cancelled}
 
 
 def parse_room_list(df, imported_people):
@@ -1609,6 +1620,8 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ungültiger Ersetzungsbereich.')
     replacement = ({'kind':'FULL_NATION'} if snapshot_scope == 'FULL_NATION' else
         {'kind':'SPORT_FAMILY','family':next(iter(families))} if len(families)==1 and None not in families else {'kind':'UNCONFIRMED'})
+    for cancelled in people_result.get('cancelledPeople', []):
+        cancelled['sourceFamily'] = next(iter(families)) if len(families) == 1 else None
     room_result = parse_room_list(room_df, people_result['people'])
     requirement_issues = apply_preview_requirements(people_result['people'], room_result['rooms'], read_context=read_context)
     apply_preview_rates(people_result['people'], read_context=read_context)
@@ -1649,6 +1662,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
         'createdAt': datetime.utcnow(),
         'eventId': event.id if event else None,
         'people': people_result['people'],
+        **({'cancelledPeople': people_result['cancelledPeople']} if people_result.get('cancelledPeople') else {}),
         'rooms': room_result['rooms'],
         'roomListHasNoData': is_empty_fis_room_list(room_df),
         'entriesColumns': list(entries_df.columns),
@@ -1676,6 +1690,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
 
     return {
         'previewToken': preview_token,
+        **({'cancelledPeople': preview['cancelledPeople']} if preview.get('cancelledPeople') else {}),
         **({'evaluationPeople':[_serialize_person_preview(p) for p in preview['evaluationPeople']]} if 'evaluationPeople' in preview else {}),
         'roomListHasNoData': preview['roomListHasNoData'],
         'eventId': str(event.id) if event else None,
@@ -1782,7 +1797,7 @@ def project_effective_nation(preview, read_context):
                 person['competitionIds']=sorted(set(normalize_competition_ids(person.get('competitionIds',[])))|outside)
                 person['savedCompetitionIdsEvidence']=[str(i) for i in person['competitionIds']]
                 resolve_saved_quota_memberships(person,read_context=read_context);changed=True
-    nations={p.get('nationCode') for p in people}
+    nations={p.get('nationCode') for p in people + preview.get('cancelledPeople', [])}
     for existing in read_context.athletes:
         if existing.id in matched or existing.nation_code not in nations:continue
         outside=[c.id for c in existing.competitions if competition_athlete_family(c) not in families]
@@ -2084,7 +2099,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ersetzungsbereich ist nicht bestätigt.')
 
     # Legacy internal callers cannot bypass explicit destructive review.
-    imported_nations = {p.get('nationCode') for p in preview['people'] if p.get('nationCode')}
+    imported_nations = {p.get('nationCode') for p in preview['people'] + preview.get('cancelledPeople', []) if p.get('nationCode')}
     matched_ids = {a.id for p in preview['people'] if (a := _find_existing_athlete(p, athlete_maps))}
     missing = [a for a in read_context.athletes if a.nation_code in imported_nations and a.id not in matched_ids]
     if missing and change_plan is None:

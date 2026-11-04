@@ -169,6 +169,11 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
             for key in keys:room_for_person.setdefault(key,[]).append(item)
             by_signature[signature]=item
             rooms.append(room)
+    cancellations = [{**p, 'sourceVersionId': v.id} for v, source in sources for p in source.get('cancelledPeople', [])]
+    if cancellations:
+        result['cancelledPeople'] = cancellations
+    else:
+        result.pop('cancelledPeople', None)
     result.update(people=people,rooms=rooms,roomListHasNoData=all(p.get('roomListHasNoData') for p in people))
     for field in ('errors','warnings'):
         result[field]=[{**item,'sourceVersionId':v.id} for v,s in sources for item in s.get(field,[])]
@@ -330,7 +335,7 @@ def present_plan(preview,plan):
     categories=analysis.get('categories') or {}
     if 'removedAthletes' in categories:
         records=[{'personId':str(p['personId']),'athlete':p['name'],'nation':plan['nation'],
-            'reason':'Im bestätigten vollständigen Nationen-Snapshot nicht mehr gemeldet'} for p in plan['people']['remove']]
+            'reason':p.get('removalReason') or 'Im bestätigten vollständigen Nationen-Snapshot nicht mehr gemeldet'} for p in plan['people']['remove']]
         categories['removedAthletes'].update(count=len(records),records=records)
         changes=[c for c in analysis.get('changes',[]) if c.get('type')!='PERSON_REMOVED']
         changes += [{'type':'PERSON_REMOVED','preview':'persons','entityId':str(p['personId']),

@@ -81,7 +81,7 @@ def state(event_id, nation):
 
 
 def input_fingerprint(preview):
-    return digest({**{k:preview[k] for k in ('replacementScope','submissionSources','submissionSourceDigests','reviewSourceVersionId','evaluationPeople') if k in preview}, **{k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
+    return digest({**{k:preview[k] for k in ('replacementScope','submissionSources','submissionSourceDigests','reviewSourceVersionId','evaluationPeople','cancelledPeople') if k in preview}, **{k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
         'quotaRulesDigest','quotaRulesRevision','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
         'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')}})
 
@@ -102,6 +102,16 @@ def build_plan(preview, read_context, *, version=None):
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Sportbereich nicht eindeutig. Ersetzungsbereich ausdrücklich wählen; kein Import durchgeführt.')
     snapshot = state(event_id, nation)
     old = {p['id']:p for p in snapshot['people']}
+    cancelled = {}
+    strong_cancellations = set()
+    from .normalization import canonical_fis_code, normalize_whitespace
+    for entry in preview.get('cancelledPeople', []):
+        existing = _find_existing_athlete(entry, read_context.athlete_maps)
+        if existing and existing.id in old:
+            cancelled.setdefault(existing.id, set()).add(entry.get('sourceFamily'))
+            if ((canonical_fis_code(entry.get('fisCode')) and canonical_fis_code(entry.get('fisCode')) == canonical_fis_code(existing.fis_code)) or
+                    (normalize_whitespace(entry.get('competitorId')) and normalize_whitespace(entry.get('competitorId')) == normalize_whitespace(existing.competitor_id))):
+                strong_cancellations.add(existing.id)
     memberships = {i:set() for i in old}
     for m in snapshot['memberships']:memberships[m['athlete_id']].add(m['competition_id'])
     in_scope = {cid for cid, c in read_context.competitions_by_id.items() if not family or competition_athlete_family(c) in family}
@@ -148,7 +158,9 @@ def build_plan(preview, read_context, *, version=None):
         people['update' if changes or incoming!=before else 'unchanged'].append(identity)
 
     absent = set(old)-matched
-    if family and any(not memberships[i] or any(cid not in read_context.competitions_by_id or competition_athlete_family(read_context.competitions_by_id[cid]) is None for cid in memberships[i]) for i in absent):
+    proven_unmapped = {i for i in absent & strong_cancellations if not memberships[i] and
+        cancellation_source_proven(i, family, event_id, nation, read_context)} if family else set()
+    if family and any((not memberships[i] and i not in proven_unmapped) or any(cid not in read_context.competitions_by_id or competition_athlete_family(read_context.competitions_by_id[cid]) is None for cid in memberships[i]) for i in absent):
         raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Fehlende bestehende Personen ohne eindeutigen Sportbereich; Teilersatz nicht sicher prüfbar.')
     removed = {i for i in absent if not family or memberships[i] <= in_scope}
     for i in sorted(absent-removed):
@@ -173,6 +185,7 @@ def build_plan(preview, read_context, *, version=None):
         p=old[i]
         people['remove'].append({'personId':i,'name':f"{p['firstname']} {p['lastname']}",
             'fisCode':p['fis_code'],'competitorId':p['competitor_id'],'competitionIds':sorted(memberships[i]),
+            **({'removalReason':'Stornierte Meldung (Present = CANCELLED)'} if i in cancelled else {}),
             'before':p,'bookingIds':sorted({o['room_booking_id'] for o in removed_occupants if o['athlete_id']==i}),
             'approvalId':p['single_room_decision_id'],
             'competitions':[{'id':c['id'],'name':c['name'],'importCode':c['import_code']} for c in snapshot['competitions'] if c['id'] in memberships[i]]})
@@ -188,6 +201,9 @@ def build_plan(preview, read_context, *, version=None):
             removeOccupants=removed_occupants,deleteEmptyBookingIds=sorted(empty_bookings),
             partnerIds=sorted(related_partner_ids),partners=[{'id':i,'name':f"{all_people[i]['firstname']} {all_people[i]['lastname']}"} for i in sorted(related_partner_ids)],clearPartnerFields=partner_fields,legacy=legacy,fis=fis),
         approvalEvidence=snapshot['approvals'])
+    for item in member_changes['remove']:
+        if item.get('personId') in cancelled and competition_athlete_family(read_context.competitions_by_id[item['competitionId']]) in cancelled[item['personId']]:
+            item['reason'] = 'Stornierte Meldung (Present = CANCELLED)'
     plan['requiresDestructiveConfirmation']=bool(removed or member_changes['remove'])
     plan['digest']=digest(plan)
     return json.loads(encoded(plan))
@@ -238,3 +254,30 @@ def apply_removals(plan):
         if db.session.query(RoomBookingOccupant.id).filter_by(room_booking_id=bid).first():
             raise ImportValidationError('STALE_PREVIEW','Zu löschende Buchung ist nicht mehr leer.')
     db.session.execute(sa.delete(RoomBooking).where(RoomBooking.event_id==event_id,RoomBooking.id.in_(ops['deleteEmptyBookingIds'])))
+
+
+def cancellation_source_proven(person_id, selected_families, event_id, nation, context):
+    """An unmapped legacy person needs confirmed source evidence, not a name guess."""
+    from .workflow import imported_submission_ids, load_version_preview
+    from .normalization import canonical_fis_code, normalize_whitespace
+    target = next(p for p in context.athletes if p.id == person_id)
+    origins = set()
+    for session in ImportSession.query.filter_by(event_id=event_id, nation=nation).all():
+        imported = imported_submission_ids(session)
+        for version in session.versions:
+            if version.id not in imported:
+                continue
+            source = load_version_preview(version)
+            for person in source.get('people', []):
+                strong = (canonical_fis_code(person.get('fisCode')) and canonical_fis_code(person.get('fisCode')) == canonical_fis_code(target.fis_code)) or (normalize_whitespace(person.get('competitorId')) and normalize_whitespace(person.get('competitorId')) == normalize_whitespace(target.competitor_id))
+                if not strong:
+                    continue
+                hit = _find_existing_athlete(person, context.athlete_maps)
+                if not hit or hit.id != person_id:
+                    continue
+                scope = source.get('replacementScope') or {}
+                if scope.get('kind') == 'SPORT_FAMILY':
+                    origins.update(scope.get('families') or [scope.get('family')])
+                else:
+                    origins.add('*')
+    return bool(origins) and origins <= selected_families

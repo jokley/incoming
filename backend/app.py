@@ -1973,7 +1973,7 @@ def preview_fis_import():
         result = create_fis_import_preview(entries_path, room_path, event_context,read_context=read_context,snapshot_scope=request.form.get('snapshotScope'))
         session_id = request.form.get('sessionId')
         if request.form.get('createSession') == 'true' or session_id:
-            nations = sorted({person.get('nationCode') for person in result['people'] if person.get('nationCode')})
+            nations = sorted({person.get('nationCode') for person in result['people'] + result.get('cancelledPeople', []) if person.get('nationCode')})
             if not nations and session_id:
                 owner=db.session.get(ImportSession,normalize_event_id(session_id))
                 validate_session_event(owner,event_id=event_context.id)

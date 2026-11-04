@@ -80,3 +80,12 @@ test('guided workflow owns recheck without a competing change-plan action',()=>{
  assert.ok(html.includes('Prüfstand veraltet'));assert.ok(!html.includes('<button'));
  assert.equal((html.match(/type="checkbox" disabled=""/g)||[]).length,1);
 });
+
+test('explicit cancellation explains removal without bypassing booking or destructive consent',()=>{
+ const cancelled=structuredClone(plan);
+ cancelled.people.remove[0].removalReason='Stornierte Meldung (Present = CANCELLED)';
+ const html=renderToStaticMarkup(createElement(Component,{plan:cancelled,editable:true,destructiveConfirmed:false,onDestructive:()=>{},busy:false}));
+ assert.ok(html.includes('Stornierte Meldung (Present = CANCELLED)'));
+ assert.ok(html.includes('Buchungsfolgen'));
+ assert.equal(canConfirmReview(cancelled,false),false);
+});
