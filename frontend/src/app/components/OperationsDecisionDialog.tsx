@@ -16,7 +16,8 @@ function taskTitle(task: OperationsTask) {
   return task.singleRoomCandidates.length ? `${task.discipline} · ${task.gender}` : task.approval.description;
 }
 
-export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
+export function OperationsDecisionDialog({ canWrite=true, task, saving, onClose, onSave }: {
+  canWrite?: boolean;
   task: OperationsTask | null;
   saving: boolean;
   onClose: () => void;
@@ -73,7 +74,7 @@ export function OperationsDecisionDialog({ task, saving, onClose, onSave }: {
           <div className="grid gap-3 border-t border-[var(--ops-divider)] p-4 text-sm sm:grid-cols-2"><DecisionFact label="Entscheidungs-ID" value={task.approval.id}/><DecisionFact label="Session-ID" value={task.approval.sessionId}/><DecisionFact label="Regeltyp" value={task.approval.type}/><DecisionFact label="Version" value="Aktuelle Importversion"/></div>
         </details>
       </DialogContent>
-      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={saving||(athleteQuota&&decision==='nation'&&!tariffSelectionValid(extent,task.approval.quotaDetails?.candidates ?? [],approvedPersonKeys,tariffEffect))||(athleteQuota&&!completed&&decision==='nation'&&!Object.values(extent).some(v=>v>0))||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&!canApproveSingleRoomSelection(approvedPersonKeys,selectionLimit))} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,costCoverage:costCoverage||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[],tariffEffect:athleteQuota?tariffEffect:undefined,approvedExtent:athleteQuota?extent:undefined})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
+      <DialogFooter><OpsButton type="button" onClick={onClose} disabled={saving}>Abbrechen</OpsButton><OpsButton type="button" disabled={!canWrite||saving||(athleteQuota&&decision==='nation'&&!tariffSelectionValid(extent,task.approval.quotaDetails?.candidates ?? [],approvedPersonKeys,tariffEffect))||(athleteQuota&&!completed&&decision==='nation'&&!Object.values(extent).some(v=>v>0))||!contact||!date||(organizerApproval&&!deadline)||(decision==='nation'&&task.singleRoomCandidates.length>0&&!canApproveSingleRoomSelection(approvedPersonKeys,selectionLimit))} onClick={()=>onSave({decision:decision==='newList'?'NEW_LIST_ANNOUNCED':'APPROVED',comment,approvalType:decision==='newList'?undefined:organizerApproval?'ORGANIZER_APPROVED':'NATION_APPROVED',approvalMethod:method,approvalBy:contact,approvalDate:new Date(date).toISOString(),contactSubject:subject||undefined,costCoverage:costCoverage||undefined,deadlineAt:deadline?new Date(deadline).toISOString():undefined,approvedPersonKeys:decision==='nation'?approvedPersonKeys:[],tariffEffect:athleteQuota?tariffEffect:undefined,approvedExtent:athleteQuota?extent:undefined})} className="border-[var(--ops-tone-primary-border)] bg-[var(--ops-tone-primary-surface)]">{saving?'Wird gespeichert …':'Dokumentation speichern'}</OpsButton></DialogFooter>
     </div>}
   </Dialog>;
 }

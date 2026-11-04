@@ -23,12 +23,12 @@ const navItems: NavigationItem[] = [
 ];
 
 export function Layout() {
-  const { user, permissions } = useAuth();
+  const { user, permissions, hasPermission } = useAuth();
   const { mode, toggle } = useOpsTheme();
   const displayName = user?.displayName?.trim() || user?.username || 'Benutzer';
   const initials = displayName.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase() || 'U';
   const visibleNavItems = navItems.filter(item => !item.permission
-    || (item.permission === 'imports' && permissions.canManageImports)
+    || (item.permission === 'imports' && hasPermission('data.read'))
     || (item.permission === 'audit' && permissions.canReadAudit)
     || (item.permission === 'admin' && permissions.isAdmin));
   const navLinkClass = (isActive: boolean, compact = false) => `inline-flex ${compact ? 'h-9 text-xs' : 'h-10 text-sm'} shrink-0 items-center rounded-xl px-3 font-medium transition-colors focus-visible:outline-none focus-visible:shadow-[var(--ops-focus-ring)] ${isActive ? 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-primary)]' : 'text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-elevated)] hover:text-[var(--ops-text)]'}`;

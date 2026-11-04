@@ -142,3 +142,11 @@ test('queue excludes closed sessions from normal count and keeps collapsed histo
  const readonly=renderToStaticMarkup(createElement(Queue,{sessions,selectedId:null,onSelect:()=>{}}));
  assert.ok(!readonly.includes('Importsession aus Warteschlange entfernen'));
 });
+
+test('read-only users can inspect the import but cannot upload, recheck, release or confirm',()=>{
+ for(const status of ['DRAFT','PROFESSIONALLY_REVIEWED','APPROVED','IMPORTED']){
+  const session={...sourceSession,status,approvals:[]};
+  const html=renderToStaticMarkup(createElement(PrimaryAction,{canWrite:false,session,preview:{...preview,isValid:true,errors:[],changePlan:{digest:'current'}},files:[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}}));
+  assert.match(html,/disabled=""/);
+ }
+});
