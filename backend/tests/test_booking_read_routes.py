@@ -27,6 +27,10 @@ class BookingReadRoutesTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            from models import Event
+            owner = Event(name='Explicit read-model test event', active=True)
+            db.session.add(owner); db.session.commit()
+            app.config['OPERATIONAL_EVENT_ID'] = owner.id
         self.client = app.test_client()
         self.viewer = {'X-Authenticated-User': 'reader',
                        'X-Authenticated-Groups': 'incoming-viewer'}
@@ -59,11 +63,16 @@ class BookingReadRoutesTest(unittest.TestCase):
                     db.session.flush()
                     occupants = [{'id': str(occupant.id), 'roomBookingId': str(booking.id),
                                   'athlete': person.to_dict(), 'role': None}]
-                expected.append({'id': str(booking.id), 'hotel': {'id': str(hotel.id), 'name': hotel.name},
+                expected.append({'id': str(booking.id), 'hotel': {'id': str(hotel.id), 'name': hotel.name, 'accommodationType': 'STANDARD'},
                     'roomType': {'id': str(room_type.id), 'name': 'Double', 'maxPersons': 2},
                     'roomNumber': number, 'checkInDate': '2027-03-01' if dated else None,
                     'checkOutDate': '2027-03-05' if dated else None,
                     'countsAsSingle': dated, 'occupants': occupants})
+            # Additive read-only assessment; all legacy fields remain exact.
+            expected[2]['occupants'][0]['athlete']['stayWindow'] = {
+                'eventStart':None,'eventEnd':None,'allowedStart':None,'allowedEnd':None,
+                'arrivalDate':'2027-03-01','departureDate':'2027-03-05',
+                'nightsBefore':None,'nightsAfter':None,'outsideNights':None,'reason':'EVENT_DATES_UNCLEAR'}
             db.session.commit()
             return [expected[2], expected[3], expected[1], expected[0]]
 

@@ -411,6 +411,8 @@ def generate_mock_files(output_dir: Path) -> list[dict]:
 
 def reset_athlete_related_data() -> dict:
     from app import app
+    from event_ownership_runtime import require_isolated_legacy_database
+    require_isolated_legacy_database(app)
     from models import (Athlete, FisRoomAssignment, ImportRun, RoomAssignment,
                         RoomBooking, RoomBookingOccupant, db)
 

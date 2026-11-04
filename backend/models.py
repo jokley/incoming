@@ -2,6 +2,9 @@ from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import MetaData
 from datetime import datetime
 import json
+from accommodation_rates import rate_projection
+from accommodation_requirements import requirement_projection
+from competitions import quota_disciplines
 
 NAMING_CONVENTION = {
     'ix': 'ix_%(table_name)s_%(column_0_name)s',
@@ -64,6 +67,7 @@ class AuditEvent(db.Model):
 class ImportRun(db.Model):
     """Tracks the latest import timestamps for change detection"""
     __tablename__ = 'import_run'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=True, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     import_type = db.Column(db.String(50), nullable=False)  # athletes | roomlist
@@ -93,9 +97,11 @@ SINGLE_ROOM_STATUSES = ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL'
 class ImportSession(db.Model):
     """Long-lived workflow for one nation; uploads are immutable versions."""
     __tablename__ = 'import_session'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
-    nation = db.Column(db.String(10), nullable=False, unique=True, index=True)
+    nation = db.Column(db.String(10), nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint('event_id', 'nation', name='uq_import_session_event_nation'),)
     discipline = db.Column(db.String(100))
     status = db.Column(db.String(30), nullable=False, default='DRAFT', index=True)
     # Break the session/version DDL cycle on PostgreSQL. SQLAlchemy keeps this
@@ -137,7 +143,9 @@ class ImportSession(db.Model):
             if event.event_type == 'QUOTA_DECISION_REVISED_FROM' and event.approval_id
         }
         return [item for item in self.approvals
-                if item.version_id == self.current_version_id and item.id not in superseded_ids]
+                if item.version_id == self.current_version_id and item.id not in superseded_ids
+                and item.approval_type != 'QUOTA_OFFICIALS_EXCEEDED'
+                and not item.description.startswith('Officials überschritten')]
 
     def to_dict(self, include_preview=False):
         current = self.current_version
@@ -162,6 +170,27 @@ class ImportSession(db.Model):
         }
         if include_preview:
             result['preview'] = preview
+            from imports.workflow import submission_heads, merge_submission_previews
+            from imports.event_context import ImportValidationError
+            heads=submission_heads(self)
+            if heads:
+                try:
+                    from imports.read_context import ImportReadContext
+                    from imports.identity import _find_existing_athlete
+                    from competitions import competition_athlete_family
+                    context=ImportReadContext(self.event_id)
+                    combined=merge_submission_previews(list(heads.values()),read_context=context)
+                    people=combined['people']
+                    matched={a.id for p in people if (a:=_find_existing_athlete(p,context.athlete_maps))}
+                    retained=[a for a in context.athletes if a.nation_code==self.nation and a.id not in matched
+                        and (not a.competitions or any(competition_athlete_family(c) not in heads for c in a.competitions))]
+                    result['submissionTotal']={'people':len(people)+len(retained),
+                        'athletes':sum((p.get('function') or '').lower()=='athlete' for p in people)+sum((a.function or '').lower()=='athlete' for a in retained),
+                        **({'retainedPeople':len(retained)} if retained else {})}
+                except ImportValidationError as exc:
+                    result['submissionTotal']={'people':None,'conflict':str(exc)}
+        from imports.workflow import submission_summary
+        result['submissions'] = submission_summary(self)
         return result
 
 
@@ -204,10 +233,34 @@ class ImportSessionEvent(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
+        from import_control import clarification_document
+        document = clarification_document(self)
+        description = document['comment'] if document else self.description
+        if self.event_type=='OFFICIAL_SOURCE_LINK':
+            try:
+                linked=json.loads(self.description or '{}')
+                if linked.get('format')=='incoming.official-source-link':
+                    description=' / '.join(f"{i.get('firstname','')} {i.get('lastname','')} · {i['family']} · Staff-ID {i['staffId']} · Quellzeile {i.get('row','—')}" for i in linked['identities'])+' · Identität ausdrücklich bestätigt; Unterkunft und Genehmigungen separat.'
+            except (TypeError,ValueError,KeyError):pass
+
+        if document:
+            subject = document.get('subject') or {}
+            names = ', '.join(subject.get('people') or [])
+            stay = (subject.get('facts') or {}).get('stay')
+            if stay:
+                description = f"Aufenthalt {stay.get('arrivalDate') or '—'} – {stay.get('departureDate') or '—'}; Fenster {stay.get('allowedStart') or '—'} – {stay.get('allowedEnd') or '—'} · {description}"
+            rooms = (subject.get('facts') or {}).get('rooms') or []
+            if rooms:
+                description = '; '.join(f"{r.get('roomType') or 'Zimmer'}: {r.get('person1Name') or '—'} / {r.get('person2Name') or r.get('sharedWithRawName') or 'Partner fehlt'}" for r in rooms) + ' · ' + description
+            if names:
+                description = names + ' · ' + description
+        if document and document.get('contactMethod'):
+            method = {'EMAIL':'E-Mail', 'PHONE':'Telefon', 'OTHER':'Sonstiges'}.get(document['contactMethod'], document['contactMethod'])
+            description = f"{method} · {document['contactDate']} · {description}"
         return {'id': str(self.id), 'versionId': str(self.version_id) if self.version_id else None,
                 'decisionId': str(self.approval_id) if self.approval_id else None,
                 'type': self.event_type, 'title': self.title,
-                'description': self.description, 'user': self.username,
+                'description': description, 'user': self.username,
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
 
@@ -235,6 +288,13 @@ class ImportApproval(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
 
     def to_dict(self):
+        # API-only aliases preserve the frozen decision JSON.
+        details = json.loads(self.quota_details_json or '{}')
+        if 'singleRoomCandidates' in details or 'singleRoomsAllowed' in details:
+            details.update(decisionKind='SINGLE_ROOM',
+                ezRequested=details.get('singleRoomsRequested', details.get('importedSingleRooms')),
+                ezEntitlement=details.get('singleRoomsAllowed'), ezExcess=details.get('excessCount'),
+                officialsBasis=details.get('officialQuota'), officialsReported=details.get('importedOfficials'))
         return {'id': str(self.id), 'sessionId': str(self.session_id), 'nation': self.nation,
                 'type': self.approval_type, 'description': self.description,
                 'decision': self.decision, 'comment': self.comment, 'user': self.username,
@@ -245,7 +305,7 @@ class ImportApproval(db.Model):
                 'costCoverage': self.cost_coverage,
                 'deadlineAt': self.deadline_at.isoformat() + 'Z' if self.deadline_at else None,
                 'approvedPersonKeys': json.loads(self.approved_person_keys_json or '[]'),
-                'quotaDetails': json.loads(self.quota_details_json or '{}'),
+                'quotaDetails': details,
                 'timestamp': self.created_at.isoformat() + 'Z'}
 
 class RoomType(db.Model):
@@ -271,6 +331,8 @@ class Hotel(db.Model):
 
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False)
+    accommodation_type = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
+    __table_args__ = (db.CheckConstraint("accommodation_type IN ('STANDARD', 'EXTERNAL')", name='hotel_accommodation_type'),)
     location = db.Column(db.String(100))  # Ort
     region = db.Column(db.String(100))  # Region
     contact_person = db.Column(db.String(150))
@@ -286,6 +348,7 @@ class Hotel(db.Model):
         return {
             'id': str(self.id),
             'name': self.name,
+            'accommodationType': self.accommodation_type,
             'location': self.location,
             'region': self.region,
             'contactPerson': self.contact_person,
@@ -299,6 +362,7 @@ class Hotel(db.Model):
 class HotelRoomInventory(db.Model):
     """Verfügbare Zimmer pro Hotel, Zimmertyp und Zeitraum"""
     __tablename__ = 'hotel_room_inventory'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     hotel_id = db.Column(db.Integer, db.ForeignKey('hotel.id'), nullable=False)
@@ -315,6 +379,8 @@ class HotelRoomInventory(db.Model):
     room_type = db.relationship('RoomType', backref='hotel_inventories')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'hotelId': str(self.hotel_id),
@@ -331,7 +397,9 @@ class HotelRoomInventory(db.Model):
 class AccommodationEvent(db.Model):
     """Events/Disziplinen mit Bedarf an Zimmern"""
     __tablename__ = 'event'
+    championship_event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
+    __table_args__ = (db.UniqueConstraint('id','championship_event_id',name='uq_accommodation_event_owner_identity'),)
     id = db.Column(db.Integer, primary_key=True)
     discipline = db.Column(db.String(100), nullable=False)  # Big Air, Moguls, etc.
     start_date = db.Column(db.Date, nullable=False)
@@ -344,6 +412,8 @@ class AccommodationEvent(db.Model):
     room_demands = db.relationship('EventRoomDemand', backref='event', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'discipline': self.discipline,
@@ -369,6 +439,8 @@ class EventRoomDemand(db.Model):
     room_type = db.relationship('RoomType', backref='event_demands')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'eventId': str(self.event_id),
@@ -401,6 +473,12 @@ class Competition(db.Model):
     athletes = db.relationship('Athlete', secondary='athlete_competition', back_populates='competitions')
     event_mappings = db.relationship('EventCompetition', back_populates='competition', cascade='all, delete-orphan')
 
+    @property
+    def top_level_discipline(self):
+        """Higher-level athlete admission discipline, derived from the mapping."""
+        from competitions import competition_athlete_family
+        return competition_athlete_family(self)
+
     def to_dict(self):
         return {
             'id': str(self.id), 'importCode': self.import_code, 'code': self.code,
@@ -412,7 +490,7 @@ class Competition(db.Model):
 
 
 class Event(db.Model):
-    """Top-level championship context (accommodation scoping follows later)."""
+    """Existing championship owner with draft/fixed event quota policy."""
     __tablename__ = 'championship_event'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(160), nullable=False, unique=True)
@@ -421,14 +499,105 @@ class Event(db.Model):
     fis_event_id = db.Column(db.String(50))
     sector_code = db.Column(db.String(50))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    is_world_championship = db.Column(db.Boolean, nullable=False, default=False, server_default=db.false())
+    quota_rules_json = db.Column(db.Text)
+    quota_rules_revision = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    quota_rules_fixed_at = db.Column(db.DateTime)
+    quota_rules_fixed_by = db.Column(db.String(100))
+    world_champion_list_json = db.Column(db.Text)
     competition_mappings = db.relationship('EventCompetition', back_populates='event', cascade='all, delete-orphan')
 
     def to_dict(self, include_mappings=False):
+        from quota_rules import rule_projection
         result = {'id': str(self.id), 'name': self.name, 'year': self.year,
                   'active': self.active, 'fisEventId': self.fis_event_id,
-                  'sectorCode': self.sector_code}
+                  'sectorCode': self.sector_code, 'isWorldChampionship': self.is_world_championship,
+                  'quotaRules': rule_projection(self)}
         if include_mappings:
-            result['competitionMappings'] = [mapping.to_dict() for mapping in self.competition_mappings]
+            periods = {period.id:period for period in AccommodationEvent.query.filter_by(championship_event_id=self.id).order_by(AccommodationEvent.start_date,AccommodationEvent.id)}
+            result['planningPeriods'] = [dict(id=str(period.id),discipline=period.discipline,startDate=period.start_date.isoformat(),endDate=period.end_date.isoformat()) for period in periods.values()]
+            result['competitionMappings'] = [mapping.to_dict(periods) for mapping in self.competition_mappings]
+        return result
+
+
+class EventQuotaRevision(db.Model):
+    __tablename__ = 'event_quota_revision'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id'), primary_key=True)
+    revision = db.Column(db.Integer, primary_key=True)
+    config_json = db.Column(db.Text, nullable=False)
+    is_world_championship = db.Column(db.Boolean, nullable=False)
+    digest = db.Column(db.String(64), nullable=False)
+    activated_at = db.Column(db.DateTime, nullable=False)
+    activated_by = db.Column(db.String(100))
+    reason = db.Column(db.Text, nullable=False)
+
+    def to_dict(self):
+        return dict(eventId=str(self.event_id),revision=self.revision,config=json.loads(self.config_json),
+            isWorldChampionship=self.is_world_championship,digest=self.digest,
+            activatedAt=self.activated_at.isoformat()+'Z',activatedBy=self.activated_by,reason=self.reason)
+
+
+class WorldChampionRecognition(db.Model):
+    __tablename__ = 'world_champion_recognition'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id'), primary_key=True)
+    title_id = db.Column(db.Integer, db.ForeignKey('world_champion.id'), primary_key=True)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    created_by = db.Column(db.String(100))
+
+
+class UserReference(db.Model):
+    """Directory hints only; no login credentials or functional role assignments."""
+    __tablename__ = 'user_reference'
+    username = db.Column(db.String(100), primary_key=True)
+    display_name = db.Column(db.String(200))
+    groups_json = db.Column(db.Text)  # Last authenticated observation, never authorization.
+    last_seen_at = db.Column(db.DateTime)
+
+
+class EventAccess(db.Model):
+    """Explicit grants for the identity supplied by the existing authentication layer."""
+    __tablename__ = 'event_access'
+    username = db.Column(db.String(100), primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='CASCADE'), primary_key=True)
+    can_write = db.Column(db.Boolean, nullable=False, default=False)
+    event = db.relationship('Event')
+
+
+class WorldChampion(db.Model):
+    """A title reference explicitly applicable to one target championship."""
+    __tablename__ = 'world_champion'
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id'), nullable=False, index=True)
+    fis_code = db.Column(db.String(50), nullable=False, index=True)
+    name = db.Column(db.String(200), nullable=False)
+    nation = db.Column(db.String(10), nullable=False)
+    gender = db.Column(db.String(10), nullable=False)
+    discipline = db.Column(db.String(100), nullable=False)
+    event_group = db.Column(db.String(100), nullable=False)
+    championship = db.Column(db.String(160), nullable=False)
+    championship_year = db.Column(db.Integer, nullable=False)
+    title_type = db.Column(db.String(20), nullable=False)
+    entitlement_enabled = db.Column(db.Boolean, nullable=False, default=False)
+    source = db.Column(db.Text, nullable=False)
+    active = db.Column(db.Boolean, nullable=False, default=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (
+        db.CheckConstraint("title_type IN ('INDIVIDUAL', 'TEAM')", name='world_champion_title_type'),
+        db.CheckConstraint("title_type != 'TEAM' OR entitlement_enabled = false", name='world_champion_team_disabled'),
+        db.UniqueConstraint('event_id', 'fis_code', 'championship', 'championship_year', 'discipline', 'title_type', name='uq_world_champion_title'),
+    )
+
+    def to_dict(self):
+        fields = {'eventId': 'event_id', 'fisCode': 'fis_code', 'name': 'name', 'nation': 'nation',
+                  'gender': 'gender', 'discipline': 'discipline', 'eventGroup': 'event_group',
+                  'championship': 'championship', 'championshipYear': 'championship_year',
+                  'titleType': 'title_type', 'entitlementEnabled': 'entitlement_enabled',
+                  'source': 'source', 'active': 'active'}
+        result = {key: getattr(self, value) for key, value in fields.items()}
+        result.update(id=str(self.id), eventId=str(self.event_id),
+                      createdAt=self.created_at.isoformat() + 'Z', updatedAt=self.updated_at.isoformat() + 'Z')
         return result
 
 
@@ -442,16 +611,25 @@ class EventCompetition(db.Model):
     import_code = db.Column(db.String(50), nullable=False)
     official_name = db.Column(db.String(120), nullable=False)
     active = db.Column(db.Boolean, nullable=False, default=True)
+    accommodation_event_id = db.Column(db.Integer, nullable=True, index=True)
     __table_args__ = (
+        db.ForeignKeyConstraint(['accommodation_event_id','event_id'],['event.id','event.championship_event_id'],name='fk_event_competition_accommodation_period',ondelete='RESTRICT'),
         db.UniqueConstraint('event_id', 'competition_id', name='uq_event_competition_competition'),
         db.UniqueConstraint('event_id', 'import_code', name='uq_event_competition_import_code'),
     )
     event = db.relationship('Event', back_populates='competition_mappings')
     competition = db.relationship('Competition', back_populates='event_mappings')
 
-    def to_dict(self):
+    def to_dict(self, planning_periods=None):
         competition = self.competition
-        return {'id': str(self.id), 'eventId': str(self.event_id),
+        period = None
+        if planning_periods is not None:
+            period = planning_periods.get(self.accommodation_event_id)
+        elif self.accommodation_event_id is not None:
+            period = AccommodationEvent.query.filter_by(id=self.accommodation_event_id,championship_event_id=self.event_id).first()
+        return {'accommodationEventId':str(self.accommodation_event_id) if self.accommodation_event_id is not None else None,
+                'accommodationEvent':dict(id=str(period.id),discipline=period.discipline,startDate=period.start_date.isoformat(),endDate=period.end_date.isoformat()) if period else None,
+                'id': str(self.id), 'eventId': str(self.event_id),
                 'competitionId': str(self.competition_id), 'fisCodex': self.fis_codex,
                 'importCode': self.import_code, 'officialName': self.official_name,
                 'active': self.active, 'displayName': competition.display_name,
@@ -463,6 +641,7 @@ class EventCompetition(db.Model):
 class Athlete(db.Model):
     """Athleten und Staff"""
     __tablename__ = 'athlete'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
     __table_args__ = (
         db.CheckConstraint(
             "single_room_status IN ('NONE', 'IN_QUOTA', 'APPROVED_EXTRA', 'PENDING_APPROVAL')",
@@ -473,11 +652,22 @@ class Athlete(db.Model):
             "single_room_quota_exempt_reason IN ('WORLD_CHAMPION', 'OTHER')",
             name='single_room_quota_exempt_reason',
         ),
+        db.CheckConstraint("accommodation_requirement_import_value IS NULL OR accommodation_requirement_import_value IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement_import_value'),
+        db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement'),
+        db.CheckConstraint("accommodation_requirement_source IN ('DEFAULT', 'IMPORT', 'MANUAL')", name='accommodation_requirement_source'),
+        db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
+        db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL', 'APPROVAL')", name='accommodation_rate_source'),
     )
 
     id = db.Column(db.Integer, primary_key=True)
     # Ownership marker for independently managed, disposable data sets.
     created_by = db.Column(db.String(50), nullable=True, index=True)
+    accommodation_requirement_import_value = db.Column(db.String(10))
+    accommodation_requirement = db.Column(db.String(10), nullable=False, default='REQUIRED', server_default='REQUIRED')
+    accommodation_requirement_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
+    accommodation_rate_category = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
+    accommodation_rate_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
+    accommodation_rate_approval_id = db.Column(db.Integer, db.ForeignKey('import_approval.id', name='fk_athlete_rate_approval'), nullable=True, index=True)
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
     competitor_id = db.Column(db.String(50))
     accred_id = db.Column(db.String(50))
@@ -523,6 +713,7 @@ class Athlete(db.Model):
     single_room_status = db.Column(db.String(30), nullable=False, default='NONE')
     # Administrative, person-level exemption from normal single-room quota.
     single_room_quota_exempt_reason = db.Column(db.String(30), nullable=True)
+    single_room_exemption_source = db.Column(db.String(30), nullable=True)
     single_room_decision_id = db.Column(db.Integer, db.ForeignKey('import_approval.id'), nullable=True)
     single_room_decision = db.relationship('ImportApproval', foreign_keys=[single_room_decision_id])
     shared_with_name = db.Column(db.String(200))
@@ -565,8 +756,12 @@ class Athlete(db.Model):
     )
 
     def to_dict(self):
+        from quota_history import approved_quota_disciplines, approved_quota_contexts
         return {
             'id': str(self.id),
+            **rate_projection(self),
+            **requirement_projection(self),
+            'importAccommodationRequirement': self.accommodation_requirement_import_value,
             'function': self.function,
             'competitorId': self.competitor_id,
             'accredId': self.accred_id,
@@ -576,6 +771,9 @@ class Athlete(db.Model):
             'nationCode': self.nation_code,
             'discipline': self.discipline,  # legacy compatibility only
             'competitions': [competition.to_dict() for competition in self.competitions],
+            'quotaDisciplines': quota_disciplines(self.competitions),
+            'approvedQuotaDisciplines': approved_quota_disciplines(self),
+            'approvedQuotaContexts': approved_quota_contexts(self),
             'disciplines': [competition.name for competition in self.competitions],
             'gender': self.gender,
             'forGender': self.for_gender,
@@ -585,6 +783,7 @@ class Athlete(db.Model):
             'singleRoomEntitlement': self.single_room_entitlement,
             'single_room_status': self.single_room_status or 'NONE',
             'singleRoomQuotaExemptReason': self.single_room_quota_exempt_reason,
+            'singleRoomExemptionSource': self.single_room_exemption_source,
             'single_room_decision_id': self.single_room_decision_id,
             'arrivalDate': self.arrival_date.isoformat() if self.arrival_date else None,
             'arrivalTime': self.arrival_time,
@@ -650,6 +849,8 @@ class FisRoomAssignment(db.Model):
     hotel = db.relationship('Hotel', backref='fis_room_assignments')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'importRunId': str(self.import_run_id) if self.import_run_id else None,
@@ -688,6 +889,8 @@ class RoomAssignment(db.Model):
     room_type = db.relationship('RoomType', backref='room_assignments')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'athlete': self.athlete.to_dict(),
@@ -702,13 +905,14 @@ class RoomAssignment(db.Model):
 
 class RoomBooking(db.Model):
     __tablename__ = 'room_booking'
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
 
     id = db.Column(db.Integer, primary_key=True)
     # Bookings created by a simulation are removed by ownership, never by age
     # or by relationships to otherwise unmarked data.
     created_by = db.Column(db.String(50), nullable=True, index=True)
     hotel_id = db.Column(db.Integer, db.ForeignKey('hotel.id'), nullable=False)
-    room_type_id = db.Column(db.Integer, db.ForeignKey('room_type.id'), nullable=False)
+    room_type_id = db.Column(db.Integer, db.ForeignKey('room_type.id'), nullable=True)
     room_number = db.Column(db.String(20))
     check_in_date = db.Column(db.Date)
     check_out_date = db.Column(db.Date)
@@ -720,10 +924,12 @@ class RoomBooking(db.Model):
     occupants = db.relationship('RoomBookingOccupant', backref='room_booking', lazy=True, cascade='all, delete-orphan')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
-            'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name},
-            'roomType': self.room_type.to_dict(),
+            'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name, 'accommodationType': self.hotel.accommodation_type},
+            'roomType': self.room_type.to_dict() if self.room_type else None,
             'roomNumber': self.room_number,
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
@@ -747,9 +953,43 @@ class RoomBookingOccupant(db.Model):
     athlete = db.relationship('Athlete', backref='room_booking_memberships')
 
     def to_dict(self):
+        from accommodation_scope import validate_serialized_ownership
+        validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'roomBookingId': str(self.room_booking_id),
             'athlete': self.athlete.to_dict(),
             'role': self.role
         }
+
+
+# Compatibility ownership assignment and same-event membership validation.
+from sqlalchemy import event as _sa_event
+from event_ownership_runtime import apply_event_ownership
+_sa_event.listen(db.session, 'before_flush', apply_event_ownership)
+
+
+from sqlalchemy.orm import Session as _Session
+
+
+@_sa_event.listens_for(_Session, 'before_flush')
+def protect_fixed_event_rules(session, flush_context, instances):
+    from sqlalchemy import inspect
+    for obj in session.dirty:
+        if not isinstance(obj, Event):
+            continue
+        state=inspect(obj)
+        fixed=state.attrs.quota_rules_fixed_at.history
+        was_fixed=bool(fixed.deleted and fixed.deleted[0]) or bool(obj.quota_rules_fixed_at and not fixed.has_changes())
+        if was_fixed and any(state.attrs[field].history.has_changes() for field in
+            ('quota_rules_json','quota_rules_revision','quota_rules_fixed_at','quota_rules_fixed_by','is_world_championship')):
+            from quota_rules import rule_projection
+            token=session.info.get('quota_revision_activation')
+            snapshot=next((r for r in session.new if isinstance(r,EventQuotaRevision) and r.event_id==obj.id and r.revision==obj.quota_rules_revision),None)
+            if (token != (obj.id,obj.quota_rules_revision) or snapshot is None or
+                snapshot.digest != rule_projection(obj)['digest'] or
+                not obj.quota_rules_fixed_at or obj.quota_rules_revision != session.info.get('quota_revision_previous',0)+1):
+                raise ValueError('Fixed event quota rules cannot be changed')
+    for obj in session.dirty.union(session.deleted):
+        if isinstance(obj,EventQuotaRevision):
+            raise ValueError('Historical quota revisions are append-only')

@@ -57,11 +57,18 @@ class RuntimeSettings:
         app.config.update(
             SQLALCHEMY_DATABASE_URI=self.database_url,
             SQLALCHEMY_TRACK_MODIFICATIONS=False,
+            # Staged restores replace the database and terminate its old sockets.
+            # Reconnect before the next request checks out a stale pooled socket.
+            SQLALCHEMY_ENGINE_OPTIONS={'pool_pre_ping': True},
             AUTH_PROXY_SECRET=self.auth_proxy_secret,
             AUTH_DEV_USER=self.auth_dev_user,
             AUTH_DEV_GROUPS=self.auth_dev_groups,
+            SUPERADMIN_USERNAME=os.environ.get('SUPERADMIN_USERNAME', '').strip(),
             LOG_LEVEL=self.log_level,
             RUNTIME_ENV=self.environment,
             BACKUP_DIR=str(self.backup_dir),
             BACKUP_SERVICE_URL=self.backup_service_url,
+            RESTORE_COORDINATION_REQUIRED=True,
+            DATABASE_MAINTENANCE_MODE=os.environ.get('DATABASE_MAINTENANCE_MODE', '').lower() == 'true',
+            OPERATIONAL_EVENT_ID=os.environ.get("OPERATIONAL_EVENT_ID"),
         )

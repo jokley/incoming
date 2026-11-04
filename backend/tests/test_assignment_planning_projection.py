@@ -50,6 +50,55 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         with app.app_context():
             db.session.remove()
 
+    def test_person_and_planning_coverage_expose_adjacent_segments_without_rewriting_bookings(self):
+        with app.app_context():
+            athlete=self.athlete('Split','Person')
+            athlete.arrival_date=date(2027,3,14)
+            athlete.departure_date=date(2027,3,27)
+            db.session.add(athlete); db.session.flush()
+            person_id=athlete.id
+            for start,end in [(14,20),(20,27)]:
+                booking=RoomBooking(hotel=Hotel.query.one(),room_type=RoomType.query.one(),
+                    check_in_date=date(2027,3,start),check_out_date=date(2027,3,end),counts_as_single=False)
+                db.session.add(RoomBookingOccupant(athlete=athlete,room_booking=booking))
+            db.session.commit()
+            frozen=[(b.id,b.check_in_date,b.check_out_date,b.counts_as_single) for b in RoomBooking.query.order_by(RoomBooking.id).all()]
+        client=app.test_client()
+        person=client.get(f'/api/athletes/{person_id}').get_json()
+        coverage=person['accommodationCoverage']
+        self.assertEqual(coverage['coverageStatus'],'FULLY_ASSIGNED')
+        self.assertEqual(coverage['openIntervals'],[])
+        self.assertEqual(len(coverage['segments']),2)
+        self.assertEqual(client.get('/api/athletes').get_json()[0]['accommodationCoverage'],coverage)
+        planning=client.get('/api/assignments/planning-view?includeValidations=false').get_json()
+        self.assertEqual(planning['units']['assigned'][0]['occupants'][0]['accommodationCoverage'],coverage)
+        with app.app_context():
+            self.assertEqual([(b.id,b.check_in_date,b.check_out_date,b.counts_as_single) for b in RoomBooking.query.order_by(RoomBooking.id).all()],frozen)
+
+    def test_existing_hotel_and_contingent_comments_are_projected_without_capacity_changes(self):
+        with app.app_context():
+            hotel=Hotel.query.one()
+            inventory=HotelRoomInventory.query.one()
+            hotel.comment='Hotel operational note'
+            inventory.comment='Contingent operational note'
+            inventory_id=str(inventory.id)
+            room_type_id=str(inventory.room_type_id)
+            db.session.commit()
+        response=app.test_client().get('/api/assignments/planning-view?includeValidations=false')
+        self.assertEqual(response.status_code,200)
+        projected=response.get_json()['hotels'][0]
+        self.assertEqual(projected['comment'],'Hotel operational note')
+        self.assertEqual(projected['inventoryComments'],[{'id':inventory_id,'roomTypeId':room_type_id,
+            'availableFrom':'2027-03-01','availableUntil':'2027-03-31','comment':'Contingent operational note'}])
+        self.assertEqual(len(projected['slots']),5)
+        with app.app_context():
+            Hotel.query.one().comment=None
+            HotelRoomInventory.query.one().comment='   '
+            db.session.commit()
+        projected=app.test_client().get('/api/assignments/planning-view?includeValidations=false').get_json()['hotels'][0]
+        self.assertIsNone(projected['comment'])
+        self.assertEqual(projected['inventoryComments'],[])
+
     @staticmethod
     def athlete(firstname, lastname, nation='AUT', discipline='Big Air', gender='F', partner=None):
         return Athlete(
@@ -125,7 +174,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
             self.assertEqual(FisRoomAssignment.query.count(), 0)
         sui = next(unit for unit in units if unit['nationCode'] == 'SUI')
         self.assertEqual(sui['occupants'][0]['discipline'], 'Moguls')
-        self.assertEqual(sui['occupants'][0]['gender'], 'male')
+        self.assertEqual(sui['occupants'][0]['gender'], 'M')
 
     def test_partner_projection_is_deterministic_and_ignores_legacy_fis_units(self):
         with app.app_context():
@@ -212,7 +261,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
                 team_competition=False, quota_discipline='Snowboard Slopestyle')
             luca = self.athlete('Luca', 'MERIMEE MANTOVANI', nation='BRA', gender='M')
             luca.competitions = [big_air, slopestyle]
-            event = Event(name='WSC Montafon 2027', year=2027)
+            event = db.session.get(Event, int(app.config['OPERATIONAL_EVENT_ID']))
             mapping = EventCompetition(event=event, competition=big_air,
                 fis_codex='6182', import_code='WSC_BA_M_6182', official_name="Men's Big Air")
             db.session.add_all([big_air, slopestyle, luca, event, mapping])
@@ -252,7 +301,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual({row['discipline']: row['singleRoomsUsed']
                           for row in quota_with_override}, {
             'Snowboard Big Air': 1,
-            'Snowboard Slopestyle': 1,
+            'Snowboard Slopestyle': 0,
         })
         athlete_payload = app.test_client().get('/api/athletes').get_json()[0]
         self.assertTrue(athlete_payload['assignment']['countsAsSingle'])
@@ -268,7 +317,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
                           for row in changed}, disposition)
         self.assertEqual({row['discipline']: row['singleRoomsUsed'] for row in changed}, {
             'Snowboard Big Air': 1,
-            'Snowboard Slopestyle': 1,
+            'Snowboard Slopestyle': 0,
         })
 
         untoggled = app.test_client().put(
@@ -320,7 +369,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual({row['discipline']: row['singleRoomsUsed']
                           for row in quota_in_overridden_physical_single}, {
             'Snowboard Big Air': 1,
-            'Snowboard Slopestyle': 1,
+            'Snowboard Slopestyle': 0,
         })
         self.assertTrue(app.test_client().get('/api/athletes').get_json()[0]
                         ['assignment']['countsAsSingle'])
@@ -408,7 +457,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         self.assertEqual(response.get_json()['occupants'][0]['athlete']['id'], athlete_id)
 
-    def test_quota_single_flag_is_not_derived_from_entitlement_or_occupancy(self):
+    def test_explicit_false_is_preserved_independent_of_entitlement_or_occupancy(self):
         with app.app_context():
             entitled = self.athlete('Lina', 'Frei')
             entitled.single_room_status = 'IN_QUOTA'
@@ -421,7 +470,7 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         client = app.test_client()
         created = client.post('/api/assignments/bookings', json={
-            'athleteIds': [entitled_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
+            'athleteIds': [entitled_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id, 'countsAsSingle': False,
             'roomNumber': 'Slot 01', 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
         })
         self.assertEqual(created.status_code, 201)
@@ -533,12 +582,13 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         ordinary_in_single = assign('ordinary_single', single_id, 'EZ 02')
         self.assertEqual(ordinary_in_single.status_code, 201)
-        self.assertFalse(ordinary_in_single.get_json()['countsAsSingle'])
+        self.assertTrue(ordinary_in_single.get_json()['countsAsSingle'])  # Physical EZ creation default; saved overrides remain authoritative.
 
     def test_non_entitled_single_occupant_is_not_marked_exclusive(self):
         with app.app_context():
             athlete = self.athlete('Noah', 'Keller')
             athlete.single_room_status = 'PENDING_APPROVAL'
+            athlete.room_type = 'Double shared'  # No EZ request and no approved extra.
             db.session.add(athlete)
             db.session.commit()
             athlete_id = str(athlete.id)

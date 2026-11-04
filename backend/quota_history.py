@@ -1,0 +1,275 @@
+"""Read-only compatibility at the immutable historical approval boundary.
+
+Detailed 2027 labels are frozen evidence of the old catalogue, never operative
+membership. Intersect their exact codes with the person's current memberships;
+ambiguous/unresolvable records remain review work rather than guessed groups.
+"""
+from imports.normalization import canonical_fis_code
+from competitions import COMPETITIONS, normalize_competition_ids
+from quota_service import normalize_gender, quota_keys
+
+CATALOGUE_IDENTITIES = {(c.import_code, c.code) for c in COMPETITIONS}
+
+LEGACY_CODES = {
+    'Parallel': {'6170', '6172', '6177', '6178', '6180'},
+    'Snowboard Halfpipe': {'6174', '6175'},
+    'Snowboard Big Air': {'6182', '6183'},
+    'Snowboard Slopestyle': {'6188', '6190'},
+    'Snowboard Cross': {'6191', '6192', '6193'},
+    'Freeski Halfpipe': {'8171', '8172'},
+    'Freeski Big Air': {'8178', '8181'},
+    'Moguls': {'8179', '8183', '8186', '8187', '8188'},
+    'Ski Cross': {'8180', '8184', '8185'},
+    'Aerials': {'8193', '8194', '8195'},
+    'Freeski Slopestyle': {'8196', '8197'},
+}
+
+
+# Frozen compatibility for the approved 1C transition, not a quota algorithm.
+LEGACY_CANONICAL_TARGETS = {
+    'Parallel': 'Snowboard Alpine', 'Snowboard Halfpipe': 'Snowboard Park & Pipe',
+    'Snowboard Big Air': 'Snowboard Park & Pipe', 'Snowboard Slopestyle': 'Snowboard Park & Pipe',
+    'Snowboard Cross': 'Snowboard Cross', 'Freeski Halfpipe': 'Freeski Park & Pipe',
+    'Freeski Big Air': 'Freeski Park & Pipe', 'Moguls': 'Freestyle',
+    'Ski Cross': 'Ski Cross', 'Aerials': 'Freestyle', 'Freeski Slopestyle': 'Freeski Park & Pipe',
+}
+
+# Exact frozen identities previously covered by the two 1B broad labels.
+BROAD_CODES = {
+    'Snowboard': set().union(*(LEGACY_CODES[g] for g in (
+        'Parallel', 'Snowboard Halfpipe', 'Snowboard Big Air', 'Snowboard Slopestyle', 'Snowboard Cross'))),
+    'Freestyle': set().union(*(LEGACY_CODES[g] for g in (
+        'Freeski Halfpipe', 'Freeski Big Air', 'Moguls', 'Ski Cross', 'Aerials', 'Freeski Slopestyle'))),
+}
+CURRENT_CATALOGUE_GROUPS = {(c.import_code, c.code): c.quota_discipline for c in COMPETITIONS}
+
+
+def quota_person(person):
+    """Projection shared by approval resolution and athlete-derived contexts."""
+    return {'personId': getattr(person, 'id', None), 'nationCode': person.nation_code,
+            'gender': person.gender, 'function': getattr(person, 'function', None),
+            'quotaDisciplines': sorted({c.quota_discipline for c in person.competitions if c.quota_discipline})}
+
+
+def person_keys(person):
+    """Stable import identities, including the exact name-key fallback."""
+    from imports.identity import build_name_key
+    fis = canonical_fis_code(person.fis_code)
+    return {str(value) for value in (person.fis_code, fis,
+        fis + '.0' if fis and fis.isdigit() else None, person.competitor_id,
+        build_name_key(person.lastname, person.firstname, person.nation_code)) if value}
+
+
+def _evidence_keys(person, person_key):
+    if person_key is None:
+        return person_keys(person)
+    keys = {str(person_key)}
+    fis = canonical_fis_code(person.fis_code)
+    if fis and fis.isdigit() and str(person_key) in {fis, fis + '.0'}:
+        keys.update((fis, fis + '.0'))
+    return keys
+
+
+def historical_approval_groups(details, person, person_key=None, roster=None, *, _projection=None):
+    """Read immutable evidence; unknown provenance never means a current label."""
+    gender = normalize_gender(details.get('gender'))
+    if details.get('nationCode') != person.nation_code or gender not in {'M', 'W'}:
+        return set()
+    keys = _evidence_keys(person, person_key)
+    candidates = [c for c in details.get('singleRoomCandidates', []) if str(c.get('personKey')) in keys]
+    if len(candidates) > 1:
+        return set()
+    candidate = candidates[0] if candidates else {}
+    ids = {str(value) for value in candidate.get('competitionIds', [])}
+    codes = set(candidate.get('competitionImportCodes') or [])
+    label = details.get('discipline')
+    version = details.get('quotaMembershipVersion')
+    canonical = version in {1, 2}
+    # Before versioned canonical evidence, only frozen legacy provenance is
+    # supported. String equality with a present-day group is never proof.
+    if not canonical and label not in LEGACY_CODES:
+        return set()
+    supported = list(person.competitions)
+    if ids:
+        supported = [c for c in supported if str(c.id) in ids]
+    elif codes:
+        supported = [c for c in supported if c.import_code in codes]
+    else:
+        return set()
+    if version == 1 and label in BROAD_CODES:
+        supported = [c for c in supported if c.code in BROAD_CODES[label]
+            and CURRENT_CATALOGUE_GROUPS.get((c.import_code, c.code)) == c.quota_discipline]
+    elif canonical:
+        # Exact identity AND the reviewed group must still match. A mapping
+        # change requires new review, even when the Competition ID survives.
+        supported = [c for c in supported if c.quota_discipline == label]
+    else:
+        supported = [c for c in supported if c.code in LEGACY_CODES[label]
+                     and (c.import_code, c.code) in CATALOGUE_IDENTITIES
+                     and c.quota_discipline == LEGACY_CANONICAL_TARGETS[label]]
+    if roster is None:
+        if (quota_person(person)['function'] or '').strip().lower() == 'athlete':
+            roster = [person]
+        else:
+            from models import Athlete
+            roster = Athlete.query.filter_by(event_id=person.event_id, nation_code=person.nation_code).all()
+    current_keys = (_projection.current_keys(person, roster) if _projection else
+                    quota_keys(quota_person(person), [quota_person(p) for p in roster]))
+    return {(person.nation_code or '', c.quota_discipline, gender)
+            for c in supported if c.quota_discipline} & current_keys
+
+
+def historical_approval_evidence(approval):
+    """Read saved version evidence into a transient copy; never rewrite history."""
+    import json
+    from copy import deepcopy
+    from models import ImportSession, ImportSessionVersion, db
+    details = json.loads(approval.quota_details_json or '{}')
+    if details.get('quotaMembershipVersion') in {1, 2} or details.get('discipline') not in LEGACY_CODES:
+        return details
+    if not approval.version_id:
+        return details
+    session = db.session.get(ImportSession, approval.session_id)
+    if not session or (session.status not in {'IMPORTED', 'REPLACED', 'ARCHIVED'}
+            and (not session.current_version_id or session.current_version_id == approval.version_id)):
+        # An editable current preview is not immutable evidence of what was
+        # reviewed. Missing decision evidence must remain unresolved here.
+        return details
+    version = db.session.get(ImportSessionVersion, approval.version_id)
+    if not version or version.session_id != session.id:
+        return details
+    people = json.loads(version.preview_json or '{}').get('people', [])
+    result = deepcopy(details)
+    candidates = result.setdefault('singleRoomCandidates', [])
+    for key in json.loads(approval.approved_person_keys_json or '[]'):
+        existing = [c for c in candidates if c.get('personKey') == key]
+        if len(existing) > 1 or (existing and (existing[0].get('competitionIds') or existing[0].get('competitionImportCodes'))):
+            continue
+        matches = [p for p in people if p.get('matchKey') == key]
+        if len(matches) != 1:
+            continue
+        evidence = matches[0]
+        candidate = existing[0] if existing else {'personKey': key}
+        if not existing:
+            candidates.append(candidate)
+        candidate['competitionIds'] = list(evidence.get('competitionIds') or [])
+        candidate['competitionImportCodes'] = list(evidence.get('competitionImportCodes') or [])
+    return result
+
+
+def applicable_approval_groups(approval, person, person_key=None, roster=None, *, preserve_historical_rule=False, _projection=None):
+    """Selected person + immutable evidence + exact membership.
+
+    preserve_historical_rule is only for restoring an existing stored price/
+    operational tuple during reimport, never for covering a current quota check.
+    """
+    import json
+    if not approval or approval.decision != 'APPROVED':
+        return set()
+    details = (_projection.details_for(approval) if _projection else
+               json.loads(approval.quota_details_json or '{}'))
+    if details.get('decisionKind') == 'ATHLETE_QUOTA':
+        return set()
+    owner = getattr(person, 'event_id', None)
+    valid_event = (_projection.event_matches(approval, owner) if _projection else
+                   approval_event_matches(approval, owner, require_current_rules=not preserve_historical_rule))
+    if not valid_event:
+        return set()
+    selected = (_projection.selected_for(approval) if _projection else
+                {str(value) for value in json.loads(approval.approved_person_keys_json or '[]')})
+    if person_key is not None and str(person_key) not in person_keys(person):
+        return set()
+    keys = _evidence_keys(person, person_key)
+    matched = selected & keys
+    if len(matched) != 1:
+        return set()
+    if roster is None and _projection:
+        # Athletes formerly used a singleton roster for a single-person approval.
+        # Keep that distinction; Officials require active athlete contexts.
+        roster = ([person] if len(selected) == 1 and
+                  (quota_person(person)['function'] or '').strip().lower() == 'athlete'
+                  else _projection.roster_for(person))
+    evidence = (_projection.evidence_for(approval) if _projection else historical_approval_evidence(approval))
+    if len(selected) > 1:
+        if roster is None:
+            from models import Athlete
+            roster = Athlete.query.filter_by(event_id=person.event_id, nation_code=person.nation_code).all()
+        cohort_key = (id(approval), _projection.roster_key(roster)) if _projection else None
+        valid = _projection.cohorts.get(cohort_key) if _projection else None
+        if valid is None:
+            index = _projection.index_for(roster) if _projection else None
+            valid = True
+            for key in selected:
+                people = index.get(key, []) if index is not None else [p for p in roster if key in person_keys(p)]
+                if len(people) != 1 or not historical_approval_groups(evidence, people[0], key, roster, _projection=_projection):
+                    valid = False
+                    break
+            if _projection:
+                _projection.cohorts[cohort_key] = valid
+        if not valid:
+            return set()
+    return historical_approval_groups(evidence, person, next(iter(matched)), roster, _projection=_projection)
+
+
+def approved_quota_disciplines(person):
+    """API projection; person-level status alone cannot authorize a group."""
+    if person.single_room_status != 'APPROVED_EXTRA' or person.single_room_quota_exempt_reason:
+        return []
+    from approval_projection import projected_approval_groups
+    return sorted({group[1] for group in projected_approval_groups(person.single_room_decision, person)})
+
+
+def approved_quota_contexts(person):
+    """Derived API evidence; approval coverage must not spread across genders."""
+    if person.single_room_status != 'APPROVED_EXTRA' or person.single_room_quota_exempt_reason:
+        return []
+    from approval_projection import projected_approval_groups
+    return [{'nationCode': nation, 'discipline': group, 'gender': gender}
+            for nation, group, gender in sorted(projected_approval_groups(person.single_room_decision, person))]
+
+
+def preview_approval_person(person, *, competitions_by_id=None):
+    """Current DB-resolved preview evidence, never a static catalogue lookup."""
+    from types import SimpleNamespace
+    from models import Competition
+    from flask import has_app_context, current_app, has_request_context, g
+    ids = normalize_competition_ids(person.get('competitionIds') or [])
+    competitions = ([competitions_by_id[key] for key in ids if key in competitions_by_id]
+                    if competitions_by_id is not None else
+                    Competition.query.filter(Competition.id.in_(ids)).all() if ids else [])
+    owner = (getattr(g, 'authorized_event_id', None) if has_request_context() else None)
+    return SimpleNamespace(event_id=person.get('eventId') or owner or (current_app.config.get('OPERATIONAL_EVENT_ID') if has_app_context() else None), nation_code=person.get('nationCode'), gender=person.get('gender'),
+        function=person.get('function'),
+        for_gender=person.get('forGender'), fis_code=person.get('fisCode'),
+        competitor_id=person.get('competitorId'), lastname=person.get('lastname'),
+        firstname=person.get('firstname'), competitions=competitions)
+
+
+def approval_event_matches(approval, event_id, *, require_current_rules=True):
+    """Resolve Event identity without modifying immutable decision evidence.
+
+    Older EZ decisions omitted eventId while their owning upload version retained
+    it. Exact Competition/context/person checks remain separate and mandatory.
+    An explicit conflicting Event never falls back to version evidence.
+    """
+    import json
+    from models import ImportSessionVersion, db
+    from models import ImportSession
+    if event_id is None:
+        return False
+    session = db.session.get(ImportSession, getattr(approval, 'session_id', None))
+    if not session or str(session.event_id) != str(event_id):
+        return False
+    details = json.loads(approval.quota_details_json or '{}')
+    from models import Event
+    from quota_rules import accommodation_rule_event
+    policy=accommodation_rule_event(db.session.get(Event,int(event_id)))
+    if require_current_rules and policy and policy.quota_rules_revision>1 and details.get('rulesRevision')!=policy.quota_rules_revision:
+        return False
+    saved_event = details.get('eventId')
+    version_id = getattr(approval, 'version_id', None)
+    version = db.session.get(ImportSessionVersion, version_id) if version_id else None
+    if version_id and (not version or version.session_id != session.id):
+        return False
+    version_event = json.loads(version.preview_json or '{}').get('eventId') if version else None
+    return all(value is None or str(value) == str(event_id) for value in (saved_event, version_event))

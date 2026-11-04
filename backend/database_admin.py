@@ -19,6 +19,86 @@ BACKUP_PATTERN = re.compile(r'^[A-Za-z0-9_.-]+\.dump\.gz$')
 BACKUP_CATEGORIES = ('automatic', 'manual', 'pre-restore')
 
 
+# Exact allowlist: a GET download is a global data export, never metadata.
+def is_database_metadata_request(path, method):
+    return method in {'GET', 'HEAD'} and path in {
+        '/api/admin/database/status', '/api/admin/database/backups', '/api/admin/database/restore-status'}
+
+
+DATABASE_PERMISSIONS = {
+    'database_admin.database_status': 'database.read',
+    'database_admin.list_backups': 'database.read',
+    'database_admin.trigger_backup': 'database.backup',
+    'database_admin.import_backup': 'database.backup',
+    'database_admin.download_backup': 'database.export',
+    'database_admin.restore_backup': 'database.restore',
+    'database_admin.restore_status': 'database.read',
+}
+
+
+def database_permission():
+    from flask import abort
+    permission = DATABASE_PERMISSIONS.get(request.endpoint)
+    if permission is None: abort(403)
+    return permission
+
+
+def require_maintenance(confirmation):
+    from flask import abort
+    if not current_app.config.get('DATABASE_MAINTENANCE_MODE'):
+        abort(409, description='Datenbankreset nur im ausdrücklich freigegebenen Wartungsmodus.')
+    if (request.get_json(silent=True) or {}).get('confirmation') != confirmation:
+        abort(400, description='Zusätzliche ausdrückliche Bestätigung erforderlich.')
+
+
+def database_capabilities():
+    from auth import current_user
+    user = current_user()
+    has = lambda permission: bool(user and user.has_permission(permission))
+    maintenance = current_app.config.get('DATABASE_MAINTENANCE_MODE', False)
+    return dict(download=has('database.export'), create=has('database.backup'),
+                upload=has('database.backup'), restore=has('database.restore'),
+                reset=has('database.reset'))
+
+
+@database_admin.before_request
+def audit_database_attempt():
+    from auth import current_user
+    from flask import g
+    from models import AuditEvent
+    import uuid
+    user = current_user()
+    if not user or request.endpoint in {'database_admin.database_status','database_admin.list_backups','database_admin.restore_status'}:
+        return
+    # App authentication/functional authorization ran first. This records an
+    # explicitly requested sensitive operation, not a business-data GET update.
+    if not user.has_permission(database_permission()): return
+    if request.endpoint == 'database_admin.restore_backup':
+        # Independent service logs are the durable audit across DB replacement.
+        return
+    db.session.add(AuditEvent(username=user.username,action='request',entity_type='global-database',
+        entity_id=request.endpoint,request_id=str(getattr(g,'request_id',uuid.uuid4()))[:36],
+        method=request.method,path=request.url_rule.rule,category='Administration',
+        activity='Globale Datenbankoperation angefordert',changes_json=json.dumps({'operation':request.endpoint}),
+        entity_refs_json='{}'))
+    db.session.commit()
+
+
+@database_admin.after_request
+def audit_database_operation(response):
+    # Persistent service logs also survive a database restore. Never log tokens,
+    # uploaded contents, filenames, connection parameters or request bodies.
+    from auth import current_user
+    from flask import g
+    user = current_user()
+    current_app.logger.info('database_operation actor=%s operation=%s status=%s request_id=%s',
+        user.username if user else 'unauthenticated', request.endpoint, response.status_code,
+        getattr(g, 'request_id', '-'))
+    g.atomic_import_audit = True
+    if request.endpoint == 'database_admin.restore_status':response.headers['Cache-Control']='no-store'
+    return response
+
+
 def backup_directory():
     return Path(current_app.config['BACKUP_DIR'])
 
@@ -32,7 +112,11 @@ def backup_files():
 
 def last_status():
     try:
-        return json.loads((backup_directory() / 'last-backup.json').read_text(encoding='utf-8'))
+        payload = json.loads((backup_directory() / 'last-backup.json').read_text(encoding='utf-8'))
+        # Do not disclose raw pg_dump errors, connection details or database names.
+        if not isinstance(payload, dict):
+            return None
+        return {key: payload[key] for key in ('status', 'created', 'size', 'durationSeconds', 'category') if key in payload}
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return None
 
@@ -52,6 +136,8 @@ def database_status():
         current_app.logger.exception('Database status check failed')
         return jsonify({
             'databaseStatus': 'unavailable',
+            'capabilities': database_capabilities(),
+            'maintenanceMode': bool(current_app.config.get('DATABASE_MAINTENANCE_MODE')),
             'postgresVersion': None,
             'databaseSize': None,
             'alembicVersion': None,
@@ -62,6 +148,8 @@ def database_status():
         }), 503
     return jsonify({
         'databaseStatus': 'available',
+        'capabilities': database_capabilities(),
+        'maintenanceMode': bool(current_app.config.get('DATABASE_MAINTENANCE_MODE')),
         'postgresVersion': version,
         'databaseSize': size,
         'alembicVersion': alembic,
@@ -119,9 +207,19 @@ def import_backup():
                      'X-Filename': urllib.parse.quote(upload.filename)}, timeout=60)
 
 
+def restore_database_target():
+    url=db.engine.url
+    return {'host':(url.host or '').lower(),'port':url.port or 5432,'database':url.database}
+
+
 @database_admin.post('/api/admin/database/restore')
 def restore_backup():
+    from auth import current_user
+    from restore_coordination import schema_contract
     payload = request.get_json(silent=True) or {}
+    if not isinstance(payload,dict):return jsonify(error='INVALID_BACKUP'),400
+    if payload.get('confirmation') != 'RESTORE DATABASE':
+        return jsonify(error='RESTORE_CONFIRMATION_REQUIRED'), 400
     if not payload.get('filename') and not payload.get('token'):
         return jsonify({'error': 'BACKUP_REQUIRED', 'message': 'Bitte wählen Sie ein Backup aus.'}), 400
     # Always forward one canonical request shape, irrespective of whether the
@@ -130,9 +228,13 @@ def restore_backup():
         'filename': payload.get('filename'),
         'category': payload.get('category'),
         'token': payload.get('token'),
+        'actor': current_user().username,
+        'schemaContract': schema_contract(),
+        'databaseTarget': restore_database_target(),
+        'confirmation': 'RESTORE DATABASE',
     }
-    return delegate('/restore', json.dumps(restore_request).encode(),
-                    {'Content-Type': 'application/json'}, timeout=3600)
+    return delegate('/restore-jobs', json.dumps(restore_request).encode(),
+                    {'Content-Type': 'application/json', 'X-Backup-Control-Secret': current_app.config['AUTH_PROXY_SECRET']}, timeout=10)
 
 
 @database_admin.get('/api/admin/database/backups')
@@ -151,3 +253,11 @@ def download_backup(category, filename):
         return jsonify({'error': 'BACKUP_NOT_FOUND'}), 404
     return send_file(path, as_attachment=True, download_name=filename,
                      mimetype='application/octet-stream', conditional=True)
+
+
+@database_admin.get('/api/admin/database/restore-status')
+def restore_status():
+    from restore_coordination import read_status
+    try: return jsonify(read_status(current_app.config['BACKUP_DIR']))
+    except (OSError, ValueError):
+        return jsonify(state='UNAVAILABLE', message='Restorekoordination nicht verfügbar; Betrieb bleibt gesperrt.'), 503

@@ -6,7 +6,7 @@ from datetime import date, datetime
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from test_support import configure_test_app, postgres_test_url
+from test_support import configure_test_app, postgres_test_url, prepare_import_championship
 
 database_url = postgres_test_url()
 os.environ['DATABASE_URL'] = database_url
@@ -18,7 +18,7 @@ from excel_import import (PREVIEW_STORE, apply_preserved_single_room_approvals,
                           _serialize_person_preview,
                           preserved_single_room_approvals)  # noqa: E402
 from models import (ImportApproval, ImportSession, ImportSessionEvent,
-                    ImportSessionVersion, Athlete, Competition, Event, Hotel,
+                    ImportSessionVersion, Athlete, Competition, Event, EventCompetition, Hotel,
                     RoomBooking, RoomBookingOccupant, RoomType, db)  # noqa: E402
 
 
@@ -30,6 +30,11 @@ class SingleRoomStatusTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            competition = Competition(import_code='WSC_BA_W_6183', code='6183', name='Display',
+                display_name='Display', sport='Snowboard', gender='F', quota_discipline='Big Air')
+            db.session.add(competition)
+            db.session.commit()
+            prepare_import_championship([competition])
 
     @staticmethod
     def person(key, function='Official'):
@@ -37,45 +42,53 @@ class SingleRoomStatusTest(unittest.TestCase):
             'matchKey': key, 'fisCode': key, 'firstname': key, 'lastname': 'Person',
             'nationCode': 'AUT', 'industryName': 'Big Air', 'gender': 'F',
             'function': function,
+            'competitionImportCodes': ['WSC_BA_W_6183'],
+            'quotaDisciplines': ['Big Air'],
+            'competitionIds': [str(Competition.query.filter_by(import_code='WSC_BA_W_6183').one().id)],
         }
 
     def test_import_persists_all_business_statuses_and_decision_reference(self):
         with app.app_context():
-            session = ImportSession(nation='AUT')
-            db.session.add(session)
-            db.session.flush()
-            decision = ImportApproval(
-                session_id=session.id, nation='AUT', approval_type='NATION_APPROVED',
-                description='Single Rooms', decision='APPROVED', username='test',
-            )
-            db.session.add(decision)
             event = Event(name='Status Test', active=True)
+            event.competition_mappings.append(EventCompetition(
+                competition=Competition.query.filter_by(import_code='WSC_BA_W_6183').one(),
+                import_code='WSC_BA_W_6183', fis_codex='6183', official_name='Display'))
             db.session.add(event)
-            db.session.commit()
+            db.session.flush()
+            app.config['OPERATIONAL_EVENT_ID']=event.id
+            session = ImportSession(nation='AUT', event_id=event.id)
+            db.session.add(session); db.session.flush()
+            decision = ImportApproval(session_id=session.id, nation='AUT', approval_type='NATION_APPROVED',
+                description='Single Rooms', decision='APPROVED', username='test')
+            db.session.add(decision); db.session.commit()
 
-            people = [self.person('NONE', 'Athlete'), self.person('QUOTA'),
-                      self.person('APPROVED'), self.person('PENDING')]
+            people = [self.person('NONE', 'Athlete'), self.person('A_QUOTA'),
+                      self.person('APPROVED'), self.person('Z_PENDING')]
             PREVIEW_STORE['status-test'] = {
                 'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': people,
                 'rooms': [
                     {'person1Key': key, 'person2Key': None, 'roomType': 'Single'}
-                    for key in ('QUOTA', 'APPROVED', 'PENDING')
+                    for key in ('A_QUOTA', 'APPROVED', 'Z_PENDING')
                 ],
                 'quotaChecks': [{
                     'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'F',
                     'singleRoomsAllowed': 1,
                 }],
             }
+            decision.approved_person_keys_json = '["APPROVED"]'
+            decision.quota_details_json = json.dumps(dict(quotaMembershipVersion=1, nationCode='AUT', discipline='Big Air', gender='F',
+                singleRoomCandidates=[dict(personKey='APPROVED', competitionIds=[str(Competition.query.filter_by(import_code='WSC_BA_W_6183').one().id)])]))
+            db.session.commit()
             confirm_fis_import('status-test', {'APPROVED': decision.id})
 
             rows = {row.fis_code: row for row in Athlete.query.all()}
             self.assertEqual(rows['NONE'].single_room_status, 'NONE')
-            self.assertEqual(rows['QUOTA'].single_room_status, 'IN_QUOTA')
+            self.assertEqual(rows['A_QUOTA'].single_room_status, 'IN_QUOTA')
             self.assertEqual(rows['APPROVED'].single_room_status, 'APPROVED_EXTRA')
             self.assertEqual(rows['APPROVED'].single_room_decision_id, decision.id)
-            self.assertEqual(rows['PENDING'].single_room_status, 'PENDING_APPROVAL')
-            self.assertIsNone(rows['PENDING'].single_room_decision_id)
+            self.assertEqual(rows['Z_PENDING'].single_room_status, 'PENDING_APPROVAL')
+            self.assertIsNone(rows['Z_PENDING'].single_room_decision_id)
 
     def test_person_api_exposes_snake_case_fields(self):
         with app.app_context():
@@ -91,11 +104,24 @@ class SingleRoomStatusTest(unittest.TestCase):
                 fis_code='P1', firstname='Patrick', lastname='Burgener', nation_code='BRA',
                 discipline='Snowboard Halfpipe', gender='M', function='Official',
                 single_room_status='APPROVED_EXTRA', single_room_entitlement='APPROVED_EXTRA')
+            competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
+            competition.quota_discipline = 'Snowboard Halfpipe'
+            patrick.competitions = [competition]
             db.session.add(patrick)
             db.session.commit()
             people = [{**self.person('P1'), 'firstname': 'Patrick', 'lastname': 'Burgener',
-                       'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'gender': 'M'}]
+                       'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'quotaDisciplines': ['Snowboard Halfpipe'], 'gender': 'M'}]
+            support = {**self.person('SUPPORT', 'Athlete'), 'nationCode': 'BRA', 'gender': 'M',
+                'competitionIds': [str(competition.id)], 'competitionImportCodes': [competition.import_code],
+                'quotaDisciplines': ['Snowboard Halfpipe']}
+            people.append(support)
             rooms = [{'person1Key': 'P1', 'person2Key': None, 'roomType': 'Single'}]
+            session = ImportSession(nation='BRA'); db.session.add(session); db.session.flush()
+            decision = ImportApproval(session_id=session.id, nation='BRA', approval_type='NATION_APPROVED',
+                description='Reviewed', decision='APPROVED', username='test', approved_person_keys_json='["P1"]',
+                quota_details_json=json.dumps(dict(quotaMembershipVersion=1, nationCode='BRA', discipline='Snowboard Halfpipe', gender='M',
+                    singleRoomCandidates=[dict(personKey='P1', competitionIds=[str(competition.id)])])))
+            patrick.single_room_decision = decision; db.session.add(decision); db.session.commit()
             warnings = [{'code': 'QUOTA_SINGLE_ROOMS_EXCEEDED', 'details': {
                 'nationCode': 'BRA', 'discipline': 'Snowboard Halfpipe', 'gender': 'M',
                 'importedSingleRooms': 3, 'singleRoomsAllowed': 2, 'excessCount': 1,
@@ -114,9 +140,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             self.assertEqual(warnings[0]['details']['approvedExtraCount'], 1)
             self.assertEqual(warnings[0]['details']['openExcessCount'], 0)
 
-            event = Event(name='Preservation Test', active=True)
-            db.session.add(event)
-            db.session.commit()
+            event = db.session.get(Event, patrick.event_id)
             PREVIEW_STORE['preservation-test'] = {
                 'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': people, 'rooms': rooms,
@@ -133,10 +157,13 @@ class SingleRoomStatusTest(unittest.TestCase):
                 fis_code='P1', firstname='Patrick', lastname='Burgener', nation_code='BRA',
                 discipline='Snowboard Halfpipe', gender='M', function='Official',
                 single_room_status='APPROVED_EXTRA')
+            competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
+            competition.quota_discipline = 'Snowboard Halfpipe'
+            patrick.competitions = [competition]
             db.session.add(patrick)
             db.session.commit()
             person = {**self.person('P1'), 'nationCode': 'BRA',
-                      'industryName': 'Snowboard Halfpipe', 'gender': 'M'}
+                      'industryName': 'Snowboard Halfpipe', 'quotaDisciplines': ['Snowboard Halfpipe'], 'gender': 'M'}
             self.assertEqual(preserved_single_room_approvals([], []), {})
             self.assertEqual(preserved_single_room_approvals(
                 [person], [{'person1Key': 'P1', 'person2Key': 'OTHER', 'roomType': 'Double'}]), {})
@@ -170,8 +197,13 @@ class SingleRoomStatusTest(unittest.TestCase):
                               competitions=[moguls, dual, aerials])
             db.session.add(athlete)
             db.session.commit()
+            decision.approved_person_keys_json = '["P1"]'
+            decision.quota_details_json = json.dumps(dict(quotaMembershipVersion=1, nationCode='BRA', discipline='Moguls', gender='M',
+                singleRoomCandidates=[dict(personKey='P1', competitionIds=[str(moguls.id), str(dual.id)])]))
+            db.session.commit()
             person = {**self.person('P1', 'Athlete'), 'nationCode': 'BRA', 'gender': 'M',
-                      'industryName': 'Moguls', 'quotaDisciplines': ['Moguls', 'Moguls', 'Aerials']}
+                      'industryName': 'Moguls', 'quotaDisciplines': ['Moguls', 'Moguls', 'Aerials'],
+                      'competitionIds': [str(c.id) for c in athlete.competitions]}
             preserved = preserved_single_room_approvals(
                 [person], [{'person1Key': 'P1', 'person2Key': None, 'roomType': 'Single'}])
 
@@ -182,9 +214,9 @@ class SingleRoomStatusTest(unittest.TestCase):
         with app.app_context():
             people = [
                 {**self.person('A'), 'firstname': 'Patrick', 'lastname': 'Burgener',
-                 'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'gender': 'M'},
+                 'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'quotaDisciplines': ['Snowboard Halfpipe'], 'gender': 'M'},
                 {**self.person('B'), 'firstname': 'Augustinho', 'lastname': 'Teixeira',
-                 'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'gender': 'M'},
+                 'nationCode': 'BRA', 'industryName': 'Snowboard Halfpipe', 'quotaDisciplines': ['Snowboard Halfpipe'], 'gender': 'M'},
             ]
             preview = {'people': people, 'errors': [], 'quotaChecks': []}
             session = ImportSession(nation='BRA', discipline='Snowboard Halfpipe',
@@ -218,10 +250,26 @@ class SingleRoomStatusTest(unittest.TestCase):
                                  single_room_status='IN_QUOTA', single_room_entitlement='IN_QUOTA')
             hotel = Hotel(name='Revision Hotel')
             room_type = RoomType(name='Revision Single', max_persons=1)
+            competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
+            competition.quota_discipline = 'Snowboard Halfpipe'
+            # Current review uses exact saved memberships in an active event.
+            event = db.session.get(Event, session.event_id)
+            preview['eventId'] = event.id
+            version.preview_json = json.dumps(preview)
+            patrick.competitions = [competition]
+            augustinho.competitions = [competition]
+            support = Athlete(fis_code='SUPPORT', firstname='Support', lastname='Athlete',
+                nation_code='BRA', gender='M', function='Athlete', competitions=[competition])
+            db.session.add(support)
             db.session.add_all([patrick, augustinho, hotel, room_type]); db.session.flush()
             booking = RoomBooking(hotel_id=hotel.id, room_type_id=room_type.id, counts_as_single=True)
             db.session.add(booking); db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=patrick.id))
+            db.session.commit()
+            details['quotaMembershipVersion'] = 1
+            for candidate in details['singleRoomCandidates']:
+                candidate['competitionIds'] = [str(competition.id)]
+            approval.quota_details_json = json.dumps(details)
             db.session.commit()
             original_id, session_id = approval.id, session.id
 
@@ -252,6 +300,8 @@ class SingleRoomStatusTest(unittest.TestCase):
                 approval_id=current[0].id, event_type='QUOTA_DECISION_REVISED').one()
             self.assertEqual(revised_event.description, 'Augustinho Teixeira')
 
+            people.append({**self.person('SUPPORT', 'Athlete'), 'nationCode': 'BRA', 'gender': 'M',
+                'quotaDisciplines': ['Snowboard Halfpipe'], 'competitionIds': [str(competition.id)]})
             rooms = [{'person1Key': key, 'person2Key': None, 'roomType': 'Single'} for key in ('A', 'B')]
             self.assertEqual(set(preserved_single_room_approvals(people, rooms)), {'B'})
 
@@ -288,8 +338,11 @@ class SingleRoomStatusTest(unittest.TestCase):
     def test_confirm_consumes_staged_exemption_and_athlete_edit_can_remove_it(self):
         with app.app_context():
             event = Event(name='Exemption Test', active=True)
+            event.competition_mappings.append(EventCompetition(
+                competition=Competition.query.filter_by(import_code='WSC_BA_W_6183').one(),
+                import_code='WSC_BA_W_6183', fis_codex='6183', official_name='Display'))
             db.session.add(event); db.session.commit()
-            person = {**self.person('WC'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'}
+            person = {**self.person('WC', 'Athlete'), 'nationCode': 'BRA', 'industryName': 'Halfpipe', 'gender': 'M'}
             PREVIEW_STORE['exemption-confirm'] = {
                 'createdAt': datetime.utcnow(),
                 'errors': [], 'eventId': event.id, 'people': [person], 'rooms': [],
@@ -319,14 +372,19 @@ class SingleRoomStatusTest(unittest.TestCase):
 
     def test_import_review_stages_exemption_and_recalculates_current_preview(self):
         with app.app_context():
-            officials = [{**self.person(f'O{index}'), 'nationCode': 'BRA',
+            officials = [{**self.person(f'O{index}', 'Athlete' if index == 0 else 'Official'), 'nationCode': 'BRA',
                           'industryName': 'Halfpipe', 'gender': 'M'} for index in range(3)]
             athletes = [{**self.person(f'A{index}', 'Athlete'), 'nationCode': 'BRA',
                          'industryName': 'Halfpipe', 'gender': 'M'} for index in range(2)]
             people = officials + athletes
             rooms = [{'person1Key': person['matchKey'], 'person2Key': None, 'roomType': 'Single'}
                      for person in officials]
-            preview = {'previewToken': 'stage-exemption', 'errors': [], 'warnings': [],
+            event = Event(name='Staged exemption review', active=True)
+            competition = Competition.query.filter_by(import_code='WSC_BA_W_6183').one()
+            db.session.add(EventCompetition(event=event, competition=competition,
+                import_code=competition.import_code, fis_codex=competition.code, official_name=competition.name))
+            db.session.flush()
+            preview = {'previewToken': 'stage-exemption', 'eventId': event.id, 'errors': [], 'warnings': [],
                        'people': people, 'rooms': rooms, 'quotaChecks': [],
                        'singleRoomQuotaExemptOverrides': {},
                        'dispositionAnalysis': {'categories': {}, 'changes': []}}
@@ -370,12 +428,28 @@ class SingleRoomStatusTest(unittest.TestCase):
                 f'/api/import/sessions/{session.id}/single-room-exemptions/O1',
                 headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
                 json={'reason': 'OTHER'})
-            self.assertEqual(response.status_code, 200)
-            check = response.get_json()['preview']['quotaChecks'][0]
-            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 2))
-            self.assertEqual(check['quotaExemptSingleRooms'], 1)
-            self.assertFalse(any(approval['decision'] == 'PENDING'
-                                 for approval in response.get_json()['approvals']))
+            self.assertEqual(response.status_code, 400)
+            self.assertIsNone(response.get_json().get('preview'))
+
+    def test_staged_exemption_reports_invalid_event_mapping_without_writes(self):
+        with app.app_context():
+            event = Event(name='Inactive mapping', active=False)
+            session = ImportSession(nation='AUT', status='PROFESSIONALLY_REVIEWED')
+            db.session.add_all([event, session]); db.session.flush()
+            original = json.dumps({'eventId': event.id, 'people': [self.person('O', 'Athlete')],
+                                   'errors': [], 'warnings': []})
+            version = ImportSessionVersion(session_id=session.id, version=1,
+                preview_json=original, uploaded_by='test')
+            db.session.add(version); db.session.flush(); session.current_version = version
+            db.session.commit()
+            response = app.test_client().patch(
+                f'/api/import/sessions/{session.id}/single-room-exemptions/O',
+                headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
+                json={'reason': 'WORLD_CHAMPION'})
+            self.assertEqual(response.status_code, 403)
+            self.assertEqual(response.get_json()['error'], 'EVENT_ACCESS_DENIED')
+            db.session.expire_all()
+            self.assertEqual(db.session.get(ImportSessionVersion, version.id).preview_json, original)
 
     def test_recalculation_accepts_serialized_preview_dates(self):
         with app.app_context():

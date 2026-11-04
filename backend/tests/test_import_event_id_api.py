@@ -16,6 +16,7 @@ from models import Event, db  # noqa: E402
 class ImportEventIdApiTest(unittest.TestCase):
     def setUp(self):
         configure_test_app(app)
+        app.config['OPERATIONAL_EVENT_ID'] = None
         with app.app_context():
             db.drop_all()
             db.create_all()
@@ -31,6 +32,7 @@ class ImportEventIdApiTest(unittest.TestCase):
         if event_id_marker:
             data['eventId'] = event_id
         return self.client.post('/api/import/fis/preview', data=data,
+                                headers={'X-Championship-Event-ID': str(event_id)} if event_id_marker else {},
                                 content_type='multipart/form-data')
 
     def test_multipart_string_id_is_normalized_before_postgresql_query(self):
@@ -39,19 +41,19 @@ class ImportEventIdApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('two required FIS Excel files', response.get_json()['error'])
 
-    def test_missing_and_invalid_event_ids_are_structured_400_responses(self):
+    def test_missing_and_invalid_event_ids_are_rejected_before_upload(self):
         missing = self.preview()
         invalid = self.preview(True, 'abc')
         empty = self.preview(True, '')
-        self.assertEqual((missing.status_code, missing.get_json()['error']), (400, 'EVENT_REQUIRED'))
-        self.assertEqual((empty.status_code, empty.get_json()['error']), (400, 'EVENT_REQUIRED'))
-        self.assertEqual((invalid.status_code, invalid.get_json()['error']), (400, 'INVALID_EVENT_ID'))
+        self.assertEqual((missing.status_code, missing.get_json()['error']), (409, 'OPERATIONAL_EVENT_REQUIRED'))
+        self.assertEqual((empty.status_code, empty.get_json()['error']), (409, 'INVALID_EVENT_ID'))
+        self.assertEqual((invalid.status_code, invalid.get_json()['error']), (409, 'INVALID_EVENT_ID'))
 
     def test_unknown_and_inactive_ids_are_controlled(self):
         unknown = self.preview(True, '2147483647')
         inactive = self.preview(True, str(self.inactive_id))
-        self.assertEqual((unknown.status_code, unknown.get_json()['error']), (404, 'EVENT_NOT_FOUND'))
-        self.assertEqual((inactive.status_code, inactive.get_json()['error']), (422, 'EVENT_INACTIVE'))
+        self.assertEqual((unknown.status_code, unknown.get_json()['error']), (403, 'EVENT_ACCESS_DENIED'))
+        self.assertEqual((inactive.status_code, inactive.get_json()['error']), (403, 'EVENT_ACCESS_DENIED'))
 
 
 if __name__ == '__main__':

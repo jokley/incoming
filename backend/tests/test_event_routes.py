@@ -1,3 +1,5 @@
+import pytest
+pytestmark=pytest.mark.quota_rule_lifecycle
 """HTTP coverage for championship administration and event audit parity."""
 import json
 import os
@@ -42,15 +44,29 @@ class EventRoutesTest(unittest.TestCase):
         self.assertEqual(response.status_code, 201)
         return response.get_json()
 
+    def use_explicit_catalogue_context(self, fallback):
+        """Old catalogue tests now send the explicit target on each admin request."""
+        import re
+        original = self.client.open
+        def scoped(path, *args, **kwargs):
+            app.config['OPERATIONAL_EVENT_ID'] = None
+            target = re.match(r'/api/admin/events/(\d+)', path)
+            kwargs['headers'] = {**kwargs.get('headers', {}),
+                'X-Championship-Event-ID': target.group(1) if target else str(fallback)}
+            return original(path, *args, **kwargs)
+        self.client.open = scoped
+
     def test_championship_lists_detail_update_and_validation(self):
         self.assertEqual(self.client.post('/api/admin/events', json={'name': '  '}).status_code, 400)
         later = self.create_event(' Later ', year=2028, fisEventId='123', sectorCode='SB')
         earlier = self.create_event('Earlier', year=2027)
         inactive = self.create_event('Inactive', year=2026, active=False)
+        self.use_explicit_catalogue_context(earlier['id'])
         self.assertEqual(later, {'id': later['id'], 'name': 'Later', 'year': 2028,
-                                'fisEventId': '123', 'sectorCode': 'SB', 'active': True})
+                                'fisEventId': '123', 'sectorCode': 'SB', 'active': True,
+                                'isWorldChampionship':False,'quotaRules':{'status':'DRAFT','config':None,'digest':__import__('quota_rules').fingerprint({'config':None,'isWorldChampionship':False}),'revision':0,'fixedAt':None,'fixedBy':None}})
         self.assertEqual(self.client.get('/api/championship-events', headers=self.viewer).get_json(),
-                         [earlier, later])
+                         [{k:v for k,v in row.items() if k!='quotaRules'} for row in [earlier,later]])
         self.assertEqual(self.client.get('/api/admin/events').get_json(), [inactive, earlier, later])
         path = '/api/admin/events/' + later['id']
         self.assertEqual(self.client.get(path).get_json(), {**later, 'competitionMappings': []})
@@ -65,6 +81,7 @@ class EventRoutesTest(unittest.TestCase):
     def test_mapping_creation_update_copy_and_event_scoping(self):
         source = self.create_event('Source')['id']
         target = self.create_event('Target')['id']
+        self.use_explicit_catalogue_context(source)
         source_path = f'/api/admin/events/{source}'
         target_path = f'/api/admin/events/{target}'
         payload = {'competitionId': self.competition_id, 'fisCodex': ' 6182 ',
@@ -109,6 +126,7 @@ class EventRoutesTest(unittest.TestCase):
             self.assertEqual(AuditEvent.query.count(), 0)
 
     def test_accommodation_mutation_audit_and_rejected_commands(self):
+        self.create_event('Explicit planning owner')
         payload = {'discipline': 'Big Air', 'startDate': '2027-03-01',
                    'endDate': '2027-03-10', 'personDemand': 10}
         response = self.client.post('/api/events', json=payload, headers=self.editor)
@@ -130,7 +148,7 @@ class EventRoutesTest(unittest.TestCase):
                 self.assertEqual(row.username, 'editor')
                 self.assertEqual(row.entity_type, 'events')
                 self.assertEqual(row.entity_id, event_id)
-                self.assertEqual(json.loads(row.entity_refs_json), {'eventId': event_id})
+                self.assertEqual(json.loads(row.entity_refs_json), {'eventId': event_id, 'championshipEventId': str(app.config['OPERATIONAL_EVENT_ID']), '_scope': 'OPERATIONAL_EVENT'})
             self.assertEqual(json.loads(rows[0].changes_json), payload)
             self.assertEqual(json.loads(rows[1].changes_json), {'personDemand': 20})
 
@@ -138,7 +156,7 @@ class EventRoutesTest(unittest.TestCase):
         routes = json.loads((Path(__file__).parent / 'fixtures/api_routes.json').read_text())
         event_paths = {p for p in routes if p.startswith(('/api/events', '/api/admin/events',
                                                         '/api/championship-events'))}
-        self.assertEqual(len(event_paths), 10)
+        self.assertEqual(len(event_paths), 16)
         registered = {r.rule for r in app.url_map.iter_rules()}
         for path in event_paths:
             self.assertIn(path, registered)

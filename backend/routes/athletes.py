@@ -1,10 +1,14 @@
 """Person HTTP routes; updates, authentication and mutation auditing remain in app."""
+from accommodation_scope import event_query, event_get
 
 from datetime import datetime
 
 from flask import Blueprint, jsonify, request
 
 from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
+from stay_window import assess_stay, load_stay_schedule
+from accommodation_scope import accommodation_event_id
+from accommodation_coverage import person_accommodation_coverage
 
 
 athletes = Blueprint('athletes', __name__)
@@ -15,27 +19,33 @@ athletes = Blueprint('athletes', __name__)
 @athletes.route('/athletes', methods=['GET'])
 @athletes.route('/athletes/', methods=['GET'])
 def get_athletes():
-    athletes = Athlete.query.options(db.selectinload(Athlete.competitions)).all()
+    schedule = load_stay_schedule(accommodation_event_id())
+    athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions)).all()
 
-    latest_athletes_run = ImportRun.query.filter_by(import_type='athletes').order_by(ImportRun.started_at.desc()).first()
-    latest_roomlist_run = ImportRun.query.filter_by(import_type='roomlist').order_by(ImportRun.started_at.desc()).first()
-
-    latest_athletes_at = latest_athletes_run.started_at if latest_athletes_run else None
-    latest_roomlist_at = latest_roomlist_run.started_at if latest_roomlist_run else None
+    # One PostgreSQL DISTINCT ON query replaces the two latest-run lookups,
+    # keeping the total read budget unchanged after adding the event schedule.
+    latest = {row.import_type: row.started_at for row in event_query(ImportRun)
+        .filter(ImportRun.import_type.in_(['athletes','roomlist']))
+        .order_by(ImportRun.import_type,ImportRun.started_at.desc())
+        .distinct(ImportRun.import_type).all()}
+    latest_athletes_at = latest.get('athletes')
+    latest_roomlist_at = latest.get('roomlist')
 
     # Assignment summaries belong to the athlete read model.  Eager-loading
     # keeps their query count constant as the number of people and rooms grows.
-    booking_rows = RoomBookingOccupant.query.options(
+    booking_rows = event_query(RoomBookingOccupant).options(
         db.joinedload(RoomBookingOccupant.athlete),
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.hotel),
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type),
     ).all()
     assignment_map = {}
+    bookings_by_person = {}
     for occupant in booking_rows:
         booking = occupant.room_booking
         athlete = occupant.athlete
         if not booking or not athlete:
             continue
+        bookings_by_person.setdefault(athlete.id, []).append(booking)
         current = assignment_map.get(athlete.id)
         summary = {
             'hasAssignment': True,
@@ -67,7 +77,11 @@ def get_athletes():
         record_ids = {record.id for record in records}
         data['id'] = str(min(record_ids))
         data['sourceRecordIds'] = [str(value) for value in sorted(record_ids)]
+        data['accommodationCoverage'] = person_accommodation_coverage(
+            a.arrival_date, a.departure_date,
+            [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])], a.accommodation_requirement)
         competitions = {competition.id: competition for record in records for competition in record.competitions}
+        data['stayWindow'] = assess_stay(a.arrival_date,a.departure_date,list(competitions.values()),schedule,a.accommodation_requirement)
         data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
         data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
         if not data['disciplines']:
@@ -133,6 +147,8 @@ def get_athletes():
         # not master-data integrity failures. CONFLICT is intentionally reserved
         # for explicit integrity validation and must never be inferred from them.
         data['workflowStatus'] = (
+            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement == 'NO_ROOM' else
+            'NO_ROOM' if a.accommodation_requirement == 'NO_ROOM' else
             'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
             'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
             'OPEN_ASSIGNMENT' if not data['assignment']['hasAssignment'] else
@@ -147,7 +163,19 @@ def get_athletes():
 @athletes.route('/api/athletes/<int:athlete_id>', methods=['GET'])
 @athletes.route('/api/athletes/<int:athlete_id>/', methods=['GET'])
 def get_athlete(athlete_id):
-    return jsonify(Athlete.query.get_or_404(athlete_id).to_dict())
+    athlete = event_get(Athlete, athlete_id, required=True)
+    bookings = event_query(RoomBooking).join(RoomBookingOccupant).filter(
+        RoomBookingOccupant.athlete_id == athlete.id).options(
+            db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
+    data = athlete.to_dict()
+    data['stayWindow'] = assess_stay(athlete.arrival_date,athlete.departure_date,athlete.competitions,load_stay_schedule(athlete.event_id),athlete.accommodation_requirement)
+    data['accommodationCoverage'] = person_accommodation_coverage(
+        athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
+    coverage = data['accommodationCoverage']['coverageStatus']
+    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement == 'NO_ROOM' and coverage == 'CONFLICT' else
+        'NO_ROOM' if athlete.accommodation_requirement == 'NO_ROOM' else
+        'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
+    return jsonify(data)
 
 
 @athletes.route('/api/athletes', methods=['POST'])
@@ -170,7 +198,7 @@ def create_athlete():
 @athletes.route('/api/athletes/<int:athlete_id>/acknowledge-roomlist-change', methods=['POST'])
 @athletes.route('/api/athletes/<int:athlete_id>/acknowledge-roomlist-change/', methods=['POST'])
 def acknowledge_athlete_roomlist_change(athlete_id):
-    athlete = Athlete.query.get_or_404(athlete_id)
+    athlete = event_get(Athlete, athlete_id, required=True)
     if athlete.roomlist_changed_at is None:
         return jsonify({'error': 'No roomlist change to acknowledge'}), 400
 

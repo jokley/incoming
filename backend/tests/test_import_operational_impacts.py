@@ -7,7 +7,7 @@ from datetime import date
 
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-from test_support import configure_test_app, postgres_test_url
+from test_support import configure_test_app, postgres_test_url, prepare_import_championship
 
 database_url = postgres_test_url()
 os.environ['DATABASE_URL'] = database_url
@@ -15,7 +15,7 @@ os.environ['DATABASE_URL'] = database_url
 from app import app  # noqa: E402
 from excel_import import (_remove_athletes, build_disposition_analysis, build_import_changes,
                           build_quota_warnings)  # noqa: E402
-from models import (Athlete, Hotel, ImportApproval, ImportSession, ImportSessionVersion,
+from models import (Competition, Athlete, Hotel, ImportApproval, ImportSession, ImportSessionVersion,
                     RoomBooking, RoomBookingOccupant, RoomType, db)  # noqa: E402
 
 
@@ -33,6 +33,8 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             'matchKey': athlete.fis_code, 'fisCode': athlete.fis_code,
             'firstname': athlete.firstname, 'lastname': athlete.lastname,
             'nationCode': athlete.nation_code, 'industryName': athlete.discipline,
+            'quotaDisciplines': sorted({c.quota_discipline for c in athlete.competitions}),
+            'competitionImportCodes': [c.import_code for c in athlete.competitions],
             'gender': athlete.gender, 'forGender': athlete.for_gender,
             'function': function or athlete.function, 'roomType': athlete.room_type,
             'arrivalDate': arrival if arrival is not None else athlete.arrival_date,
@@ -54,6 +56,11 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                                discipline='Big Air', function='Official', gender='M',
                                single_room_status='APPROVED_EXTRA',
                                single_room_entitlement='APPROVED_EXTRA')
+            competition = Competition(import_code='EXACT', code='EXACT', name='Display',
+                display_name='Display', sport='Sport', gender='M', quota_discipline='Big Air')
+            athlete.competitions = [competition]
+            official.competitions = [competition]
+            official.fis_code = 'O'
             session = ImportSession(nation='AUT', discipline='Big Air')
             db.session.add_all([athlete, official, session]); db.session.flush()
             version = ImportSessionVersion(session_id=session.id, version=1, uploaded_by='test')
@@ -67,15 +74,18 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             db.session.add_all([approval, booking]); db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=official.id))
             variants = [('M', 'M'), ('male', 'M'), ('man', 'M'), ('men', 'M'),
-                        ('Herr', 'M'), ('Herren', 'M'), ('F', 'F'), ('W', 'F'),
-                        ('female', 'F'), ('woman', 'F'), ('women', 'F'),
-                        ('Dame', 'F'), ('Damen', 'F'), (' w ', 'F')]
+                        ('Herr', 'M'), ('Herren', 'M'), ('F', 'W'), ('W', 'W'),
+                        ('female', 'W'), ('woman', 'W'), ('women', 'W'),
+                        ('Dame', 'W'), ('Damen', 'W'), (' w ', 'W')]
             for raw, canonical in variants:
                 with self.subTest(gender=raw):
                     athlete.gender = canonical
                     official.gender = raw
                     approval.quota_details_json = json.dumps({
-                        'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': raw})
+                        'quotaMembershipVersion': 1, 'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': raw,
+                        'singleRoomCandidates': [{'personKey': 'O', 'competitionIds': [str(competition.id)]}]})
+                    approval.approved_person_keys_json = '["O"]'
+                    official.single_room_decision = approval
                     db.session.commit()
                     response = app.test_client().get('/api/fis/official-quotas',
                         query_string={'nationCode': 'AUT', 'gender': raw})
@@ -90,12 +100,35 @@ class ImportOperationalImpactsTest(unittest.TestCase):
                     self.assertEqual((row['remainingSingleRooms'], row['approvedExceptions']), (0, 1))
 
 
-    def test_live_quota_uses_import_entitlements_not_assigned_room_types(self):
+    def test_missing_athlete_gender_blocks_exemption_removal_without_partial_writes(self):
+        with app.app_context():
+            competition = Competition(import_code='MIXED', code='8185', name='Mixed Team',
+                display_name='Ski Cross Team', sport='Freestyle', gender='A',
+                team_competition=True, quota_discipline='Ski Cross')
+            athlete = Athlete(firstname='Malformed', lastname='Athlete', nation_code='AUT',
+                function='Athlete', gender=None, for_gender='A', competitions=[competition],
+                single_room_quota_exempt_reason='WORLD_CHAMPION')
+            booking = RoomBooking(hotel=Hotel.query.one(), room_type=RoomType.query.one(), counts_as_single=True)
+            db.session.add(RoomBookingOccupant(room_booking=booking, athlete=athlete))
+            db.session.commit()
+            athlete_id = athlete.id
+        response = app.test_client().patch(f'/api/athletes/{athlete_id}',
+            json={'singleRoomQuotaExemptReason': None})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()['code'], 'QUOTA_GENDER_REVIEW_REQUIRED')
+        with app.app_context():
+            self.assertEqual(db.session.get(Athlete, athlete_id).single_room_quota_exempt_reason, 'WORLD_CHAMPION')
+
+    def test_live_quota_uses_persisted_single_flags_not_physical_room_types(self):
         with app.app_context():
             roster = [Athlete(fis_code='A1', firstname='A', lastname='One', nation_code='AUT',
                 discipline='Big Air', gender='F', function='Athlete')]
             roster += [Athlete(fis_code=f'O{i}', firstname='O', lastname=str(i), nation_code='AUT',
                 discipline='Big Air', gender='F', function='Official') for i in range(4)]
+            competition = Competition(import_code='EXACT', code='EXACT', name='Display',
+                display_name='Display', sport='Sport', gender='F', quota_discipline='Big Air')
+            for person in roster:
+                person.competitions = [competition]
             roster[1].single_room_entitlement = 'IN_QUOTA'
             roster[2].single_room_entitlement = 'APPROVED_EXTRA'
             db.session.add_all(roster)
@@ -111,36 +144,46 @@ class ImportOperationalImpactsTest(unittest.TestCase):
 
             warnings = build_quota_warnings([self.person(person) for person in roster], [])
             self.assertEqual({warning['code'] for warning in warnings}, {
-                'QUOTA_OFFICIALS_EXCEEDED', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
+                'INFO_OFFICIALS_OVER_BASIS', 'QUOTA_SINGLE_ROOMS_EXCEEDED'})
             with patch.dict(os.environ, {'ASSIGNMENT_PERFORMANCE_ENABLED': 'true'}):
                 response = app.test_client().get('/api/fis/official-quotas')
             live = response.get_json()[0]
             self.assertEqual((live['assignedOfficials'], live['officialQuota']), (4, 3))
             self.assertEqual((live['singleRoomsUsed'], live['singleRoomsAllowed']), (2, 1))
-            self.assertEqual(live['approvedExtraSingleRooms'], 1)
-            self.assertEqual(live, {
-                'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'F',
+            self.assertEqual(live['approvedExtraSingleRooms'], 0)
+            allocation = live['singleRoomAllocations']
+            self.assertEqual(len(allocation), 2)
+            self.assertEqual(live['singleRoomsCovered'], 1)
+            self.assertEqual(live['singleRoomsPending'], 1)
+            expected_core = {
+                'nationCode': 'AUT', 'discipline': 'Big Air', 'gender': 'W',
                 'athletesEntered': 1, 'officialQuota': 3,
                 'singleRoomsAllowed': 1, 'assignedOfficials': 4,
                 'singleRoomsUsed': 2, 'quotaExemptSingleRooms': 0,
-                'approvedExtraSingleRooms': 1,
+                'approvedExtraSingleRooms': 0,
                 'requiredSingleRooms': 2, 'implementedSingleRooms': 2,
                 'remainingSingleRooms': 0, 'openApprovals': 0,
-                'approvedExceptions': 0, 'quotaStatus': 'FULFILLED',
+                'approvedExceptions': 0, 'quotaStatus': 'DECISION_REQUIRED',
                 'peopleTotal': 5, 'peopleAssigned': 4,
-            })
+                'unresolvedHistoricalApprovalIds': [],
+            }
+            self.assertEqual({key: live[key] for key in expected_core}, expected_core)
+            self.assertEqual(live['specialRateCount'], 0)
+            self.assertEqual(sum(group['count'] for group in live['functionGroups']), 5)
+            self.assertEqual(live['accommodationPeopleRequired'], 5)
             # People, select-in competition memberships, bookings, approval state.
             query_count = int(response.headers['X-Assignment-Query-Count'])
-            self.assertLessEqual(query_count, 4)
+            self.assertLessEqual(query_count, 8)  # Seven domain queries plus one fresh user/event grant check (PR8).
             db.session.add_all([Athlete(firstname='Additional', lastname=str(index),
-                nation_code='AUT', discipline='Big Air', gender='F', function='Athlete')
+                nation_code='AUT', discipline='Big Air', gender='F', function='Athlete',
+                competitions=[competition])
                 for index in range(5)])
             db.session.commit()
             with patch.dict(os.environ, {'ASSIGNMENT_PERFORMANCE_ENABLED': 'true'}):
                 expanded = app.test_client().get('/api/fis/official-quotas')
             self.assertEqual(expanded.get_json()[0]['peopleTotal'], 10)
             self.assertEqual(expanded.get_json()[0]['peopleAssigned'], 4)
-            self.assertEqual(int(expanded.headers['X-Assignment-Query-Count']), query_count)
+            self.assertLessEqual(int(expanded.headers['X-Assignment-Query-Count']), query_count)  # Warm owner lookup may save one SELECT.
 
     def test_changed_stay_reports_existing_booking_hotel_and_partner(self):
         with app.app_context():
@@ -288,6 +331,7 @@ class ImportOperationalImpactsTest(unittest.TestCase):
 
     def test_new_person_with_room_emits_person_and_room_created(self):
         with app.app_context():
+            prepare_import_championship()
             mia = Athlete(fis_code='A1', firstname='Mia', lastname='One', nation_code='AUT', discipline='Big Air')
             people = [self.person(mia)]
             room = self.room(mia, source_key='A1|single')
@@ -323,11 +367,12 @@ class ImportOperationalImpactsTest(unittest.TestCase):
             db.session.add(booking); db.session.flush()
             db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete.id))
             db.session.commit()
-            self.assertEqual(_remove_athletes([athlete]), 1)
-            db.session.commit()
-            self.assertEqual(RoomBooking.query.count(), 0)
-            self.assertEqual(RoomBookingOccupant.query.count(), 0)
-            self.assertEqual(Athlete.query.count(), 0)
+            from imports.event_context import ImportValidationError
+            with self.assertRaises(ImportValidationError):_remove_athletes([athlete])
+            db.session.rollback()
+            self.assertEqual(RoomBooking.query.count(), 1)
+            self.assertEqual(RoomBookingOccupant.query.count(), 1)
+            self.assertEqual(Athlete.query.count(), 1)
 
 
 if __name__ == '__main__':

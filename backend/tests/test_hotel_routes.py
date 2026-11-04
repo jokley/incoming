@@ -88,6 +88,9 @@ class HotelReadRoutesTest(unittest.TestCase):
                     'nationCode': 'SUI', 'discipline': 'Moguls',
                     'checkInDate': '2027-03-11', 'checkOutDate': '2027-03-15',
                     'specialNotes': 'Vegetarian',
+                    'stayWindow': {'eventStart':None,'eventEnd':None,'allowedStart':None,'allowedEnd':None,
+                        'arrivalDate':'2027-03-11','departureDate':'2027-03-15',
+                        'nightsBefore':None,'nightsAfter':None,'outsideNights':None,'reason':'EVENT_DATES_UNCLEAR'},
                 }])
 
     def test_reservations_filter_primary_guest_when_room_is_shared(self):

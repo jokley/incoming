@@ -1,5 +1,21 @@
 # Deployment Guide - Freestyle WM
 
+## Zentraler Edge-Einstiegspunkt
+
+Die aktuelle `docker-compose.yml` ist für den Netzwerkaufbau maßgeblich.
+Incoming-Nginx (`incoming-nginx`, Container `freestyle-wm-nginx`) ist der einzige
+Edge-Einstiegspunkt des Incoming-Stacks. Er bleibt im internen
+`freestyle-network` und hängt zusätzlich am externen Docker-Netz `edge-net`
+mit dem Alias `incoming-nginx`. Dieses Netz muss bereits bestehen und wird
+nicht vom Incoming-Stack erzeugt.
+
+Der zukünftige zentrale Edge erreicht Incoming über
+`http://incoming-nginx:8080`; ein Host-Port wird dafür nicht veröffentlicht.
+Frontend, Backend, PostgreSQL und Backup bleiben ausschließlich im internen
+Netz und sind vom Edge isoliert. Die internen Upstreams und
+Authelia-Header bleiben unverändert. Ältere Beispiele mit direkten Host-Ports
+weiter unten beschreiben diesen Edge-Aufbau nicht.
+
 ## 🌐 Environment-Konfiguration
 
 Das System unterstützt verschiedene Umgebungen über `.env` Dateien.
@@ -39,7 +55,7 @@ VITE_API_URL=https://incoming.jokley.at/api
 
 ### Vite Konfiguration
 
-Die `vite.config.ts` ist bereits konfiguriert:
+Die `frontend/vite.config.ts` ist bereits konfiguriert:
 
 ```typescript
 server: {
@@ -86,7 +102,7 @@ services:
   frontend:
     build:
       context: .
-      dockerfile: Dockerfile.frontend
+      dockerfile: frontend/Dockerfile
     container_name: freestyle-wm-frontend
     ports:
       - "5173:5173"
@@ -196,7 +212,7 @@ Wenn Sie einen statischen Build bevorzugen:
 ### 1. Frontend bauen
 ```bash
 cd /workspaces/default/code
-VITE_API_URL=https://incoming.jokley.at/api pnpm run build
+VITE_API_URL=https://incoming.jokley.at/api pnpm --dir frontend run build
 ```
 
 ### 2. Dist-Ordner serven
@@ -260,7 +276,7 @@ CORS(app, origins=['https://incoming.jokley.at'])
 ### Problem: Vite dev server ist nicht erreichbar
 
 Überprüfen Sie:
-1. `host: '0.0.0.0'` in vite.config.ts
+1. `host: '0.0.0.0'` in frontend/vite.config.ts
 2. `allowedHosts` enthält Ihren Hostnamen
 3. Port 5173 ist geöffnet
 
@@ -269,7 +285,7 @@ CORS(app, origins=['https://incoming.jokley.at'])
 ## 🎯 Deployment Checkliste
 
 - [ ] `.env` Datei mit Production API URL erstellt
-- [ ] `vite.config.ts` hat `allowedHosts` konfiguriert
+- [ ] `frontend/vite.config.ts` hat `allowedHosts` konfiguriert
 - [ ] Docker Container laufen (`docker-compose ps`)
 - [ ] Backend ist unter `/api` erreichbar
 - [ ] Frontend ist unter `/` erreichbar
@@ -331,3 +347,16 @@ Bei Problemen:
 2. Environment Variables überprüfen
 3. Netzwerk-Konnektivität testen
 4. CORS-Konfiguration validieren
+
+## Frontend directory ownership
+
+Frontend builds use repository-root context and `frontend/Dockerfile`, with
+working directory `/app/frontend`. Only frontend files are copied; root `.env*`
+and production secrets are never included in the image. Supply frontend settings
+through explicit `VITE_*` container variables (Compose currently supplies
+`VITE_API_URL`). Local Vite retains root environment discovery through envDir.
+Build artifacts now live in `frontend/dist/`.
+
+Compose mounts `frontend/src` into `/app/frontend/src`. The optional existing
+root `public/` mount is retained at `/app/public` for external deployment
+assets; this checkout has no such content. No empty frontend/public is added.

@@ -1,0 +1,2963 @@
+import {EzQuotaControl} from './assignment/EzQuotaControl';
+import {ezQuotaReason} from '../services/ezQuotaPresentation';
+import {stableRoomSlots} from '../services/assignmentPresentation';
+import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
+import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
+import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
+import { periodLabel } from '../services/dispositionItems';
+import { slotPersonCount, slotOperationalUsed, bookingFreeCapacity } from '../services/assignmentRoomUsage';
+import {hotelFitLabel,queueDemandSummary,matchesHotelFit,compareHotelFit,type HotelFit} from '../services/assignmentSuitability';
+import { DispositionDragContext } from './assignment/DispositionDragContext';
+import { DispositionQueueCard } from './assignment/DispositionQueueCard';
+import { SplitAssignmentDialog } from './assignment/SplitAssignmentDialog';
+import { dispositionItems, itemContainsPeople, periodLabel as intervalLabel, type DispositionItem } from '../services/dispositionItems';
+import { PersonAccommodationPanel } from './assignment/PersonAccommodationPanel';
+import { unitCoverageComplete } from '../services/segmentWorkflow';
+import { AssignmentComment } from './assignment/AssignmentComment';
+import { contingentComments, visibleAssignmentComment } from '../services/assignmentComments';
+import type { SingleRoomQuotaExemptReason } from '../types';
+import { Profiler, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router';
+import { Dialog, DialogContent } from '@mui/material';
+import {
+  AlertCircle,
+  AlertTriangle,
+  ArrowRight,
+  Bell,
+  Bed,
+  Building2,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronLeft,
+  Eye,
+  Flag,
+  RefreshCw,
+  Search,
+  Trash2,
+  Users,
+  X,
+} from 'lucide-react';
+
+import { ImportConflictNotice } from './ImportConflictNotice';
+import { AssignmentStatusChip, PendingChanges, type AssignmentChangeSubject } from './assignment/AssignmentInfo';
+import { OccupantCard } from './assignment/OccupantCard';
+import { SingleRoomAssignmentBadges } from './SingleRoomStatusBadge';
+import { FisRulesPanel } from './FisRulesPanel';
+import { ImportDecisionDialog } from './ImportDecisionDialog';
+import { ActivitySummaryCard } from './activity';
+import { compareOperationalHotels, matchesOperationalHotelFilter, OperationalHotelFilters, type OperationalHotelFilter, type OperationalHotelState } from './OperationalHotelFilters';
+import { DialogFooter, DialogHeader, OpsButton, WorkspaceFrame } from '../design-system';
+import type { OperationsLocationState } from '../operationsContext';
+import { usePermissions } from '../auth/AuthProvider';
+import { api } from '../services/api';
+import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
+import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
+import type { OfficialQuotaUsage } from '../services/fisRules';
+import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, matchesQuotaAllowanceContext, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, uniqueQuotaContext } from '../services/quotaEvaluation';
+import type {
+  AssignmentGridBooking,
+  AssignmentGridHotel,
+  AssignmentPlanningView,
+  AssignmentSlot,
+  AssignmentValidationResult,
+  Athlete,
+  RoomBookingUnit,
+} from '../types';
+
+type AppView = 'dispatch' | 'quotas' | 'fis-rules';
+type QueueStatus = 'pending' | 'all';
+type FilterMode = 'synchronized' | 'queue';
+type RoomCategoryFilter = '' | 'ez' | 'dz';
+type AssignmentFilterCriteria = {
+  search: string;
+  nation: string;
+  discipline: string;
+  gender: string;
+  status: QueueStatus;
+  roomCategory: RoomCategoryFilter;
+  importReview: boolean;
+};
+type SelectedState =
+  | { type: 'unit'; id: string }
+  | { type: 'booking'; id: string }
+  | null;
+
+type DragState = {
+  unitId: string;
+  athleteIds: string[];
+  label: string;
+};
+
+type PendingAssignmentAction = {
+  kind: 'assign' | 'unassign' | 'single';
+  unitId?: string;
+  athleteIds?: string[];
+  hotelId?: string;
+  bookingId?: string;
+};
+
+const REGION_COLORS: Record<string, string> = {
+  Bludenz: 'var(--ops-primary)',
+  Montafon: 'var(--ops-success)',
+  Feldkirch: 'var(--ops-secondary)',
+};
+
+function AssignmentPerformanceBoundary({ id, children }: { id: string; children: ReactNode }) {
+  return assignmentPerformanceEnabled
+    ? <Profiler id={id} onRender={recordAssignmentRender}>{children}</Profiler>
+    : children;
+}
+
+export function Assignments() {
+  const permissions = usePermissions();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const routeState = location.state as ({ athleteId?: string; assignmentId?: string; view?: AppView; quotaKey?: string } & OperationsLocationState) | null;
+  const routeQuery = new URLSearchParams(location.search);
+  const requestedAthleteId = routeQuery.get('athleteId') || routeState?.athleteId || routeState?.operationsContext?.personId; const requestedAssignmentId=routeQuery.get('assignmentId')||routeState?.assignmentId||routeState?.operationsContext?.assignmentId;
+  const requestedRoomTypeId = routeQuery.get('roomTypeId');
+  const [planning, setPlanning] = useState<AssignmentPlanningView | null>(null);
+  const [validationByUnit, setValidationByUnit] = useState<Record<string, AssignmentValidationResult[]>>({});
+  const validationCacheRef = useRef<Record<string, AssignmentValidationResult[]>>({});
+  const validationRequestsRef = useRef(new Map<string, Promise<AssignmentValidationResult[]>>());
+  const validationGenerationRef = useRef(0);
+  const [athletes, setAthletes] = useState<Athlete[]>([]);
+  const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [manualQuotaValues,setManualQuotaValues]=useState<Record<string,boolean>>({});
+  const [pendingAction, setPendingAction] = useState<PendingAssignmentAction | null>(null);
+  const [quotaRefreshing, setQuotaRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [decisionId, setDecisionId] = useState<string | null>(null);
+
+  const [view, setView] = useState<AppView>(routeState?.view || (routeState?.operationsContext?.quotaKey ? 'quotas' : 'dispatch'));
+  const [externalItem,setExternalItem]=useState<ExternalStayTarget|null>(null);
+  const [splitBookingId,setSplitBookingId]=useState<string|null>(null);
+  const [notice,setNotice]=useState('');
+  const [reveal,setReveal]=useState<{ids:string[];interval?:import('../types').AccommodationInterval}|null>(null);
+  const [highlightedItems,setHighlightedItems]=useState<string[]>([]);
+  const [selected, setSelected] = useState<SelectedState>(null);
+  const [activeHotelId, setActiveHotelId] = useState<string | null>(routeQuery.get('hotelId'));
+  const [showAlert, setShowAlert] = useState(true);
+  const [selectedQuotaKey, setSelectedQuotaKey] = useState<string | null>(routeState?.quotaKey || routeState?.operationsContext?.quotaKey || null);
+
+  const [queueSearch, setQueueSearch] = useState('');
+  const [filterMode, setFilterMode] = useState<FilterMode>('queue');
+  const [hotelSearch, setHotelSearch] = useState('');
+  const [filterNation, setFilterNation] = useState('');
+  const [filterDiscipline, setFilterDiscipline] = useState('');
+  const [filterGender, setFilterGender] = useState('');
+  const [filterPersonType, setFilterPersonType] = useState<QueuePersonType>('');
+  const requestedWorkflow = routeQuery.get('workflow') || (routeQuery.get('status') === 'open' ? 'open' : '');
+  const [filterStatus, setFilterStatus] = useState<QueueStatus>(requestedWorkflow === 'review' ? 'all' : 'pending');
+  const [filterRoomCategory, setFilterRoomCategory] = useState<RoomCategoryFilter>('');
+  const [filterImportReview, setFilterImportReview] = useState(requestedWorkflow === 'review');
+  const [regionFilter, setRegionFilter] = useState('');
+  const [hotelFitFilter,setHotelFitFilter]=useState('all');
+  const [queueTargets,setQueueTargets]=useState<Record<string,AssignmentValidationResult[]>>({});
+  const [hotelFits,setHotelFits]=useState<Record<string,HotelFit>>({});
+  const [hotelOperationalFilter, setHotelOperationalFilter] = useState<OperationalHotelFilter>('all');
+
+  const [dragging, setDragging] = useState<DragState | null>(null);
+  const [dragOverHotelId, setDragOverHotelId] = useState<string | null>(null);
+  const [dragOverRoomTypeKey, setDragOverRoomTypeKey] = useState<string | null>(null);
+  const [dragOverBookingId, setDragOverBookingId] = useState<string | null>(null);
+
+  const replacePlanning = (planningData: AssignmentPlanningView) => {
+    validationGenerationRef.current += 1;
+    validationCacheRef.current = {};
+    validationRequestsRef.current.clear();
+    setValidationByUnit({});
+    setPlanning(planningData);
+  };
+
+  const ensureAssignmentValidations = (unitId: string, athleteIds?: string[], override?:import('../types').AccommodationInterval) => {
+    const validationKey = getValidationKey(unitId, athleteIds);
+    const item=unitById.get(unitId);
+    const interval=override ?? (item ? {checkInDate:item.checkInDate ?? null,checkOutDate:item.checkOutDate ?? null} : undefined);
+    const ids=athleteIds?.length ? athleteIds : item?.occupants.map(p=>p.athleteId);
+    const cacheKey=`${validationKey}:${interval?.checkInDate ?? ''}:${interval?.checkOutDate ?? ''}`;
+    if (Object.prototype.hasOwnProperty.call(validationCacheRef.current, cacheKey)) {
+      return Promise.resolve(validationCacheRef.current[cacheKey]);
+    }
+    const pendingRequest = validationRequestsRef.current.get(cacheKey);
+    if (pendingRequest) return pendingRequest;
+
+    const generation = validationGenerationRef.current;
+    if(!interval?.checkInDate || !interval.checkOutDate || !ids?.length) return Promise.reject(new Error('Offenen Zeitraum prüfen.'));
+    const request = api.getAssignmentAvailability([{key:validationKey,athleteIds:ids,checkInDate:interval.checkInDate,checkOutDate:interval.checkOutDate}]).then((projection) => {
+      const result={validations:projection.targets[validationKey] ?? []};
+      if (generation === validationGenerationRef.current) {
+        validationCacheRef.current[cacheKey] = result.validations;
+        setValidationByUnit((current) => ({
+          ...current,
+          [validationKey]: result.validations,
+        }));
+      }
+      return result.validations;
+    }).finally(() => {
+      if (validationRequestsRef.current.get(cacheKey) === request) {
+        validationRequestsRef.current.delete(cacheKey);
+      }
+    });
+    validationRequestsRef.current.set(cacheKey, request);
+    return request;
+  };
+
+  useEffect(() => {
+    void loadInitialData();
+  }, []);
+
+  useEffect(() => {
+    void loadQuotaUsage();
+  }, [filterNation, filterDiscipline, filterGender]);
+
+  useEffect(() => {
+    if (!requestedRoomTypeId || !planning || !activeHotelId) return;
+    const frame = window.requestAnimationFrame(() => document.getElementById(`room-group-${requestedRoomTypeId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeHotelId, planning, requestedRoomTypeId]);
+
+  const loadInitialData = async () => {
+    try {
+      setLoading(true);
+      const [planningData, athletesData] = await Promise.all([
+        api.getAssignmentPlanningView(),
+        api.getAthletes(),
+      ]);
+      replacePlanning(planningData);
+      setAthletes(athletesData);
+      if (requestedAssignmentId) {
+        const booking = planningData.hotels.flatMap(hotel => hotel.slots.flatMap(slot => slot.bookings)).find(candidate => candidate.bookingId === requestedAssignmentId);
+        const unit = [...planningData.units.unassigned, ...planningData.units.assigned].find(candidate => candidate.unitId === requestedAssignmentId);
+        if (booking) { setSelected({type:'booking',id:booking.bookingId}); setActiveHotelId(booking.hotelId); } else if(unit) setSelected({type:'unit',id:unit.unitId});
+      } else if (requestedAthleteId) {
+        const booking = planningData.hotels
+          .flatMap((hotel) => hotel.slots.flatMap((slot) => slot.bookings))
+          .find((candidate) => candidate.occupants.some((occupant) => occupant.athleteId === requestedAthleteId));
+        const unit = [...planningData.units.unassigned, ...planningData.units.assigned]
+          .find((candidate) => candidate.occupants.some((occupant) => occupant.athleteId === requestedAthleteId));
+
+        if (booking) {
+          setSelected({ type: 'booking', id: booking.bookingId });
+          setActiveHotelId(booking.hotelId);
+        } else if (unit) {
+          setSelected({ type: 'unit', id: unit.unitId });
+        }
+      }
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setError('Fehler beim Laden der Dispositionsansicht');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const refreshPlanningData = async ({ silent = true }: { silent?: boolean } = {}) => {
+    try {
+      if (!silent) {
+        setLoading(true);
+      }
+      const planningData = await api.getAssignmentPlanningView();
+      replacePlanning(planningData);
+      setError(null);
+    } catch (err) {
+      console.error(err);
+      setError('Fehler beim Aktualisieren der Dispositionsansicht');
+    } finally {
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  };
+
+  const refreshOperationalState = async () => {
+    const [planningData, athletesData] = await Promise.all([
+      api.getAssignmentPlanningView(),
+      api.getAthletes(),
+      loadQuotaUsage(),
+    ]);
+    replacePlanning(planningData);
+    setAthletes(athletesData);
+    window.dispatchEvent(new CustomEvent('operations:state-changed', { detail: { source: 'disposition' } }));
+  };
+
+  const loadQuotaUsage = async () => {
+    try {
+      setQuotaRefreshing(true);
+      const rows = await api.getOfficialQuotaUsage({
+        nationCode: filterNation || undefined,
+        discipline: filterDiscipline || undefined,
+        gender: filterGender || undefined,
+      });
+      setQuotaUsage(rows);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setQuotaRefreshing(false);
+    }
+  };
+
+  // Keep collection identities stable while unrelated UI state (saving, dialogs,
+  // drag targets) changes. The profiler showed these short-lived arrays invalidated
+  // every downstream memo on each parent render even though planning was unchanged.
+  // Coverage changes only the Assignments work queues, not backend/global counts.
+  const allUnitsCombined = useMemo(() => [...(planning?.units.unassigned ?? []), ...(planning?.units.assigned ?? [])]
+    .map(unit=>({...unit,isFullyAssigned:unitCoverageComplete(unit)})), [planning]);
+  const allUnits = useMemo(()=>allUnitsCombined.filter(unit=>!unit.isFullyAssigned),[allUnitsCombined]);
+  const assignedUnits = useMemo(()=>allUnitsCombined.filter(unit=>unit.isFullyAssigned),[allUnitsCombined]);
+  const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
+  const currentQuotaUsage = useMemo(() => evaluateCurrentQuotaUsage(quotaUsage, quotaAssignmentsFromPlanning(allHotels)), [allHotels, quotaUsage]);
+  const additionalCostPersonIds = useMemo(() => new Set(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId))), [allHotels, quotaUsage]);
+  const openItems=useMemo(()=>dispositionItems(allUnitsCombined,allHotels),[allUnitsCombined,allHotels]);
+  const unitById = useMemo(() => {
+    const map = new Map<string, RoomBookingUnit>();
+    for (const unit of [...allUnitsCombined,...openItems]) map.set(unit.unitId, unit);
+    return map;
+  }, [allUnitsCombined,openItems]);
+
+  const slotById = useMemo(() => {
+    const map = new Map<string, AssignmentSlot>();
+    for (const hotel of allHotels) {
+      for (const slot of hotel.slots) map.set(slot.slotId, slot);
+    }
+    return map;
+  }, [allHotels]);
+
+  const bookingContextById = useMemo(() => {
+    const map = new Map<string, { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel }>();
+    for (const hotel of allHotels) {
+      for (const slot of hotel.slots) {
+        for (const booking of slot.bookings) {
+          map.set(booking.bookingId, { booking, slot, hotel });
+        }
+      }
+    }
+    return map;
+  }, [allHotels]);
+
+  const nationOptions = useMemo(
+    () => Array.from(new Set(allUnitsCombined.map((unit) => unit.nationCode).filter(Boolean))).sort(),
+    [allUnitsCombined]
+  );
+
+  const disciplineOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const unit of allUnitsCombined) {
+      for (const occupant of unit.occupants) {
+        const disciplines = occupant.quotaDisciplines || [];
+        disciplines.forEach((discipline) => values.add(discipline));
+      }
+    }
+    return Array.from(values).sort((a, b) => disciplineDisplayName(a).localeCompare(disciplineDisplayName(b)));
+  }, [allUnitsCombined]);
+
+  const genderOptions = useMemo(() => {
+    const values = new Set<string>();
+    for (const unit of allUnitsCombined) {
+      for (const occupant of unit.occupants) {
+        const gender = normalizeGender(occupant.gender);
+        if (gender) values.add(gender);
+      }
+    }
+    return Array.from(values).sort();
+  }, [allUnitsCombined]);
+
+  const importReviewCount = useMemo(
+    () => allUnitsCombined.filter((unit) => unit.occupants.some((occupant) => occupant.hasPendingReview)).length,
+    [allUnitsCombined]
+  );
+
+  useEffect(() => {
+    if (importReviewCount === 0 && filterImportReview) setFilterImportReview(false);
+  }, [filterImportReview, importReviewCount]);
+
+  // Operational criteria share one predicate. Person type is a separate UI
+  // projection and is never passed to quota requests or quota calculations.
+  const assignmentFilters = useMemo<AssignmentFilterCriteria>(() => ({
+    search: queueSearch,
+    nation: filterNation,
+    discipline: filterDiscipline,
+    gender: filterGender,
+    status: filterStatus,
+    roomCategory: filterRoomCategory,
+    importReview: filterImportReview,
+  }), [filterDiscipline, filterGender, filterImportReview, filterNation, filterRoomCategory, filterStatus, queueSearch]);
+
+  const queueUnits = useMemo(
+    () => filterQueuePersonType(openItems.map(unit=>({...unit,occupants:unit.occupants.filter(person=>matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},assignmentFilters))})).filter(unit=>unit.occupants.length>0), filterPersonType),
+    [openItems, assignmentFilters, filterPersonType],
+  );
+
+  // Matching assigned people remain part of the context for "Bereits genutzt".
+  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType]);
+  useEffect(()=>{
+    if(filterMode!=='synchronized' && !activeHotelId) {setHotelFits({});setQueueTargets({});return;}
+    let current=true;
+    setHotelFits({});
+    setQueueTargets({});
+    const generation=validationGenerationRef.current;
+    const timer=window.setTimeout(()=>{
+      const needs=queueUnits.filter(u=>u.canAssign && u.checkInDate && u.checkOutDate).map(u=>({key:u.unitId,athleteIds:u.occupants.map(p=>p.athleteId),checkInDate:u.checkInDate!,checkOutDate:u.checkOutDate!}));
+      void api.getAssignmentAvailability(needs,syncPopulation.flatMap(u=>u.occupants.map(p=>p.athleteId))).then(result=>{if(current && generation===validationGenerationRef.current){
+        setHotelFits(result.hotels);setQueueTargets(result.targets);
+        setValidationByUnit(current=>({...current,...result.targets}));
+        for(const need of needs) for(const key of [need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)])
+          validationCacheRef.current[`${key}:${need.checkInDate}:${need.checkOutDate}`]=result.targets[key] ?? [];
+      }}).catch(()=>{if(current)setError('Hotel-Eignung konnte nicht geprüft werden.');});
+    },180);
+    return ()=>{current=false;window.clearTimeout(timer);};
+  },[filterMode,queueUnits,syncPopulation,planning,activeHotelId]);
+  const synchronizedHotels=allHotels.filter(h=>h.accommodationType!=='EXTERNAL');
+
+  const filteredHotels = useMemo(() => {
+    const query = hotelSearch.trim().toLowerCase();
+    return synchronizedHotels.filter((hotel) => {
+      const fit=hotelFits[hotel.hotelId];
+      if(filterMode==='synchronized' && !matchesHotelFit(fit,hotelFitFilter))return false;
+      const matchesRegion = !regionFilter || hotel.region === regionFilter;
+      const haystack = `${hotel.hotelName} ${hotel.location || ''}`.toLowerCase();
+      const matchesSearch = !query || haystack.includes(query);
+      return matchesRegion && matchesSearch && matchesOperationalHotelFilter(assignmentHotelOperationalState(hotel), hotelOperationalFilter);
+    }).sort((a,b)=>(filterMode==='synchronized' ? compareHotelFit(hotelFits[a.hotelId],hotelFits[b.hotelId]) : 0) || compareOperationalHotels(assignmentHotelOperationalState(a),assignmentHotelOperationalState(b)));
+  }, [hotelOperationalFilter, hotelSearch, regionFilter, synchronizedHotels,filterMode,hotelFitFilter,hotelFits]);
+
+  const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
+
+  const queueProgress = useMemo(() => {
+    const people = new Map(allUnitsCombined.flatMap(unit=>unit.occupants).filter(p=>p.accommodationRequirement!=='NO_ROOM').map(p=>[p.athleteId,p]));
+    const total = people.size;
+    const done = [...people.values()].filter(p=>p.accommodationCoverage?.coverageStatus==='FULLY_ASSIGNED').length;
+    return {
+      done,
+      total,
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+    };
+  }, [allUnitsCombined]);
+
+  const actionableQuotaCases = useMemo(
+    () => actionableQuotaCaseCount(currentQuotaUsage),
+    [currentQuotaUsage]
+  );
+  const pendingQuotaDecisions = useMemo(
+    () => currentQuotaUsage.filter((row) => row.quotaStatus === 'DECISION_REQUIRED' || row.openApprovals > 0),
+    [currentQuotaUsage]
+  );
+
+  const shareRequests = useMemo(() => {
+    return queueUnits
+      .filter((unit) => unit.occupants.length >= 2)
+      .slice(0, 8)
+      .map((unit) => ({
+        unit,
+        compatible: sameGender(unit) && sameNation(unit),
+        mixed: !sameGender(unit) || !sameNation(unit),
+      }));
+  }, [queueUnits]);
+
+  const shareRequestUnitIds = useMemo(
+    () => new Set(shareRequests.map(({ unit }) => unit.unitId)),
+    [shareRequests]
+  );
+
+  const regularQueueUnits = useMemo(
+    () => queueUnits.filter((unit) => !shareRequestUnitIds.has(unit.unitId)),
+    [queueUnits, shareRequestUnitIds]
+  );
+
+  const selectedUnit = selected?.type === 'unit' ? unitById.get(selected.id) ?? null : null;
+  const selectedBookingContext = selected?.type === 'booking' ? bookingContextById.get(selected.id) ?? null : null;
+  const selectedAssignedUnit = selectedBookingContext ? findAssignedUnitForBooking(selectedBookingContext.booking.bookingId, assignedUnits) : null;
+
+  const showDisposition=(ids:string[],interval?:import('../types').AccommodationInterval)=>{
+    setSelected(null);setView('dispatch');setQueueSearch('');setFilterNation('');setFilterDiscipline('');setFilterGender('');setFilterPersonType('');
+    setFilterStatus('pending');setFilterRoomCategory('');setFilterImportReview(false);setReveal({ids,interval});
+  };
+  useEffect(()=>{
+    if(!reveal)return;
+    const matches=openItems.filter(item=>itemContainsPeople(item,reveal.ids,reveal.interval));
+    setHighlightedItems(matches.map(item=>item.unitId));
+    const frame=requestAnimationFrame(()=>document.getElementById(encodeURIComponent(matches[0]?.unitId ?? ''))?.scrollIntoView({behavior:'smooth',block:'center'}));
+    return ()=>cancelAnimationFrame(frame);
+  },[openItems,reveal]);
+  const splitComplete=async(result:import('../types').AccommodationSplitResult)=>{
+    try {await refreshOperationalState();} catch(error) {
+      setError('Teilung gespeichert. Ansicht konnte nicht aktualisiert werden. Bitte aktualisieren.');
+      setSelected(null);return;
+    }
+    const chosen=result.people.filter(p=>p.selected);
+    const interval=chosen[0]?.accommodationCoverage.openIntervals.find(p=>p.checkInDate!<=result.splitDate && result.splitDate<p.checkOutDate!);
+    setNotice(`Zuweisung geteilt. ${chosen.map(p=>p.name).join(' + ')} · ${interval ? intervalLabel(interval) : ''} · Offen`);
+    showDisposition(chosen.map(p=>p.personId),interval);
+  };
+
+  const handleAssignToHotel = async (unitId: string, hotelId: string, athleteIds?: string[]) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    let validations: AssignmentValidationResult[];
+    const targetGeneration=validationGenerationRef.current;
+    try {
+      validations = await ensureAssignmentValidations(unitId, athleteIds,undefined);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Zimmerprüfung konnte nicht geladen werden.'));
+      return;
+    }
+    if(targetGeneration!==validationGenerationRef.current) return;
+    const validSlot = findFirstValidSlot(validations, allHotels, hotelId);
+    if (!validSlot) {
+      setError('Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
+      return;
+    }
+    await assignUnitToSlot(unitId, validSlot, athleteIds);
+  };
+
+  const handleAssignToRoomType = async (unitId: string, hotelId: string, roomTypeId: string, athleteIds?: string[]) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    let validations: AssignmentValidationResult[];
+    const targetGeneration=validationGenerationRef.current;
+    try {
+      validations = await ensureAssignmentValidations(unitId, athleteIds,undefined);
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Zimmerprüfung konnte nicht geladen werden.'));
+      return;
+    }
+    if(targetGeneration!==validationGenerationRef.current) return;
+    const slot = findFirstValidSlotForRoomType(validations, allHotels, hotelId, roomTypeId);
+    if (!slot) {
+      setError('Für diesen Zimmertyp gibt es kein gültiges freies Zimmer.');
+      return;
+    }
+    await assignUnitToSlot(unitId, slot, athleteIds);
+  };
+
+  const assignUnitToSlot = async (unitId: string, slot: AssignmentSlot, athleteIds?: string[]) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    const unit = unitById.get(unitId);
+    if (!unit) return;
+    const normalizedAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map(person=>person.athleteId);
+    const target=unitById.get(unitId) as DispositionItem|undefined;
+    if(!target?.canAssign || !target.checkInDate || !target.checkOutDate) {setError('Offenen Zeitraum prüfen.');return;}
+    try {
+      setPendingAction({ kind: 'assign', unitId, athleteIds: normalizedAthleteIds, hotelId: slot.hotelId });
+      setSaving(true);
+      setError(null);
+      await api.addAccommodationSegments({
+        hotelId:slot.hotelId,roomTypeId:slot.roomTypeId,roomNumber:slot.roomNumber || undefined,
+        checkInDate:target.checkInDate!,checkOutDate:target.checkOutDate!,athleteIds:normalizedAthleteIds,
+      });
+      setDragging(null);
+      setDragOverHotelId(null);
+      setDragOverRoomTypeKey(null);
+      setDragOverBookingId(null);
+      await refreshOperationalState();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Zuweisung fehlgeschlagen'));
+    } finally {
+      setPendingAction(null);
+      setSaving(false);
+    }
+  };
+
+  const handleUnassignBooking = async (bookingId: string) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    try {
+      setPendingAction({ kind: 'unassign', bookingId });
+      setSaving(true);
+      setError(null);
+      await api.unassignRoomBookingUnit(bookingId);
+      setSelected(null);
+      await refreshOperationalState();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Ausbuchen fehlgeschlagen'));
+    } finally {
+      setPendingAction(null);
+      setSaving(false);
+    }
+  };
+
+  const handleUnassignOccupant = async (bookingId: string, athleteId: string) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    try {
+      setPendingAction({ kind: 'unassign', bookingId, athleteIds: [athleteId] });
+      setSaving(true);
+      setError(null);
+      await api.unassignRoomBookingOccupant(bookingId, athleteId);
+      await refreshOperationalState();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Teil-Ausbuchung fehlgeschlagen'));
+    } finally {
+      setPendingAction(null);
+      setSaving(false);
+    }
+  };
+
+  const handleMarkBookingAsSingle = async (bookingId: string, countsAsSingle: boolean) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    try {
+      setPendingAction({ kind: 'single', bookingId });
+      setSaving(true);
+      setError(null);
+      await api.updateAssignedUnit(bookingId, { countsAsSingle });
+      setManualQuotaValues(values=>({...values,[bookingId]:countsAsSingle}));
+      await refreshOperationalState();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Quotenbewertung konnte nicht geändert werden'));
+    } finally {
+      setPendingAction(null);
+      setSaving(false);
+    }
+  };
+
+  const handleAssignToExistingBooking = async (
+    unitId: string,
+    booking: AssignmentGridBooking,
+    athleteIds?: string[],
+  ) => {
+    if (!permissions.canManageAssignments) {
+      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    const unit = unitById.get(unitId);
+    if (!unit) return;
+    const incomingAthleteIds = athleteIds?.length ? athleteIds : unit.occupants.map((occupant) => occupant.athleteId);
+    const target=unitById.get(unitId) as DispositionItem|undefined;
+    if(!target?.canAssign || target.checkInDate!==booking.checkInDate || target.checkOutDate!==booking.checkOutDate) {
+      setError('Zum Beitreten müssen die angezeigten Aufenthaltsdaten übereinstimmen.');return;
+    }
+
+    try {
+      setPendingAction({ kind: 'assign', unitId, athleteIds: incomingAthleteIds, hotelId: booking.hotelId, bookingId: booking.bookingId });
+      setSaving(true);
+      setError(null);
+      await api.addAccommodationSegments({athleteIds:incomingAthleteIds,
+        hotelId:booking.hotelId,roomTypeId:booking.roomTypeId,roomNumber:booking.roomNumber ?? undefined,
+        checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!,joinBookingId:booking.bookingId,
+      });
+      setDragging(null);
+      setDragOverHotelId(null);
+      setDragOverRoomTypeKey(null);
+      setDragOverBookingId(null);
+      await refreshOperationalState();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Partner zum Doppelzimmer hinzufügen fehlgeschlagen'));
+    } finally {
+      setPendingAction(null);
+      setSaving(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    await Promise.all([
+      refreshPlanningData({ silent: false }),
+      loadQuotaUsage(),
+    ]);
+  };
+
+  const handleAcknowledgeImportChanges = async (unit: { occupants: AssignmentChangeSubject[] }) => {
+    try {
+      setSaving(true);
+      await Promise.all(unit.occupants.filter((occ) => occ.hasPendingReview).map((occ) => api.acknowledgeAthleteRoomlistChange(occ.athleteId)));
+      await refreshOperationalState();
+    } catch (err) {
+      setError(extractErrorMessage(err, 'Prüfung konnte nicht gespeichert werden'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const focusedNeed=dragging ?? (selected?.type==='unit' && unitById.has(selected.id) ? {unitId:selected.id,athleteIds:unitById.get(selected.id)!.occupants.map(p=>p.athleteId),label:''} : null);
+  useEffect(()=>{if(focusedNeed)void ensureAssignmentValidations(focusedNeed.unitId,focusedNeed.athleteIds).catch(()=>{});},[selected,dragging,planning]);
+
+  if (loading) {
+    return (
+      <div className="flex h-64 items-center justify-center">
+        <RefreshCw className="h-8 w-8 animate-spin text-blue-600" />
+      </div>
+    );
+  }
+
+  return (
+    <>
+    <DispositionDragContext.Provider value={{
+      onAssignSlot:slot=>{
+        if(!permissions.canManageAssignments || !focusedNeed)return;
+        const validations=validationByUnit[getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds)];
+        if(validations?.some(v=>v.slotId===slot.slotId && v.status!=='blocked'))
+          void assignUnitToSlot(focusedNeed.unitId,slot,focusedNeed.athleteIds);
+      },
+      queueTargets,hotelId:activeHotelId ?? undefined,fits:filterMode==='synchronized' ? hotelFits : undefined,
+      validations:validationByUnit[focusedNeed ? getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds) : ''],
+      interval:focusedNeed ? (unitById.get(focusedNeed.unitId) as DispositionItem|undefined)?.openPeriod : undefined,
+      occupantCount:focusedNeed?.athleteIds.length}}><div className="relative" aria-busy={saving}>
+      {saving && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-50" role="status" aria-live="polite">
+          <div className="h-1 overflow-hidden bg-blue-950"><div className="h-full w-1/2 animate-pulse bg-blue-400" /></div>
+          <div className="absolute right-4 top-3 flex items-center gap-2 rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-xs font-semibold text-blue-100 shadow-xl">
+            <RefreshCw className="h-4 w-4 animate-spin" /> Zuweisung wird verarbeitet …
+          </div>
+        </div>
+      )}
+    <div className="relative flex h-[calc(100vh-106px)] w-full items-center justify-center overflow-hidden px-1 py-2">
+      <WorkspaceFrame>
+        <div className="p-3 pb-0"><ImportConflictNotice/></div>
+        <TopBar
+          view={view}
+          onViewChange={setView}
+          progress={queueProgress}
+          actionableQuotaCases={actionableQuotaCases}
+          saving={saving}
+          onRefresh={handleRefresh}
+          quotaRows={currentQuotaUsage}
+          quotaRefreshing={quotaRefreshing}
+        />
+
+        {notice && <div role="status" className="mx-3 my-2 flex justify-between gap-2 rounded-lg border border-[var(--ops-primary)] px-3 py-2 text-xs"><span>{notice}</span><button onClick={()=>setNotice('')}>Schließen</button></div>}
+
+        {showAlert && pendingQuotaDecisions.length > 0 && (
+          <AlertBanner row={pendingQuotaDecisions[0]} onClose={() => setShowAlert(false)} onGoQuotas={() => setView('quotas')} />
+        )}
+
+        <div className={`grid min-h-0 flex-1 border-t border-[var(--ops-divider)] ${view === 'dispatch' ? 'grid-cols-[352px_minmax(0,1fr)]' : 'grid-cols-1'}`}>
+          {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
+            <AssignmentPerformanceBoundary id="Queue">
+            <QueueSidebar
+              units={queueUnits}
+              onExternal={setExternalItem}
+              onSplit={setSplitBookingId}
+              splitOptionsFor={unit=>[
+                ...Array.from(bookingContextById.values()).map(({booking,hotel})=>({bookingId:booking.bookingId,checkInDate:booking.checkInDate,checkOutDate:booking.checkOutDate,hotelName:hotel.hotelName,occupants:booking.occupants})),
+              ].filter(booking=>
+                booking.occupants.some(p=>unit.occupants.some(person=>person.athleteId===p.athleteId)) &&
+                !!booking.checkInDate && !!booking.checkOutDate &&
+                Date.parse(booking.checkOutDate)-Date.parse(booking.checkInDate)>86400000 &&
+                !allUnitsCombined.flatMap(u=>u.occupants).some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT' && p.accommodationCoverage.segments.some(segment=>segment.bookingId===booking.bookingId))
+              ).map(booking=>({bookingId:booking.bookingId,label:`${periodLabel({checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!})} · ${booking.hotelName} · ${booking.occupants.map(p=>p.name).join(' + ')}`}))}
+              filterMode={filterMode}
+              onFilterMode={setFilterMode}
+              regularUnits={regularQueueUnits}
+              shareRequests={shareRequests}
+              filterNation={filterNation}
+              onFilterNation={setFilterNation}
+              filterDiscipline={filterDiscipline}
+              onFilterDiscipline={setFilterDiscipline}
+              filterPersonType={filterPersonType}
+              onFilterPersonType={setFilterPersonType}
+              filterGender={filterGender}
+              onFilterGender={setFilterGender}
+              filterStatus={filterStatus}
+              onFilterStatus={setFilterStatus}
+              filterRoomCategory={filterRoomCategory}
+              onFilterRoomCategory={setFilterRoomCategory}
+              filterImportReview={filterImportReview}
+              onFilterImportReview={setFilterImportReview}
+              importReviewCount={importReviewCount}
+              search={queueSearch}
+              onSearch={setQueueSearch}
+              nationOptions={nationOptions}
+              disciplineOptions={disciplineOptions}
+              genderOptions={genderOptions}
+              draggingUnitId={focusedNeed?.unitId || null}
+              draggingAthleteIds={dragging?.athleteIds || []}
+              canEditAssignments={permissions.canManageAssignments}
+              onDragStart={(unitId, athleteIds, label) => {
+                if (!permissions.canManageAssignments) return;
+                const unit=unitById.get(unitId);
+                if(!(unit as DispositionItem|undefined)?.canAssign)return;
+                void ensureAssignmentValidations(unitId,athleteIds).catch(error=>setError(extractErrorMessage(error,'Zimmerprüfung fehlgeschlagen.')));
+                setDragging({ unitId, athleteIds, label });
+              }}
+              onDragEnd={() => {
+                setDragging(null);
+                setDragOverHotelId(null);
+                setDragOverRoomTypeKey(null);
+                setDragOverBookingId(null);
+              }}
+              onSelectUnit={(unitId) => setSelected({ type: 'unit', id: unitId })}
+              onQuickAssignPair={(unitId,ids)=>{
+                if(activeHotel) void handleAssignToHotel(unitId,activeHotel.hotelId,ids);
+              }}
+              hotelName={activeHotel?.hotelName}
+              highlightedItems={highlightedItems}
+              selectedUnitId={selected?.type === 'unit' ? selected.id : null}
+              pendingAction={pendingAction}
+            />
+            </AssignmentPerformanceBoundary>
+          </aside>}
+
+          <main className="flex min-h-0 flex-col overflow-hidden bg-[var(--ops-assignment-canvas)]">
+            {view === 'dispatch' && (
+                <><div className="flex flex-wrap items-center gap-2 px-3 text-xs">{filterMode==='synchronized' && <label>Hotels: <select aria-label="Hotels" value={hotelFitFilter} onChange={e=>setHotelFitFilter(e.target.value)} className="rounded border px-2 py-1"><option value="all">Alle</option><option value="fit">Passend</option><option value="used">Bereits genutzt</option></select></label>}</div><DispatchWorkspace
+                  hotels={filteredHotels}
+                  additionalCostPersonIds={additionalCostPersonIds}
+                  activeHotel={activeHotel}
+                  allHotels={allHotels}
+                  validationByUnit={validationByUnit}
+                  draggingUnitId={focusedNeed?.unitId || null}
+                  draggingValidationKey={focusedNeed ? getValidationKey(focusedNeed.unitId, focusedNeed.athleteIds) : null}
+                  dragOverHotelId={dragOverHotelId}
+                  dragOverRoomTypeKey={dragOverRoomTypeKey}
+                  onSelectHotel={setActiveHotelId}
+                  onDragOverHotel={(hotelId) => setDragOverHotelId(hotelId)}
+                  onDragLeaveHotel={() => setDragOverHotelId(null)}
+                  onDropHotel={(hotelId) => permissions.canManageAssignments && focusedNeed && void handleAssignToHotel(focusedNeed!.unitId, hotelId, focusedNeed!.athleteIds)}
+                  onDragOverRoomType={(roomTypeKey) => setDragOverRoomTypeKey(roomTypeKey)}
+                  onDragLeaveRoomType={() => setDragOverRoomTypeKey(null)}
+                  onDropRoomType={(hotelId, roomTypeId) => permissions.canManageAssignments && focusedNeed && void handleAssignToRoomType(focusedNeed!.unitId, hotelId, roomTypeId, focusedNeed!.athleteIds)}
+                  dragOverBookingId={dragOverBookingId}
+                  onDragOverBooking={(bookingId) => setDragOverBookingId(bookingId)}
+                  onDragLeaveBooking={() => setDragOverBookingId(null)}
+                  onDropBooking={(booking) => permissions.canManageAssignments && focusedNeed && void handleAssignToExistingBooking(focusedNeed!.unitId, booking, focusedNeed!.athleteIds)}
+                  hotelSearch={hotelSearch}
+                  onHotelSearch={setHotelSearch}
+                  regionFilter={regionFilter}
+                  onRegionFilter={setRegionFilter}
+                  hotelOperationalFilter={hotelOperationalFilter}
+                  onHotelOperationalFilter={setHotelOperationalFilter}
+                  onClearActiveHotel={() => setActiveHotelId(null)}
+                  selectedBookingId={selected?.type === 'booking' ? selected.id : null}
+                  onSelectBooking={(bookingId) => setSelected({ type: 'booking', id: bookingId })}
+                  pendingAction={pendingAction}
+                /></>
+            )}
+
+            {view === 'quotas' && (
+              <AssignmentPerformanceBoundary id="Quotas">
+              <QuotasPanel
+                rows={currentQuotaUsage}
+                assignedUnits={assignedUnits}
+                allUnits={allUnitsCombined}
+                onSelect={setSelectedQuotaKey}
+                filterNation={filterNation}
+                onFilterNation={setFilterNation}
+                filterDiscipline={filterDiscipline}
+                onFilterDiscipline={setFilterDiscipline}
+                filterGender={filterGender}
+                onFilterGender={setFilterGender}
+                nationOptions={nationOptions}
+                disciplineOptions={disciplineOptions}
+                genderOptions={genderOptions}
+                refreshing={quotaRefreshing}
+              />
+              </AssignmentPerformanceBoundary>
+            )}
+            {view === 'fis-rules' && <FisRulesPanel />}
+          </main>
+
+        </div>
+
+        {selected && (
+          <AssignmentDialog title="Zimmer / Zuweisung" subtitle="Bewohner, Importinformationen und Disposition im Überblick" onClose={() => setSelected(null)}>
+          <PersonAccommodationPanel
+            people={selectedUnit?.occupants ?? allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext?.booking.occupants.some(occupant=>occupant.athleteId===person.athleteId))}
+            onExternal={people=>{const interval=people[0]?.accommodationCoverage?.overallInterval;if(interval)setExternalItem({occupants:people,openPeriod:interval,replaceStandard:true});}}
+            canEdit={permissions.canManageAssignments} onShowDisposition={(id,interval)=>showDisposition([id],interval)}
+            onSplit={setSplitBookingId} canSplit={id=>!allUnitsCombined.flatMap(u=>u.occupants).some(p=>p.accommodationCoverage?.coverageStatus==='CONFLICT' && p.accommodationCoverage.segments.some(s=>s.bookingId===id))} onChanged={async personId=>{
+              const unit=allUnitsCombined.find(item=>item.occupants.some(person=>person.athleteId===personId));
+              await refreshOperationalState();
+              if(unit) setSelected({type:'unit',id:unit.unitId});
+            }}/>
+          <DetailPanel
+              selectedUnit={selectedUnit}
+              selectedBookingContext={selectedBookingContext}
+              quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.slot.capacity,
+                allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext.booking.occupants.some(p=>p.athleteId===person.athleteId)),manualQuotaValues[selectedBookingContext.booking.bookingId]) : undefined}
+              selectedAssignedUnit={selectedAssignedUnit}
+              hotels={allHotels}
+              onUnassignBooking={handleUnassignBooking}
+              onUnassignOccupant={handleUnassignOccupant}
+              onMarkBookingAsSingle={handleMarkBookingAsSingle}
+              pendingAction={pendingAction}
+            onAcknowledgeImportChanges={handleAcknowledgeImportChanges}
+            onShowDecision={setDecisionId}
+          />
+          </AssignmentDialog>
+        )}
+
+        {externalItem && <ExternalStayDialog item={externalItem} hotels={allHotels} onClose={()=>setExternalItem(null)} onComplete={async ids=>{
+          try {await refreshOperationalState();setNotice('Externe Unterkunft gespeichert.');showDisposition(ids);}
+          catch {setError('Externe Unterkunft gespeichert. Ansicht konnte nicht aktualisiert werden. Bitte aktualisieren.');}
+        }}/>}
+        {splitBookingId && (()=>{
+          const booking=bookingContextById.get(splitBookingId)?.booking;
+          const hotel=booking && allHotels.find(h=>h.hotelId===booking.hotelId);
+          const slot=booking && hotel?.slots.find(s=>s.roomTypeId===booking.roomTypeId);
+          const external=allHotels.flatMap(h=>h.externalBookings ?? []).find(b=>b.id===splitBookingId);
+          if(external)return <SplitAssignmentDialog booking={external} onClose={()=>setSplitBookingId(null)} onSplit={splitComplete}/>;
+          if(!booking || !hotel || !slot)return null;
+          return <SplitAssignmentDialog booking={{id:booking.bookingId,hotel:{id:hotel.hotelId,name:hotel.hotelName},roomType:{id:slot.roomTypeId,name:slot.roomTypeName,maxPersons:slot.capacity},roomNumber:booking.roomNumber,checkInDate:booking.checkInDate,checkOutDate:booking.checkOutDate,
+            occupants:booking.occupants.map(p=>({id:p.athleteId,roomBookingId:booking.bookingId,athlete:{...p,id:p.athleteId}}))} }
+            onClose={()=>setSplitBookingId(null)} onSplit={splitComplete}/>;
+        })()}
+
+        {selectedQuotaKey && (
+          <AssignmentDialog title="Quotendetails" subtitle="Quoten- und Regelstatus" onClose={() => setSelectedQuotaKey(null)}>
+            <QuotaDetail
+              quotaKey={selectedQuotaKey}
+              rows={currentQuotaUsage}
+              assignedUnits={assignedUnits}
+              allUnits={allUnitsCombined}
+              hotels={planning?.hotels ?? []}
+              onShowDecision={(id) => {
+                setSelectedQuotaKey(null);
+                setDecisionId(id);
+              }}
+            />
+          </AssignmentDialog>
+        )}
+
+        {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
+    </WorkspaceFrame>
+    </div>
+    </div></DispositionDragContext.Provider>
+    <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
+    </>
+  );
+}
+
+function TopBar({
+  view,
+  onViewChange,
+  progress,
+  actionableQuotaCases,
+  saving,
+  onRefresh,
+  quotaRows,
+  quotaRefreshing,
+}: {
+  view: AppView;
+  onViewChange: (view: AppView) => void;
+  progress: { done: number; total: number; percent: number };
+  actionableQuotaCases: number;
+  saving: boolean;
+  onRefresh: () => void;
+  quotaRows: OfficialQuotaUsage[];
+  quotaRefreshing: boolean;
+}) {
+  return (
+    <div className="flex h-14 items-center justify-between border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-4">
+      <div className="flex items-center gap-6">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-blue-600/20 text-xs font-bold text-[var(--ops-assignment-text-accent-strong)]">
+            FIS
+          </div>
+          <div>
+            <div className="text-sm font-bold text-[var(--ops-assignment-text-bright)]">NWSC 2027</div>
+            <div className="text-[10px] uppercase tracking-[0.22em] text-[var(--ops-assignment-text-muted)]">Zimmer-Disposition</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          {[
+            { id: 'dispatch', label: 'Disposition' },
+            { id: 'quotas', label: 'Quoten' },
+            { id: 'fis-rules', label: 'FIS Rules' },
+          ].map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onViewChange(item.id as AppView)}
+              className={`rounded-xl border px-3 py-1.5 text-sm font-semibold transition-all ${
+                view === item.id
+                  ? 'border-blue-500/50 bg-blue-500/15 text-[var(--ops-assignment-text-accent)]'
+                  : 'border-transparent text-[var(--ops-assignment-text-faint)] hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center gap-4 text-xs">
+        <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} refreshing={quotaRefreshing} />
+        <div className="flex items-center gap-2">
+          <div className="w-20">
+            <CapacityBar pct={progress.percent} />
+          </div>
+          <span className="font-mono text-[var(--ops-assignment-text-muted)]" title={`${progress.done} von ${progress.total} disponiert`}>
+            <strong className="text-[var(--ops-assignment-text-body)]">{progress.total ? `${progress.percent}%` : 'Kein Unterkunftsbedarf'}</strong>
+          </span>
+        </div>
+
+        {actionableQuotaCases > 0 && (
+          <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
+            {actionableQuotaCases} Handlungsbedarf
+          </div>
+        )}
+
+        <button
+          onClick={onRefresh}
+          className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ops-assignment-text-faint)] transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]"
+        >
+          <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
+        </button>
+        <button className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ops-assignment-text-faint)] transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]">
+          <Bell className="h-4 w-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage[]; onOpen: () => void; refreshing: boolean }) {
+  if (!rows.length) return <span className="hidden text-[var(--ops-assignment-text-faint)] xl:inline">Keine Quoten verfügbar</span>;
+  const row = uniqueQuotaContext(buildQuotaCards(rows));
+  if (!row) return null;
+
+  return (
+    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, als EZ gewertete Personen ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
+      {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[var(--ops-surface)]/95 py-0.5 text-[9px] text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
+      <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
+        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
+          {row.assignedOfficials} / {row.officialQuota}
+          {row.assignedOfficials <= row.officialQuota && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+        </span>
+      </span>
+      <span className="min-w-[112px] px-3 py-1.5">
+        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Einzelzimmer</span>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${evaluateQuotaUsageRow(row).hasViolation ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
+          {row.singleRoomsUsed} / {row.singleRoomsAllowed}
+          {!evaluateQuotaUsageRow(row).hasViolation && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+        </span>
+      </span>
+    </button>
+  );
+}
+
+function AssignmentDialog({ children, title, subtitle, onClose }: { children: ReactNode; title: string; subtitle?: string; onClose: () => void }) {
+  return <Dialog open onClose={onClose} fullWidth maxWidth="md">
+    <div className="flex max-h-[calc(100vh-64px)] flex-col bg-[var(--ops-surface)] text-[var(--ops-text)]">
+      <DialogHeader title={title} subtitle={subtitle} />
+      <DialogContent dividers className="min-h-0 p-0">{children}</DialogContent>
+      <DialogFooter><OpsButton onClick={onClose}>Schließen</OpsButton></DialogFooter>
+    </div>
+  </Dialog>;
+}
+
+function OperationsNotice({ message, onClose }: { message: string; onClose: () => void }) {
+  const isMissingContingent = /no kontingent available|keinen gültigen (slot|freien slot)/i.test(message);
+  return (
+    <div className="absolute inset-x-4 bottom-4 z-40 mx-auto max-w-2xl rounded-[var(--ops-radius-xl)] border border-[var(--ops-tone-info-border)] bg-[var(--ops-surface-raised)] p-4 shadow-[var(--ops-shadow-lg)]" role="status">
+      <div className="flex items-start gap-3">
+        <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-[var(--ops-tone-info-surface)] text-[var(--ops-info)]"><Building2 className="h-4 w-4" /></div>
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-bold text-[var(--ops-text)]">{isMissingContingent ? 'Zimmerkontingent prüfen' : 'Hinweis zur Disposition'}</div>
+          <p className="mt-1 text-sm leading-5 text-[var(--ops-text-subtle)]">
+            {isMissingContingent ? 'Für den gewählten Zeitraum ist kein passendes Zimmerkontingent vorhanden.' : message}
+          </p>
+        </div>
+        <button onClick={onClose} aria-label="Meldung schließen" className="rounded-lg p-1.5 text-[var(--ops-text-muted)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]"><X className="h-4 w-4" /></button>
+      </div>
+    </div>
+  );
+}
+
+function AlertBanner({
+  row,
+  onClose,
+  onGoQuotas,
+}: {
+  row: OfficialQuotaUsage;
+  onClose: () => void;
+  onGoQuotas: () => void;
+}) {
+  const officialText = row.assignedOfficials > row.officialQuota
+    ? `Official-Quote überschritten: ${row.nationCode} (${row.assignedOfficials}/${row.officialQuota})`
+    : '';
+  const quotaEvaluation = evaluateQuotaUsageRow(row);
+  const singleText = quotaEvaluation.hasViolation
+    ? `EZ-Quotenbewertung überschritten (${quotaEvaluation.usedSingleRooms}/${quotaEvaluation.allowedSingleRooms})`
+    : '';
+  const message = [officialText, singleText].filter(Boolean).join(' und ');
+
+  return (
+    <div className="flex items-center gap-3 border-b border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-4 py-2.5 text-sm text-[var(--ops-tone-warning-text)]">
+      <AlertTriangle className="h-4 w-4 flex-shrink-0" />
+      <div className="min-w-0 flex-1 truncate">
+        {message || 'Quoten-Warnung'}
+      </div>
+      <button onClick={onGoQuotas} className="font-semibold text-[var(--ops-tone-warning-text)] hover:text-[var(--ops-warning)]">
+        Zu den Quoten →
+      </button>
+      <button onClick={onClose} className="text-[var(--ops-warning)] hover:text-[var(--ops-tone-warning-text)]">
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+function QueueSidebar({
+  units,
+  filterMode,
+  onFilterMode,
+  regularUnits,
+  shareRequests,
+  filterNation,
+  onFilterNation,
+  filterDiscipline,
+  onFilterDiscipline,
+  filterPersonType,
+  onFilterPersonType,
+  filterGender,
+  onFilterGender,
+  filterStatus,
+  onFilterStatus,
+  filterRoomCategory,
+  onFilterRoomCategory,
+  filterImportReview,
+  onFilterImportReview,
+  importReviewCount,
+  search,
+  onSearch,
+  nationOptions,
+  disciplineOptions,
+  genderOptions,
+  draggingUnitId,
+  draggingAthleteIds,
+  canEditAssignments,
+  onDragStart,
+  onDragEnd,
+  onSelectUnit,
+  onQuickAssignPair,
+  selectedUnitId,
+  pendingAction,
+  hotelName,highlightedItems,onSplit,splitOptionsFor,onExternal,
+}: {
+  hotelName?:string;highlightedItems:string[];
+  onSplit:(bookingId:string)=>void;
+  onExternal:(unit:DispositionItem)=>void;
+  splitOptionsFor:(unit:DispositionItem)=>{bookingId:string;label:string}[];
+  units: DispositionItem[];
+  filterMode: FilterMode;
+  onFilterMode: (value: FilterMode) => void;
+  regularUnits: DispositionItem[];
+  shareRequests: Array<{ unit: DispositionItem; compatible: boolean; mixed: boolean }>;
+  filterNation: string;
+  onFilterNation: (value: string) => void;
+  filterDiscipline: string;
+  onFilterDiscipline: (value: string) => void;
+  filterPersonType: QueuePersonType;
+  onFilterPersonType: (value: QueuePersonType) => void;
+  filterGender: string;
+  onFilterGender: (value: string) => void;
+  filterStatus: QueueStatus;
+  onFilterStatus: (value: QueueStatus) => void;
+  filterRoomCategory: RoomCategoryFilter;
+  onFilterRoomCategory: (value: RoomCategoryFilter) => void;
+  filterImportReview: boolean;
+  onFilterImportReview: (value: boolean) => void;
+  importReviewCount: number;
+  search: string;
+  onSearch: (value: string) => void;
+  nationOptions: string[];
+  disciplineOptions: string[];
+  genderOptions: string[];
+  draggingUnitId: string | null;
+  draggingAthleteIds: string[];
+  canEditAssignments: boolean;
+  onDragStart: (unitId: string, athleteIds: string[], label: string) => void;
+  onDragEnd: () => void;
+  onSelectUnit: (unitId: string) => void;
+  onQuickAssignPair: (unitId: string, athleteIds: string[]) => void;
+  selectedUnitId: string | null;
+  pendingAction: PendingAssignmentAction | null;
+}) {
+  return (
+    <div className="flex h-full flex-col overflow-hidden">
+      <div className="border-b border-[var(--ops-border)] px-3 py-2.5">
+        <fieldset className="mb-3 rounded-lg border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] px-3 py-2">
+          <legend className="px-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-assignment-text-muted)]">Filtermodus</legend>
+          <div className="mt-0.5 flex gap-4 text-xs font-semibold text-[var(--ops-assignment-text-strong)]">
+            <label className="flex cursor-pointer items-center gap-1.5"><input type="radio" name="assignment-filter-mode" checked={filterMode === 'queue'} onChange={() => onFilterMode('queue')} />Nur Warteschlange</label>
+            <label className="flex cursor-pointer items-center gap-1.5"><input type="radio" name="assignment-filter-mode" checked={filterMode === 'synchronized'} onChange={() => onFilterMode('synchronized')} />Synchron</label>
+          </div>
+        </fieldset>
+        <div className="mb-2 flex items-center justify-between">
+          <div>
+            <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
+            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} offene Zuweisungen</div>
+          </div>
+        </div>
+
+        {filterMode==='synchronized' && <QueueDemandSummary units={units} context={[filterNation,filterDiscipline && disciplineDisplayName(filterDiscipline),filterGender,filterPersonType==='athletes' ? 'Athleten' : filterPersonType==='officials' ? 'Officials' : '',search].filter(Boolean).join(' · ')}/>}
+        <SearchInput value={search} onChange={onSearch} placeholder="Athleten suchen..." />
+
+        <div className="mt-3 grid grid-cols-3 gap-1.5">
+          <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, disciplineDisplayName(value)]))} />
+          <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Männlich', F: 'Weiblich' }} />
+        </div>
+
+        <div className="mt-3">
+          <FilterButtonGroup label="Personentyp" value={filterPersonType || 'all'}
+            options={[{id:'all',label:'Alle'},{id:'athletes',label:'Athleten'},{id:'officials',label:'Officials'}]}
+            onChange={value=>onFilterPersonType(value==='all' ? '' : value as QueuePersonType)}/>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <FilterButtonGroup
+            label="Zimmerwunsch"
+            value={filterRoomCategory || 'all'}
+            options={[{ id: 'all', label: 'Alle' }, { id: 'ez', label: 'EZ' }, { id: 'dz', label: 'DZ' }]}
+            onChange={(value) => onFilterRoomCategory(value === 'all' ? '' : value as RoomCategoryFilter)}
+          />
+        </div>
+
+        {importReviewCount > 0 && (
+          <button
+            onClick={() => onFilterImportReview(!filterImportReview)}
+            aria-pressed={filterImportReview}
+            className={`assignment-review-warning mt-3 flex w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-semibold transition-colors ${filterImportReview ? 'border-amber-500/60 bg-amber-500/15 text-amber-100' : 'border-amber-500/30 bg-[var(--ops-surface-elevated)] text-amber-200 hover:border-amber-500/50'}`}
+          >
+            <AlertTriangle className="h-3.5 w-3.5" />
+            {importReviewCount} {importReviewCount === 1 ? 'Disposition' : 'Dispositionen'} prüfen
+          </button>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <div className="px-3 py-3">
+          <div className="space-y-2">
+            {shareRequests.map(({ unit }) => (
+                <DispositionQueueCard
+                  key={unit.unitId}
+                  unit={unit}
+                onSplit={onSplit}
+                splitOptions={splitOptionsFor(unit)}
+                onExternal={()=>onExternal(unit)}
+                  selected={selectedUnitId === unit.unitId}
+                  canEditAssignments={canEditAssignments}
+                  onSelect={() => onSelectUnit(unit.unitId)}
+                  onDragStart={onDragStart}
+                  onDragEnd={onDragEnd}
+                  onQuickAssign={onQuickAssignPair}
+                  hotelName={hotelName}
+                highlighted={highlightedItems.includes(unit.unitId)}
+                pending={pendingAction?.unitId === unit.unitId}
+                />
+              ))}
+            {regularUnits.map((unit) => (
+              <DispositionQueueCard
+                key={unit.unitId}
+                unit={unit}
+                onSplit={onSplit}
+                splitOptions={splitOptionsFor(unit)}
+                onExternal={()=>onExternal(unit)}
+                selected={selectedUnitId === unit.unitId}
+                canEditAssignments={canEditAssignments}
+                onSelect={() => onSelectUnit(unit.unitId)}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                onQuickAssign={onQuickAssignPair}
+                hotelName={hotelName}
+                highlighted={highlightedItems.includes(unit.unitId)}
+                pending={pendingAction?.unitId === unit.unitId}
+              />
+            ))}
+            {!regularUnits.length && !shareRequests.length && (
+              <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-[var(--ops-assignment-text-body)]">
+                Keine Einheiten mit den aktuellen Filtern.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+function DispatchWorkspace({
+  hotels,
+  additionalCostPersonIds,
+  activeHotel,
+  allHotels,
+  validationByUnit,
+  draggingUnitId,
+  draggingValidationKey,
+  dragOverHotelId,
+  dragOverRoomTypeKey,
+  dragOverBookingId,
+  onSelectHotel,
+  onDragOverHotel,
+  onDragLeaveHotel,
+  onDropHotel,
+  onDragOverRoomType,
+  onDragLeaveRoomType,
+  onDropRoomType,
+  onDragOverBooking,
+  onDragLeaveBooking,
+  onDropBooking,
+  hotelSearch,
+  onHotelSearch,
+  regionFilter,
+  onRegionFilter,
+  hotelOperationalFilter,
+  onHotelOperationalFilter,
+  onClearActiveHotel,
+  selectedBookingId,
+  onSelectBooking,
+  pendingAction,
+}: {
+  hotels: AssignmentGridHotel[];
+  additionalCostPersonIds: Set<string>;
+  activeHotel: AssignmentGridHotel | null;
+  allHotels: AssignmentGridHotel[];
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
+  draggingUnitId: string | null;
+  draggingValidationKey: string | null;
+  dragOverHotelId: string | null;
+  dragOverRoomTypeKey: string | null;
+  dragOverBookingId: string | null;
+  onSelectHotel: (hotelId: string) => void;
+  onDragOverHotel: (hotelId: string) => void;
+  onDragLeaveHotel: () => void;
+  onDropHotel: (hotelId: string) => void;
+  onDragOverRoomType: (roomTypeKey: string) => void;
+  onDragLeaveRoomType: () => void;
+  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onDragOverBooking: (bookingId: string) => void;
+  onDragLeaveBooking: () => void;
+  onDropBooking: (booking: AssignmentGridBooking) => void;
+  hotelSearch: string;
+  onHotelSearch: (value: string) => void;
+  regionFilter: string;
+  onRegionFilter: (value: string) => void;
+  hotelOperationalFilter: OperationalHotelFilter;
+  onHotelOperationalFilter: (value: OperationalHotelFilter) => void;
+  onClearActiveHotel: () => void;
+  selectedBookingId: string | null;
+  onSelectBooking: (bookingId: string) => void;
+  pendingAction: PendingAssignmentAction | null;
+}) {
+  return (
+    <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)]">
+      <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)]">
+        <HotelGridOrDetail
+          hotels={hotels}
+          additionalCostPersonIds={additionalCostPersonIds}
+          activeHotel={activeHotel}
+          allHotels={allHotels}
+          validationByUnit={validationByUnit}
+          draggingUnitId={draggingUnitId}
+          draggingValidationKey={draggingValidationKey}
+          dragOverHotelId={dragOverHotelId}
+          dragOverRoomTypeKey={dragOverRoomTypeKey}
+          dragOverBookingId={dragOverBookingId}
+          onSelectHotel={onSelectHotel}
+          onDragOverHotel={onDragOverHotel}
+          onDragLeaveHotel={onDragLeaveHotel}
+          onDropHotel={onDropHotel}
+          onDragOverRoomType={onDragOverRoomType}
+          onDragLeaveRoomType={onDragLeaveRoomType}
+          onDropRoomType={onDropRoomType}
+          onDragOverBooking={onDragOverBooking}
+          onDragLeaveBooking={onDragLeaveBooking}
+          onDropBooking={onDropBooking}
+          hotelSearch={hotelSearch}
+          onHotelSearch={onHotelSearch}
+          regionFilter={regionFilter}
+          onRegionFilter={onRegionFilter}
+          hotelOperationalFilter={hotelOperationalFilter}
+          onHotelOperationalFilter={onHotelOperationalFilter}
+          onClearActiveHotel={onClearActiveHotel}
+          selectedBookingId={selectedBookingId}
+          onSelectBooking={onSelectBooking}
+          pendingAction={pendingAction}
+        />
+      </div>
+    </div>
+  );
+}
+
+function HotelGridOrDetail({
+  hotels,
+  additionalCostPersonIds,
+  activeHotel,
+  allHotels,
+  validationByUnit,
+  draggingUnitId,
+  draggingValidationKey,
+  dragOverHotelId,
+  dragOverRoomTypeKey,
+  dragOverBookingId,
+  onSelectHotel,
+  onDragOverHotel,
+  onDragLeaveHotel,
+  onDropHotel,
+  onDragOverRoomType,
+  onDragLeaveRoomType,
+  onDropRoomType,
+  onDragOverBooking,
+  onDragLeaveBooking,
+  onDropBooking,
+  hotelSearch,
+  onHotelSearch,
+  regionFilter,
+  onRegionFilter,
+  hotelOperationalFilter,
+  onHotelOperationalFilter,
+  onClearActiveHotel,
+  selectedBookingId,
+  onSelectBooking,
+  pendingAction,
+}: {
+  hotels: AssignmentGridHotel[];
+  additionalCostPersonIds: Set<string>;
+  activeHotel: AssignmentGridHotel | null;
+  allHotels: AssignmentGridHotel[];
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
+  draggingUnitId: string | null;
+  draggingValidationKey: string | null;
+  dragOverHotelId: string | null;
+  dragOverRoomTypeKey: string | null;
+  dragOverBookingId: string | null;
+  onSelectHotel: (hotelId: string) => void;
+  onDragOverHotel: (hotelId: string) => void;
+  onDragLeaveHotel: () => void;
+  onDropHotel: (hotelId: string) => void;
+  onDragOverRoomType: (roomTypeKey: string) => void;
+  onDragLeaveRoomType: () => void;
+  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onDragOverBooking: (bookingId: string) => void;
+  onDragLeaveBooking: () => void;
+  onDropBooking: (booking: AssignmentGridBooking) => void;
+  hotelSearch: string;
+  onHotelSearch: (value: string) => void;
+  regionFilter: string;
+  onRegionFilter: (value: string) => void;
+  hotelOperationalFilter: OperationalHotelFilter;
+  onHotelOperationalFilter: (value: OperationalHotelFilter) => void;
+  onClearActiveHotel: () => void;
+  selectedBookingId: string | null;
+  onSelectBooking: (bookingId: string) => void;
+  pendingAction: PendingAssignmentAction | null;
+}) {
+  return (
+    <div className="grid h-full min-h-0 grid-rows-[minmax(0,1fr)]">
+      {!activeHotel && <div>
+        <AssignmentPerformanceBoundary id="HotelOverview">
+        <HotelGridView
+          hotels={hotels}
+          regionOptions={[...new Set(allHotels.map(hotel => hotel.region).filter((value): value is string => Boolean(value)))].sort((a, b) => a.localeCompare(b, 'de'))}
+          hotelSearch={hotelSearch}
+          onHotelSearch={onHotelSearch}
+          regionFilter={regionFilter}
+          onRegionFilter={onRegionFilter}
+          hotelOperationalFilter={hotelOperationalFilter}
+          onHotelOperationalFilter={onHotelOperationalFilter}
+          activeHotelId={activeHotel?.hotelId ?? null}
+          draggingUnitId={draggingUnitId}
+          draggingValidationKey={draggingValidationKey}
+          dragOverHotelId={dragOverHotelId}
+          validationByUnit={validationByUnit}
+          onSelectHotel={onSelectHotel}
+          onDragOverHotel={onDragOverHotel}
+          onDragLeaveHotel={onDragLeaveHotel}
+          onDropHotel={onDropHotel}
+          pendingHotelId={pendingAction?.hotelId ?? null}
+        />
+        </AssignmentPerformanceBoundary>
+      </div>}
+      {activeHotel && (
+        <div className="min-h-0">
+          <AssignmentPerformanceBoundary id="HotelDetail">
+          <HotelDetailView
+            hotel={activeHotel}
+            additionalCostPersonIds={additionalCostPersonIds}
+            draggingUnitId={draggingUnitId}
+            dragOverRoomTypeKey={dragOverRoomTypeKey}
+            dragOverBookingId={dragOverBookingId}
+            onDragOverRoomType={onDragOverRoomType}
+            onDragLeaveRoomType={onDragLeaveRoomType}
+            onDropRoomType={onDropRoomType}
+            onDragOverBooking={onDragOverBooking}
+            onDragLeaveBooking={onDragLeaveBooking}
+            onDropBooking={onDropBooking}
+            onBack={onClearActiveHotel}
+            selectedBookingId={selectedBookingId}
+            onSelectBooking={onSelectBooking}
+            pendingAction={pendingAction}
+          />
+          </AssignmentPerformanceBoundary>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function HotelGridView({
+  hotels,
+  regionOptions,
+  hotelSearch,
+  onHotelSearch,
+  regionFilter,
+  onRegionFilter,
+  hotelOperationalFilter,
+  onHotelOperationalFilter,
+  activeHotelId,
+  draggingUnitId,
+  draggingValidationKey,
+  dragOverHotelId,
+  validationByUnit,
+  onSelectHotel,
+  onDragOverHotel,
+  onDragLeaveHotel,
+  onDropHotel,
+  pendingHotelId,
+}: {
+  hotels: AssignmentGridHotel[];
+  regionOptions: string[];
+  hotelSearch: string;
+  onHotelSearch: (value: string) => void;
+  regionFilter: string;
+  onRegionFilter: (value: string) => void;
+  hotelOperationalFilter: OperationalHotelFilter;
+  onHotelOperationalFilter: (value: OperationalHotelFilter) => void;
+  activeHotelId: string | null;
+  draggingUnitId: string | null;
+  draggingValidationKey: string | null;
+  dragOverHotelId: string | null;
+  validationByUnit: Record<string, AssignmentValidationResult[]>;
+  onSelectHotel: (hotelId: string) => void;
+  onDragOverHotel: (hotelId: string) => void;
+  onDragLeaveHotel: () => void;
+  onDropHotel: (hotelId: string) => void;
+  pendingHotelId: string | null;
+}) {
+  const usedBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slotPersonCount(slot), 0), 0);
+  const totalBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slot.capacity, 0), 0);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[var(--ops-divider)] px-4 py-3">
+        <OperationalHotelFilters value={hotelOperationalFilter} onChange={onHotelOperationalFilter}/>
+        <SearchInput value={hotelSearch} onChange={onHotelSearch} placeholder="Hotels oder Orte suchen..." dark />
+        <div className="flex items-center gap-1">
+          {['', ...regionOptions].map((region) => (
+            <button
+              key={region || 'all'}
+              onClick={() => onRegionFilter(region)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
+                regionFilter === region
+                  ? region
+                    ? 'border border-blue-700/40 bg-blue-500/15 text-[var(--ops-assignment-text-accent-strong)]'
+                  : 'bg-[var(--ops-surface-elevated)] text-[var(--ops-assignment-text-strong)]'
+                  : 'text-[var(--ops-assignment-text-muted)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-assignment-text-bright)]'
+              }`}
+            >
+              {region || 'Alle Regionen'}
+            </button>
+          ))}
+        </div>
+        <div className="ml-auto flex items-center gap-3 text-xs">
+          <span className="font-mono text-[var(--ops-assignment-text-body)]">
+            <strong className="text-[var(--ops-assignment-text-bright)]">{usedBeds}</strong> / {totalBeds} Betten
+          </span>
+          <div className="w-24">
+            <CapacityBar pct={totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0} />
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-3">
+        {hotels.length ? <div className="grid grid-cols-2 gap-2.5 xl:grid-cols-3">
+          {hotels.map((hotel) => (
+            <HotelCard
+              key={hotel.hotelId}
+              hotel={hotel}
+              active={activeHotelId === hotel.hotelId}
+              dragOver={dragOverHotelId === hotel.hotelId}
+              dragging={!!draggingUnitId}
+              canDrop={draggingValidationKey ? hotelHasValidDrop(validationByUnit[draggingValidationKey] || [], hotel.hotelId) : false}
+              onSelect={() => onSelectHotel(hotel.hotelId)}
+              onDragOver={() => onDragOverHotel(hotel.hotelId)}
+              onDragLeave={onDragLeaveHotel}
+              onDrop={() => onDropHotel(hotel.hotelId)}
+              pending={pendingHotelId === hotel.hotelId}
+            />
+          ))}
+        </div> : <EmptyCenter text="Keine Hotels für die aktuelle Auswahl gefunden."/>}
+      </div>
+    </div>
+  );
+}
+
+function HotelCard({
+  hotel,
+  active,
+  dragOver,
+  dragging,
+  canDrop,
+  onSelect,
+  onDragOver,
+  onDragLeave,
+  onDrop,
+  pending,
+}: {
+  hotel: AssignmentGridHotel;
+  active: boolean;
+  dragOver: boolean;
+  dragging: boolean;
+  canDrop: boolean;
+  onSelect: () => void;
+  onDragOver: () => void;
+  onDragLeave: () => void;
+  onDrop: () => void;
+  pending: boolean;
+}) {
+  const {fits,validations}=useContext(DispositionDragContext);
+  const fit=fits?.[hotel.hotelId];
+  const totals = summarizeHotel(hotel);
+  const regionColor = REGION_COLORS[hotel.region || ''] || 'var(--ops-primary)';
+  const contingentRange = getHotelContingentRange(hotel);
+
+  return (
+    <div
+      onClick={onSelect}
+      onDrop={(event) => {
+        if(!canDrop)return;
+        event.preventDefault();
+        markAssignmentDrop();
+        onDrop();
+      }}
+      onDragOver={(event) => {
+        if(!canDrop)return;
+        event.preventDefault();
+        onDragOver();
+      }}
+      onDragLeave={onDragLeave}
+      title={dragging && !canDrop ? (validations?.find(v=>v.slotId.startsWith(`${hotel.hotelId}:`))?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : undefined}
+      aria-busy={pending}
+      className={`${dragging && !canDrop ? 'opacity-60' : ''} group relative flex h-full min-h-[220px] cursor-pointer flex-col overflow-hidden rounded-2xl border transition-all ${
+        dragOver
+          ? canDrop
+            ? 'scale-[1.02] border-blue-400/60 bg-blue-500/15'
+            : 'border-red-400/50 bg-red-500/10'
+          : active
+            ? 'border-blue-400/60 bg-[var(--ops-surface-overlay)]'
+            : 'border-[var(--ops-border)] bg-[var(--ops-assignment-card)] shadow-[var(--ops-assignment-card-shadow)] hover:border-[var(--ops-border-strong)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-card-hover-shadow)]'
+      }`}
+    >
+      {pending && <div className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--ops-surface)]/55" role="status" aria-live="polite"><span className="flex items-center gap-2 rounded-lg bg-[var(--ops-surface)] px-3 py-2 text-xs font-semibold text-blue-100"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span></div>}
+      <div className="h-[3px] w-full" style={{ backgroundColor: regionColor }} />
+      <div className="flex flex-1 flex-col gap-2 p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-extrabold text-[var(--ops-text)]">{hotel.hotelName}</div>
+            <div className="mt-0.5 flex items-center gap-1.5 text-[11px]">
+              <span className="text-[var(--ops-text-muted)]">{hotel.location || '—'}</span>
+            </div>
+            <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
+            {fit && <div className="mt-1 text-[11px] text-[var(--ops-text-muted)]" role="status" title={fit.conservative ? 'Nachgewiesene Mindestkapazität; keine Berechnung der maximal möglichen Belegung.' : undefined}>{hotelFitLabel(fit)}{fit.alreadyUsed && <div>Bereits für diese Auswahl genutzt</div>}</div>}
+          </div>
+          <div className="rounded-md border border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-[var(--ops-assignment-text-strong)]">
+            {totals.totalRooms} Zimmer
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-[var(--ops-assignment-card-header-border)] bg-[var(--ops-assignment-card-header)] px-2.5 py-2">
+          <div className="mb-1.5 flex items-center justify-between text-[11px]">
+            <span className="font-semibold text-[var(--ops-text-subtle)]"><strong className="text-sm font-extrabold text-[var(--ops-text)]">{totals.usedBeds}</strong> belegt · <strong className="text-sm font-extrabold text-[var(--ops-success)]">{Math.max(0, totals.totalBeds - totals.operationalUsed)}</strong> frei</span>
+            <span className={`font-mono text-xs font-bold ${totals.percent >= 75 ? 'text-[var(--ops-assignment-text-warning)]' : totals.percent > 0 ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-faint)]'}`}>
+              {totals.percent}%
+            </span>
+          </div>
+          <CapacityBar pct={totals.percent} className="h-1.5" />
+          <div className="mt-1.5 flex items-center justify-between text-[9px] text-[var(--ops-assignment-text-muted)]">
+            <span>{totals.usedRooms} Zimmer belegt</span>
+            <span>{totals.totalRooms - totals.usedRooms} frei</span>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-x-3 gap-y-1.5">
+          {totals.roomTypes.map((row) => (
+            <div key={row.roomTypeId}>
+              <div className="mb-1 flex items-center justify-between gap-2 text-[9px]">
+                <span className="truncate text-[10px] font-bold text-[var(--ops-text-subtle)]">{row.roomTypeName}</span>
+                <span className="whitespace-nowrap font-mono text-[10px] font-bold text-[var(--ops-text)]">{row.usedBeds} / {row.totalBeds} belegt</span>
+              </div>
+              <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1" />
+              <div className="mt-1 text-right text-[9px] font-bold text-[var(--ops-success)]">{Math.max(0, row.totalBeds - row.operationalUsed)} frei</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between border-t border-[var(--ops-divider)]/60 px-3 py-2">
+        <span className="text-[10px] text-[var(--ops-assignment-text-muted)]">{totals.roomTypes.length} Zimmertypen</span>
+        <div className={`flex items-center gap-1 text-[11px] font-bold ${dragOver && canDrop ? 'text-[var(--ops-assignment-text-accent)]' : active ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)] group-hover:text-[var(--ops-assignment-text-accent)]'}`}>
+          {dragging && dragOver ? (canDrop ? 'Loslassen zum Zuweisen' : 'Blockiert') : 'Öffnen →'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HotelDetailView({
+  hotel,
+  additionalCostPersonIds,
+  draggingUnitId,
+  dragOverRoomTypeKey,
+  dragOverBookingId,
+  onDragOverRoomType,
+  onDragLeaveRoomType,
+  onDropRoomType,
+  onDragOverBooking,
+  onDragLeaveBooking,
+  onDropBooking,
+  onBack,
+  selectedBookingId,
+  onSelectBooking,
+  pendingAction,
+}: {
+  hotel: AssignmentGridHotel;
+  additionalCostPersonIds: Set<string>;
+  draggingUnitId: string | null;
+  dragOverRoomTypeKey: string | null;
+  dragOverBookingId: string | null;
+  onDragOverRoomType: (roomTypeKey: string) => void;
+  onDragLeaveRoomType: () => void;
+  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
+  onDragOverBooking: (bookingId: string) => void;
+  onDragLeaveBooking: () => void;
+  onDropBooking: (booking: AssignmentGridBooking) => void;
+  onBack: () => void;
+  selectedBookingId: string | null;
+  onSelectBooking: (bookingId: string) => void;
+  pendingAction: PendingAssignmentAction | null;
+}) {
+  const {validations,interval,occupantCount,onAssignSlot}=useContext(DispositionDragContext);
+  const grouped = useMemo(() => {
+    const map = new Map<string, AssignmentSlot[]>();
+    for (const slot of hotel.slots) {
+      const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(slot);
+    }
+    return Array.from(map.entries()).map(([key, slots]) => ({
+      roomTypeId: key.split('|')[0],
+      roomTypeName: key.split('|')[1],
+      slots:stableRoomSlots(slots),
+    }));
+  }, [hotel.slots]);
+
+  const [openRoomTypes, setOpenRoomTypes] = useState<Record<string, boolean>>({});
+
+  // Missing entries already render expanded; only user toggles need stored state.
+
+  const {fits}=useContext(DispositionDragContext);
+  const fit=fits?.[hotel.hotelId];
+  const totals = summarizeHotel(hotel);
+  const contingentRange = getHotelContingentRange(hotel);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] px-4 py-2.5">
+        <div className="flex flex-wrap items-center gap-3">
+            <button
+              onClick={onBack}
+              className="rounded-lg px-2 py-1.5 text-xs font-semibold text-[var(--ops-assignment-text-body)] transition-colors hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-assignment-text-bright)]"
+            >
+              <ChevronLeft className="mr-1 inline h-3.5 w-3.5" />
+            Alle Hotels
+          </button>
+          <div className="flex-1">
+            <h2 className="truncate text-lg font-extrabold text-[var(--ops-text)]">{hotel.hotelName}</h2>
+            <div className="flex items-center gap-2 text-[11px] text-[var(--ops-assignment-text-muted)]">
+              <span>{hotel.location || '—'}</span>
+              <span>·</span>
+              <span style={{ color: REGION_COLORS[hotel.region || ''] || 'var(--ops-primary)' }}>{hotel.region}</span>
+            </div>
+            <div className="mt-1 text-xs font-bold text-[var(--ops-primary)]">{contingentRange}</div>
+            {fit && <div className="mt-1 text-[11px] text-[var(--ops-text-muted)]" role="status" title={fit.conservative ? 'Nachgewiesene Mindestkapazität; keine Berechnung der maximal möglichen Belegung.' : undefined}>{hotelFitLabel(fit)}{fit.alreadyUsed && <div>Bereits für diese Auswahl genutzt</div>}</div>}
+          </div>
+          {visibleAssignmentComment(hotel.comment) && <div className="w-full min-w-0 sm:w-52"><AssignmentComment label="Hotelkommentar" comment={hotel.comment}/></div>}
+          <div className="flex items-center gap-4">
+            <div className="text-right">
+              <div className="font-mono text-base font-bold text-[var(--ops-assignment-text-strong)]">
+                {totals.usedBeds}
+                <span className="text-sm text-[var(--ops-assignment-text-faint)]">/{totals.totalBeds}</span>
+              </div>
+              <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">belegte Betten</div>
+            </div>
+            <div className="w-24">
+              <CapacityBar pct={totals.percent} />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto bg-[var(--ops-surface-raised)] p-3">
+        <div className="space-y-2.5">
+          {grouped.map((group) => {
+            const summary = summarizeRoomType(group.slots);
+            const isOpen = openRoomTypes[group.roomTypeId] ?? true;
+
+            return (
+              <div id={`room-group-${group.roomTypeId}`} key={group.roomTypeId} className="scroll-mt-4 overflow-hidden rounded-2xl border border-[var(--ops-border)]">
+                <button
+                  onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
+                  className="flex w-full items-center gap-3 bg-[var(--ops-surface-overlay)] px-3 py-2.5 text-left hover:bg-[var(--ops-surface-overlay)]"
+                >
+                  <ChevronDown className={`h-4 w-4 text-[var(--ops-assignment-text-faint)] transition-transform ${isOpen ? '' : '-rotate-90'}`} />
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[15px] font-extrabold text-[var(--ops-assignment-text-bright)]">{group.roomTypeName}</span>
+                      <span className="rounded-md bg-[var(--ops-surface-overlay)] px-2 py-0.5 text-[10px] font-bold text-[var(--ops-assignment-text-strong)]">
+                        {summary.capacityPerRoom}p max
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-xs font-mono text-[var(--ops-assignment-text-muted)]">
+                      {summary.usedRooms}/{summary.totalRooms} Zimmer · {summary.usedBeds}/{summary.totalBeds} Betten
+                    </div>
+                  </div>
+                  <div className="w-32">
+                    <CapacityBar pct={summary.percent} />
+                  </div>
+                </button>
+
+                {isOpen && contingentComments(hotel,group.roomTypeId).length>0 && <div className="grid gap-3 border-t border-[var(--ops-divider)] px-3 py-2 sm:grid-cols-2">{contingentComments(hotel,group.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
+                {isOpen && (
+                  <div className="grid auto-rows-fr grid-cols-1 gap-2 bg-[var(--ops-surface-elevated)] p-2 2xl:grid-cols-2">
+                    {group.slots.map((slot,index)=>{
+                      const slotValidation=validations?.find(v=>v.slotId===slot.slotId);
+                      const canDrop=!!draggingUnitId && slotValidation?.status!=='blocked' && !!slotValidation;
+                      const roomTargetKey=slot.slotId;
+                      return <div key={slot.slotId} data-room-slot={slot.slotId} data-room-number={slot.roomNumber || slot.slotId} className="flex min-h-40 min-w-0 flex-col gap-2">
+                    {slot.bookings.map(booking => {
+                      const entry={slot,booking};
+                        const canAddPartner =
+                          !!draggingUnitId && validations?.some(v=>v.slotId===`booking:${entry.booking.bookingId}` && v.status!=='blocked') && !entry.booking.countsAsSingle &&
+                          (entry.booking.capacity || 0) >= entry.booking.occupants.length + (occupantCount ?? 1) &&
+                          (!interval || (entry.booking.checkInDate===interval.checkInDate && entry.booking.checkOutDate===interval.checkOutDate)) &&
+                          entry.booking.occupants.length >= 1;
+                        const isBookingDropTarget = dragOverBookingId === entry.booking.bookingId;
+                        return (
+                      <button
+                        key={entry.booking.bookingId}
+                        title={draggingUnitId && !canAddPartner ? validations?.find(v=>v.slotId===`booking:${entry.booking.bookingId}`)?.messages[0] ?? 'Zimmer im benötigten Zeitraum nicht verfügbar.' : undefined}
+                        onClick={() => onSelectBooking(entry.booking.bookingId)}
+                        onDrop={(event) => {
+                          if (!canAddPartner) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          markAssignmentDrop();
+                          onDropBooking(entry.booking);
+                        }}
+                        onDragOver={(event) => {
+                          if (!canAddPartner) return;
+                          event.preventDefault();
+                          event.stopPropagation();
+                          onDragOverBooking(entry.booking.bookingId);
+                        }}
+                        onDragLeave={onDragLeaveBooking}
+                        aria-busy={pendingAction?.bookingId === entry.booking.bookingId}
+                        disabled={pendingAction?.bookingId === entry.booking.bookingId}
+                        className={`${draggingUnitId && !canAddPartner ? 'opacity-60' : ''} relative flex h-full w-full items-start justify-between rounded-xl border px-3 py-2 text-left transition-all ${
+                          selectedBookingId === entry.booking.bookingId
+                            ? 'border-blue-400/60 bg-[var(--ops-surface-overlay)]'
+                            : isBookingDropTarget && canAddPartner
+                              ? 'border-violet-400/70 bg-violet-500/15'
+                              : 'border-[var(--ops-border)] bg-[var(--ops-surface-overlay)] hover:border-[var(--ops-border-strong)]'
+                        }`}
+                      >
+                        {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[var(--ops-surface)]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                          <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
+                            {entry.slot.roomNumber || `#${index + 1}`}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
+                              {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`} · {intervalLabel({checkInDate:entry.booking.checkInDate ?? null,checkOutDate:entry.booking.checkOutDate ?? null})}
+                            </div>
+                            <div className="mt-1 flex items-center gap-2 text-[10px]">
+                              <><span className={`rounded-md px-1.5 py-0.5 font-bold ${bookingFreeCapacity(entry.booking)>0 ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
+                                {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt{entry.booking.countsAsSingle ? ' · EZ-Nutzung' : ''}
+                              </span>{bookingFreeCapacity(entry.booking)>0 && <span className="font-bold text-[var(--ops-success)]">{bookingFreeCapacity(entry.booking)} frei</span>}</>
+                              {entry.booking.countsAsSingle && <span className="text-[var(--ops-text-muted)]">0 frei</span>}
+                              {canAddPartner && (
+                                <span className={`${isBookingDropTarget ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)]'}`}>
+                                  Partner hinzufügen
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1.5 grid gap-1">
+                              {entry.booking.occupants.map(occupant => <OccupantCard
+                                key={occupant.athleteId}
+                                person={{...occupant,arrivalDate:entry.booking.checkInDate,departureDate:entry.booking.checkOutDate}}
+                                status={occupant.hasPendingReview ? 'review' : 'assigned'}
+                                fallbackArrival={entry.booking.checkInDate}
+                                fallbackDeparture={entry.booking.checkOutDate}
+                                hideNation
+                                hideDiscipline
+                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
+                              />)}
+                            </div>
+                          </div>
+                        </div>
+                      </button>
+                        );
+                    })}
+
+                    {slot.bookings.length===0 || canDrop ? (
+                      <div
+                        role="button" tabIndex={0}
+                        aria-disabled={!canDrop} title={!canDrop ? (slotValidation?.messages[0] ?? 'Unterkunftsbedarf auswählen / Prüfung läuft.') : undefined}
+                        onClick={()=>{if(canDrop)onAssignSlot?.(slot);}}
+                        onKeyDown={event=>{if(canDrop && (event.key==='Enter' || event.key===' ')) {event.preventDefault();onAssignSlot?.(slot);}}}
+                        onDrop={(event) => {
+                          if(!canDrop)return;
+                          event.preventDefault();
+                          markAssignmentDrop();
+                          onAssignSlot?.(slot);
+                        }}
+                        onDragOver={(event) => {
+                          if(!canDrop)return;
+                          event.preventDefault();
+                          onDragOverRoomType(roomTargetKey);
+                        }}
+                        onDragLeave={onDragLeaveRoomType}
+                        className={`${draggingUnitId && !canDrop ? 'opacity-50 cursor-not-allowed' : ''} flex min-h-20 flex-1 flex-col items-center justify-center rounded-xl border-2 border-dashed px-4 py-3 text-center transition-all ${
+                          dragOverRoomTypeKey === roomTargetKey
+                            ? canDrop
+                              ? 'border-blue-500/60 bg-blue-500/15 text-blue-100'
+                              : 'border-red-500/60 bg-red-500/10 text-red-200'
+                            : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] text-[var(--ops-assignment-text-body)]'
+                        }`}
+                      >
+                        <div className="text-[11px] font-semibold">{slot.roomNumber || `Zimmer ${slot.slotIndex}`}</div>
+                        <div className="text-sm font-extrabold">
+                          {draggingUnitId && !canDrop ? (slotValidation?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : dragOverRoomTypeKey === roomTargetKey
+                            ? 'Loslassen, um neue Zuweisung anzulegen'
+                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : 'Frei'}
+                        </div>
+                        {dragOverRoomTypeKey !== roomTargetKey && (
+                          <div className="mt-1 text-xs font-medium text-[var(--ops-assignment-text-muted)]">{draggingUnitId ? 'Hier ablegen oder zum Zuweisen klicken' : 'Offenen Aufenthalt hierher ziehen oder links zuweisen.'}</div>
+                        )}
+                      </div>
+                    ) : null}
+                      </div>;
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AthletesPanel({
+  athletes,
+  selectedAthleteId,
+  onSelectAthlete,
+}: {
+  athletes: Athlete[];
+  selectedAthleteId: string | null;
+  onSelectAthlete: (athleteId: string) => void;
+}) {
+  const [search, setSearch] = useState('');
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return athletes.filter((athlete) => {
+      const haystack = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.discipline || ''}`.toLowerCase();
+      return !query || haystack.includes(query);
+    });
+  }, [athletes, search]);
+
+  return (
+    <div className="flex h-full flex-col">
+      <div className="border-b border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-4 py-3">
+        <SearchInput value={search} onChange={setSearch} placeholder="Athleten suchen..." dark />
+      </div>
+      <div className="flex-1 overflow-auto">
+        <table className="min-w-full text-sm">
+          <thead className="sticky top-0 bg-[var(--ops-surface)]">
+            <tr>
+              {['Name', 'Nation', 'Disz.', 'Gender', 'Anr.', 'Abr.', 'Status'].map((heading) => (
+                <th key={heading} className="px-3 py-2.5 text-left text-[9px] font-bold uppercase tracking-widest text-slate-600">
+                  {heading}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-[var(--ops-divider)]">
+            {filtered.map((athlete) => (
+              <tr
+                key={athlete.id}
+                onClick={() => onSelectAthlete(athlete.id)}
+                className={`cursor-pointer transition-colors ${selectedAthleteId === athlete.id ? 'bg-[var(--ops-tone-primary-surface)]' : 'hover:bg-[var(--ops-surface-raised)]'}`}
+              >
+                <td className="px-3 py-2.5 text-xs font-semibold text-[var(--ops-assignment-text-body)]">{athlete.firstname} {athlete.lastname}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.nationCode}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{competitionDisplayName(athlete.discipline) || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{normalizeGender(athlete.gender) || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.arrivalDate || '—'}</td>
+                <td className="px-3 py-2.5 text-xs text-[var(--ops-assignment-text-muted)]">{athlete.departureDate || '—'}</td>
+                <td className="px-3 py-2.5 text-xs">
+                  {athlete.assignment?.hasAssignment ? (
+                    <span className="rounded-lg border border-emerald-800/50 bg-emerald-950/50 px-2 py-0.5 font-semibold text-emerald-400">Erledigt</span>
+                  ) : (
+                    <span className="rounded-lg border border-amber-800/40 bg-amber-950/40 px-2 py-0.5 font-semibold text-amber-400">Offen</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+type QuotaCard = {
+  key: string;
+  nationCode: string;
+  discipline: string;
+  gender: string;
+  athletes: number;
+  officialQuota: number;
+  assignedOfficials: number;
+  singleRoomsAllowed: number;
+  singleRoomsUsed: number;
+  quotaExemptSingleRooms: number;
+  approvedExtraSingleRooms: number;
+  requiredSingleRooms: number;
+  implementedSingleRooms: number;
+  remainingSingleRooms: number;
+  openApprovals: number;
+  approvedExceptions: number;
+  quotaStatus: OfficialQuotaUsage['quotaStatus'];
+  peopleTotal: number;
+  peopleAssigned: number;
+  accommodationPeopleRequired: number;
+  accommodationPeopleFullyAssigned: number;
+};
+
+function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
+  const cards = new Map<string, QuotaCard>();
+  for (const row of rows) {
+    const key = `${row.nationCode}::${row.discipline || '—'}::${row.gender}`;
+    const current = cards.get(key) ?? {
+      key,
+      nationCode: row.nationCode,
+      discipline: row.discipline || '—',
+      gender: row.gender,
+      athletes: 0,
+      officialQuota: 0,
+      assignedOfficials: 0,
+      singleRoomsAllowed: 0,
+      singleRoomsUsed: 0,
+      quotaExemptSingleRooms: 0,
+      approvedExtraSingleRooms: 0,
+      requiredSingleRooms: 0,
+      implementedSingleRooms: 0,
+      remainingSingleRooms: 0,
+      openApprovals: 0,
+      approvedExceptions: 0,
+      quotaStatus: 'FULFILLED',
+      peopleTotal: 0,
+      peopleAssigned: 0,
+      accommodationPeopleRequired:0,
+      accommodationPeopleFullyAssigned:0,
+    };
+    current.athletes += row.athletesEntered;
+    current.officialQuota += row.officialQuota;
+    current.assignedOfficials += row.assignedOfficials;
+    current.singleRoomsAllowed += row.singleRoomsAllowed;
+    current.singleRoomsUsed += row.singleRoomsUsed;
+    current.quotaExemptSingleRooms += row.quotaExemptSingleRooms || 0;
+    current.approvedExtraSingleRooms += row.approvedExtraSingleRooms || 0;
+    current.requiredSingleRooms += row.requiredSingleRooms || 0;
+    current.implementedSingleRooms += row.implementedSingleRooms || 0;
+    current.remainingSingleRooms += row.remainingSingleRooms || 0;
+    current.openApprovals += row.openApprovals || 0;
+    current.approvedExceptions += row.approvedExceptions || 0;
+    current.peopleTotal += row.peopleTotal || 0;
+    current.peopleAssigned += row.peopleAssigned || 0;
+    current.accommodationPeopleRequired += row.accommodationPeopleRequired ?? row.peopleTotal ?? 0;
+    current.accommodationPeopleFullyAssigned += row.accommodationPeopleFullyAssigned ?? row.peopleAssigned ?? 0;
+    if (row.quotaStatus === 'DECISION_REQUIRED' || (row.quotaStatus === 'EXCEPTION_APPROVED' && current.quotaStatus === 'FULFILLED')) current.quotaStatus = row.quotaStatus;
+    cards.set(key, current);
+  }
+
+  return [...cards.values()].sort((a, b) => a.nationCode.localeCompare(b.nationCode)
+    || a.discipline.localeCompare(b.discipline) || a.gender.localeCompare(b.gender));
+}
+
+function quotaGenderLabel(gender: string) {
+  if (gender === 'W' || gender === 'F') return 'Damen';
+  if (gender === 'M') return 'Herren';
+  return gender || '—';
+}
+
+function getQuotaState(card: QuotaCard) {
+  if (evaluateQuotaUsageRow(card).hasViolation) return { label: 'Quote überschritten · Mehrkosten', tone: 'warning' as const, icon: AlertTriangle };
+  if (card.assignedOfficials > card.officialQuota) return { label: 'Official-Quote überschritten', tone: 'warning' as const, icon: AlertTriangle };
+  return { label: 'Quote erfüllt', tone: 'success' as const, icon: CheckCircle2 };
+}
+
+function QuotasPanel({
+  rows, allUnits, assignedUnits, onSelect,
+  filterNation, onFilterNation, filterDiscipline, onFilterDiscipline,
+  filterGender, onFilterGender, nationOptions, disciplineOptions, genderOptions, refreshing,
+}: {
+  rows: OfficialQuotaUsage[];
+  allUnits: RoomBookingUnit[];
+  assignedUnits: RoomBookingUnit[];
+  onSelect: (key: string) => void;
+  filterNation: string;
+  onFilterNation: (value: string) => void;
+  filterDiscipline: string;
+  onFilterDiscipline: (value: string) => void;
+  filterGender: string;
+  onFilterGender: (value: string) => void;
+  nationOptions: string[];
+  disciplineOptions: string[];
+  genderOptions: string[];
+  refreshing: boolean;
+}) {
+  const cards = buildQuotaCards(rows);
+  const issues = cards.filter(quotaRequiresAction).length;
+  return (
+    <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
+      <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.2em] text-[var(--ops-primary)]"><Flag className="h-3.5 w-3.5" /> Live-Regelzentrale</div>
+          <h2 className="text-xl font-bold text-[var(--ops-text)]">Quoten nach Nation, Disziplin &amp; Gender</h2>
+          <p className="mt-1 flex items-center gap-2 text-sm text-[var(--ops-text-muted)]">Regelverstöße, Freigaben und Dispositionsstand auf einen Blick. {refreshing && <span className="flex items-center gap-1 text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-3.5 w-3.5 animate-spin" /> wird aktualisiert</span>}</p>
+        </div>
+        <div className="flex gap-2">
+          <SummaryPill label="Kombinationen" value={cards.length} />
+          <SummaryPill label="Handlungsbedarf" value={issues} warning={issues > 0} />
+        </div>
+      </div>
+      <div className="mb-5 rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-4">
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--ops-text-muted)]">Quotengruppen filtern</div>
+        <div className="grid gap-2 sm:grid-cols-3">
+          <DarkSelect value={filterNation} onChange={onFilterNation} options={nationOptions} placeholder="Alle Nationen" />
+          <DarkSelect value={filterDiscipline} onChange={onFilterDiscipline} options={disciplineOptions} placeholder="Alle Disziplinen" labelMap={Object.fromEntries(disciplineOptions.map(value => [value, disciplineDisplayName(value)]))} />
+          <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Herren', F: 'Damen' }} />
+        </div>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+        {cards.map((card) => {
+          const state = getQuotaState(card);
+          const StateIcon = state.icon;
+          const officialsOver = card.assignedOfficials > card.officialQuota;
+          const singlesOver = evaluateQuotaUsageRow(card).hasViolation;
+          const dispatchPct = card.accommodationPeopleRequired > 0 ? Math.round(card.accommodationPeopleFullyAssigned / card.accommodationPeopleRequired * 100) : 0;
+
+          return (
+            <button key={card.key} onClick={() => onSelect(card.key)} className="group overflow-hidden rounded-[var(--ops-radius-xl)] border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] text-left shadow-[var(--ops-shadow-xs)] transition-all hover:-translate-y-0.5 hover:border-[var(--ops-border-strong)] hover:shadow-[var(--ops-shadow-sm)] focus-visible:shadow-[var(--ops-focus-ring)]">
+              <div className={`h-1 ${state.tone === 'success' ? 'bg-[var(--ops-success)]' : state.tone === 'warning' ? 'bg-[var(--ops-warning)]' : 'bg-[var(--ops-error)]'}`} />
+              <div className="p-5">
+                <div className="mb-5 flex items-start justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-11 min-w-11 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div>
+                    <div><div className="font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {competitionDisplayName(card.discipline)} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quotengruppe</div></div>
+                  </div>
+                  <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
+                </div>
+
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <KpiBlock label="Athleten" value={`${card.athletes}`} />
+                  <KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} />
+                  <KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
+                  <KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} />
+                </div>
+
+                <div className="mt-4 space-y-3 rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface)] p-3.5">
+                  <QuotaProgress label="Officials" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} />
+                  <QuotaProgress label="Einzelzimmer" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
+                  {card.accommodationPeopleRequired>0 && <QuotaProgress label="Disposition" current={card.accommodationPeopleFullyAssigned} max={card.accommodationPeopleRequired} />}
+                </div>
+
+                <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
+                  <ApprovalInfo label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
+                  <ApprovalInfo label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
+                  <ApprovalInfo label="EZ mit Mehrkosten" value={String(evaluateQuotaUsageRow(card).overflow)} warning={singlesOver} />
+                </div>
+                <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{card.accommodationPeopleRequired ? `${dispatchPct}% disponiert` : 'Kein Unterkunftsbedarf'}</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
+              </div>
+            </button>
+          );
+        })}
+
+        {!cards.length && (
+          <div className="col-span-full py-20 text-center text-sm text-[var(--ops-text-muted)]">Keine Quoten verfügbar</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SummaryPill({ label, value, warning = false }: { label: string; value: number; warning?: boolean }) {
+  return <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] px-3.5 py-2"><span className="text-[10px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</span><span className={`ml-2 font-mono font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-assignment-text-bright)]'}`}>{value}</span></div>;
+}
+
+function StatusPill({ tone, label, icon }: { tone: 'success' | 'warning' | 'error'; label: string; icon: ReactNode }) {
+  const classes = tone === 'success' ? 'border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-success)]' : tone === 'warning' ? 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-warning)]' : 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]';
+  return <span className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${classes}`}>{icon}{label}</span>;
+}
+
+function KpiBlock({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+  return <div className="rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3"><div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`mt-1.5 font-mono text-lg font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-assignment-text-bright)]'}`}>{value}</div></div>;
+}
+
+function QuotaProgress({ label, current, max, warning = false }: { label: string; current: number; max: number; warning?: boolean }) {
+  const pct = max > 0 ? Math.round(current / max * 100) : 0;
+  return <div><div className="mb-1.5 flex justify-between text-[10px]"><span className="text-[var(--ops-text-muted)]">{label}</span><span className={`font-mono ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-text-subtle)]'}`}>{current} / {max}</span></div><div className="h-1.5 overflow-hidden rounded-full bg-[var(--ops-surface-elevated)]"><div className={`h-full rounded-full ${warning ? 'bg-[var(--ops-warning)]' : 'bg-[var(--ops-primary-emphasis)]'}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></div>;
+}
+
+function ApprovalInfo({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
+  return <div><div className="mb-1 text-[9px] uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`font-mono font-semibold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-text-subtle)]'}`}>{value}</div></div>;
+}
+
+type SingleRoomControlPerson = {
+  athleteId: string;
+  name: string;
+  decisionId?: string | null;
+  additionalCost: boolean;
+  allocationStatus?: string;
+  exemptReason?: SingleRoomQuotaExemptReason;
+};
+
+function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>, allocationByPerson: Map<string, string | undefined>): SingleRoomControlPerson[] {
+  const bookingsByAthlete = new Map<string, AssignmentGridBooking>();
+  hotels.forEach((hotel) => hotel.slots.forEach((slot) => slot.bookings.forEach((booking) => {
+    if (booking.countsAsSingle) booking.occupants.forEach((occupant) => bookingsByAthlete.set(occupant.athleteId, booking));
+  })));
+
+  const people = new Map<string, SingleRoomControlPerson>();
+  allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
+    if (!allocationByPerson.has(occupant.athleteId) || !matchesQuotaAllowanceContext(occupant, card)) return;
+
+    const booking = bookingsByAthlete.get(occupant.athleteId);
+    if (!booking?.countsAsSingle) return;
+    people.set(occupant.athleteId, {
+      athleteId: occupant.athleteId,
+      name: occupant.name,
+      decisionId: occupant.single_room_decision_id,
+      additionalCost: additionalCostPersonIds.has(occupant.athleteId),
+      allocationStatus: allocationByPerson.get(occupant.athleteId),
+      exemptReason: occupant.singleRoomQuotaExemptReason,
+    });
+  }));
+  return [...people.values()].sort((a, b) => a.name.localeCompare(b.name, 'de'));
+}
+
+function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDecision }: {
+  quotaKey: string;
+  rows: OfficialQuotaUsage[];
+  allUnits: RoomBookingUnit[];
+  assignedUnits: RoomBookingUnit[];
+  hotels: AssignmentGridHotel[];
+  onShowDecision: (decisionId: string) => void;
+}) {
+  const card = buildQuotaCards(rows).find((candidate) => candidate.key === quotaKey);
+  if (!card) return <EmptyCenter text="Quote nicht mehr verfügbar." />;
+  const state = getQuotaState(card);
+  const StateIcon = state.icon;
+  const officialsOver = card.assignedOfficials > card.officialQuota;
+  const quotaEvaluation = evaluateQuotaUsageRow(card);
+  const singlesOver = quotaEvaluation.hasViolation;
+  const evaluatedGroup = evaluateAllQuotaGroups(rows, quotaAssignmentsFromPlanning(hotels))
+    .find(group => group.key === quotaUsageKey(card.nationCode, card.discipline, card.gender));
+  // Per-group applicability comes from the backend; status alone is not evidence.
+  const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
+  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds, new Map(evaluatedGroup?.people.map(person => [person.personId, person.allocationStatus] as const) || []));
+  const additionalCostPeople = controlPeople.filter(person => person.additionalCost);
+  const exemptPeople = controlPeople.filter(person => person.exemptReason);
+  const withinQuotaPeople = controlPeople.filter(person => person.allocationStatus === 'COVERED');
+  const pendingPeople = controlPeople.filter(person => person.allocationStatus === 'PENDING');
+  const sharedDecisionId = additionalCostPeople.find(person => person.decisionId)?.decisionId
+    ?? controlPeople.find(person => person.decisionId)?.decisionId;
+
+  return <div className="flex h-full flex-col">
+    <header className="border-b border-[var(--ops-divider)] bg-[var(--ops-surface)] px-6 py-5 pr-16">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-center gap-3"><div className="flex h-12 min-w-12 items-center justify-center rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] font-mono text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{card.nationCode}</div><div><div className="text-lg font-bold text-[var(--ops-assignment-text-bright)]">{card.nationCode} · {competitionDisplayName(card.discipline)} · {quotaGenderLabel(card.gender)}</div><div className="mt-1 text-xs text-[var(--ops-text-muted)]">Quoten- und Regelstatus</div></div></div>
+        <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
+      </div>
+    </header>
+    <div className="flex-1 space-y-4 overflow-auto p-6">
+      <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} /></div>
+      </DetailSection>
+      <QuotaPersonGroups row={rows.find(row=>row.nationCode===card.nationCode && row.discipline===card.discipline && row.gender===card.gender)}/>
+      <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
+        {controlPeople.length ? <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <SingleRoomDecisionGroup title="Mehrpreis" people={additionalCostPeople} status="APPROVED_EXTRA" />
+            <SingleRoomDecisionGroup title="Innerhalb der Quote" people={withinQuotaPeople} status="IN_QUOTA" />
+            <SingleRoomDecisionGroup title="Genehmigung erforderlich" people={pendingPeople} status="PENDING_APPROVAL" />
+            <SingleRoomDecisionGroup title="Ohne Quotenverbrauch" people={exemptPeople} status="IN_QUOTA" />
+          </div>
+          <div className="flex justify-end border-t border-[var(--ops-divider)] pt-3">
+            <OpsButton disabled={!sharedDecisionId} title={!sharedDecisionId ? 'Für diese Quotengruppe ist keine Importentscheidung hinterlegt.' : undefined} onClick={() => sharedDecisionId && onShowDecision(sharedDecisionId)}>Entscheidung anzeigen</OpsButton>
+          </div>
+        </div> : <p className="text-sm text-[var(--ops-text-muted)]">Keine Personen mit Einzelzimmeranspruch in dieser Quotengruppe.</p>}
+      </DetailSection>
+    </div>
+  </div>;
+}
+
+function SingleRoomDecisionGroup({ title, people, status }: { title: string; people: SingleRoomControlPerson[]; status: 'APPROVED_EXTRA' | 'IN_QUOTA' | 'PENDING_APPROVAL' }) {
+  return <section className="overflow-hidden rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]">
+    <header className="flex items-center justify-between gap-3 border-b border-[var(--ops-divider)] px-3 py-2.5">
+      <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
+      <SingleRoomAssignmentBadges status={status} />
+    </header>
+    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]"><span>{person.name}</span><SingleRoomAssignmentBadges status={status} countsAsSingle exemptReason={person.exemptReason}/></li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
+  </section>;
+}
+
+function DetailSection({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
+  return <section className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface)] p-3"><h3 className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-[var(--ops-primary)]">{icon}{title}</h3>{children}</section>;
+}
+
+function DetailPanel({
+  quotaReason,
+  selectedUnit,
+  selectedBookingContext,
+  selectedAssignedUnit,
+  hotels,
+  onUnassignBooking,
+  onUnassignOccupant,
+  onMarkBookingAsSingle,
+  pendingAction,
+  onAcknowledgeImportChanges,
+  onShowDecision,
+}: {
+  quotaReason?:string;
+  selectedUnit: RoomBookingUnit | null;
+  selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
+  selectedAssignedUnit: RoomBookingUnit | null;
+  hotels: AssignmentGridHotel[];
+  onUnassignBooking: (bookingId: string) => void;
+  onUnassignOccupant: (bookingId: string, athleteId: string) => void;
+  onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
+  pendingAction: PendingAssignmentAction | null;
+  onAcknowledgeImportChanges: (unit: { occupants: AssignmentChangeSubject[] }) => void;
+  onShowDecision: (decisionId: string) => void;
+}) {
+  if (!selectedUnit && !selectedBookingContext) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center px-6 text-center">
+        <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-2xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] text-[var(--ops-assignment-text-faint)]">
+          <Eye className="h-5 w-5" />
+        </div>
+        <div className="text-lg font-semibold text-[var(--ops-assignment-text-body)]">Nichts ausgewählt</div>
+        <div className="mt-2 text-sm text-[var(--ops-assignment-text-faint)]">Wähle eine Buchung oder eine Einheit aus</div>
+        <div className="mt-6 rounded-2xl border border-dashed border-[var(--ops-border)] px-6 py-4 text-sm text-[var(--ops-assignment-text-faint)]">
+          Ziehe eine Einheit aus der Warteschlange auf freie Zimmerbereiche
+        </div>
+      </div>
+    );
+  }
+
+  if (selectedBookingContext) {
+    const { booking, hotel, slot } = selectedBookingContext;
+    const pendingOccupants = booking.occupants.filter(occupant => occupant.hasPendingReview);
+    return (
+      <div className="space-y-3 p-4" aria-busy={pendingAction?.bookingId === booking.bookingId}>
+        {pendingOccupants.length > 0 && <DetailSection icon={<AlertTriangle className="h-4 w-4" />} title="Disposition prüfen">
+          <p className="text-xs font-semibold text-[var(--ops-tone-warning-text)]">Importdaten weichen von der aktuellen Zimmerzuweisung ab.</p>
+          <button onClick={() => onAcknowledgeImportChanges(booking)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Disposition bestätigen</button>
+        </DetailSection>}
+        <DetailSection icon={<Users className="h-4 w-4" />} title="Personen">
+          <div className="space-y-2">
+            {booking.occupants.map((occupant) => (
+              <OccupantCard
+                key={occupant.athleteId}
+                person={occupant}
+                status={occupant.hasPendingReview ? 'review' : 'assigned'}
+                fallbackArrival={booking.checkInDate}
+                fallbackDeparture={booking.checkOutDate}
+                hideNation
+                hideDiscipline
+                footer={<><div className="flex items-start justify-between gap-2">
+                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
+                  {booking.occupants.length > 1 && (
+                    <button
+                      disabled={pendingAction?.bookingId === booking.bookingId}
+                      onClick={() => onUnassignOccupant(booking.bookingId, occupant.athleteId)}
+                      className="rounded-lg border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] px-2 py-1 text-[10px] font-semibold text-[var(--ops-tone-warning-text)] hover:bg-[var(--ops-tone-warning-hover)] disabled:border-[var(--ops-tone-warning-disabled-border)] disabled:bg-[var(--ops-tone-warning-disabled-surface)] disabled:text-[var(--ops-tone-warning-disabled-text)]"
+                    >
+                      {pendingAction?.athleteIds?.includes(occupant.athleteId) ? <><RefreshCw className="mr-1 inline h-3 w-3 animate-spin" /> Loading</> : 'Nur diese Person'}
+                    </button>
+                  )}
+                </div>{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
+              />
+            ))}
+          </div>
+        </DetailSection>
+        <DetailSection icon={<Building2 className="h-4 w-4" />} title="Hotel">
+          <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3">
+            <div className="flex items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-bold text-[var(--ops-text)]">{hotel.hotelName}</div>
+                <div className="mt-1 text-xs text-[var(--ops-text-muted)]">{hotel.location || '—'}</div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="text-xs font-bold text-[var(--ops-text)]">{slot.roomNumber || `Zimmer ${String(slot.slotIndex).padStart(2, '0')}`}</div>
+                <div className="mt-1 text-[10px] font-semibold text-[var(--ops-text-muted)]">{slot.roomTypeName} · {booking.occupants.length} / {booking.capacity || 0} belegt</div>
+              </div>
+            </div>
+            <div className="mt-3 flex items-center justify-between gap-3 border-t border-[var(--ops-divider)] pt-2 text-[10px]">
+              <span className="font-semibold text-[var(--ops-text-muted)]">Hotelkontingent</span>
+              <span className="font-mono font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</span>
+            </div>
+            {(visibleAssignmentComment(hotel.comment) || contingentComments(hotel,slot.roomTypeId).length>0) && <div className="mt-2 grid gap-2 border-t border-[var(--ops-divider)] pt-2"><AssignmentComment label="Hotelkommentar" comment={hotel.comment}/>{contingentComments(hotel,slot.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
+            <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
+          </div>
+        </DetailSection>
+        <DetailSection icon={<Bed className="h-4 w-4" />} title="Quotenbewertung">
+          <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={pendingAction?.bookingId===booking.bookingId}
+            onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>
+        </DetailSection>
+        <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
+          <button
+            disabled={pendingAction?.bookingId === booking.bookingId}
+            onClick={() => onUnassignBooking(booking.bookingId)}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
+          >
+            {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            {pendingAction?.kind === 'unassign' && pendingAction.bookingId === booking.bookingId ? 'Ausbuchen läuft...' : 'Zimmerzuweisung für alle Personen entfernen'}
+          </button>
+        </DetailSection>
+        <ActivitySummaryCard entityType="assignments" entityId={booking.bookingId} />
+      </div>
+    );
+  }
+
+  if (!selectedUnit) return null;
+
+  const pendingChanges = Array.from(new Set(selectedUnit.occupants.filter((occ) => occ.hasPendingReview).flatMap((occ) => occ.importChangeTypes)));
+  const assignedHotel = hotels.find(hotel => hotel.hotelId === (selectedAssignedUnit?.assignedHotelId || selectedUnit.assignedHotelId));
+  const assignedSlots = assignedHotel?.slots.filter(slot => !selectedUnit.assignedRoomTypeId || slot.roomTypeId === selectedUnit.assignedRoomTypeId) || [];
+  const availableFrom = assignedSlots.map(slot => slot.dateCoverage.availableFrom).filter((value): value is string => Boolean(value)).sort()[0];
+  const availableUntil = assignedSlots.map(slot => slot.dateCoverage.availableUntil).filter((value): value is string => Boolean(value)).sort().at(-1);
+
+  return (
+    <div className="flex h-full flex-col overflow-y-auto">
+      {pendingChanges.length > 0 && (
+        <div className="m-4 mb-0 rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-amber-100">
+          <div className="text-xs font-bold">Importänderungen</div>
+          <button onClick={() => onAcknowledgeImportChanges(selectedUnit)} className="mt-3 w-full rounded-lg bg-amber-400 px-3 py-2 text-xs font-bold text-slate-950">Keine Änderung notwendig · geprüft speichern</button>
+        </div>
+      )}
+      {selectedUnit.assignmentWarnings.length > 0 && <div className="mx-4 mt-4 space-y-2">{selectedUnit.assignmentWarnings.map(warning => <div key={`${warning.code}-${warning.message}`} className={`flex items-start gap-2 rounded-xl border p-3 text-xs font-bold ${warning.level === 'error' ? 'border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] text-[var(--ops-error)]' : 'border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)] text-[var(--ops-tone-warning-text)]'}`}><AlertTriangle className="h-4 w-4 shrink-0"/>{warning.message}</div>)}</div>}
+      <div className="border-b border-[var(--ops-divider)] px-4 py-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-400/15 text-sm font-bold text-[var(--ops-assignment-text-accent)]">
+            {selectedUnit.nationCode}
+          </div>
+          <div>
+            <div className="text-[10px] font-bold uppercase tracking-[0.18em] text-[var(--ops-assignment-text-faint)]">Einheitsdetail</div>
+            <div className="mt-2 text-sm font-bold text-[var(--ops-assignment-text-strong)]">
+              {selectedUnit.occupants.map((occ) => `${occ.firstname} ${occ.lastname}`).join(' / ')}
+            </div>
+            <div className="mt-1 text-[10px] font-mono text-[var(--ops-assignment-text-muted)]">
+              {selectedUnit.roomTypeLabel} · {selectedUnit.checkInDate || '—'} → {selectedUnit.checkOutDate || '—'}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-[var(--ops-divider)] px-4 py-4">
+        <div className="rounded-xl border border-[var(--ops-tone-warning-border)] bg-[var(--ops-tone-warning-surface)]/40 p-3">
+          <div className="grid grid-cols-2 gap-3 text-xs">
+            <div><div className="text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Hotel</div><div className="mt-1 font-bold text-[var(--ops-text)]">{assignedHotel?.hotelName || 'Noch nicht zugewiesen'}</div></div>
+            <div><div className="text-[9px] font-bold uppercase tracking-wide text-[var(--ops-text-muted)]">Hotelkontingent</div><div className="mt-1 font-mono font-bold text-[var(--ops-text)]">{availableFrom && availableUntil ? `${formatShortDate(availableFrom)} – ${formatShortDate(availableUntil)}` : 'Kein Kontingentbezug'}</div></div>
+          </div>
+          <ContingentConflict arrival={selectedUnit.checkInDate} departure={selectedUnit.checkOutDate} availableFrom={availableFrom} availableUntil={availableUntil}/>
+        </div>
+      </div>
+      <div className="border-b border-[var(--ops-divider)] px-4 py-4">
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Personen</div>
+        <div className="space-y-2">
+          {selectedUnit.occupants.map((occupant) => (
+            <OccupantCard
+              key={occupant.athleteId}
+              person={occupant}
+              status={occupant.hasPendingReview || occupant.accommodationCoverage?.coverageStatus==='CONFLICT' ? 'review' : occupant.accommodationCoverage ? occupant.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' ? 'assigned' : 'open' : occupant.isAssigned ? 'assigned' : 'open'}
+              fallbackArrival={selectedUnit.checkInDate}
+              fallbackDeparture={selectedUnit.checkOutDate}
+              hideNation
+              hideDiscipline
+              hideRole={!occupant.function || occupant.function === 'Athlet'}
+              footer={<>{occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />}{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
+            />
+          ))}
+        </div>
+
+      </div>
+
+      <div className="px-4 py-4">
+        <div className="mb-3 text-[10px] font-bold uppercase tracking-widest text-[var(--ops-assignment-text-faint)]">Zuweisung</div>
+        {selectedAssignedUnit && selectedAssignedUnit.hasAnyAssigned ? (
+          <div className="space-y-3">
+            <div className="rounded-xl border border-emerald-700/40 bg-emerald-950/15 p-3">
+              <div className="flex items-center gap-2.5">
+                <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+                <div>
+                  <div className="text-xs font-bold text-emerald-300">{selectedAssignedUnit.isFullyAssigned ? (selectedAssignedUnit.assignedRoomNumber || 'Aktive Zuweisung') : 'Teilweise zugewiesen'}</div>
+                  <div className="mt-0.5 text-[10px] font-mono text-emerald-500">
+                    {selectedAssignedUnit.isFullyAssigned ? 'Bereits zugewiesen' : 'Mindestens eine Person ist bereits eingeplant'}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-raised)] p-3 text-xs text-[var(--ops-assignment-text-body)]">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Nation</div>
+                  <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{selectedUnit.nationCode}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Typ</div>
+                  <div className="mt-1 font-semibold text-[var(--ops-assignment-text-strong)]">{selectedUnit.roomTypeLabel}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Anreise</div>
+                  <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{selectedUnit.checkInDate || '—'}</div>
+                </div>
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">Abreise</div>
+                  <div className="mt-1 font-mono text-[var(--ops-assignment-text-body)]">{selectedUnit.checkOutDate || '—'}</div>
+                </div>
+              </div>
+            </div>
+            {selectedAssignedUnit.assignedBookingId && (
+              <button
+                onClick={() => onUnassignBooking(selectedAssignedUnit.assignedBookingId!)}
+                className="flex w-full items-center justify-center gap-2 rounded-xl border border-red-800/50 bg-red-950/30 py-2.5 text-xs font-semibold text-red-400 transition-colors hover:bg-red-950/50"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Zimmerzuweisung für alle Personen entfernen
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-[var(--ops-assignment-text-warning)]">
+            <AlertTriangle className="h-3.5 w-3.5" />
+            Zuweisung starten — auf einen Zimmerbereich ziehen
+          </div>
+        )}
+      </div>
+      <div className="px-4 pb-4"><ActivitySummaryCard entityType="assignments" entityId={selectedAssignedUnit?.assignedBookingId || selectedUnit.unitId} /></div>
+    </div>
+  );
+}
+
+function ContingentConflict({ arrival, departure, availableFrom, availableUntil }: { arrival?: string | null; departure?: string | null; availableFrom?: string | null; availableUntil?: string | null }) {
+  const early = Boolean(arrival && availableFrom && arrival < availableFrom);
+  const late = Boolean(departure && availableUntil && departure > availableUntil);
+  if (!early && !late) return null;
+  const message = early && late ? 'Aufenthalt außerhalb Hotelkontingent' : early ? 'Anreise vor Kontingentbeginn' : 'Abreise nach Kontingentende';
+  return <div className="mt-2 flex items-center gap-1.5 rounded-md border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] px-2 py-1.5 text-[10px] font-extrabold text-[var(--ops-error)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" />{message}</div>;
+}
+
+function SingleRoomDecisionCard({ status, decisionId, onShowDecision }: { status?: string | null; decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
+  const importStatus = status === 'PENDING_APPROVAL' ? 'Entscheidung offen' : decisionId ? 'Entscheidung dokumentiert' : 'Aus Import übernommen';
+  return (
+    <div className="mt-2 border-t border-[var(--ops-divider)] pt-2 text-xs text-[var(--ops-text-muted)]">
+      <div><span className="font-bold text-[var(--ops-text)]">Importstatus:</span> {importStatus}</div>
+      {decisionId && <button onClick={() => onShowDecision(decisionId)} className="mt-1.5 font-semibold text-[var(--ops-primary)] hover:underline">Entscheidung anzeigen</button>}
+    </div>
+  );
+}
+function EmptyCenter({ text }: { text: string }) {
+  return (
+    <div className="flex h-full items-center justify-center text-sm text-[var(--ops-assignment-text-faint)]">
+      {text}
+    </div>
+  );
+}
+
+function SearchInput({
+  value,
+  onChange,
+  placeholder,
+  dark,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  dark?: boolean;
+}) {
+  return (
+    <div className="relative">
+      <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[var(--ops-assignment-input-icon)]" />
+      <input
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        className={`w-full rounded-xl border pl-9 pr-3 py-2 text-sm transition-all focus:outline-none ${
+          dark
+            ? 'border-[var(--ops-assignment-input-border)] bg-[var(--ops-assignment-input)] text-[var(--ops-assignment-input-text)] placeholder:text-[var(--ops-assignment-input-placeholder)] hover:bg-[var(--ops-assignment-input-hover)] hover:border-[var(--ops-assignment-input-hover-border)] focus:border-[var(--ops-assignment-input-focus)] focus:shadow-[var(--ops-assignment-input-focus-ring)]'
+            : 'border-[var(--ops-assignment-input-alt-border)] bg-[var(--ops-assignment-input-alt)] text-[var(--ops-assignment-input-alt-text)] placeholder:text-[var(--ops-assignment-input-alt-placeholder)] hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-input-hover)] focus:border-[var(--ops-focus)] focus:shadow-[var(--ops-assignment-input-focus-ring)]'
+        }`}
+      />
+    </div>
+  );
+}
+
+function FilterButtonGroup({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: Array<{ id: string; label: string }>;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <fieldset>
+      <legend className="mb-1.5 text-[10px] font-bold uppercase tracking-[0.14em] text-[var(--ops-text-muted)]">{label}</legend>
+      <div className="inline-flex w-full rounded-lg bg-[var(--ops-surface-elevated)] p-0.5">
+        {options.map((option) => (
+          <button
+            key={option.id}
+            type="button"
+            onClick={() => onChange(option.id)}
+            aria-pressed={value === option.id}
+            className={`min-w-0 flex-1 rounded-md px-2 py-1 text-xs font-semibold transition-colors ${
+              value === option.id
+                ? 'bg-[var(--ops-primary-emphasis)] text-[var(--ops-on-accent)]'
+                : 'text-[var(--ops-text-subtle)] hover:bg-[var(--ops-surface-overlay)] hover:text-[var(--ops-text)]'
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
+    </fieldset>
+  );
+}
+
+function DarkSelect({
+  value,
+  onChange,
+  options,
+  placeholder,
+  labelMap,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: string[];
+  placeholder: string;
+  labelMap?: Record<string, string>;
+}) {
+  return (
+    <div className="relative">
+      <select
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="w-full appearance-none rounded-xl border border-[var(--ops-assignment-input-border)] bg-[var(--ops-assignment-input)] px-3 py-2 text-sm text-[var(--ops-assignment-select-text)] transition-all hover:border-[var(--ops-assignment-input-hover-border)] hover:bg-[var(--ops-assignment-input-hover)] focus:border-[var(--ops-assignment-input-focus)] focus:outline-none focus:shadow-[var(--ops-assignment-input-focus-ring)]"
+      >
+        <option value="">{placeholder}</option>
+        {options.map((option) => (
+          <option key={option} value={option}>
+            {labelMap?.[option] || option}
+          </option>
+        ))}
+      </select>
+      <ChevronDown className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-[var(--ops-assignment-text-faint)]" />
+    </div>
+  );
+}
+
+function CapacityBar({
+  pct,
+  className = '',
+  trackClassName = 'bg-[var(--ops-assignment-progress-track)]',
+}: {
+  pct: number;
+  className?: string;
+  trackClassName?: string;
+}) {
+  const color = pct >= 95 ? 'var(--ops-error)' : pct >= 75 ? 'var(--ops-warning)' : pct > 0 ? 'var(--ops-primary)' : 'var(--ops-border)';
+  return (
+    <div className={`h-2 overflow-hidden rounded-full ${trackClassName} ${className}`}>
+      <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.max(0, Math.min(pct, 100))}%`, backgroundColor: color }} />
+    </div>
+  );
+}
+
+function StatusTag({ tone, label }: { tone: 'green' | 'red'; label: string }) {
+  return (
+    <span className={`rounded-lg border px-2 py-0.5 text-[10px] font-semibold ${
+      tone === 'green'
+        ? 'border-emerald-800/50 bg-emerald-950/50 text-emerald-400'
+        : 'border-red-800/50 bg-red-950/50 text-red-400'
+    }`}>
+      {label}
+    </span>
+  );
+}
+
+function QuotaMetric({
+  label,
+  current,
+  max,
+  tone = 'blue',
+}: {
+  label: string;
+  current: number;
+  max: number;
+  tone?: 'blue' | 'red';
+}) {
+  const pct = max > 0 ? Math.min(100, Math.round((current / max) * 100)) : 0;
+  return (
+    <div>
+      <div className="mb-2 text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-faint)]">{label}</div>
+      <div className="mb-2 flex items-end gap-1">
+        <span className={`font-mono text-2xl font-bold ${tone === 'red' ? 'text-red-400' : 'text-[var(--ops-assignment-text-body)]'}`}>{current}</span>
+        <span className="pb-0.5 text-xs text-slate-600">/ {max}</span>
+      </div>
+      <CapacityBar pct={pct} />
+    </div>
+  );
+}
+
+function normalizeGender(value?: string | null) {
+  if (!value) return '';
+  const normalized = value.trim().toUpperCase();
+  if (normalized.startsWith('M')) return 'M';
+  if (normalized.startsWith('F') || normalized.startsWith('W')) return 'F';
+  return normalized;
+}
+
+function sameGender(unit: RoomBookingUnit) {
+  const genders = Array.from(new Set(unit.occupants.map((occ) => normalizeGender(occ.gender)).filter(Boolean)));
+  return genders.length <= 1;
+}
+
+function sameNation(unit: RoomBookingUnit) {
+  const nations = Array.from(new Set(unit.occupants.map((occ) => occ.nationCode).filter(Boolean)));
+  return nations.length <= 1;
+}
+
+function getValidationKey(unitId: string, athleteIds?: string[]) {
+  if (!athleteIds || athleteIds.length !== 1) return unitId;
+  return `${unitId}:athlete:${athleteIds[0]}`;
+}
+
+function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
+  if (unit.roomCategoryLabel === 'ez' || unit.roomCategoryLabel === 'dz') {
+    return unit.roomCategoryLabel;
+  }
+  if (unit.roomTypeLabel === 'single') return 'ez';
+  if (unit.roomTypeLabel === 'double') return 'dz';
+  return '';
+}
+
+/**
+ * The single predicate for filters owned by the assignment queue. Adding a
+ * future filter means extending the criteria and this function; consumers do
+ * not need target-specific filter branches.
+ */
+function matchesAssignmentFilters(unit: RoomBookingUnit, filters: AssignmentFilterCriteria) {
+  if (filters.status === 'pending' && unit.isFullyAssigned) return false;
+  if (filters.nation && unit.nationCode !== filters.nation) return false;
+  if ((filters.discipline || filters.gender) && !unit.occupants.some((occupant) =>
+    matchesDisciplineAndGender(occupant, filters.discipline, filters.gender))) return false;
+  if (filters.roomCategory && getUnitRoomCategory(unit) !== filters.roomCategory) return false;
+  if (filters.importReview && !unit.occupants.some((occupant) => occupant.hasPendingReview)) return false;
+
+  const query = filters.search.trim().toLowerCase();
+  if (!query) return true;
+  const haystack = `${unit.nationCode} ${unit.roomTypeLabel} ${unit.occupants
+    .map((occupant) => `${occupant.firstname} ${occupant.lastname}`)
+    .join(' ')}`.toLowerCase();
+  return haystack.includes(query);
+}
+
+function hasActiveAssignmentFilters(filters: AssignmentFilterCriteria) {
+  return Boolean(
+    filters.search.trim()
+    || filters.nation
+    || filters.discipline
+    || filters.gender
+    || filters.status !== 'all'
+    || filters.roomCategory
+    || filters.importReview,
+  );
+}
+
+/**
+ * The synchronized result is intentionally hotel-level: a matching occupancy
+ * keeps the original hotel, including every room and booking, intact. The
+ * right-hand side is an overview and must never turn into a filtered person or
+ * slot list.
+ */
+function filterHotelsByMatchingUnits(hotels: AssignmentGridHotel[], units: RoomBookingUnit[]) {
+  const athleteIds = new Set(units.flatMap((unit) => unit.occupants.map((occupant) => occupant.athleteId)));
+  return hotels.filter((hotel) => hotel.slots.some((slot) =>
+    slot.bookings.some((booking) => booking.occupants.some((occupant) => athleteIds.has(occupant.athleteId))),
+  ));
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return '—';
+  const [year, month, day] = value.split('-');
+  return year && month && day ? `${day}.${month}.` : value;
+}
+
+function assignmentHotelOperationalState(hotel: AssignmentGridHotel):OperationalHotelState {
+  const summary=summarizeHotel(hotel);
+  const hasFree=(pattern:RegExp)=>summary.roomTypes.some(row=>pattern.test(row.roomTypeName)&&row.operationalUsed<row.totalBeds);
+  return {name:hotel.hotelName,occupancy:summary.percent,totalCapacity:summary.totalBeds,freeCapacity:Math.max(0,summary.totalBeds-summary.operationalUsed),hasFreeSingle:hasFree(/(^|\W)EZ(\W|$)|einzel/i),hasFreeDouble:hasFree(/(^|\W)DZ(\W|$)|doppel/i)};
+}
+
+function summarizeHotel(hotel: AssignmentGridHotel) {
+  const roomTypeMap = new Map<string, { roomTypeId: string; roomTypeName: string; usedBeds: number; operationalUsed:number; totalBeds: number; capacity: number }>();
+  let usedBeds = 0;
+  let operationalUsed=0;
+  let totalBeds = 0;
+  let usedRooms = 0;
+
+  for (const slot of hotel.slots) {
+    const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
+    const slotUsedBeds = slotPersonCount(slot);
+    usedBeds += slotUsedBeds;
+    operationalUsed+=slotOperationalUsed(slot);
+    totalBeds += slot.capacity;
+    if (slot.bookings.length > 0) usedRooms += 1;
+
+    if (!roomTypeMap.has(key)) {
+      roomTypeMap.set(key, {
+        roomTypeId: slot.roomTypeId,
+        roomTypeName: slot.roomTypeName,
+        usedBeds: 0,
+        operationalUsed:0,
+        totalBeds: 0,
+        capacity: slot.capacity,
+      });
+    }
+
+    const current = roomTypeMap.get(key)!;
+    current.usedBeds += slotUsedBeds;
+    current.operationalUsed+=slotOperationalUsed(slot);
+    current.totalBeds += slot.capacity;
+  }
+
+  const starts = hotel.slots.map((slot) => slot.dateCoverage.availableFrom).filter(Boolean) as string[];
+  const ends = hotel.slots.map((slot) => slot.dateCoverage.availableUntil).filter(Boolean) as string[];
+  const days = starts.length && ends.length
+    ? Math.max(1, differenceInDays(starts.sort()[0], ends.sort()[ends.length - 1]))
+    : 0;
+
+  return {
+    usedBeds,
+    operationalUsed,
+    totalBeds,
+    usedRooms,
+    totalRooms: hotel.slots.length,
+    percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
+    days,
+    roomTypes: Array.from(roomTypeMap.values()),
+  };
+}
+
+function summarizeRoomType(slots: AssignmentSlot[]) {
+  const totalRooms = slots.length;
+  const totalBeds = slots.reduce((sum, slot) => sum + slot.capacity, 0);
+  const usedRooms = slots.filter((slot) => slot.bookings.length > 0).length;
+  const usedBeds = slots.reduce((sum, slot) => sum + slotPersonCount(slot), 0);
+  return {
+    totalRooms,
+    remainingRooms: Math.max(0, totalRooms - usedRooms),
+    totalBeds,
+    usedRooms,
+    usedBeds,
+    percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
+    capacityPerRoom: slots[0]?.capacity || 0,
+  };
+}
+
+function getHotelContingentRange(hotel: AssignmentGridHotel) {
+  const starts = hotel.slots.map((slot) => slot.dateCoverage.availableFrom).filter((date): date is string => Boolean(date)).sort();
+  const ends = hotel.slots.map((slot) => slot.dateCoverage.availableUntil).filter((date): date is string => Boolean(date)).sort();
+  if (!starts.length || !ends.length) return 'Zeitraum nicht hinterlegt';
+  return `${formatGermanDate(starts[0])} – ${formatGermanDate(ends[ends.length - 1])}`;
+}
+
+function formatGermanDate(value: string) {
+  const [year, month, day] = value.slice(0, 10).split('-');
+  return day && month && year ? `${day}.${month}.${year}` : value;
+}
+
+function hotelHasValidDrop(validations: AssignmentValidationResult[], hotelId: string) {
+  return validations.some((validation) => validation.status !== 'blocked' && validation.slotId.startsWith(`${hotelId}:`));
+}
+
+function findFirstValidSlot(validations: AssignmentValidationResult[], hotels: AssignmentGridHotel[], hotelId: string) {
+  const hotel = hotels.find((item) => item.hotelId === hotelId);
+  if (!hotel) return null;
+  for (const slot of hotel.slots) {
+    const result = validations.find((entry) => entry.slotId === slot.slotId);
+    if (result && result.status !== 'blocked') return slot;
+  }
+  return null;
+}
+
+function findFirstValidSlotForRoomType(validations: AssignmentValidationResult[], hotels: AssignmentGridHotel[], hotelId: string, roomTypeId: string) {
+  const hotel = hotels.find((item) => item.hotelId === hotelId);
+  if (!hotel) return null;
+  for (const slot of hotel.slots.filter((entry) => entry.roomTypeId === roomTypeId)) {
+    const result = validations.find((entry) => entry.slotId === slot.slotId);
+    if (result && result.status !== 'blocked') return slot;
+  }
+  return null;
+}
+
+function findAssignedUnitForBooking(bookingId: string, assignedUnits: RoomBookingUnit[]) {
+  return assignedUnits.find((unit) => unit.assignedBookingId === bookingId) ?? null;
+}
+
+function differenceInDays(start: string, end: string) {
+  const startDate = new Date(start);
+  const endDate = new Date(end);
+  const diff = endDate.getTime() - startDate.getTime();
+  return Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24)));
+}
+
+function extractErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message;
+  if (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string') {
+    return error.message;
+  }
+  return fallback;
+}
+
+function QueueDemandSummary({units,context}:{units:DispositionItem[];context:string}) {
+  const summary=queueDemandSummary(units);
+  return <div className="mb-2 rounded border border-[var(--ops-divider)] px-2 py-1.5 text-[11px] text-[var(--ops-text-muted)]"><div className="font-semibold">{context || 'Aktuelle Auswahl'}</div><div>{summary.people} {summary.people===1 ? 'Person' : 'Personen'} offen · {summary.athletes} {summary.athletes===1 ? 'Athlet' : 'Athleten'} · {summary.officials} {summary.officials===1 ? 'Official' : 'Officials'}</div><div>EZ {summary.ez} · DZ {summary.dz}{summary.start && summary.end && <> · {periodLabel({checkInDate:summary.start,checkOutDate:summary.end})}</>}</div></div>;
+}

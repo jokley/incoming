@@ -6,7 +6,9 @@ import unittest
 from unittest.mock import MagicMock, patch
 from sqlalchemy.exc import OperationalError
 
-from flask import Flask
+from flask import Flask, g
+from types import SimpleNamespace
+from restore_coordination import schema_contract
 
 from database_admin import database_admin
 
@@ -16,7 +18,13 @@ class DatabaseAdminTest(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.app = Flask(__name__)
         self.app.config.update(BACKUP_DIR=self.temporary.name,
-                               BACKUP_SERVICE_URL='http://backup:8080')
+                               BACKUP_SERVICE_URL='http://backup:8080', DATABASE_MAINTENANCE_MODE=True)
+        self.app.config['AUTH_PROXY_SECRET'] = 'unit-test-control'
+        @self.app.before_request
+        def contract_identity():
+            g.current_user = SimpleNamespace(username='contract-admin', has_permission=lambda permission: False)
+        target=patch('database_admin.restore_database_target',return_value={'host':'postgres','port':5432,'database':'isolated'})
+        target.start();self.addCleanup(target.stop)
         self.app.register_blueprint(database_admin)
         self.client = self.app.test_client()
 
@@ -57,7 +65,7 @@ class DatabaseAdminTest(unittest.TestCase):
         automatic.mkdir()
         Path(automatic, 'incoming-1.dump.gz').write_bytes(b'dump')
         Path(self.temporary.name, 'last-backup.json').write_text(json.dumps({
-            'status': 'success', 'filename': 'incoming-1.dump.gz', 'size': 4}))
+            'status': 'success', 'filename': 'incoming-1.dump.gz', 'size': 4, 'error': 'private diagnostic', 'database': 'internal'}))
         payload = self.client.get('/api/admin/database/status').get_json()
         self.assertEqual(payload['postgresVersion'], '17.5')
         self.assertEqual(payload['databaseSize'], 42000000)
@@ -65,6 +73,9 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(payload['backupCount'], 1)
         self.assertEqual(payload['backupStatus'], 'success')
         self.assertEqual(payload['databaseStatus'], 'available')
+        self.assertNotIn('error', payload['lastBackup'])
+        self.assertNotIn('database', payload['lastBackup'])
+        self.assertNotIn('filename', payload['lastBackup'])
 
     @patch('database_admin.db.session.rollback')
     @patch('database_admin.db.session.execute')
@@ -97,12 +108,12 @@ class DatabaseAdminTest(unittest.TestCase):
         self.assertEqual(request.full_url, 'http://backup:8080/import')
         self.assertEqual(request.headers['Content-length'], '5')
         self.assertEqual(uploaded, [b'PGDMP'])
-        response = self.client.post('/api/admin/database/restore', json={'token': 'abc'})
+        response = self.client.post('/api/admin/database/restore', json={'token': 'abc','confirmation':'RESTORE DATABASE'})
         self.assertEqual(response.status_code, 200)
         restore_request = urlopen.call_args_list[1].args[0]
-        self.assertEqual(restore_request.full_url, 'http://backup:8080/restore')
+        self.assertEqual(restore_request.full_url, 'http://backup:8080/restore-jobs')
         self.assertEqual(json.loads(restore_request.data),
-                         {'filename': None, 'category': None, 'token': 'abc'})
+                         {'filename': None, 'category': None, 'token': 'abc', 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
 
     @patch('database_admin.urllib.request.urlopen')
     def test_server_and_imported_backups_use_same_restore_request_shape(self, urlopen):
@@ -110,18 +121,27 @@ class DatabaseAdminTest(unittest.TestCase):
         restored.read.return_value = json.dumps({'status': 'success'}).encode()
         urlopen.return_value.__enter__.return_value = restored
 
-        self.client.post('/api/admin/database/restore', json={'filename': 'server.dump.gz'})
+        self.client.post('/api/admin/database/restore', json={'filename': 'server.dump.gz','confirmation':'RESTORE DATABASE'})
         server_payload = json.loads(urlopen.call_args_list[0].args[0].data)
         self.client.post('/api/admin/database/restore',
-                         json={'filename': 'import.dump', 'token': 'a' * 32})
+                         json={'filename': 'import.dump', 'token': 'a' * 32,'confirmation':'RESTORE DATABASE'})
         imported_payload = json.loads(urlopen.call_args_list[1].args[0].data)
 
-        self.assertEqual(set(server_payload), {'filename', 'category', 'token'})
-        self.assertEqual(set(imported_payload), {'filename', 'category', 'token'})
-        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'category': None, 'token': None})
+        self.assertEqual(set(server_payload), {'filename', 'category', 'token', 'actor', 'confirmation', 'schemaContract', 'databaseTarget'})
+        self.assertEqual(set(imported_payload), {'filename', 'category', 'token', 'actor', 'confirmation', 'schemaContract', 'databaseTarget'})
+        self.assertEqual(server_payload, {'filename': 'server.dump.gz', 'category': None, 'token': None, 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
         self.assertEqual(imported_payload,
-                         {'filename': 'import.dump', 'category': None, 'token': 'a' * 32})
+                         {'filename': 'import.dump', 'category': None, 'token': 'a' * 32, 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
 
 
 if __name__ == '__main__':
     unittest.main()
+
+
+def test_metadata_allowlist_never_includes_downloads_or_writes():
+    from database_admin import is_database_metadata_request
+    assert is_database_metadata_request('/api/admin/database/status','GET')
+    assert is_database_metadata_request('/api/admin/database/backups','HEAD')
+    assert not is_database_metadata_request('/api/admin/database/backups/manual/file.dump.gz','GET')
+    assert not is_database_metadata_request('/api/admin/database/status','POST')
+    assert not is_database_metadata_request('/api/admin/database/restore','GET')

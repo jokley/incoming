@@ -30,6 +30,25 @@ class ApiRouteSafetyTest(unittest.TestCase):
                                  AUTH_PROXY_SECRET='baseline-secret')
         self.config.start()
         self.addCleanup(self.config.stop)
+        # These guard/manifest tests replace endpoint bodies with sentinels and
+        # intentionally use no database; real transaction locking is tested with PG.
+        lock = patch('app.lock_accommodation_writes')
+        lock.start()
+        self.addCleanup(lock.stop)
+        # This suite isolates functional permissions using sentinel handlers.
+        # Real grant/ownership checks are exercised against PG in PR8 acceptance.
+        context = patch('event_ownership_runtime.bind_request_event', return_value=1)
+        context.start()
+        self.addCleanup(context.stop)
+        # This suite replaces route bodies and isolates authentication/permissions;
+        # reference persistence is covered against PostgreSQL in PR9 acceptance.
+        references = patch('user_access.remember_authenticated_user')
+        references.start()
+        self.addCleanup(references.stop)
+        administrative_context = patch('admin_scope.bind_admin_target')
+        administrative_context.start(); self.addCleanup(administrative_context.stop)
+        cleanup_context=patch('admin_scope.bind_reset_target')
+        cleanup_context.start();self.addCleanup(cleanup_context.stop)
         self.client = app.test_client()
 
     @staticmethod
@@ -72,7 +91,7 @@ class ApiRouteSafetyTest(unittest.TestCase):
 
     def test_viewer_cannot_mutate_or_read_admin_and_audit_routes(self):
         for path, methods in ROUTES.items():
-            if path == '/health':
+            if path in {'/health','/api/assignments/availability','/api/auth/me'}:
                 continue
             for method in methods:
                 restricted_read = path.startswith(('/api/admin/', '/api/audit-events'))
@@ -81,6 +100,12 @@ class ApiRouteSafetyTest(unittest.TestCase):
                 with self.subTest(path=path, method=method):
                     self.assertEqual(self.client.open(concrete(path), method=method,
                         headers=self.headers('incoming-viewer')).status_code, 403)
+
+    def test_viewer_can_read_availability_projection(self):
+        with patch.dict(app.view_functions, get_assignment_availability=lambda: {'readOnly': True}), patch('app.lock_accommodation_writes') as lock:
+            response=self.client.post('/api/assignments/availability',json={},headers=self.headers('incoming-viewer'))
+            self.assertEqual(response.status_code,200)
+            lock.assert_not_called()
 
     def test_editor_cannot_access_administration(self):
         for path, methods in ROUTES.items():
@@ -114,6 +139,11 @@ class ApiRouteSafetyTest(unittest.TestCase):
             ('PATCH', '/api/athletes/1', 'data.write'),
             ('POST', '/api/events', 'data.write'),
             ('POST', '/api/assignments/bookings', 'assignments.write'),
+            ('POST', '/api/assignments/persons/1/segments', 'assignments.write'),
+            ('POST', '/api/assignments/segments', 'assignments.write'),
+            ('POST', '/api/assignments/bookings/1/split', 'assignments.write'),
+            ('PUT', '/api/assignments/persons/1/segments/1', 'assignments.write'),
+            ('DELETE', '/api/assignments/persons/1/segments/1', 'assignments.write'),
             ('DELETE', '/api/room-assignments/1', 'assignments.write'),
             ('POST', '/api/import/fis/preview', 'imports.write'),
             ('POST', '/api/import/fis/confirm', 'imports.write'),
@@ -134,7 +164,10 @@ class ApiRouteSafetyTest(unittest.TestCase):
                             patch.dict(ROLE_PERMISSIONS, {'baseline-role': {permission}}):
                         response = self.client.open(path, method=method,
                             headers=self.headers('baseline-role'))
-                        self.assertEqual(response.status_code, 418 if permission == required else 403)
+                        if permission == required and path.startswith(('/api/import/sessions/', '/api/import/approvals/')):
+                            self.assertEqual(response.status_code, 404)  # Context guard precedes the mocked handler.
+                        else:
+                            self.assertEqual(response.status_code, 418 if permission == required else 403)
 
     def test_options_remains_unauthenticated(self):
         for path in ROUTES:

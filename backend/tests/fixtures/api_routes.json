@@ -1,4 +1,7 @@
 {
+  "/api/active-event-context": [
+    "GET"
+  ],
   "/api/admin/database/backup": [
     "POST"
   ],
@@ -13,6 +16,9 @@
   ],
   "/api/admin/database/restore": [
     "POST"
+  ],
+  "/api/admin/database/restore-status": [
+    "GET"
   ],
   "/api/admin/database/status": [
     "GET"
@@ -34,6 +40,28 @@
   "/api/admin/events/<int:event_id>/copy-mappings": [
     "POST"
   ],
+  "/api/admin/events/<int:event_id>/quota-rules": [
+    "GET",
+    "PUT"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/fix": [
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/revision-preview": [
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/quota-rules/revisions": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/events/<int:event_id>/world-champion-list": [
+    "GET",
+    "PUT"
+  ],
+  "/api/admin/events/<int:event_id>/world-champions": [
+    "GET",
+    "POST"
+  ],
   "/api/admin/scenarios": [
     "GET"
   ],
@@ -48,13 +76,38 @@
     "POST"
   ],
   "/api/admin/test-data/reset": [
+    "GET",
     "POST"
+  ],
+  "/api/admin/users": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/users/grants": [
+    "PUT"
+  ],
+  "/api/admin/world-champion-lists": [
+    "GET"
+  ],
+  "/api/admin/world-champion-titles": [
+    "GET"
+  ],
+  "/api/admin/world-champions": [
+    "GET",
+    "POST"
+  ],
+  "/api/admin/world-champions/<int:champion_id>": [
+    "GET",
+    "PUT"
   ],
   "/api/analytics/occupancy-timeline": [
     "GET"
   ],
   "/api/analytics/room-availability": [
     "GET"
+  ],
+  "/api/assignments/availability": [
+    "POST"
   ],
   "/api/assignments/bookings": [
     "POST"
@@ -74,11 +127,24 @@
   "/api/assignments/bookings/<int:booking_id>/occupants/<int:athlete_id>/unassign/": [
     "POST"
   ],
+  "/api/assignments/bookings/<int:booking_id>/split": [
+    "POST"
+  ],
+  "/api/assignments/bookings/<int:booking_id>/split-preview": [
+    "GET"
+  ],
   "/api/assignments/bookings/<int:booking_id>/unassign": [
     "POST"
   ],
   "/api/assignments/bookings/<int:booking_id>/unassign/": [
     "POST"
+  ],
+  "/api/assignments/persons/<int:person_id>/segments": [
+    "POST"
+  ],
+  "/api/assignments/persons/<int:person_id>/segments/<int:booking_id>": [
+    "DELETE",
+    "PUT"
   ],
   "/api/assignments/planning-view": [
     "GET"
@@ -87,6 +153,15 @@
     "GET"
   ],
   "/api/assignments/planning-view/validations/<path:validation_key>": [
+    "GET"
+  ],
+  "/api/assignments/segments": [
+    "POST"
+  ],
+  "/api/assignments/segments/preview": [
+    "GET"
+  ],
+  "/api/athlete-quotas": [
     "GET"
   ],
   "/api/athletes": [
@@ -117,7 +192,8 @@
     "GET"
   ],
   "/api/auth/me": [
-    "GET"
+    "GET",
+    "POST"
   ],
   "/api/championship-events": [
     "GET"
@@ -141,6 +217,9 @@
   ],
   "/api/events/<int:event_id>/demand/<int:demand_id>": [
     "DELETE"
+  ],
+  "/api/fis/athlete-quotas": [
+    "GET"
   ],
   "/api/fis/official-quotas": [
     "GET"
@@ -231,6 +310,12 @@
   "/api/import/sessions/<int:session_id>": [
     "GET"
   ],
+  "/api/import/sessions/<int:session_id>/accommodation-rates/<path:person_key>": [
+    "PATCH"
+  ],
+  "/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>": [
+    "PATCH"
+  ],
   "/api/import/sessions/<int:session_id>/approvals/<int:approval_id>": [
     "PATCH"
   ],
@@ -249,6 +334,9 @@
   "/api/import/sessions/<int:session_id>/import": [
     "POST"
   ],
+  "/api/import/sessions/<int:session_id>/recheck": [
+    "POST"
+  ],
   "/api/import/sessions/<int:session_id>/single-room-exemptions/<path:person_key>": [
     "PATCH"
   ],
@@ -256,6 +344,9 @@
     "GET"
   ],
   "/api/official-quotas/": [
+    "GET"
+  ],
+  "/api/quota-rules": [
     "GET"
   ],
   "/api/room-assignments": [

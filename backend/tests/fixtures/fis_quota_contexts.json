@@ -1,0 +1,95 @@
+{
+  "people": [
+    {
+      "personId": "M",
+      "nationCode": "AUT",
+      "function": "Athlete",
+      "gender": "M",
+      "quotaDisciplines": [
+        "Ski Cross"
+      ]
+    },
+    {
+      "personId": "W",
+      "nationCode": "AUT",
+      "function": "Athlete",
+      "gender": "W",
+      "quotaDisciplines": [
+        "Ski Cross",
+        "Snowboard Cross"
+      ]
+    },
+    {
+      "personId": "O1",
+      "nationCode": "AUT",
+      "function": "Official",
+      "gender": "M",
+      "forGender": "A",
+      "quotaDisciplines": [
+        "Ski Cross"
+      ]
+    },
+    {
+      "personId": "O2",
+      "nationCode": "AUT",
+      "function": "Official",
+      "gender": "W",
+      "forGender": "A",
+      "quotaDisciplines": [
+        "Ski Cross",
+        "Snowboard Cross"
+      ]
+    },
+    {
+      "personId": "O3",
+      "nationCode": "AUT",
+      "function": "Official",
+      "gender": "A",
+      "forGender": "A",
+      "quotaDisciplines": [
+        "Ski Cross"
+      ],
+      "singleRoomQuotaExemptReason": "OTHER"
+    }
+  ],
+  "assignedPersonIds": [
+    "O1",
+    "O2",
+    "O3"
+  ],
+  "expected": [
+    {
+      "nationCode": "AUT",
+      "discipline": "Ski Cross",
+      "gender": "M",
+      "athletesEntered": 1,
+      "officialQuota": 3,
+      "singleRoomsAllowed": 1,
+      "assignedOfficials": 3,
+      "singleRoomsUsed": 1,
+      "quotaExemptSingleRooms": 1
+    },
+    {
+      "nationCode": "AUT",
+      "discipline": "Ski Cross",
+      "gender": "W",
+      "athletesEntered": 1,
+      "officialQuota": 3,
+      "singleRoomsAllowed": 1,
+      "assignedOfficials": 3,
+      "singleRoomsUsed": 1,
+      "quotaExemptSingleRooms": 0
+    },
+    {
+      "nationCode": "AUT",
+      "discipline": "Snowboard Cross",
+      "gender": "W",
+      "athletesEntered": 1,
+      "officialQuota": 3,
+      "singleRoomsAllowed": 1,
+      "assignedOfficials": 1,
+      "singleRoomsUsed": 0,
+      "quotaExemptSingleRooms": 0
+    }
+  ]
+}

@@ -53,3 +53,34 @@ def configure_test_app(app):
             raise ValueError('Test app engine differs from TEST_DATABASE_URL')
     app.config.update(TESTING=True, AUTH_DEV_USER='test-admin',
                       AUTH_DEV_GROUPS='incoming-admin', AUTH_PROXY_SECRET='')
+
+
+def prepare_import_championship(competitions=()):
+    """Explicit isolated fixture owner/mapping for legacy import tests."""
+    from flask import current_app
+    from models import db, Event, EventCompetition
+    identity = current_app.config.get('OPERATIONAL_EVENT_ID')
+    championship = db.session.get(Event, identity) if identity else None
+    if championship is None:
+        championship = Event(name='Explicit import test championship', active=True)
+        db.session.add(championship); db.session.flush()
+        current_app.config['OPERATIONAL_EVENT_ID'] = championship.id
+    for competition in competitions:
+        if not any(m.competition_id == competition.id for m in championship.competition_mappings):
+            db.session.add(EventCompetition(event_id=championship.id, competition_id=competition.id,
+                import_code=competition.import_code, fis_codex=competition.code,
+                official_name=competition.name))
+    db.session.commit()
+    return championship
+
+
+def import_review_payload(session):
+    """Explicit full-snapshot test review; production always receives operator consent."""
+    import json
+    from imports.workflow import refresh_plan
+    from models import db
+    refresh_plan(session)
+    db.session.commit()
+    plan=json.loads(session.current_version.preview_json)['_workflow']['plan']
+    return {'planDigest':plan['digest'],'snapshotScope':'FULL_NATION','versionId':session.current_version_id,
+            'confirmDestructiveChanges':plan['requiresDestructiveConfirmation']}

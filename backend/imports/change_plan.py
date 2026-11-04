@@ -1,0 +1,288 @@
+"""Deterministic server-owned replacement plans, scoped to nation or sport family."""
+import hashlib
+import json
+from datetime import date, datetime
+from types import SimpleNamespace
+import sqlalchemy as sa
+from models import (db, Athlete, AthleteCompetition, RoomBooking, RoomBookingOccupant,
+    RoomAssignment, FisRoomAssignment, ImportSession, ImportSessionVersion,
+    ImportApproval, ImportSessionEvent, Event, EventCompetition, Competition, WorldChampion, WorldChampionRecognition, AuditEvent)
+from .identity import _find_existing_athlete
+from .event_context import ImportValidationError
+
+
+def encoded(value):
+    return json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(',', ':'),
+        default=lambda v: v.isoformat() if isinstance(v, (date, datetime)) else str(v))
+
+
+def digest(value):
+    return hashlib.sha256(encoded(value).encode()).hexdigest()
+
+
+def rows(model, condition):
+    table = model.__table__
+    return [dict(row) for row in db.session.execute(sa.select(table).where(condition)
+        .order_by(*table.primary_key.columns)).mappings()]
+
+
+def state(event_id, nation):
+    """Bulk raw SQL avoids stale ORM snapshots and per-person evidence queries."""
+    people = rows(Athlete, sa.and_(Athlete.event_id == event_id, Athlete.nation_code == nation))
+    ids = [p['id'] for p in people]
+    memberships = rows(RoomBookingOccupant, RoomBookingOccupant.athlete_id.in_(ids)) if ids else []
+    booking_ids = {m['room_booking_id'] for m in memberships}
+    occupants = rows(RoomBookingOccupant, RoomBookingOccupant.room_booking_id.in_(booking_ids)) if booking_ids else []
+    partner_ids = {o['athlete_id'] for o in occupants} - set(ids)
+    partners = rows(Athlete, Athlete.id.in_(partner_ids)) if partner_ids else []
+    bookings = rows(RoomBooking, RoomBooking.id.in_(booking_ids)) if booking_ids else []
+    if any(p['event_id'] != event_id for p in partners) or any(b['event_id'] != event_id for b in bookings):
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Gemischte Event-Buchungsbeziehungen.')
+    legacy = rows(RoomAssignment, sa.or_(RoomAssignment.athlete_id.in_(ids), RoomAssignment.shared_with_athlete_id.in_(ids))) if ids else []
+    fis = rows(FisRoomAssignment, sa.or_(FisRoomAssignment.person1_id.in_(ids), FisRoomAssignment.person2_id.in_(ids))) if ids else []
+    linked_ids = {r[k] for r in legacy for k in ('athlete_id','shared_with_athlete_id') if r[k]}
+    linked_ids |= {r[k] for r in fis for k in ('person1_id','person2_id') if r[k]}
+    extra_ids = linked_ids - set(ids) - partner_ids
+    if extra_ids:
+        partners += rows(Athlete, Athlete.id.in_(extra_ids))
+    if any(p['event_id'] != event_id for p in partners):
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Eventfremde Legacy-Referenz.')
+    sessions = rows(ImportSession, sa.and_(ImportSession.event_id == event_id, ImportSession.nation == nation))
+    session_ids = [s['id'] for s in sessions]
+    decision_ids={p[k] for p in people for k in ('single_room_decision_id','accommodation_rate_approval_id') if p[k]}
+    if decision_ids and db.session.query(ImportApproval.id).join(ImportSession).filter(ImportApproval.id.in_(decision_ids),ImportSession.event_id!=event_id).first():
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH','Eventfremde Genehmigungsreferenz.')
+    approvals = rows(ImportApproval, sa.or_(ImportApproval.session_id.in_(session_ids),ImportApproval.id.in_(decision_ids)))
+    versions = rows(ImportSessionVersion, ImportSessionVersion.session_id.in_(session_ids))
+    approval_history = rows(ImportSessionEvent, sa.and_(ImportSessionEvent.session_id.in_(session_ids),
+        ImportSessionEvent.event_type == 'QUOTA_DECISION_REVISED_FROM'))
+    current_ids = {s['current_version_id'] for s in sessions}
+    # Workflow transitions and the current plan must not invalidate themselves.
+    # Prior parsed evidence stays immutable and participates in concurrency checks.
+    sessions = [{k: s[k] for k in ('id','event_id','nation','current_version_id')} for s in sessions]
+    versions = [{**{k:v[k] for k in ('id','session_id','version','source_hash','preview_token')},
+        'historicalPreviewFingerprint':digest(json.loads(v['preview_json'] or '{}')) if v['id'] not in current_ids else None} for v in versions]
+    # Calendar-only references must not invalidate historical import evidence.
+    mappings = [{k:v for k,v in mapping.items() if k!='accommodation_event_id'}
+                for mapping in rows(EventCompetition, EventCompetition.event_id == event_id)]
+    competitions = rows(Competition, Competition.id.in_([m['competition_id'] for m in mappings]))
+    audits = rows(AuditEvent, sa.and_(AuditEvent.entity_id.in_([str(i) for i in ids]),
+        AuditEvent.entity_type.in_(['athletes','athlete','world-champion-status']))) if ids else []
+    from quota_rules import accommodation_rule_event
+    event_rows = rows(Event, Event.id == event_id)
+    for row in event_rows:
+        policy = accommodation_rule_event(SimpleNamespace(**row))
+        for field in ('quota_rules_json', 'quota_rules_revision', 'quota_rules_fixed_at', 'quota_rules_fixed_by'):
+            row[field] = getattr(policy, field)
+    return dict(people=people, partners=partners, memberships=rows(AthleteCompetition, AthleteCompetition.athlete_id.in_(ids)) if ids else [],
+        bookings=bookings, occupants=occupants, legacy=legacy, fis=fis, sessions=sessions, versions=versions,
+        approvals=approvals, approvalHistory=approval_history, mappings=mappings, competitions=competitions,
+        event=event_rows, champions=rows(WorldChampion, sa.or_(WorldChampion.event_id == event_id,WorldChampion.id.in_(sa.select(WorldChampionRecognition.title_id).where(WorldChampionRecognition.event_id==event_id)))), recognitions=rows(WorldChampionRecognition, WorldChampionRecognition.event_id==event_id), audits=audits)
+
+
+def input_fingerprint(preview):
+    return digest({**{k:preview[k] for k in ('replacementScope','submissionSources','submissionSourceDigests','reviewSourceVersionId','evaluationPeople','cancelledPeople') if k in preview}, **{k:preview.get(k) for k in ('people','rooms','entriesColumns','roomColumns',
+        'quotaRulesDigest','quotaRulesRevision','quotaRulesSnapshot','athleteQuotaChecks','roomListHasNoData','accommodationRateOverrides','accommodationRequirementOverrides',
+        'singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions','carriedSingleRoomQuotaExemptKeys')}})
+
+
+def build_plan(preview, read_context, *, version=None):
+    """The sole source of person/membership/deletion sets for review and apply."""
+    from excel_import import _apply_person_record
+    from quota_history import applicable_approval_groups, preview_approval_person
+    event_id = read_context.event_id
+    nations = {p.get('nationCode') for p in preview['people'] if p.get('nationCode')}
+    nation = version.session.nation if version else next(iter(nations)) if len(nations)==1 else None
+    if nation is None or nations - {nation}:
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Ein Snapshot benötigt genau eine ausdrücklich gewählte Nation.')
+    from competitions import competition_athlete_family
+    scope = preview.get('replacementScope') or {'kind':'FULL_NATION'}  # Historical snapshots retain their original meaning.
+    family = set(scope.get('families') or [scope.get('family')]) if scope.get('kind') == 'SPORT_FAMILY' else set()
+    if scope.get('kind') not in {'FULL_NATION','SPORT_FAMILY'} or (scope['kind']=='SPORT_FAMILY' and (not family or not family <= {'Snowboard','Freestyle'})):
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Sportbereich nicht eindeutig. Ersetzungsbereich ausdrücklich wählen; kein Import durchgeführt.')
+    snapshot = state(event_id, nation)
+    old = {p['id']:p for p in snapshot['people']}
+    cancelled = {}
+    strong_cancellations = set()
+    from .normalization import canonical_fis_code, normalize_whitespace
+    for entry in preview.get('cancelledPeople', []):
+        existing = _find_existing_athlete(entry, read_context.athlete_maps)
+        if existing and existing.id in old:
+            cancelled.setdefault(existing.id, set()).add(entry.get('sourceFamily'))
+            if ((canonical_fis_code(entry.get('fisCode')) and canonical_fis_code(entry.get('fisCode')) == canonical_fis_code(existing.fis_code)) or
+                    (normalize_whitespace(entry.get('competitorId')) and normalize_whitespace(entry.get('competitorId')) == normalize_whitespace(existing.competitor_id))):
+                strong_cancellations.add(existing.id)
+    memberships = {i:set() for i in old}
+    for m in snapshot['memberships']:memberships[m['athlete_id']].add(m['competition_id'])
+    in_scope = {cid for cid, c in read_context.competitions_by_id.items() if not family or competition_athlete_family(c) in family}
+    people = {k:[] for k in ('create','update','unchanged','remove','conflicts')}
+    member_changes = {'add':[], 'remove':[], 'unchanged':[]}
+    single_bookings = {b['id'] for b in snapshot['bookings'] if b['counts_as_single']}
+    protected_people = {p['id'] for p in snapshot['people'] if p.get('single_room_decision_id') or p.get('accommodation_rate_approval_id') or (p.get('room_type') or '').strip().lower() in {'single','double single'}}
+    protected_people |= {o['athlete_id'] for o in snapshot['occupants'] if o['room_booking_id'] in single_bookings}
+    matched = set()
+    roster=[preview_approval_person(p,competitions_by_id=read_context.competitions_by_id) for p in preview['people']]
+    for p in preview['people']:
+        existing = _find_existing_athlete(p, read_context.athlete_maps)
+        incoming = {int(i) for i in p.get('competitionIds', [])}
+        identity = {'personKey':p['matchKey'], 'personId':existing.id if existing else None,
+            'name':f"{p.get('firstname','')} {p.get('lastname','')}".strip(),
+            'fisCode':p.get('fisCode'), 'competitorId':p.get('competitorId')}
+        if existing and existing.nation_code!=nation:
+            raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_CONFLICT','Nationswechsel benötigt eine gesonderte Identitätsprüfung.')
+        before = memberships.get(existing.id,set()) if existing else set()
+        if family:
+            incoming |= before - in_scope
+        for category, values in (('add',incoming-before),('remove',before-incoming),('unchanged',before&incoming)):
+            member_changes[category] += [{**identity,'competitionId':i} for i in sorted(values)]
+        if not existing:
+            people['create'].append(identity)
+            continue
+        matched.add(existing.id)
+        clone = SimpleNamespace(**old[existing.id])
+        _apply_person_record(clone, p, clone.athletes_last_seen_at,
+            rate_override=(preview.get('accommodationRateOverrides') or {}).get(p['matchKey']),
+            preserve_missing_roomlist=bool(p.get('roomListHasNoData',preview.get('roomListHasNoData'))))
+        clone.accommodation_requirement=p['accommodationRequirement']
+        clone.accommodation_requirement_source=p['accommodationRequirementSource']
+        changes = [{'field':k,'old':v,'new':getattr(clone,k)} for k,v in old[existing.id].items()
+            if k not in {'athletes_last_seen_at','roomlist_last_seen_at'} and getattr(clone,k)!=v]
+        identity.update(changes=changes, approvalId=existing.single_room_decision_id,
+            approvalApplicability='APPLICABLE' if existing.single_room_decision_id and applicable_approval_groups(existing.single_room_decision,preview_approval_person(p,competitions_by_id=read_context.competitions_by_id),p['matchKey'],roster) else 'REVIEW_REQUIRED' if existing.single_room_decision_id else 'NONE')
+        if family and (before - in_scope or not before):
+            conflicts = [change for change in changes if change['field'] not in {'discipline','entry_date','last_update','entries_sent_date'}]
+            if before - in_scope:
+                changes[:] = conflicts  # Other-source export metadata is not applied to a shared person.
+            linked=p.get('confirmedOfficialLinkId') in {link['id'] for link in read_context.official_links}
+            if (conflicts or (existing.id in protected_people and before-incoming)) and linked:
+                problem=dict(code='IMPORT_SHARED_ACCOMMODATION_CONFLICT',message='Bestand einer gemeinsamen Person würde geändert. Gemeinsamen Quellenstand und Unterkunft ausdrücklich klären.',details={'personId':existing.id,'fields':[c['field'] for c in conflicts] or ['competitionIds'],'singleScopeReview':True})
+                if problem not in preview.setdefault('errors',[]):preview['errors'].append(problem)
+                preview['isValid']=False
+            elif conflicts or (existing.id in protected_people and before-incoming):
+                raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Gemeinsame Person in SB/FS mit widersprüchlichen Daten. Gemeinsamen Datenstand klären; kein stilles Überschreiben.', details={'personId':existing.id,'fields':[c['field'] for c in conflicts] or ['competitionIds']})
+        people['update' if changes or incoming!=before else 'unchanged'].append(identity)
+
+    absent = set(old)-matched
+    proven_unmapped = {i for i in absent & strong_cancellations if not memberships[i] and
+        cancellation_source_proven(i, family, event_id, nation, read_context)} if family else set()
+    if family and any((not memberships[i] and i not in proven_unmapped) or any(cid not in read_context.competitions_by_id or competition_athlete_family(read_context.competitions_by_id[cid]) is None for cid in memberships[i]) for i in absent):
+        raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Fehlende bestehende Personen ohne eindeutigen Sportbereich; Teilersatz nicht sicher prüfbar.')
+    removed = {i for i in absent if not family or memberships[i] <= in_scope}
+    for i in sorted(absent-removed):
+        person = old[i]
+        drop = memberships[i] & in_scope if family else set()
+        if drop and i in protected_people:
+            raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Gemeinsame Person mit EZ-/Genehmigungsbezug: Competition-Entfernung im vollständigen gemeinsamen Prüfstand klären.')
+        identity = dict(personId=i,personKey=str(i),name=f"{person['firstname']} {person['lastname']}",fisCode=person['fis_code'],competitorId=person['competitor_id'],changes=[])
+        people['update' if drop else 'unchanged'].append(identity)
+        member_changes['remove'] += [{**identity,'competitionId':cid} for cid in sorted(drop)]
+        member_changes['unchanged'] += [{**identity,'competitionId':cid} for cid in sorted(memberships[i]-drop)]
+    affected_bookings = {o['room_booking_id'] for o in snapshot['occupants'] if o['athlete_id'] in removed}
+    empty_bookings = {bid for bid in affected_bookings if all(o['athlete_id'] in removed for o in snapshot['occupants'] if o['room_booking_id']==bid)}
+    removed_occupants = [o for o in snapshot['occupants'] if o['athlete_id'] in removed]
+    related_partner_ids = {o['athlete_id'] for o in snapshot['occupants'] if o['room_booking_id'] in affected_bookings and o['athlete_id'] not in removed}
+    related_partner_ids |= {r['athlete_id'] for r in snapshot['legacy'] if r['shared_with_athlete_id'] in removed and r['athlete_id'] not in removed}
+    related_partner_ids |= {i for r in snapshot['fis'] if r['person1_id'] in removed or r['person2_id'] in removed for i in (r['person1_id'],r['person2_id']) if i and i not in removed}
+    all_people = {p['id']:p for p in snapshot['people']+snapshot['partners']}
+    removed_names = {f"{old[i]['lastname']}, {old[i]['firstname']}".casefold() for i in removed}
+    partner_fields = [i for i in sorted(related_partner_ids) if (all_people[i]['shared_with_name'] or '').strip().casefold() in removed_names]
+    for i in sorted(removed):
+        p=old[i]
+        people['remove'].append({'personId':i,'name':f"{p['firstname']} {p['lastname']}",
+            'fisCode':p['fis_code'],'competitorId':p['competitor_id'],'competitionIds':sorted(memberships[i]),
+            **({'removalReason':'Stornierte Meldung (Present = CANCELLED)'} if i in cancelled else {}),
+            'before':p,'bookingIds':sorted({o['room_booking_id'] for o in removed_occupants if o['athlete_id']==i}),
+            'approvalId':p['single_room_decision_id'],
+            'competitions':[{'id':c['id'],'name':c['name'],'importCode':c['import_code']} for c in snapshot['competitions'] if c['id'] in memberships[i]]})
+        member_changes['remove'] += [{'personId':i,'competitionId':c} for c in sorted(memberships[i])]
+    legacy = [{'id':r['id'],'action':'DELETE' if r['athlete_id'] in removed else 'CLEAR_PARTNER'} for r in snapshot['legacy'] if r['athlete_id'] in removed or r['shared_with_athlete_id'] in removed]
+    fis = [{'id':r['id'],'action':'DELETE' if r['person1_id'] in removed and (not r['person2_id'] or r['person2_id'] in removed) else 'RETAIN_SURVIVOR',
+        'survivorId':next((i for i in (r['person1_id'],r['person2_id']) if i and i not in removed),None)} for r in snapshot['fis'] if r['person1_id'] in removed or r['person2_id'] in removed]
+    plan = dict(formatVersion=1,eventId=event_id,nation=nation,snapshotScope=scope['kind'],**({'sourceFamily':next(iter(family))} if len(family)==1 else {'sourceFamilies':sorted(family)} if family else {}),
+        sessionId=version.session_id if version else None,versionId=version.id if version else None,
+        importVersion=version.version if version else None,stateFingerprint=digest(snapshot),inputFingerprint=input_fingerprint(preview),people=people,
+        memberships=member_changes,operations=dict(bookingIds=sorted(affected_bookings),
+            bookings=[b for b in snapshot['bookings'] if b['id'] in affected_bookings],
+            removeOccupants=removed_occupants,deleteEmptyBookingIds=sorted(empty_bookings),
+            partnerIds=sorted(related_partner_ids),partners=[{'id':i,'name':f"{all_people[i]['firstname']} {all_people[i]['lastname']}"} for i in sorted(related_partner_ids)],clearPartnerFields=partner_fields,legacy=legacy,fis=fis),
+        approvalEvidence=snapshot['approvals'])
+    for item in member_changes['remove']:
+        if item.get('personId') in cancelled and competition_athlete_family(read_context.competitions_by_id[item['competitionId']]) in cancelled[item['personId']]:
+            item['reason'] = 'Stornierte Meldung (Present = CANCELLED)'
+    plan['requiresDestructiveConfirmation']=bool(removed or member_changes['remove'])
+    plan['digest']=digest(plan)
+    return json.loads(encoded(plan))
+
+
+def verify_plan(preview, plan):
+    if not plan or plan.get('formatVersion')!=1:
+        raise ImportValidationError('IMPORT_REVIEW_REQUIRED', 'Änderungsplan fehlt. Bitte erneut prüfen.')
+    if input_fingerprint(preview)!=plan.get('inputFingerprint'):
+        raise ImportValidationError('STALE_PREVIEW','Die geparsten Fakten oder Review-Entscheidungen wurden geändert. Erneut prüfen.')
+    current = state(plan['eventId'],plan['nation'])
+    if digest(current) != plan['stateFingerprint']:
+        raise ImportValidationError('STALE_PREVIEW', 'Der Datenstand hat sich geändert. Bitte erneut prüfen und freigeben.')
+    if 'replacementScope' not in preview and plan.get('requiresDestructiveConfirmation'):
+        # Do not execute an old implicit full-nation plan that demonstrably
+        # removes the other family. Preserve its JSON/digests; require new review.
+        from competitions import competition_athlete_family
+        families = {c['id']:competition_athlete_family(SimpleNamespace(**c)) for c in current['competitions']}
+        source = {families.get(m['competition_id']) for m in current['mappings'] if m['import_code'] in preview.get('entriesColumns', [])}
+        if len(source)==1 and None not in source and any(families.get(m['competitionId']) not in source for m in plan['memberships']['remove']):
+            raise ImportValidationError('IMPORT_SNAPSHOT_SCOPE_REQUIRED', 'Alter Prüfstand würde einen anderen Sportbereich entfernen. Dateien mit eindeutigem Ersetzungsbereich erneut prüfen.')
+
+
+
+def apply_removals(plan):
+    """Apply only reviewed stable IDs; preserve surviving booking fields/evidence."""
+    removed={p['personId'] for p in plan['people']['remove']}
+    # Membership withdrawal of a shared person must not delete that person.
+    for item in plan['memberships']['remove']:
+        if item.get('personId') and item['personId'] not in removed:
+            db.session.execute(sa.delete(AthleteCompetition).where(AthleteCompetition.athlete_id==item['personId'],AthleteCompetition.athlete_id.in_(sa.select(Athlete.id).where(Athlete.event_id==plan['eventId'])),AthleteCompetition.competition_id==item['competitionId']))
+    if not removed:return
+    event_id=plan['eventId']
+    if db.session.query(Athlete.id).filter(Athlete.id.in_(removed),Athlete.event_id!=event_id).first():
+        raise ImportValidationError('IMPORT_EVENT_MISMATCH','Eventfremde Löschung abgewiesen.')
+    ops=plan['operations']
+    db.session.execute(sa.delete(RoomBookingOccupant).where(RoomBookingOccupant.id.in_([o['id'] for o in ops['removeOccupants']])))
+    for item in ops['legacy']:
+        if item['action']=='DELETE':db.session.execute(sa.delete(RoomAssignment).where(RoomAssignment.id==item['id']))
+        else:db.session.execute(sa.update(RoomAssignment).where(RoomAssignment.id==item['id']).values(shared_with_athlete_id=None))
+    for item in ops['fis']:
+        if item['action']=='DELETE':db.session.execute(sa.delete(FisRoomAssignment).where(FisRoomAssignment.id==item['id']))
+        else:db.session.execute(sa.update(FisRoomAssignment).where(FisRoomAssignment.id==item['id']).values(person1_id=item['survivorId'],person2_id=None))
+    db.session.execute(sa.update(Athlete).where(Athlete.event_id==event_id,Athlete.id.in_(ops['clearPartnerFields'])).values(shared_with_name=None))
+    db.session.execute(sa.delete(AthleteCompetition).where(AthleteCompetition.athlete_id.in_(removed)))
+    db.session.execute(sa.delete(Athlete).where(Athlete.event_id==event_id,Athlete.id.in_(removed)))
+    for bid in ops['deleteEmptyBookingIds']:
+        if db.session.query(RoomBookingOccupant.id).filter_by(room_booking_id=bid).first():
+            raise ImportValidationError('STALE_PREVIEW','Zu löschende Buchung ist nicht mehr leer.')
+    db.session.execute(sa.delete(RoomBooking).where(RoomBooking.event_id==event_id,RoomBooking.id.in_(ops['deleteEmptyBookingIds'])))
+
+
+def cancellation_source_proven(person_id, selected_families, event_id, nation, context):
+    """An unmapped legacy person needs confirmed source evidence, not a name guess."""
+    from .workflow import imported_submission_ids, load_version_preview
+    from .normalization import canonical_fis_code, normalize_whitespace
+    target = next(p for p in context.athletes if p.id == person_id)
+    origins = set()
+    for session in ImportSession.query.filter_by(event_id=event_id, nation=nation).all():
+        imported = imported_submission_ids(session)
+        for version in session.versions:
+            if version.id not in imported:
+                continue
+            source = load_version_preview(version)
+            for person in source.get('people', []):
+                strong = (canonical_fis_code(person.get('fisCode')) and canonical_fis_code(person.get('fisCode')) == canonical_fis_code(target.fis_code)) or (normalize_whitespace(person.get('competitorId')) and normalize_whitespace(person.get('competitorId')) == normalize_whitespace(target.competitor_id))
+                if not strong:
+                    continue
+                hit = _find_existing_athlete(person, context.athlete_maps)
+                if not hit or hit.id != person_id:
+                    continue
+                scope = source.get('replacementScope') or {}
+                if scope.get('kind') == 'SPORT_FAMILY':
+                    origins.update(scope.get('families') or [scope.get('family')])
+                else:
+                    origins.add('*')
+    return bool(origins) and origins <= selected_families

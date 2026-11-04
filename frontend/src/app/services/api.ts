@@ -1,0 +1,1065 @@
+import { DatabaseGeneration } from './databaseGeneration';
+import { EventRequestScope } from '../events/eventRequestScope';
+import type { EventCapabilities } from '../events/activeEventStore';
+import type { SingleRoomQuotaExemptReason } from '../types';
+import type {
+  RoomType,
+  Hotel,
+  HotelRoomInventory,
+  Event,
+  EventRoomDemand,
+  Athlete,
+  RoomBooking,
+  RoomBookingUnit,
+  RoomAvailability,
+  HotelCapacityOverview,
+  HotelReservationRow,
+  FisImportPreview,
+  FisImportConfirmResult,
+  AssignmentPlanningView,
+  AssignmentValidationView,
+  FisMockFilePair
+} from '../types';
+import type { ChampionshipEvent, EventCompetitionMapping } from '../types';
+import type { AuthenticatedUser, AuditEvent } from '../types';
+import type { OfficialQuotaUsage } from './fisRules';
+import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
+import { finishAssignmentRequest, isMeasuredAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
+import { downloadResponse } from './download';
+import { requireSuccessfulApiResponse, requireImportConfirmation } from './importConfirmation';
+
+import {
+  mockRoomTypes as initialRoomTypes,
+  mockHotels as initialHotels,
+  mockEvents as initialEvents,
+  mockAthletes as initialAthletes,
+  mockRoomAvailability
+} from '../data/mockData';
+
+// In production we want to default to same-origin (`/api`) so deployments work without env vars.
+// For local dev you can set: VITE_API_URL=http://localhost:5000/api
+const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+
+// USE MOCK DATA - Set to true for offline testing
+const USE_MOCK_DATA = false;
+
+export interface SimulationSummary {
+  peopleCreated: number;
+  hotelsUsed: number;
+  roomAssignmentsCreated: number;
+  peopleUnassigned: number;
+  durationMs: number;
+}
+
+// Create mutable copies of mock data that persist within the session
+let mockRoomTypes = [...initialRoomTypes];
+let mockHotels = initialHotels.map(h => ({
+  ...h,
+  roomInventories: h.roomInventories ? [...h.roomInventories] : []
+}));
+let mockEvents = initialEvents.map(e => ({
+  ...e,
+  roomDemands: e.roomDemands ? [...e.roomDemands] : []
+}));
+let mockAthletes = [...initialAthletes];
+let mockRoomBookings: RoomBooking[] = [];
+
+class ApiService {
+  async observeCurrentUser() { return this.request('/auth/me',{method:'POST'}); }
+  async previewQuotaRevision(id:string,data:unknown):Promise<import('../types').QuotaRevisionProposal> {return this.request(`/admin/events/${id}/quota-rules/revision-preview`,{method:'POST',body:JSON.stringify(data)});}
+  async activateQuotaRevision(id:string,data:unknown):Promise<import('../types').EventQuotaRules> {return this.request(`/admin/events/${id}/quota-rules/revisions`,{method:'POST',body:JSON.stringify(data)});}
+  async getQuotaRevisions(id:string):Promise<import('../types').QuotaRevisionSnapshot[]> {return this.request(`/admin/events/${id}/quota-rules/revisions`);}
+  async getChampionLists():Promise<{id:string;championship:string;year:number;titleCount:number;eligibleCount:number}[]> {return this.request('/admin/world-champion-lists');}
+  async getChampionList(id:string):Promise<{listId:string|null;digest:string;partial:boolean;inferred:boolean}> {return this.request(`/admin/events/${id}/world-champion-list`);}
+  async setChampionList(id:string,listId:string|null,digest:string) {return this.request<{listId:string|null;digest:string;partial:boolean;inferred:boolean}>(`/admin/events/${id}/world-champion-list`,{method:'PUT',body:JSON.stringify({listId,digest})});}
+  async getChampionTitles():Promise<import('../types').WorldChampion[]> {return this.request('/admin/world-champion-titles');}
+  async getChampionRecognitions(id:string):Promise<{recognitions:{titleId:string;active:boolean}[]}> {return this.request(`/admin/events/${id}/world-champions`);}
+  async setChampionRecognition(id:string,titleId:string,active:boolean) {return this.request(`/admin/events/${id}/world-champions`,{method:'POST',body:JSON.stringify({titleId,active})});}
+
+  async getUserAccess(): Promise<import('../types').UserAccessOverview> { return this.request('/admin/users'); }
+  async createUserReference(username: string, displayName: string): Promise<import('../types').UserAccessOverview> {
+    return this.request('/admin/users', {method:'POST', body:JSON.stringify({username,displayName})});
+  }
+  async saveUserGrants(username: string, expectedRevision: string, grants: Record<string, import('../types').EventAccessLevel>): Promise<{users: import('../types').KnownUser[]}> {
+    return this.request('/admin/users/grants', {method:'PUT', body:JSON.stringify({username,expectedRevision,grants})});
+  }
+  async getAthleteQuotas():Promise<NonNullable<import('../types').FisImportPreview['athleteQuotaChecks']>> { return this.request('/fis/athlete-quotas'); }
+  async getQuotaRules():Promise<import('../types').EventQuotaRules> { return this.request('/quota-rules'); }
+  async getEventQuotaRules(id:string):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`); }
+  async saveEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`,{method:'PUT',body:JSON.stringify(data)}); }
+  async fixEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules/fix`,{method:'POST',body:JSON.stringify(data)}); }
+
+  private readonly databaseGeneration = new DatabaseGeneration(() => window.location.assign('/'));
+  readonly eventScope = new EventRequestScope();
+  async getActiveEventContext(): Promise<EventCapabilities> { return this.request('/active-event-context'); }
+  private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
+    const method = options?.method ?? 'GET';
+    const measurement = isMeasuredAssignmentRequest(endpoint)
+      ? startAssignmentMeasurement(endpoint, method)
+      : null;
+    const multipart = typeof FormData !== 'undefined' && options?.body instanceof FormData;
+    const headers = new Headers(options?.headers);
+    this.databaseGeneration.decorate(headers);
+    if (!multipart && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    return this.eventScope.run(`${API_BASE_URL}${endpoint}`, { ...options, headers }, async (response, assertCurrent) => {
+
+      this.databaseGeneration.observe(response);
+      const headersAt = performance.now();
+      const contentType = response.headers.get('content-type') || '';
+      const bodyReadStartedAt = performance.now();
+      const bodyText = await response.text();
+      assertCurrent();
+      this.databaseGeneration.observe(response);
+      const bodyReadFinishedAt = performance.now();
+
+      const looksLikeJson = (() => {
+        const trimmed = bodyText.trim();
+        return (
+          contentType.includes('application/json') ||
+          trimmed.startsWith('{') ||
+          trimmed.startsWith('[') ||
+          trimmed === 'null' ||
+          trimmed === 'true' ||
+          trimmed === 'false'
+        );
+      })();
+
+      let body: unknown = bodyText;
+      const jsonParseStartedAt = performance.now();
+      if (bodyText && looksLikeJson) {
+        try {
+          body = JSON.parse(bodyText);
+        } catch {
+          body = bodyText;
+        }
+      }
+      const jsonParseFinishedAt = performance.now();
+      if (measurement) {
+        finishAssignmentRequest(measurement.operationId, measurement.startedAt, response, {
+          timeToHeadersMs: headersAt - measurement.startedAt,
+          bodyReadMs: bodyReadFinishedAt - bodyReadStartedAt,
+          jsonParseMs: jsonParseFinishedAt - jsonParseStartedAt,
+          responseBytes: new Blob([bodyText]).size,
+        });
+      }
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          window.dispatchEvent(new CustomEvent('auth:unauthenticated'));
+          throw new Error('UNAUTHENTICATED');
+        }
+        if (response.status === 403) {
+          throw new Error('FORBIDDEN');
+        }
+        requireSuccessfulApiResponse(response, body);
+      }
+
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
+      if (!bodyText) {
+        return undefined as T;
+      }
+      return body as T;
+    }, endpoint === '/auth/me' ? 'auth' : endpoint === '/active-event-context' ? 'context' : (endpoint.startsWith('/admin/database/') || ['/admin/events','/admin/world-champions','/admin/world-champion-titles','/admin/world-champion-lists'].includes(endpoint) || /^\/admin\/world-champions\/[1-9]\d*$/.test(endpoint) || endpoint === '/competitions' && (options?.method??'GET')==='GET') ? 'global-metadata' : false, endpoint.match(/^\/admin\/events\/([1-9]\d*)(?:\/|$)/)?.[1]);
+  }
+
+  async getCurrentUser(): Promise<AuthenticatedUser> {
+    return this.request<AuthenticatedUser>('/auth/me');
+  }
+
+  async getAuditEvents(page = 1): Promise<{ items: AuditEvent[]; total: number; pages: number }> {
+    return this.request(`/audit-events?page=${page}`);
+  }
+
+  async previewCleanup(scope: string = 'activities', nation?: string): Promise<CleanupPreview> {
+    return this.request(`/admin/test-data/reset?scope=${encodeURIComponent(scope)}${nation?`&nation=${encodeURIComponent(nation)}`:''}`);
+  }
+  async resetTestData(scope: string, nation?: string): Promise<CleanupPreview> {
+    return this.request('/admin/test-data/reset', {method:'POST',body:JSON.stringify({scope,nation,confirmed:true})});
+  }
+
+  async getScenarios(): Promise<Array<{ number: string; title: string; description: string; versions: number }>> {
+    return this.request('/admin/scenarios');
+  }
+
+  private async download(endpoint: string, filename: string, options?: RequestInit): Promise<void> {
+    const headers=new Headers(options?.headers);
+    this.databaseGeneration.decorate(headers);
+    return this.eventScope.run(`${API_BASE_URL}${endpoint}`, {...options,headers}, async (response, assertCurrent) => {
+      this.databaseGeneration.observe(response);
+      if (!response.ok) throw new Error(response.status === 403 ? 'FORBIDDEN' : 'Datei konnte nicht geladen werden.');
+      await downloadResponse(response, filename, () => { assertCurrent(); this.databaseGeneration.observe(response); });
+    }, endpoint.startsWith('/admin/database/backups/') ? 'global-metadata' : false);
+  }
+  async generateScenario(number: string): Promise<void> {
+    return this.download(`/admin/scenarios/${number}/generate`, `wm-scenario-${number}.zip`, { method: 'POST' });
+  }
+  async generateCompleteScenarios(): Promise<void> {
+    return this.download('/admin/scenarios/complete/generate', 'Kompletter_Testordner.zip', { method: 'POST' });
+  }
+
+  async createSimulation(): Promise<SimulationSummary> {
+    return this.request<SimulationSummary>('/admin/simulation', { method: 'POST' });
+  }
+
+  async deleteSimulation(): Promise<{ deleted: { people: number; roomAssignments: number } }> {
+    return this.request('/admin/simulation', { method: 'DELETE' });
+  }
+
+  async getDatabaseStatus(): Promise<DatabaseStatus> { return this.request('/admin/database/status'); }
+  async getDatabaseBackups(): Promise<DatabaseBackup[]> { return this.request('/admin/database/backups'); }
+  async createDatabaseBackup(): Promise<{ status: string }> { return this.request('/admin/database/backup', { method: 'POST' }); }
+  async importDatabaseBackup(file: File): Promise<DatabaseBackup> {
+    const form = new FormData(); form.append('file', file);
+    const payload = await this.request<DatabaseBackup>('/admin/database/import', { method: 'POST', body: form });
+    return { ...payload, localFile: file };
+  }
+  async getRestoreStatus(): Promise<RestoreJob> { return this.request('/admin/database/restore-status'); }
+  async restoreDatabaseBackup(backup: DatabaseBackup, confirmation: string): Promise<RestoreJob> {
+    // Imported and server-side backups deliberately use the exact same request
+    // shape and endpoint. The backup service chooses the token when present and
+    // otherwise resolves the server-side filename.
+    const restoreRequest = { filename: backup.filename, category: backup.category ?? null, token: backup.token ?? null, confirmation };
+    return this.request('/admin/database/restore', { method: 'POST', body: JSON.stringify(restoreRequest) });
+  }
+  async downloadDatabaseBackup(filename: string, category: string): Promise<void> {
+    return this.download(`/admin/database/backups/${encodeURIComponent(category)}/${encodeURIComponent(filename)}`, filename);
+  }
+
+  // ============================================================================
+  // ROOM TYPES
+  // ============================================================================
+
+  async getRoomTypes(): Promise<RoomType[]> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve(mockRoomTypes);
+    }
+    return this.request<RoomType[]>('/room-types');
+  }
+
+  async createRoomType(data: { name: string; maxPersons: number }): Promise<RoomType> {
+    if (USE_MOCK_DATA) {
+      const maxId = mockRoomTypes.reduce((max, rt) => Math.max(max, parseInt(rt.id) || 0), 0);
+      const newRoomType: RoomType = {
+        id: String(maxId + 1),
+        name: data.name,
+        maxPersons: data.maxPersons,
+      };
+      mockRoomTypes.push(newRoomType);
+      return Promise.resolve(newRoomType);
+    }
+    return this.request<RoomType>('/room-types', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateRoomType(id: string, data: { name?: string; maxPersons?: number }): Promise<RoomType> {
+    if (USE_MOCK_DATA) {
+      const index = mockRoomTypes.findIndex(rt => rt.id === id);
+      if (index === -1) throw new Error('Room type not found');
+
+      if (data.name) mockRoomTypes[index].name = data.name;
+      if (data.maxPersons) mockRoomTypes[index].maxPersons = data.maxPersons;
+
+      return Promise.resolve(mockRoomTypes[index]);
+    }
+    return this.request<RoomType>(`/room-types/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteRoomType(id: string): Promise<void> {
+    if (USE_MOCK_DATA) {
+      if (mockHotels.some(hotel => hotel.roomInventories?.some(inventory => inventory.roomType.id === id))) {
+        throw new Error('Room type is still in use');
+      }
+      const index = mockRoomTypes.findIndex(rt => rt.id === id);
+      if (index !== -1) {
+        mockRoomTypes.splice(index, 1);
+      }
+      return Promise.resolve();
+    }
+    return this.request<void>(`/room-types/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ============================================================================
+  // HOTELS
+  // ============================================================================
+
+  async getHotels(): Promise<Hotel[]> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve(mockHotels);
+    }
+    return this.request<Hotel[]>('/hotels');
+  }
+
+  async getHotel(id: string): Promise<Hotel> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === id);
+      if (!hotel) throw new Error('Hotel not found');
+      return Promise.resolve(hotel);
+    }
+    return this.request<Hotel>(`/hotels/${id}`);
+  }
+
+  async createHotel(data: { name: string; location?: string; region?: string; contactPerson?: string; email?: string; phone?: string; comment?: string }): Promise<Hotel> {
+    if (USE_MOCK_DATA) {
+      const maxId = mockHotels.reduce((max, h) => Math.max(max, parseInt(h.id) || 0), 0);
+      const newHotel = {
+        id: String(maxId + 1),
+        name: data.name,
+        location: data.location,
+        region: data.region,
+        roomInventories: [],
+      } satisfies Hotel;
+      mockHotels.push(newHotel);
+      return Promise.resolve(newHotel);
+    }
+    return this.request<Hotel>('/hotels', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateHotel(id: string, data: { name?: string; location?: string; region?: string; contactPerson?: string; email?: string; phone?: string; comment?: string }): Promise<Hotel> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === id);
+      if (!hotel) throw new Error('Hotel not found');
+
+      if (data.name) hotel.name = data.name;
+      if (data.location) hotel.location = data.location;
+      if (data.region !== undefined) hotel.region = data.region;
+      if (data.contactPerson !== undefined) hotel.contactPerson = data.contactPerson;
+      if (data.email !== undefined) hotel.email = data.email;
+      if (data.phone !== undefined) hotel.phone = data.phone;
+
+      return Promise.resolve(hotel);
+    }
+    return this.request<Hotel>(`/hotels/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteHotel(id: string): Promise<void> {
+    if (USE_MOCK_DATA) {
+      const index = mockHotels.findIndex(h => h.id === id);
+      if (index !== -1) {
+        mockHotels.splice(index, 1);
+      }
+      return Promise.resolve();
+    }
+    return this.request<void>(`/hotels/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Hotel Room Inventory
+  async addHotelInventory(hotelId: string, data: {
+    roomTypeId: string;
+    availableFrom: string;
+    availableUntil: string;
+    roomCount: number;
+    hasHalfBoard?: boolean;
+    hasSR?: boolean;
+  }): Promise<HotelRoomInventory> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === hotelId);
+      if (!hotel) throw new Error('Hotel not found');
+
+      const roomType = mockRoomTypes.find(rt => rt.id === data.roomTypeId);
+      if (!roomType) throw new Error('Room type not found');
+
+      const newInventory: HotelRoomInventory = {
+        id: String(Date.now()),
+        hotelId: hotelId,
+        roomType: roomType,
+        availableFrom: data.availableFrom,
+        availableUntil: data.availableUntil,
+        roomCount: data.roomCount,
+        hasHalfBoard: data.hasHalfBoard || false,
+        hasSR: data.hasSR || false,
+      };
+
+      if (!hotel.roomInventories) hotel.roomInventories = [];
+      hotel.roomInventories.push(newInventory);
+
+      return Promise.resolve(newInventory);
+    }
+    return this.request<HotelRoomInventory>(`/hotels/${hotelId}/inventory`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateHotelInventory(hotelId: string, inventoryId: string, data: {
+    roomTypeId: string; availableFrom: string; availableUntil: string; roomCount: number; hasHalfBoard?: boolean; hasSR?: boolean;
+  }): Promise<HotelRoomInventory> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === hotelId);
+      const index = hotel?.roomInventories?.findIndex(inv => inv.id === inventoryId) ?? -1;
+      const roomType = mockRoomTypes.find(rt => rt.id === data.roomTypeId);
+      if (!hotel?.roomInventories || index < 0 || !roomType) throw new Error('Inventory not found');
+      hotel.roomInventories[index] = { ...hotel.roomInventories[index], ...data, roomType, roomCount: data.roomCount };
+      return Promise.resolve(hotel.roomInventories[index]);
+    }
+    return this.request<HotelRoomInventory>(`/hotels/${hotelId}/inventory/${inventoryId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+
+  async deleteHotelInventory(hotelId: string, inventoryId: string): Promise<void> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === hotelId);
+      if (hotel && hotel.roomInventories) {
+        const index = hotel.roomInventories.findIndex(inv => inv.id === inventoryId);
+        if (index !== -1) {
+          hotel.roomInventories.splice(index, 1);
+        }
+      }
+      return Promise.resolve();
+    }
+    return this.request<void>(`/hotels/${hotelId}/inventory/${inventoryId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ============================================================================
+  // EVENTS
+  // ============================================================================
+
+  async getEvents(): Promise<Event[]> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve(mockEvents);
+    }
+    return this.request<Event[]>('/events');
+  }
+
+  async createEvent(data: { discipline: string; startDate: string; endDate: string; personDemand: number; singleRoomPercentage: number }): Promise<Event> {
+    if (USE_MOCK_DATA) {
+      const maxId = mockEvents.reduce((max, e) => Math.max(max, parseInt(e.id) || 0), 0);
+      const newEvent = {
+        id: String(maxId + 1),
+        discipline: data.discipline,
+        startDate: data.startDate,
+        endDate: data.endDate,
+        personDemand: data.personDemand,
+        singleRoomPercentage: data.singleRoomPercentage,
+        roomDemands: [],
+      } satisfies Event;
+      mockEvents.push(newEvent);
+      return Promise.resolve(newEvent);
+    }
+    return this.request<Event>('/events', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateEvent(id: string, data: { discipline?: string; startDate?: string; endDate?: string; personDemand?: number; singleRoomPercentage?: number }): Promise<Event> {
+    if (USE_MOCK_DATA) {
+      const event = mockEvents.find(e => e.id === id);
+      if (!event) throw new Error('Event not found');
+
+      if (data.discipline) event.discipline = data.discipline;
+      if (data.startDate) event.startDate = data.startDate;
+      if (data.endDate) event.endDate = data.endDate;
+      if (data.personDemand !== undefined) event.personDemand = data.personDemand;
+      if (data.singleRoomPercentage !== undefined) event.singleRoomPercentage = data.singleRoomPercentage;
+
+      return Promise.resolve(event);
+    }
+    return this.request<Event>(`/events/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteEvent(id: string): Promise<void> {
+    if (USE_MOCK_DATA) {
+      const index = mockEvents.findIndex(e => e.id === id);
+      if (index !== -1) {
+        mockEvents.splice(index, 1);
+      }
+      return Promise.resolve();
+    }
+    return this.request<void>(`/events/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // Event Room Demand
+  async addEventDemand(eventId: string, data: {
+    roomTypeId: string;
+    roomCount: number;
+  }): Promise<EventRoomDemand> {
+    if (USE_MOCK_DATA) {
+      const event = mockEvents.find(e => e.id === eventId);
+      if (!event) throw new Error('Event not found');
+
+      const roomType = mockRoomTypes.find(rt => rt.id === data.roomTypeId);
+      if (!roomType) throw new Error('Room type not found');
+
+      const newDemand: EventRoomDemand = {
+        id: String(Date.now()),
+        eventId: eventId,
+        roomType: roomType,
+        roomCount: data.roomCount,
+      };
+
+      if (!event.roomDemands) event.roomDemands = [];
+      event.roomDemands.push(newDemand);
+
+      return Promise.resolve(newDemand);
+    }
+    return this.request<EventRoomDemand>(`/events/${eventId}/demand`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteEventDemand(eventId: string, demandId: string): Promise<void> {
+    if (USE_MOCK_DATA) {
+      const event = mockEvents.find(e => e.id === eventId);
+      if (event && event.roomDemands) {
+        const index = event.roomDemands.findIndex(d => d.id === demandId);
+        if (index !== -1) {
+          event.roomDemands.splice(index, 1);
+        }
+      }
+      return Promise.resolve();
+    }
+    return this.request<void>(`/events/${eventId}/demand/${demandId}`, {
+      method: 'DELETE',
+    });
+  }
+
+  // ============================================================================
+  // ATHLETES
+  // ============================================================================
+
+  async getAthletes(): Promise<Athlete[]> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve(mockAthletes);
+    }
+    return this.request<Athlete[]>('/athletes');
+  }
+
+  async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
+
+  async updateAthlete(id: string, data: { accommodationRequirement?: 'REQUIRED' | 'NO_ROOM' | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
+    return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
+  }
+
+  async createAthlete(data: {
+    lastname: string;
+    firstname: string;
+    nationCode: string;
+    function?: string;
+  }): Promise<Athlete> {
+    if (USE_MOCK_DATA) {
+      const maxId = mockAthletes.reduce((max, a) => Math.max(max, parseInt(a.id) || 0), 0);
+      const newAthlete: Athlete = {
+        id: String(maxId + 1),
+        lastname: data.lastname,
+        firstname: data.firstname,
+        nationCode: data.nationCode,
+        function: data.function || 'Athlete',
+        single_room_status: 'NONE',
+      };
+      mockAthletes.push(newAthlete);
+      return Promise.resolve(newAthlete);
+    }
+    return this.request<Athlete>('/athletes', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async acknowledgeAthleteRoomlistChange(id: string): Promise<Athlete> {
+    if (USE_MOCK_DATA) {
+      const athlete = mockAthletes.find((entry) => entry.id === id);
+      if (!athlete) throw new Error('Athlete not found');
+      athlete.hasPendingRoomlistReview = false;
+      athlete.roomlistChangeAcknowledgedAt = new Date().toISOString();
+      athlete.roomlistChangeAcknowledgedSummary = athlete.roomlistChangeSummary || null;
+      return Promise.resolve(athlete);
+    }
+    return this.request<Athlete>(`/athletes/${id}/acknowledge-roomlist-change`, {
+      method: 'POST',
+    });
+  }
+
+  // ============================================================================
+  // ROOM ASSIGNMENTS
+  // ============================================================================
+
+  async getRoomAssignments(): Promise<RoomBooking[]> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve(mockRoomBookings);
+    }
+    return this.request<RoomBooking[]>('/room-bookings/grouped');
+  }
+
+  async createRoomAssignment(data: {
+    athleteIds: string[];
+    hotelId: string;
+    roomTypeId: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+  }): Promise<RoomBooking> {
+    if (USE_MOCK_DATA) {
+      const hotel = mockHotels.find(h => h.id === data.hotelId);
+      if (!hotel) throw new Error('Hotel not found');
+
+      const roomType = mockRoomTypes.find(rt => rt.id === data.roomTypeId);
+      if (!roomType) throw new Error('Room type not found');
+
+      const maxId = mockRoomBookings.reduce((max, rb) => Math.max(max, parseInt(rb.id) || 0), 0);
+      const newBooking: RoomBooking = {
+        id: String(maxId + 1),
+        hotel: { id: hotel.id, name: hotel.name },
+        roomType: roomType,
+        roomNumber: data.roomNumber,
+        checkInDate: data.checkInDate,
+        checkOutDate: data.checkOutDate,
+        occupants: data.athleteIds
+          .map((athleteId, idx) => {
+            const athlete = mockAthletes.find(a => a.id === athleteId);
+            if (!athlete) return null;
+            return {
+              id: `${maxId + 1}-${idx + 1}`,
+              roomBookingId: String(maxId + 1),
+              athlete,
+              role: null,
+            };
+          })
+          .filter(Boolean) as RoomBooking['occupants'],
+      };
+
+      mockRoomBookings.push(newBooking);
+      return Promise.resolve(newBooking);
+    }
+    return this.request<RoomBooking>('/room-assignments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteRoomAssignment(id: string): Promise<void> {
+    if (USE_MOCK_DATA) {
+      const index = mockRoomBookings.findIndex(rb => rb.id === id);
+      if (index !== -1) {
+        mockRoomBookings.splice(index, 1);
+      }
+      return Promise.resolve();
+    }
+    return this.request<void>(`/room-assignments/${id}`, {
+      method: 'DELETE',
+    });
+  }
+
+  async getAssignmentPlanningView(): Promise<AssignmentPlanningView> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve({
+        timeline: { startDate: null, endDate: null },
+        units: { unassigned: [], assigned: [] },
+        hotels: [],
+        validationByUnit: {},
+      });
+    }
+    return this.request<AssignmentPlanningView>('/assignments/planning-view?includeValidations=false');
+  }
+
+  async getAssignmentAvailability(needs:{key:string;athleteIds:string[];checkInDate:string;checkOutDate:string}[], populationIds:string[]=[]) {
+    return this.request<{targets:Record<string,import('../types').AssignmentValidationResult[]>;hotels:Record<string,import('./assignmentSuitability').HotelFit>}>(
+      '/assignments/availability',{method:'POST',body:JSON.stringify({needs,populationIds})});
+  }
+
+  async getAssignmentValidations(validationKey: string, interval?:import('../types').AccommodationInterval, athleteIds?:string[]): Promise<AssignmentValidationView> {
+    return this.request<AssignmentValidationView>(
+      `/assignments/planning-view/validations/${encodeURIComponent(validationKey)}${interval ? `?checkInDate=${interval.checkInDate}&checkOutDate=${interval.checkOutDate}${athleteIds?.length ? `&athleteIds=${athleteIds.join(',')}` : ''}` : ''}`,
+    );
+  }
+
+  async previewAccommodationSplit(bookingId:string,athleteIds:string[],splitDate:string) {
+    return this.request<import('../types').AccommodationSplitPlan>(`/assignments/bookings/${bookingId}/split-preview?${new URLSearchParams({athleteIds:athleteIds.join(','),splitDate})}`);
+  }
+  async splitAccommodation(bookingId:string,plan:import('../types').AccommodationSplitPlan) {
+    return this.request<import('../types').AccommodationSplitResult>(`/assignments/bookings/${bookingId}/split`,{
+      method:'POST',body:JSON.stringify({athleteIds:plan.athleteIds,splitDate:plan.splitDate,previewToken:plan.previewToken}),
+    });
+  }
+
+  async previewExternalStay(data:{athleteIds:string[];hotelId:string;checkInDate:string;checkOutDate:string;openInterval:import('../types').AccommodationInterval;replaceStandard?:boolean}) {
+    const params=new URLSearchParams({athleteIds:data.athleteIds.join(','),hotelId:data.hotelId,checkInDate:data.checkInDate,checkOutDate:data.checkOutDate,openCheckInDate:data.openInterval.checkInDate!,openCheckOutDate:data.openInterval.checkOutDate!,replaceStandard:String(!!data.replaceStandard)});
+    return this.request<import('../types').ExternalStayPlan>(`/assignments/segments/preview?${params}`);
+  }
+
+  async addExternalStay(plan:import('../types').ExternalStayPlan) {
+    return this.request('/assignments/segments',{method:'POST',body:JSON.stringify(plan)});
+  }
+
+  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
+    return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
+  }
+
+  async mutateAccommodationSegment(personId:string, operation:'POST'|'PUT'|'DELETE', bookingId?:string, data?:{
+    hotelId:string;roomTypeId?:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string;
+  }):Promise<{success:boolean;personId:string;booking:RoomBooking|null;accommodationCoverage:import('../types').AccommodationCoverage}> {
+    return this.request(`/assignments/persons/${personId}/segments${bookingId ? `/${bookingId}` : ''}`,{
+      method:operation, ...(data ? {body:JSON.stringify(data)} : {}),
+    });
+  }
+
+  async assignRoomBookingUnit(data: {
+    hotelId: string;
+    roomTypeId: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    assignedBookingId?: string;
+    athleteIds: string[];
+  }): Promise<RoomBooking> {
+    return this.request<RoomBooking>('/assignments/bookings', {
+      method: 'POST',
+      body: JSON.stringify({
+        hotelId: data.hotelId,
+        roomTypeId: data.roomTypeId,
+        roomNumber: data.roomNumber,
+        checkInDate: data.checkInDate,
+        checkOutDate: data.checkOutDate,
+        assignedBookingId: data.assignedBookingId,
+        athleteIds: data.athleteIds,
+      }),
+    });
+  }
+
+  async moveRoomBookingUnit(data: {
+    hotelId: string;
+    roomTypeId: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    assignedBookingId: string;
+    athleteIds: string[];
+  }): Promise<RoomBooking> {
+    return this.assignRoomBookingUnit(data);
+  }
+
+  async updateAssignedUnit(bookingId: string, data: {
+    hotelId?: string;
+    roomTypeId?: string;
+    roomNumber?: string;
+    checkInDate?: string;
+    checkOutDate?: string;
+    countsAsSingle?: boolean;
+  }): Promise<RoomBooking> {
+    return this.request<RoomBooking>(`/assignments/bookings/${bookingId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+  }
+
+  async unassignRoomBookingUnit(bookingId: string): Promise<{ success: boolean; bookingId: string }> {
+    return this.request<{ success: boolean; bookingId: string }>(`/assignments/bookings/${bookingId}/unassign`, {
+      method: 'POST',
+    });
+  }
+
+  async unassignRoomBookingOccupant(bookingId: string, athleteId: string): Promise<{ success: boolean; bookingId: string; athleteId: string }> {
+    return this.request<{ success: boolean; bookingId: string; athleteId: string }>(
+      `/assignments/bookings/${bookingId}/occupants/${athleteId}/unassign`,
+      { method: 'POST' }
+    );
+  }
+
+
+
+  async getHotelCapacityOverview(params?: {
+    hotel_id?: string;
+    start_date?: string;
+    end_date?: string;
+    room_type_id?: string;
+    nation?: string;
+    discipline?: string;
+  }): Promise<HotelCapacityOverview[]> {
+    const query = new URLSearchParams();
+    if (params?.hotel_id) query.append('hotel_id', params.hotel_id);
+    if (params?.start_date) query.append('start_date', params.start_date);
+    if (params?.end_date) query.append('end_date', params.end_date);
+    if (params?.room_type_id) query.append('room_type_id', params.room_type_id);
+    if (params?.nation) query.append('nation', params.nation);
+    if (params?.discipline) query.append('discipline', params.discipline);
+    const qs = query.toString();
+    return this.request<HotelCapacityOverview[]>(`/hotels/capacity-overview${qs ? '?' + qs : ''}`);
+  }
+
+  async getHotelReservations(hotelId: string, params?: {
+    start_date?: string;
+    end_date?: string;
+    room_type_id?: string;
+    nation?: string;
+    discipline?: string;
+  }): Promise<HotelReservationRow[]> {
+    const query = new URLSearchParams();
+    if (params?.start_date) query.append('start_date', params.start_date);
+    if (params?.end_date) query.append('end_date', params.end_date);
+    if (params?.room_type_id) query.append('room_type_id', params.room_type_id);
+    if (params?.nation) query.append('nation', params.nation);
+    if (params?.discipline) query.append('discipline', params.discipline);
+    const qs = query.toString();
+    return this.request<HotelReservationRow[]>(`/hotels/${hotelId}/reservations${qs ? '?' + qs : ''}`);
+  }
+
+  // ============================================================================
+  // ANALYTICS
+  // ============================================================================
+
+  async getRoomAvailability(params?: {
+    start_date?: string;
+    end_date?: string;
+  }): Promise<RoomAvailability[]> {
+    if (USE_MOCK_DATA) {
+      // Normiere alle Zimmertypen auf EZ und DZ
+      const ezRoomType: RoomType = { id: 'ez', name: 'EZ / DU', maxPersons: 1 };
+      const dzRoomType: RoomType = { id: 'dz', name: 'DZ / DU', maxPersons: 2 };
+
+      // Berechne verfügbare Zimmer
+      let ezAvailable = 0;
+      let dzAvailable = 0;
+
+      mockHotels.forEach(hotel => {
+        hotel.roomInventories?.forEach(inv => {
+          const beds = inv.roomCount * inv.roomType.maxPersons;
+          if (inv.roomType.maxPersons === 1) {
+            // EZ: 1 Zimmer = 1 EZ
+            ezAvailable += inv.roomCount;
+          } else {
+            // DZ: 2+ Personen -> auf DZ normieren (Betten / 2)
+            dzAvailable += Math.floor(beds / 2);
+          }
+        });
+      });
+
+      // Berechne benötigte Zimmer
+      let ezDemand = 0;
+      let dzDemand = 0;
+
+      mockEvents.forEach(event => {
+        event.roomDemands?.forEach(demand => {
+          const beds = demand.roomCount * demand.roomType.maxPersons;
+          if (demand.roomType.maxPersons === 1) {
+            // EZ: 1 Zimmer = 1 EZ
+            ezDemand += demand.roomCount;
+          } else {
+            // DZ: 2+ Personen -> auf DZ normieren (Betten / 2)
+            dzDemand += Math.floor(beds / 2);
+          }
+        });
+      });
+
+      return Promise.resolve([
+        {
+          roomType: ezRoomType,
+          available: ezAvailable,
+          demand: ezDemand,
+          difference: ezAvailable - ezDemand,
+        },
+        {
+          roomType: dzRoomType,
+          available: dzAvailable,
+          demand: dzDemand,
+          difference: dzAvailable - dzDemand,
+        }
+      ]);
+    }
+
+    const query = new URLSearchParams();
+    if (params?.start_date) query.append('start_date', params.start_date);
+    if (params?.end_date) query.append('end_date', params.end_date);
+
+    const queryString = query.toString();
+    const url = `/analytics/room-availability${queryString ? '?' + queryString : ''}`;
+
+    return this.request<RoomAvailability[]>(url);
+  }
+
+  async getOccupancyTimeline(): Promise<Array<{
+    discipline: string;
+    startDate: string;
+    endDate: string;
+    demands: Array<{
+      roomType: string;
+      roomCount: number;
+      maxPersons: number;
+      totalBeds: number;
+    }>;
+  }>> {
+    return this.request('/analytics/occupancy-timeline');
+  }
+
+  // ============================================================================
+  // IMPORT
+  // ============================================================================
+
+  async getChampionshipEvents(): Promise<ChampionshipEvent[]> { return this.request('/championship-events'); }
+  async getCompetitions(): Promise<import('../types').Competition[]> { return this.request('/competitions'); }
+  async getAdminEvents(): Promise<ChampionshipEvent[]> { return this.request('/admin/events'); }
+  async getAdminEvent(id: string): Promise<ChampionshipEvent> { return this.request(`/admin/events/${id}`); }
+  async createChampionshipEvent(data: Partial<ChampionshipEvent>): Promise<ChampionshipEvent> {
+    return this.request('/admin/events', { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateChampionshipEvent(id: string, data: Partial<ChampionshipEvent>): Promise<ChampionshipEvent> {
+    return this.request(`/admin/events/${id}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async addEventCompetition(eventId: string, data: Partial<EventCompetitionMapping>): Promise<EventCompetitionMapping> {
+    return this.request(`/admin/events/${eventId}/competitions`, { method: 'POST', body: JSON.stringify(data) });
+  }
+  async updateEventCompetition(eventId: string, mappingId: string, data: Partial<EventCompetitionMapping>): Promise<EventCompetitionMapping> {
+    return this.request(`/admin/events/${eventId}/competitions/${mappingId}`, { method: 'PUT', body: JSON.stringify(data) });
+  }
+  async copyEventMappings(eventId: string, sourceEventId: string): Promise<{created:number;event:ChampionshipEvent}> {
+    return this.request(`/admin/events/${eventId}/copy-mappings`, { method: 'POST', body: JSON.stringify({ sourceEventId }) });
+  }
+
+  async getWorldChampions(): Promise<import('../types').WorldChampion[]> { return this.request('/admin/world-champions'); }
+  async saveWorldChampion(value: Partial<import('../types').WorldChampion>): Promise<import('../types').WorldChampion> {
+    return this.request(`/admin/world-champions${value.id ? '/' + value.id : ''}`, { method: value.id ? 'PUT' : 'POST', body: JSON.stringify(value) });
+  }
+
+  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string, snapshotScope:'AUTO'|'FULL_NATION'='AUTO'): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; message?: string }> {
+    const selected = this.eventScope.eventId;
+    if (!selected || (eventId && eventId !== selected)) throw new Error('Importsession und aktiver Eventkontext müssen übereinstimmen.');
+    const formData = new FormData();
+    formData.append('snapshotScope',snapshotScope);
+    files.forEach((file) => formData.append('files', file));
+    if (createSession) formData.append('createSession', 'true');
+    if (sessionId) formData.append('sessionId', sessionId);
+    formData.append('eventId', selected);
+    return this.request('/import/fis/preview', { method: 'POST', body: formData });
+  }
+
+  async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
+  async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
+  async stageAccommodationRequirement(sessionId: string, personKey: string, accommodationRequirement: 'REQUIRED' | 'NO_ROOM' | null): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/accommodation-requirements/${encodeURIComponent(personKey)}`, {method:'PATCH',body:JSON.stringify({accommodationRequirement})});
+  }
+  async stageAccommodationRate(sessionId: string, personKey: string, accommodationRateCategory: 'STANDARD' | 'SPECIAL'): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/accommodation-rates/${encodeURIComponent(personKey)}`, {method:'PATCH', body:JSON.stringify({accommodationRateCategory})});
+  }
+  async stageSingleRoomQuotaExemption(sessionId: string, personKey: string, reason: SingleRoomQuotaExemptReason): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/single-room-exemptions/${encodeURIComponent(personKey)}`, { method: 'PATCH', body: JSON.stringify({ reason }) });
+  }
+  async getImportDecision(id: string): Promise<ImportDecision> { return this.request(`/import/approvals/${id}`); }
+  async decideImportTask(sessionId: string, taskId: string, payload: { decision: Exclude<ImportApproval['decision'],'PENDING'>; comment: string; approvalType?: 'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod: 'EMAIL'|'PHONE'; approvalBy: string; approvalDate: string; contactSubject?: string; costCoverage?: string; deadlineAt?: string; approvedPersonKeys?: string[]; approvedExtent?:import('../types').QuotaExtent }): Promise<ImportSession> {
+    return this.request(`/import/sessions/${sessionId}/approvals/${taskId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    });
+  }
+  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION'|'SPORT_FAMILY';confirmDestructiveChanges:boolean}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
+  async recheckImportSession(id:string,selection?:{sourceVersionId?:string;sourceVersionIds?:string[]}):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST',body:JSON.stringify(selection??{})}); }
+  async importSession(id: string, versionId?:string|null): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST',body:JSON.stringify({versionId}) })); }
+  async archiveImportSession(id: string, versionId: string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/archive`, { method: 'POST',body:JSON.stringify({versionId}) }); }
+  async cancelImportSession(id: string, versionId?:string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/cancel`, { method: 'POST',body:JSON.stringify({versionId}) }); }
+  async documentImportClarification(id:string,data:unknown):Promise<ImportSession> {return this.request(`/import/sessions/${id}/history`,{method:'POST',body:JSON.stringify(data)});}
+  async addImportSessionNote(id: string, description: string, waitingForNation = false): Promise<ImportSession> { return this.request(`/import/sessions/${id}/history`, { method: 'POST', body: JSON.stringify({ description, waitingForNation }) }); }
+
+  async confirmFisImport(previewToken: string): Promise<FisImportConfirmResult> {
+    return this.request<FisImportConfirmResult>('/import/fis/confirm', {
+      method: 'POST',
+      body: JSON.stringify({ previewToken }),
+    });
+  }
+
+  async getFisMockFiles(): Promise<FisMockFilePair[]> {
+    return this.request<FisMockFilePair[]>('/import/fis/mock-files');
+  }
+
+  // FIS official quotas
+  async getOfficialQuotaUsage(params?: { nationCode?: string; discipline?: string; gender?: string; }): Promise<OfficialQuotaUsage[]> {
+    if (USE_MOCK_DATA) {
+      return Promise.resolve([]);
+    }
+    const query = new URLSearchParams();
+    if (params?.nationCode) query.set('nationCode', params.nationCode);
+    if (params?.discipline) query.set('discipline', params.discipline);
+    if (params?.gender) query.set('gender', params.gender);
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return this.request<OfficialQuotaUsage[]>(`/fis/official-quotas${suffix}`);
+  }
+
+  // ============================================================================
+  // LEGACY / BACKWARDS COMPATIBILITY
+  // ============================================================================
+
+  // Old endpoints kept for backwards compatibility with existing components
+  async getStatistics(): Promise<{
+    totalAthletes: number;
+    assignedAthletes: number;
+    totalHotels: number;
+    totalCapacity: number;
+    totalSingleRooms: number;
+    totalDoubleRooms: number;
+    assignedSingleRooms: number;
+    assignedDoubleRooms: number;
+    byNation: Record<string, number>;
+    byDiscipline: Record<string, number>;
+  }> {
+    // Legacy endpoint - map to new analytics
+    const [athletes, hotels, availability] = await Promise.all([
+      this.getAthletes(),
+      this.getHotels(),
+      this.getRoomAvailability(),
+    ]);
+
+    const byNation: Record<string, number> = {};
+    const byDiscipline: Record<string, number> = {};
+
+    athletes.forEach(athlete => {
+      byNation[athlete.nationCode] = (byNation[athlete.nationCode] || 0) + 1;
+      if (athlete.discipline) {
+        byDiscipline[athlete.discipline] = (byDiscipline[athlete.discipline] || 0) + 1;
+      }
+    });
+
+    return {
+      totalAthletes: athletes.length,
+      assignedAthletes: 0, // Legacy field
+      totalHotels: hotels.length,
+      totalCapacity: 0, // Legacy field
+      totalSingleRooms: 0, // Legacy field
+      totalDoubleRooms: 0, // Legacy field
+      assignedSingleRooms: 0, // Legacy field
+      assignedDoubleRooms: 0, // Legacy field
+      byNation,
+      byDiscipline,
+    };
+  }
+
+  async assignAthleteToHotel(athleteId: string, hotelId: string, roomType: 'single' | 'double' = 'double'): Promise<void> {
+    // Legacy - map to new room assignment
+    // Note: This requires roomTypeId which we don't have from the old signature
+    console.warn('assignAthleteToHotel is deprecated, use createRoomAssignment instead');
+  }
+
+  async removeAssignment(athleteId: string): Promise<void> {
+    // Legacy - not implemented in new backend
+    console.warn('removeAssignment is deprecated');
+  }
+}
+
+export const api = new ApiService();
+
+export interface DatabaseStatus { maintenanceMode?: boolean; databaseStatus?: 'available' | 'unavailable'; postgresVersion: string; databaseSize: number; alembicVersion: string; lastBackup: { created?: string; status?: string } | null; backupSize: number | null; backupCount: number; backupStatus?: string; capabilities?: { download: boolean; create: boolean; upload: boolean; restore: boolean; reset?: boolean }; }
+export interface DatabaseBackup { filename: string; size: number; modified: number; category?: 'automatic' | 'manual' | 'pre-restore'; token?: string; local?: boolean; localFile?: File; }
+
+export interface RestoreJob { state: string; operationId?: string; actor?: string; filename?: string; message?: string; safetyBackup?: string; updatedAt?: string; }
+
+export interface CleanupPreview { eventId:number;scope:string;nation:string|null;nations:string[];counts:Record<string,number>;preserved:string[];message?:string;safetyBackup?:{filename:string;category:string;size:number}|null; }

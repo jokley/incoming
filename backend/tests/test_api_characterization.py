@@ -1,4 +1,6 @@
 """Small HTTP contracts complementing planning/quota/person workflow tests."""
+from test_support import import_review_payload
+
 import io
 import json
 import os
@@ -33,6 +35,9 @@ class ApiCharacterizationTest(unittest.TestCase):
         with app.app_context():
             db.drop_all()
             db.create_all()
+            owner = Event(name='Explicit API fixture event', active=True)
+            db.session.add(owner); db.session.commit()
+            app.config['OPERATIONAL_EVENT_ID'] = owner.id
         self.client = app.test_client()
         self.editor = {'X-Authenticated-User': 'editor',
                        'X-Authenticated-Groups': 'incoming-editor'}
@@ -55,7 +60,7 @@ class ApiCharacterizationTest(unittest.TestCase):
         hotel_id = created.get_json()['id']
         self.assertIsInstance(hotel_id, str)
         expected = {'id': hotel_id, 'name': 'Baseline Hotel', 'location': None,
-            'region': None, 'contactPerson': 'Desk', 'email': None, 'phone': None,
+            'region': None, 'accommodationType': 'STANDARD', 'contactPerson': 'Desk', 'email': None, 'phone': None,
             'comment': 'Accessible', 'roomInventories': []}
         self.assert_json(created, 201, expected)
         with app.app_context():
@@ -114,6 +119,9 @@ class ApiCharacterizationTest(unittest.TestCase):
                     db.session.remove()
                     db.drop_all()
                     db.create_all()
+                    owner = Event(name='Explicit API fixture event', active=True)
+                    db.session.add(owner); db.session.commit()
+                    app.config['OPERATIONAL_EVENT_ID'] = owner.id
                 observations = []
 
                 def mutate(method, path, body=None, status=200):
@@ -225,10 +233,12 @@ class ApiCharacterizationTest(unittest.TestCase):
             self.assert_json(self.client.get(path), 200, people)
         detail = self.client.get(f'/api/athletes/{person_id}').get_json()
         self.assertEqual(detail['id'], person_id)
-        self.assertNotIn('workflowStatus', detail)  # Detail is not the collection projection.
+        self.assertEqual(detail['workflowStatus'], 'OPEN_ASSIGNMENT')
+        self.assertEqual(detail['accommodationCoverage']['coverageStatus'], 'CONFLICT')  # Missing stay dates, not a quota rewrite.
         self.assert_json(self.client.get(f'/api/athletes/{person_id}/'), 200, detail)
         quota = self.client.get('/api/fis/official-quotas?nationCode=AUT&gender=F').get_json()
-        self.assertTrue(quota)
+        # A descriptive legacy discipline supplies no quota membership.
+        self.assertEqual(quota, [])
         for path in ['/api/fis/official-quotas/', '/api/official-quotas',
                      '/api/official-quotas/', '/fis/official-quotas', '/fis/official-quotas/']:
             self.assert_json(self.client.get(path + '?nationCode=AUT&gender=F'), 200, quota)
@@ -288,17 +298,26 @@ class ApiCharacterizationTest(unittest.TestCase):
             decision = ImportApproval(session_id=session.id, version_id=session.current_version_id,
                 nation=session.nation, approval_type='NATION_APPROVED', description='Single Rooms',
                 decision='APPROVED', approved_person_keys_json=json.dumps([person_key]), username='fixture')
+            person = PREVIEW_STORE[token]['people'][0]
+            decision.quota_details_json = json.dumps(dict(quotaMembershipVersion=1, nationCode=person['nationCode'],
+                gender=person['gender'], discipline=person['quotaDisciplines'][0], singleRoomCandidates=[
+                    dict(personKey=person_key, competitionIds=person['competitionIds'])]))
             db.session.add(decision)
             db.session.commit()
             decision_id = decision.id
-        approved = self.client.post(f'/api/import/sessions/{session_id}/approve', headers=self.editor)
+            review_body = import_review_payload(session)
+        approved = self.client.post(f'/api/import/sessions/{session_id}/approve', headers=self.editor, json=review_body)
         self.assertEqual(approved.status_code, 200, approved.get_data(as_text=True))
         self.assertEqual(approved.get_json()['status'], 'APPROVED')
         path = '/api/import/fis/confirm/' if direct else f'/api/import/sessions/{session_id}/import'
         with patch('app.confirm_fis_import', wraps=confirm_fis_import) as confirm:
             confirmed = self.client.post(path,
                 json={'previewToken': token}, headers=self.editor)
-            confirm.assert_called_once_with(token, {person_key: decision_id})
+            confirm.assert_called_once()
+            self.assertEqual(confirm.call_args.args, (token, {person_key: decision_id}))
+            self.assertEqual(confirm.call_args.kwargs['confirmer'], 'editor')
+            self.assertEqual(confirm.call_args.kwargs['change_plan']['snapshotScope'], 'FULL_NATION')
+            self.assertEqual(str(confirm.call_args.kwargs['persisted_preview']['eventId']), str(payload['eventId']))
         self.assertEqual(confirmed.status_code, 200, confirmed.get_data(as_text=True))
         expected_keys = {'success', 'summary', 'run'} | (set() if direct else {'session'})
         self.assertEqual(set(confirmed.get_json()), expected_keys)
@@ -306,7 +325,8 @@ class ApiCharacterizationTest(unittest.TestCase):
         self.assertEqual(confirmed.get_json()['summary'], {
             'peopleCreated': len(payload['people']), 'peopleUpdated': 0,
             'peopleRemoved': 0, 'duplicatesRemoved': 0, 'fisRoomsImported': 0,
-            'fisRoomsReplaced': 0, 'dispositionsChanged': 0})
+            'fisRoomsReplaced': 0, 'dispositionsChanged': 0, 'peopleUnchanged':0,
+            'bookingsAffected':0,'bookingsRemoved':0,'occupantsRemoved':0,'membershipsRemoved':0,'approvalsPreserved':1})
         self.assertEqual(confirmed.get_json()['run']['importType'], 'fis_confirm')
         with app.app_context():
             count = Athlete.query.count()
@@ -320,8 +340,9 @@ class ApiCharacterizationTest(unittest.TestCase):
             self.assertEqual(AuditEvent.query.filter_by(path=path).count(), 1)
             self.assertEqual(RoomBooking.query.count(), 0)
         self.assertNotIn(token, PREVIEW_STORE)
-        self.assert_json(self.client.post('/api/import/fis/confirm', json={'previewToken': token}),
-            400, {'error': 'INVALID_IMPORT', 'message': 'Preview token not found or expired'})
+        repeated=self.client.post('/api/import/fis/confirm', json={'previewToken': token})
+        self.assertEqual(repeated.status_code,200,repeated.json)
+        self.assertTrue(repeated.json['idempotent'])
         with app.app_context():
             self.assertEqual(Athlete.query.count(), count)
 
@@ -396,20 +417,19 @@ class ApiCharacterizationTest(unittest.TestCase):
             session.status, session.approved_at = 'APPROVED', datetime.utcnow()
             db.session.commit()
         PREVIEW_STORE['session-token']['createdAt'] -= timedelta(seconds=PREVIEW_TTL_SECONDS + 1)
-        self.assert_json(self.client.post('/api/import/fis/confirm', json={'previewToken': 'session-token'}),
-            400, {'error': 'INVALID_IMPORT', 'message': 'Preview token not found or expired'})
+        # A durable legacy version is not executable until explicitly re-reviewed.
+        direct=self.client.post('/api/import/fis/confirm',json={'previewToken':'session-token'})
+        self.assertEqual(direct.status_code,409,direct.json)
+        self.assertEqual(direct.json['error'],'IMPORT_REVIEW_REQUIRED')
         with app.app_context():
-            self.assertEqual(db.session.get(ImportSession, session_id).status, 'APPROVED')
-            self.assertEqual(ImportRun.query.count(), 0)
-            self.assertEqual(ImportSessionEvent.query.count(), 0)
-
-        # The existing normal-route expiry contract remains distinct: it records
-        # a failed import attempt on the session and returns its established body.
-        self.assert_json(self.client.post(f'/api/import/sessions/{session_id}/import'), 400,
-            {'error': 'Preview token not found or expired'})
+            version_id=db.session.get(ImportSession,session_id).current_version_id
+        normal=self.client.post(f'/api/import/sessions/{session_id}/import',json={'versionId':version_id})
+        self.assertEqual(normal.status_code,409,normal.json)
+        self.assertEqual(normal.json['error'],'IMPORT_REVIEW_REQUIRED')
         with app.app_context():
-            self.assertEqual(db.session.get(ImportSession, session_id).status, 'ERROR')
-            self.assertEqual(ImportRun.query.count(), 0)
+            self.assertEqual(db.session.get(ImportSession,session_id).status,'APPROVED')
+            self.assertEqual(ImportRun.query.count(),0)
+            self.assertEqual(ImportSessionEvent.query.count(),0)
 
     def test_single_room_approval_validation_and_session_import_gate(self):
         with app.app_context():
@@ -440,8 +460,8 @@ class ApiCharacterizationTest(unittest.TestCase):
             ({'approvalBy': ''}, 'approvalBy is required'),
             ({'approvalDate': 'invalid'}, 'approvalDate or deadlineAt is invalid'),
             ({'approvalType': 'ORGANIZER_APPROVED'}, 'deadlineAt is required for organizer approval'),
-            ({'approvedPersonKeys': []}, 'Exactly the affected extra single-room persons must be selected'),
-            ({'approvedPersonKeys': ['OTHER']}, 'Exactly the affected extra single-room persons must be selected')]
+            ({'approvedPersonKeys': []}, 'Select one or more unresolved extra single-room persons, up to the remaining excess'),
+            ({'approvedPersonKeys': ['OTHER']}, 'Select one or more unresolved extra single-room persons, up to the remaining excess')]
         for change, error in cases:
             with self.subTest(change=change):
                 self.assert_json(self.client.patch(path, json={**valid, **change},

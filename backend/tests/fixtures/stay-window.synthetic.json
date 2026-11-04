@@ -1,0 +1,12 @@
+{
+  "eventStart": "2027-03-06",
+  "eventEnd": "2027-03-21",
+  "allowedStart": "2027-03-04",
+  "allowedEnd": "2027-03-22",
+  "arrivalDate": "2027-03-02",
+  "departureDate": "2027-03-23",
+  "nightsBefore": 2,
+  "nightsAfter": 1,
+  "outsideNights": 3,
+  "reason": null
+}

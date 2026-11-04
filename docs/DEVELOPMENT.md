@@ -1,10 +1,12 @@
 # Development quality checks
 
-Run these commands from the repository root after `pnpm install`.
+Run frontend commands from `frontend/` after `pnpm install`. Python commands
+remain repository-root commands. Root `.env*` files remain shared configuration.
 
 ## Frontend
 
 ```bash
+cd frontend
 pnpm typecheck
 pnpm lint
 pnpm test
@@ -106,6 +108,12 @@ Without Docker on Windows, use the portable PostgreSQL 17 workflow recorded in
 
 ### Local application without Docker (Windows PowerShell)
 
+For a legacy dump requiring explicit event ownership, use the isolated procedure
+and verified PowerShell commands in [local restore verification](LOCAL_RESTORE_VERIFICATION.md).
+The launcher supports `--env-file`, a separate `incoming_restorecheck_YYYYMMDD_HHMMSS`
+database, `BACKUP_PORT`, `OPERATIONAL_EVENT_ID`, and `EVENT_OWNERSHIP_PLAN`.
+The ordinary `.env.local` target below remains unchanged.
+
 Run from the repository root. Install dependencies once:
 
 ```powershell
@@ -164,7 +172,7 @@ the LAN. `POSTGRES_BIN` can specify an absolute PostgreSQL 17 `bin` directory
 4. Start (or restart, to load `.env.local`) the frontend:
 
    ```powershell
-   pnpm dev --host 127.0.0.1
+   pnpm --dir frontend dev --host 127.0.0.1
    ```
 
 Check configuration/database without starting a listener with
@@ -207,3 +215,29 @@ After installing `backup/requirements.txt`:
 ```bash
 cd backup && python -m unittest discover -s tests
 ```
+
+### Frontend ownership
+
+The standalone package and lockfile live in `frontend/`; no pnpm workspace is
+needed. Install dependencies there rather than reusing an old root node_modules.
+Vite still loads root `.env*` files; builds write `frontend/dist/`. The frontend
+VS Code task runs from frontend/. Existing unanchored ignore rules cover these
+nested dependency/build artifacts.
+
+The package pins pnpm 10.30.3 (also used by its Dockerfile), retaining support
+for the existing package-level dependency overrides. Optional external static
+assets continue to live at root public/ through Vite publicDir and Compose.
+
+### Structural relocation validation (2026-10-09)
+
+Clean frontend installation with pnpm 10.30.3 and --frozen-lockfile passed; the
+lockfile was unchanged. Root node_modules was moved aside throughout frontend
+validation. Typecheck, all six frontend test files, and Vite build passed.
+Backend fast checks passed (75 tests, 951 subtests), backup checks passed (15
+tests), dedicated PostgreSQL 17 migration checks passed (2 tests, 6 subtests),
+and PostgreSQL integration checks passed (104 tests, 151 subtests). Python
+compile checks and git diff --check passed. The API route manifest, backend,
+backup, scripts, nginx and relocated frontend source were unchanged in content.
+Compose structure was checked using the committed environment example because
+incoming.env is intentionally absent. A frontend image build was not performed.
+The disposable test PostgreSQL service and volume were removed after validation.
