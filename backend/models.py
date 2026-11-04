@@ -236,6 +236,13 @@ class ImportSessionEvent(db.Model):
         from import_control import clarification_document
         document = clarification_document(self)
         description = document['comment'] if document else self.description
+        if self.event_type=='OFFICIAL_SOURCE_LINK':
+            try:
+                linked=json.loads(self.description or '{}')
+                if linked.get('format')=='incoming.official-source-link':
+                    description=' / '.join(f"{i.get('firstname','')} {i.get('lastname','')} · {i['family']} · Staff-ID {i['staffId']} · Quellzeile {i.get('row','—')}" for i in linked['identities'])+' · Identität ausdrücklich bestätigt; Unterkunft und Genehmigungen separat.'
+            except (TypeError,ValueError,KeyError):pass
+
         if document:
             subject = document.get('subject') or {}
             names = ', '.join(subject.get('people') or [])

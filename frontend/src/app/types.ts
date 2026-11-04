@@ -511,6 +511,8 @@ export interface ImportControl {
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  sourceIdentities?:Array<{family:string;staffId:string;function?:string;row?:number}>;
+  sourceCompetitorId?:string;confirmedOfficialLinkId?:number;
   sourceRows?:Array<{versionId:number;version:number;row?:number}>;
   existingAthleteId?:number|null;
   arrivalDate?:string|null;departureDate?:string|null;

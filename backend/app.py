@@ -1970,6 +1970,26 @@ def preview_fis_import():
         ).hexdigest()
         from imports.read_context import ImportReadContext
         read_context=ImportReadContext(event_context.id)
+        from imports.official_links import proposals, issue_proposal
+        from imports.normalization import normalize_whitespace,canonical_fis_code
+        from excel_import import load_first_sheet
+        frame=load_first_sheet(entries_path)
+        def preflight_fis(value):
+            try:return canonical_fis_code(value) or None
+            except ValueError:return '__INVALID_FIS__'
+        raw_people=[dict(firstname=normalize_whitespace(r.get('Firstname')),lastname=normalize_whitespace(r.get('Lastname')),
+            nationCode=normalize_whitespace(r.get('Nationcode')).upper(),function=normalize_whitespace(r.get('Function')),
+            fisCode=preflight_fis(r.get('Fiscode')),competitorId=normalize_whitespace(r.get('Competitorid/Staff ID')),
+            rowNumber=int(i)+2) for i,r in frame.iterrows() if normalize_whitespace(r.get('Present')).upper()!='CANCELLED']
+        raw_nations={p['nationCode'] for p in raw_people if p['nationCode']}
+        if len(raw_nations)==1:
+            from imports.event_context import active_competition_mapping
+            from competitions import competition_athlete_family
+            mapping=active_competition_mapping(event_context)
+            families={competition_athlete_family(mapping[c]) for c in frame.columns if c in mapping}
+            prior=ImportSession.query.filter_by(event_id=event_context.id,nation=next(iter(raw_nations))).first()
+            candidates=proposals(raw_people,next(iter(families)) if len(families)==1 else None,prior,read_context)
+            if candidates:issue_proposal(prior,candidates,source_hash=source_hash)
         result = create_fis_import_preview(entries_path, room_path, event_context,read_context=read_context,snapshot_scope=request.form.get('snapshotScope'))
         session_id = request.form.get('sessionId')
         if request.form.get('createSession') == 'true' or session_id:
@@ -2104,6 +2124,9 @@ def preview_fis_import():
                     title='Quote erfüllt', description='Alle Kombinationen aus Nation, Disziplin und Gender sind erfüllt.',
                     username=user.username))
             reviewed=refresh_plan(session,result,read_context=read_context,recalculate=False)
+            if any(e.get('code')=='IMPORT_SHARED_ACCOMMODATION_CONFLICT' for e in reviewed.get('errors',[])):
+                result.update(errors=reviewed['errors'],isValid=False)
+                session.status='DRAFT'
             present_plan(result,reviewed['changePlan'])
             result['planStale']=False
             from import_control import build_import_control
@@ -2899,6 +2922,15 @@ def add_import_session_history(session_id):
     lock_accommodation_writes()
     session = ImportSession.query.filter_by(id=session_id).populate_existing().with_for_update().first_or_404()
     data = request.get_json(silent=True) or {}
+    if data.get('officialLinkAction')=='CONFIRM':
+        from imports.official_links import confirm_links
+        try:confirm_links(session,data,current_user().username)
+        except ImportValidationError as exc:return jsonify(exc.to_dict()),409
+        except (TypeError,ValueError) as exc:return jsonify(error='INVALID_OFFICIAL_LINK',message=str(exc)),409
+        db.session.commit()
+        from excel_import import PREVIEW_STORE
+        PREVIEW_STORE.pop(data.get('token'),None)
+        return jsonify(_current_session_payload(session,include_preview=True)),201
     if 'clarificationAction' in data:
         if not session.current_version:
             return jsonify(error='IMPORT_REVIEW_REQUIRED'),409

@@ -80,11 +80,17 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     from .change_plan import digest
     if not versions:
         raise ImportValidationError('IMPORT_REVIEW_REQUIRED', 'Mindestens eine aktuelle Teilmeldung auswählen.')
-    sources = [(v, load_version_preview(v)) for v in versions]
+    sources = [(v, load_version_preview(v)) for v in sorted(versions,key=lambda v:(json.loads(v.preview_json).get('replacementScope',{}).get('family',''),v.id))]
     from excel_import import apply_preview_rates, apply_preview_requirements, apply_single_room_quota_exemptions
     context=read_context or ImportReadContext(versions[0].session.event_id)
     if context.event_id!=versions[0].session.event_id:
         raise ImportValidationError('IMPORT_EVENT_MISMATCH','Fremder Kontext für die Teilmeldungen.')
+    from .official_links import source_view, proposals, issue_proposal
+    for version,source in sources:
+        candidates=proposals(source.get('people',[]),(source.get('replacementScope') or {}).get('family'),version.session,context)
+        if candidates:issue_proposal(version.session,candidates)
+    sources=[(v,source_view(s,(s.get('replacementScope') or {}).get('family'),context)) for v,s in sources]
+    shared_issues=[]
     imported=imported_submission_ids(versions[0].session)
     def project_source(people,version,source):
         if version.id in imported:
@@ -115,11 +121,19 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                     prior_version,prior_source=next((v,s) for v,s in sources if v.id==target['sourceRows'][0]['versionId'])
                     project_source([target],prior_version,prior_source)
                     project_source([incoming],version,source)
+                from .shared_accommodation import harmonize_missing,issue
+                prior_version,prior_source=next((v,s) for v,s in sources if v.id==target['sourceRows'][0]['versionId'])
+                left,right=harmonize_missing(target,incoming,prior_source,source)
                 if target.get('sharedWithName') and incoming.get('sharedWithName') and normalize_string(target['sharedWithName'])!=normalize_string(incoming['sharedWithName']):
                     partner_checks.append((target['sourceRows'][0]['versionId'],target['matchKey'],version.id,original['matchKey']))
                 conflicts = [field for field in critical if comparable(target,field) != comparable(incoming,field)
                              and not (field in {'roomType','sharedWithName'} and (not target.get(field) or not incoming.get(field)))]
-                if conflicts:
+                if left and right and left!=right and 'accommodationRequirement' not in conflicts:conflicts.append('accommodationRequirement')
+                linked=target.get('confirmedOfficialLinkId') or incoming.get('confirmedOfficialLinkId')
+                housing={'roomType','accommodationRequirement','arrivalDate','departureDate'}
+                if conflicts and linked and set(conflicts)<=housing:
+                    shared_issues.append(issue(target,incoming,conflicts,left,right))
+                elif conflicts:
                     raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Widersprüchliche Personen-, Aufenthalts- oder Zimmerangaben in den Teilmeldungen.',
                         details={'fields':conflicts,'sourceRows':target['sourceRows']+incoming['sourceRows']})
                 for field in ('fisCode','competitorId','roomType','sharedWithName'):
@@ -127,6 +141,9 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                 for field in ('competitionIds','competitionImportCodes','affirmativeWscColumns'):
                     target[field]=sorted(set(target.get(field,[]))|set(incoming.get(field,[])),key=str)
                 target['sourceRows'] += incoming['sourceRows']
+                if linked:
+                    target['confirmedOfficialLinkId']=linked
+                    target['sourceIdentities']=target.get('sourceIdentities',[])+incoming.get('sourceIdentities',[])
                 target['roomListHasNoData'] &= incoming['roomListHasNoData']
             else:
                 target=incoming;people.append(target)
@@ -143,7 +160,11 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
         return None
     for left,left_key,right,right_key in partner_checks:
         if partner(left,left_key) is None or partner(left,left_key)!=partner(right,right_key):
-            raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT','Zimmerpartnerangaben sind zwischen den Teilmeldungen nicht eindeutig.')
+            linked_keys={p['matchKey'] for p in people if p.get('confirmedOfficialLinkId')}
+            if aliases.get((left,left_key)) in linked_keys:
+                shared_issues.append(dict(code='IMPORT_SHARED_ACCOMMODATION_CONFLICT',message='Zimmerpartnerangaben unterscheiden sich zwischen den Quellen; Klärung erforderlich.',details={'personKey':aliases.get((left,left_key))}))
+            else:
+                raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT','Zimmerpartnerangaben sind zwischen den Teilmeldungen nicht eindeutig.')
     room_for_person, by_signature = {}, {}
     for version, source in sources:
         for original in source.get('rooms', []):
@@ -158,7 +179,11 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
             related={id(item):item for key in keys for item in room_for_person.get(key,[]) if item['versionId']!=version.id}
             for item in related.values():
                 if item['keys']!=keys or normalize_string(item['room']['roomType'])!=normalize_string(room['roomType']) or (item['room']['person1Key']==room['person1Key'] and item['signature']!=signature):
-                    raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT','Widersprüchliche Zimmerzuordnungen in den Teilmeldungen.',details={'sourceVersionId':version.id,'row':room.get('rowNumber')})
+                    linked_keys={p['matchKey'] for p in people if p.get('confirmedOfficialLinkId')}
+                    if set(keys) & linked_keys:
+                        shared_issues.append(dict(code='IMPORT_SHARED_ACCOMMODATION_CONFLICT',message='Widersprüchliche explizite Zimmerzuordnungen; keine automatische Übernahme.',details={'sourceVersionId':version.id,'row':room.get('rowNumber')}))
+                    else:
+                        raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT','Widersprüchliche Zimmerzuordnungen in den Teilmeldungen.',details={'sourceVersionId':version.id,'row':room.get('rowNumber')})
             previous=by_signature.get(signature)
             if previous:
                 previous['room']['sourceRows'].append({'versionId':version.id,'version':version.version,'row':room.get('rowNumber')})
@@ -176,7 +201,9 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
         result.pop('cancelledPeople', None)
     result.update(people=people,rooms=rooms,roomListHasNoData=all(p.get('roomListHasNoData') for p in people))
     for field in ('errors','warnings'):
-        result[field]=[{**item,'sourceVersionId':v.id} for v,s in sources for item in s.get(field,[])]
+        result[field]=[{**item,'sourceVersionId':v.id} for v,s in sources for item in s.get(field,[]) if not (field=='errors' and len(sources)>1 and (item.get('details') or {}).get('singleScopeReview'))]
+    result['errors'] += shared_issues
+    if shared_issues:result['isValid']=False
     for field in ('entriesColumns','roomColumns','dayColumns'):
         result[field]=list(dict.fromkeys(value for _,s in sources for value in s.get(field,[])))
     for field in ('accommodationRateOverrides','accommodationRequirementOverrides','singleRoomQuotaExemptOverrides','singleRoomQuotaExemptOverrideRevisions'):
@@ -209,7 +236,9 @@ def require_submission_sources(session, preview):
 
 def require_submission_consistency(session, preview):
     if (preview.get('replacementScope') or {}).get('kind')=='SPORT_FAMILY':
-        merge_submission_previews(list(submission_heads(session).values()),consistency_only=True)
+        merged=merge_submission_previews(list(submission_heads(session).values()),consistency_only=True)
+        conflicts=[e for e in merged.get('errors',[]) if e.get('code') in {'IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'}]
+        if conflicts:raise ImportValidationError(conflicts[0]['code'],conflicts[0]['message'],details={'issues':conflicts})
 
 
 def review_approvals(session, preview):

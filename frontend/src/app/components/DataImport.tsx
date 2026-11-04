@@ -1,3 +1,4 @@
+import {OfficialLinkDialog,type OfficialLinkProposal} from './OfficialLinkDialog';
 import { usePermissions } from '../auth/AuthProvider';
 import { NationClarificationDialog } from './NationClarificationDialog';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
@@ -64,6 +65,12 @@ export function nationReviewSelection(session: ImportSession, force = false) {
 }
 
 export function DataImport() {
+  const [officialProposal,setOfficialProposal]=useState<OfficialLinkProposal|null>(null);
+  const reportImportError=(e:unknown,fallback:string)=>{
+    const issue=e as {error?:string;details?:OfficialLinkProposal};
+    if(issue?.error==='OFFICIAL_IDENTITY_REVIEW_REQUIRED'&&issue.details?.token)setOfficialProposal(issue.details);
+    setError(e instanceof Error?e.message:fallback);
+  };
   const permissions = usePermissions();
   const importAllowed = permissions.canManageImports;
   const [searchParams] = useSearchParams();
@@ -108,7 +115,7 @@ export function DataImport() {
       const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
       setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
       if (selection) await refreshSessions();
-    } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) setError(e instanceof Error ? e.message : 'Importsession konnte nicht geladen werden.'); }
+    } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) reportImportError(e,'Importsession konnte nicht geladen werden.'); }
     finally { setLoading(false); }
   };
 
@@ -123,7 +130,7 @@ export function DataImport() {
   const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null);setCloseRefreshWarning(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
       const selection = fullReplacement ? undefined : nationReviewSelection(uploaded);
       const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : uploaded;
-      setSelected(draft); setPreview(draft.preview ?? null); await refreshSessions(); } } catch (e) { setError(e instanceof Error ? e.message : 'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+      setSelected(draft); setPreview(draft.preview ?? null); await refreshSessions(); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const closeSession = async () => {
     if(!closingSession)return;setConfirming(true);setCloseError(null);setCloseRefreshWarning(null);
     let archived: ImportSession;
@@ -151,7 +158,7 @@ export function DataImport() {
       const selection=source?{sourceVersionId:source.versionId}:nationReviewSelection(current,true);
       const updated=await api.recheckImportSession(selected.id,selection);
       setSelected(updated);setPreview(updated.preview??null);await refreshSessions();
-    } catch(e){setError(e instanceof Error?e.message:'Erneute Prüfung fehlgeschlagen');}
+    } catch(e){reportImportError(e,'Erneute Prüfung fehlgeschlagen');}
     finally{setConfirming(false);}
   };
 
@@ -159,7 +166,7 @@ export function DataImport() {
     if(!selected)return;
     setConfirming(true);setError(null);setSuccess(null);
     try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);await refreshSessions();}
-    catch(e){setError(e instanceof Error?e.message:'Teilmeldungen konnten nicht geprüft werden.');}
+    catch(e){reportImportError(e,'Teilmeldungen konnten nicht geprüft werden.');}
     finally{setConfirming(false);}
   };
   const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[];tariffEffect?:'NONE'|'SPECIAL_SELECTED';approvedExtent?:import('../types').QuotaExtent}) => {
@@ -292,6 +299,7 @@ export function DataImport() {
               <NextAction session={selected} preview={preview} success={success}/>
               <CompletedDecisions session={selected} onOpen={setActiveTask}/>
               {preview?.cancelledPeople?.length? <details className="rounded-xl border border-[var(--ops-border)] p-3 text-sm"><summary>{preview.cancelledPeople.length} stornierte Meldung(en) · im betroffenen Sportbereich inaktiv</summary><p className="mt-2 text-xs">Bestehende Personen und Competition-Zuordnungen werden ausschließlich über den geprüften Änderungsplan entfernt. Andere Sportbereiche bleiben geschützt.</p><ul className="mt-2 space-y-1">{preview.cancelledPeople.map((p,index)=><li key={index}>{p.firstname} {p.lastname} · {p.sourceFamily==='Freestyle'?'Freestyle/Freeski':p.sourceFamily||'Nationsmeldung'} · Present = CANCELLED · Entry-Zeile {p.rowNumber}</li>)}</ul></details>:null}
+              {preview?.errors.some(e=>['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'].includes(e.code))&&<InfoPanel tone="warning" title="Gemeinsame Unterkunft klären"><p>Die Personenzuordnung genehmigt keine widersprüchlichen Zimmer- oder Aufenthaltsangaben. Der gemeinsame Prüfstand bleibt bis zur Klärung gesperrt.</p><ul className="mt-2 space-y-1 text-sm">{preview.errors.filter(e=>['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'].includes(e.code)).map((e,index)=><li key={index}>{preview.people.find(p=>p.matchKey===e.details?.personKey)?.firstname} {preview.people.find(p=>p.matchKey===e.details?.personKey)?.lastname} · {e.message}</li>)}</ul></InfoPanel>}
               <ImportChangePlan plan={preview?.changePlan} stale={preview?.planStale} editable={selected.status!=='IMPORTED' && selected.status!=='APPROVED'} destructiveConfirmed={destructiveConfirmed} onDestructive={setDestructiveConfirmed} busy={confirming || loading}/>
 
               {preview&&<PreviewCard onPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} control={selected.importControl} onFilter={(area,filter)=>{setQuotaPeopleFilter(null);setPersonFilter(filter);setPersonSearch('');setDetail({title:area==='people'?'Personen der Importvorschau':'Zimmer der Importvorschau',headers:area==='people'?PEOPLE_HEADERS:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});}} preview={preview} peopleRows={peopleRows} roomRows={roomRows} onOpen={d=>{if(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(d.title)){setQuotaPeopleFilter(null);setPersonFilter('all');setPersonSearch('');}setDetail(d);}}/>}
@@ -326,6 +334,11 @@ export function DataImport() {
         const saved=await api.documentImportClarification(selected.id,data);
         setSelected(saved);setPreview(saved.preview??null);setSessions(rows=>rows.map(row=>row.id===saved.id?saved:row));
       }}/>}
+    {officialProposal&&permissions.canManageImports&&<OfficialLinkDialog key={officialProposal.token} proposal={officialProposal} onClose={()=>setOfficialProposal(null)} onConfirm={async keys=>{
+      await api.documentImportClarification(officialProposal.sessionId,{officialLinkAction:'CONFIRM',token:officialProposal.token,candidateKeys:keys,confirmed:true});
+      const sessionId=officialProposal.sessionId;setOfficialProposal(null);
+      if(files.length>=2)await runPreview();else await selectSession(await api.getImportSession(sessionId));
+    }}/>}
     <OperationsDecisionDialog canWrite={importAllowed} task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />
 
