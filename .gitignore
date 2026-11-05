@@ -3,9 +3,6 @@ dist
 
 .env
 .env.*
-!.env.test.example
-!.env.test.compose.example
-!.env.local.example
 /.local-dev/
 /.local-test/
 /scripts/__pycache__/
@@ -22,6 +19,7 @@ backend/mock_fis_files/*.xls
 
 # Local Incoming runtime secrets
 incoming.env
+incoming.test.env
 
 backend/**/__pycache__/
 

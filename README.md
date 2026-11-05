@@ -68,35 +68,26 @@ frontend/                React-/TypeScript-Frontend und Node/pnpm-Konfiguration
 - Docker Engine mit Docker Compose
 - alternativ: Python 3.12+, Node.js 20+ und pnpm
 
-### Docker Compose
+### PROD und TEST
 
-```bash
-cp incoming.env.example incoming.env
-# Kennwörter und AUTH_PROXY_SECRET in incoming.env ersetzen
-docker compose up --build postgres backup backend frontend
+PROD verwendet unverändert `incoming.env` und `docker-compose.yml`:
+
+```sh
+docker compose --env-file incoming.env -f docker-compose.yml up -d
 ```
 
-Frontend: `http://localhost:5173`, Backend-Healthcheck:
-`http://localhost:5000/health`.
+TEST verwendet die gemeinsame Basis plus strukturelles Override:
 
-### Backend
-
-```bash
-cd backend
-python -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-export DATABASE_URL=postgresql://incoming:secret@localhost:5432/incoming
-flask --app app run --debug
+```sh
+docker compose -p incoming-test --env-file incoming.test.env -f docker-compose.yml -f docker-compose.test.yml up -d
 ```
 
-### Frontend
-
-```bash
-cd frontend
-pnpm install
-pnpm dev
-```
+Vorlage: `incoming.test.env.example`. Echte Env-Dateien nicht einchecken.
+LOCAL/DEV im CodeServer verwendet dieselbe `incoming.test.env`, TEST-Datenbank
+und denselben Backup-Service. Änderungen aus LOCAL/DEV verändern TEST-Daten.
+Kein `.env.local`, keine separate lokale Runtime-DB und kein lokaler Backup-Service.
+Start, Stop, Umstellung, Restore-Volume-/Auth-Voraussetzungen und lokale Prozesse:
+[TEST-/LOCAL-Anleitung](docs/TEST_COMPOSE.md).
 
 ### Migrationen
 

@@ -2,14 +2,13 @@
 import argparse
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / 'backend'
 sys.path.insert(0, str(BACKEND))
-from test_support import validate_test_url  # noqa: E402
+from test_support import LOCAL_TEST_URL, validate_test_url  # noqa: E402
 
 POSTGRES_TESTS = [
     'test_segment_transactions.py', 'test_requirement_transactions.py',
@@ -32,18 +31,12 @@ POSTGRES_TESTS = [
 
 
 def environment(postgres):
-    local = ROOT / '.env.test'
-    if not local.exists():
-        shutil.copyfile(ROOT / '.env.test.example', local)
-    values = {}
-    for line in local.read_text(encoding='utf-8-sig').splitlines():
-        if line.strip() and not line.lstrip().startswith('#'):
-            key, value = line.split('=', 1)
-            values[key.strip()] = value.strip()
-    url = validate_test_url(values.get('TEST_DATABASE_URL'), values.get('FLASK_ENV'))
+    # Destructive automated tests must never load the shared TEST/LOCAL env file.
+    url = validate_test_url(LOCAL_TEST_URL, 'test')
     # Preserve PATH etc., but never inherit database credentials or libpq routing options.
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith(('PG', 'AUTH_', 'BACKUP_', 'DATABASE_', 'TEST_DATABASE_'))}
+           if not key.startswith(('PG', 'POSTGRES_', 'AUTH_', 'BACKUP_', 'DATABASE_', 'TEST_', 'FLASK_', 'CORS_'))
+           and key not in {'OPERATIONAL_EVENT_ID', 'EVENT_OWNERSHIP_PLAN'}}
     env.update(DATABASE_URL=url, FLASK_ENV='test', AUTH_DEV_USER='test-admin',
                AUTH_DEV_GROUPS='incoming-admin', AUTH_PROXY_SECRET='',
                BACKUP_SERVICE_URL='http://127.0.0.1:58080',
