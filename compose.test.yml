@@ -41,6 +41,8 @@ services:
       - test-postgres-data:/var/lib/postgresql/data
     networks: !override
       incoming-test-net: {}
+      dev-net:
+        aliases: [incoming-test-postgres]
 
   # Required restore coordinator: keep the existing health/dependency contract,
   # but disable scheduled backups and use exclusively TEST storage/credentials.
@@ -57,6 +59,8 @@ services:
       - test-postgres-backups:/backups
     networks: !override
       incoming-test-net: {}
+      dev-net:
+        aliases: [incoming-test-backup]
 
   # The existing opt-in ETL tool must not inherit a PROD snapshot or report mount.
   etl:
