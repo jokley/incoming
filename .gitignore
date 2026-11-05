@@ -5,11 +5,8 @@ dist
 .env.*
 /.local-dev/
 /.local-test/
-/scripts/__pycache__/
 
 backend/venv
-backend/__pycache__
-backend/*.pyc
 backend/*.pyo
 backend/*.db
 backend/*.sqlite
@@ -21,7 +18,8 @@ backend/mock_fis_files/*.xls
 incoming.env
 incoming.test.env
 
-backend/**/__pycache__/
-
-backup/**/__pycache__/
-backup/**/*.pyc
+# Local Python environments, bytecode and development logs
+backend/.venv/
+__pycache__/
+*.pyc
+*.log

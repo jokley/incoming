@@ -27,7 +27,8 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 5173,
     allowedHosts: [
-      'incoming.jokley.at'
+      'incoming.jokley.at',
+      'code.jokley.at'
     ],
     // Local dev convenience:
     // - Frontend runs on :5173
