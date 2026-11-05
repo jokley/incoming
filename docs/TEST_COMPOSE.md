@@ -102,6 +102,14 @@ Status, Logs und HTTP/API prüfen. Kein Build oder Deployment wurde hier ausgef�
 
 ## CodeServer LOCAL/DEV
 
+Den pnpm-Store außerhalb des Workspace ablegen, damit Paketdateien die
+CodeServer-Dateiüberwachung und Suche nicht belasten. Vor der Installation
+der Frontend-Abhängigkeiten einmal im CodeServer ausführen:
+
+```sh
+pnpm config set store-dir /home/coder/.local/share/pnpm/store
+```
+
 CodeServer muss bereits an dev-net hängen. **DNS/HTTP allein reicht nicht:** Der
 bestehende Restore-Schutz benötigt dasselbe lokale POSIX-Volume
 `incoming-test-postgres-backups` auch im CodeServer, read-only unter `/backups`.
