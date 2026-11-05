@@ -1,0 +1,119 @@
+# Compose >= 2.24.4. incoming.test.env is the sole runtime configuration.
+x-test-env: &test-env
+  env_file: !override [incoming.test.env]
+  environment: !reset {}
+  ports: !reset []
+
+services:
+  backend:
+    container_name: incoming-test-backend
+    depends_on: !override
+      incoming-test-postgres: {condition: service_healthy}
+      incoming-test-backup: {condition: service_healthy}
+    <<: *test-env
+    volumes: !override
+      - test-postgres-backups:/backups:ro
+    networks: !override
+      incoming-test-net: {}
+      dev-net:
+        aliases: [incoming-test-backend]
+
+  # Remove inherited keys: Compose always registers the service key in DNS.
+  postgres: !reset null
+  backup: !reset null
+
+  incoming-test-postgres:
+    image: postgres:17-alpine
+    <<: *test-env
+    container_name: incoming-test-postgres
+    volumes:
+      - test-postgres-data:/var/lib/postgresql/data
+    networks:
+      incoming-test-net:
+        aliases: [incoming-test-postgres]
+      dev-net:
+        aliases: [incoming-test-postgres]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  incoming-test-backup:
+    build:
+      context: .
+      dockerfile: backup/Dockerfile
+    <<: *test-env
+    container_name: incoming-test-backup
+    volumes:
+      - test-postgres-backups:/backups
+    depends_on:
+      incoming-test-postgres:
+        condition: service_healthy
+    networks:
+      incoming-test-net:
+        aliases: [incoming-test-backup]
+      dev-net:
+        aliases: [incoming-test-backup]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # The existing opt-in ETL tool must not inherit a PROD snapshot or report mount.
+  etl:
+    container_name: incoming-test-etl
+    depends_on: !override
+      incoming-test-postgres: {condition: service_healthy}
+    <<: *test-env
+    volumes: !reset []
+    networks: !override
+      incoming-test-net: {}
+
+  frontend:
+    container_name: incoming-test-frontend
+    env_file: !reset []
+    environment: !override {}
+    ports: !reset []
+    volumes: !reset []
+    networks: !override
+      incoming-test-net: {}
+
+  incoming-nginx: !reset null
+
+  incoming-test-nginx:
+    image: nginx:alpine
+    container_name: incoming-test-nginx
+    expose:
+      - "8080"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - incoming-test-net
+      - dev-net
+      - edge-net
+    restart: unless-stopped
+
+networks: !override
+  incoming-test-net:
+    name: incoming-test-net
+    internal: true
+  dev-net:
+    name: dev-net
+    external: true
+  edge-net:
+    name: edge-net
+    external: true
+
+volumes: !override
+  test-postgres-data:
+    name: incoming-test-postgres-data
+  test-postgres-backups:
+    name: incoming-test-postgres-backups

@@ -3,6 +3,7 @@
 **/.env
 **/.env.*
 incoming.env
+incoming.test.env
 .git
 backend/venv
 backend/.venv

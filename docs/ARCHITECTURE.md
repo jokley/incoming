@@ -87,7 +87,7 @@ scripts/                  Cross-system local startup and Python test runners
 docs/                     Shared architecture, development and operations docs
 nginx/                    Deployment reverse-proxy configuration
 docker-compose.yml        Application orchestration
-compose.test.yaml         Disposable PostgreSQL test infrastructure
+docker-compose.test.yml  TEST webstack override (shared TEST/CodeServer env)
 .env*.example             Shared local/test environment templates
 incoming.env.example      Deployment configuration template
 .vscode/                  Repository editor tasks and launch configuration
@@ -101,8 +101,8 @@ Build output is `frontend/dist/`. Python runners remain root commands:
 
 Vite loads shared root environment files through explicit `envDir`; its default
 `VITE_` exposure prefix is unchanged. Frontend Docker builds copy only frontend
-files and never root environment files. Container frontend settings are supplied
-explicitly through Compose's `VITE_API_URL` environment setting.
+files and never root environment files. The container frontend builds with `/api`; CodeServer exports VITE_* values from
+`incoming.test.env`. Secrets never belong in VITE_* values.
 
 The optional root `public/` Compose bind mount is retained for compatibility with
 external/local deployment assets, mounted at `/app/public`. It is absent
