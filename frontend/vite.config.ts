@@ -4,8 +4,10 @@ import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 
 
+const base = process.env.VITE_BASE_PATH || '/'
+
 export default defineConfig({
-  base: process.env.VITE_BASE_PATH || '/',
+  base,
   // Shared local environment files remain owned by the repository root.
   envDir: path.resolve(__dirname, '..'),
   // Preserve optional external assets at the existing root public path.
@@ -34,11 +36,13 @@ export default defineConfig({
     // Local dev convenience:
     // - Frontend runs on :5173
     // - Backend runs on :5000
-    // Proxy `/api/*` to the backend so the app can use same-origin `/api` URLs.
+    // Proxy base-prefixed API URLs to the backend using its existing /api path.
     proxy: {
-      '/api': {
+      [`${base}api`]: {
         target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:5000',
         changeOrigin: true,
+        // absproxy preserves the base; the backend still expects /api.
+        rewrite: (url) => url.slice(base.length - 1),
       },
     },
   }
