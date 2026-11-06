@@ -5,6 +5,7 @@ import react from '@vitejs/plugin-react'
 
 
 export default defineConfig({
+  base: process.env.VITE_BASE_PATH || '/',
   // Shared local environment files remain owned by the repository root.
   envDir: path.resolve(__dirname, '..'),
   // Preserve optional external assets at the existing root public path.
