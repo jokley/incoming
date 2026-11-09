@@ -41,6 +41,20 @@ export default defineConfig({
       [`${base}api`]: {
         target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:5000',
         changeOrigin: true,
+        configure: (proxy) => {
+          proxy.on('proxyReq', (proxyReq) => {
+            // Local Flask must use AUTH_DEV_USER, not the outer proxy identity.
+            for (const header of [
+              'X-Auth-Proxy-Secret',
+              'X-Authenticated-User',
+              'X-Authenticated-Name',
+              'X-Authenticated-Email',
+              'X-Authenticated-Groups',
+            ]) {
+              proxyReq.removeHeader(header)
+            }
+          })
+        },
         // absproxy preserves the base; the backend still expects /api.
         rewrite: (url) => url.slice(base.length - 1),
       },

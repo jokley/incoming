@@ -118,35 +118,21 @@ geteilten Lock-Inodes nicht. Dies ist eine externe Voraussetzung; keine Änderun
 am CodeServer-/Infra-Repository hier. Ohne diesen Mount den lokalen Backend-
 Betrieb nicht aufnehmen und den Restore-Schutz nicht deaktivieren.
 
-Weiterhin erforderlich: Python-/Frontend-Abhängigkeiten, gleicher Schema-/Code-
-Stand wie TEST und die bestehende vertrauenswürdige Proxy-Authentifizierung für
-lokale Browserrequests. Vite's Proxy erfindet keine Auth-Header. Fehlende Auth-
-Weiterleitung separat einrichten; keine DEV-Identität in der gemeinsamen Datei
-setzen, denn sie würde auch im TEST-Stack gelten. Keine Secrets in VITE_* speichern.
-
-In zwei sauberen CodeServer-Terminals jeweils aus dem Repository:
+Weiterhin erforderlich: Python-/Frontend-Abhängigkeiten und gleicher Schema-/Code-
+Stand wie TEST. Die lokale Identität wird ausschließlich beim Prozessstart gesetzt,
+nie in der gemeinsamen Env-Datei. Der Vite-Dev-Proxy entfernt externe Auth-Header,
+damit Flask den ausdrücklich gesetzten lokalen Benutzer verwendet.
 
 ```sh
-set -a
-. ./incoming.test.env
-set +a
-# Terminal 1, nach Aktivierung der Python-Umgebung:
-cd backend
-FLASK_SKIP_DOTENV=1 flask --app app run --host 127.0.0.1 --port 5000 --no-reload
+backend/.venv/bin/python scripts/dev-start.py backend --check
+backend/.venv/bin/python scripts/dev-start.py backend
+# Zweites Terminal:
+backend/.venv/bin/python scripts/dev-start.py frontend
 ```
 
-```sh
-set -a
-. ./incoming.test.env
-set +a
-# Terminal 2:
-pnpm --dir frontend dev --host 127.0.0.1
-```
-
-Nur die eigene geprüfte Datei sourcen: Shell-Dateien sind ausführbar. Die Vorlage
-verwendet gemeinsam kompatible POSIX-/Compose-Syntax; Zeitplan mit Leerzeichen ist
-quotiert. Kein zusätzlicher Env-Loader, keine URL-Umschreibung, kein lokaler Backup.
-CodeServer-Portfreigabe/Authentifizierung gehört zur vorhandenen Plattform.
+Details zu Zielschutz, Hot Reload, getrenntem ausgehendem Backup-Control-Secret,
+Browserpfaden und Uploadgrenze: [LOCAL_DEV_RUNTIME.md](LOCAL_DEV_RUNTIME.md).
+Keine Docker-Steuerung, automatische Migration oder Restore durch diese Helfer.
 
 ## Einmalige Umstellung eines bestehenden Stacks nach PR-Merge
 

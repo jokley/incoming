@@ -13,7 +13,9 @@ test('only exact database metadata GETs work without an operational event lease'
   const calls: {url:string;headers:Headers}[]=[];
   t.mock.method(globalThis,'fetch',async(url,init)=>{
     calls.push({url:String(url),headers:new Headers(init?.headers)});
-    return Response.json({});
+    return Response.json(String(url).endsWith('/database/status')
+      ? {databaseStatus:'available',postgresVersion:'17.11',databaseSize:10000000,backupCount:0}
+      : String(url).endsWith('/database/backups') ? [] : {});
   });
   await api.getDatabaseStatus();await api.getDatabaseBackups();
   assert.equal(calls.length,2);
@@ -34,4 +36,26 @@ test('only exact database metadata GETs work without an operational event lease'
   assert.match(markup,/Nicht nachgewiesen/);
   // No capability response has arrived: safe default is disabled controls.
   assert.match(markup, /disabled=""[^>]*>.*?Backup jetzt erstellen/s);
+});
+
+
+test('backup metadata and imports reject HTML, empty and malformed success responses', async t => {
+  const server = await createServer({configFile:false,envFile:false,logLevel:'silent',
+    define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},
+    server:{middlewareMode:true,hmr:false,ws:false,watch:null}});
+  t.after(()=>server.close());
+  const {api}=await server.ssrLoadModule('/src/app/services/api.ts');
+  const file = new File(['PGDMP'],'uploaded.dump');
+  for (const body of ['', '<html>Login</html>', 'null', '{}', '{broken']) {
+    t.mock.method(globalThis,'fetch',async()=>new Response(body,{status:200}));
+    await assert.rejects(api.getDatabaseStatus(),/Ungültige Antwort/);
+    await assert.rejects(api.getDatabaseBackups(),/Ungültige Antwort/);
+    await assert.rejects(api.getRestoreStatus(),/Ungültige Antwort/);
+    await assert.rejects(api.importDatabaseBackup(file),/Ungültige Antwort/);
+  }
+  t.mock.method(globalThis,'fetch',async()=>Response.json({filename:'uploaded.dump',size:5,
+    modified:1794204733,token:'test-token',local:true},{status:201}));
+  const imported = await api.importDatabaseBackup(file);
+  assert.equal(imported.filename,'uploaded.dump');
+  assert.equal(imported.localFile,file);
 });

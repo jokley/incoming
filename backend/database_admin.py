@@ -234,7 +234,7 @@ def restore_backup():
         'confirmation': 'RESTORE DATABASE',
     }
     return delegate('/restore-jobs', json.dumps(restore_request).encode(),
-                    {'Content-Type': 'application/json', 'X-Backup-Control-Secret': current_app.config['AUTH_PROXY_SECRET']}, timeout=10)
+                    {'Content-Type': 'application/json', 'X-Backup-Control-Secret': current_app.config.get('BACKUP_CONTROL_SECRET', current_app.config['AUTH_PROXY_SECRET'])}, timeout=10)
 
 
 @database_admin.get('/api/admin/database/backups')

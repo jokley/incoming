@@ -38,6 +38,19 @@ class RuntimeSettingsTest(unittest.TestCase):
                          'postgresql+psycopg://incoming:secret@postgres/incoming')
         self.assertNotIn('DATABASE_BACKEND', app.config)
 
+    def test_backup_control_secret_is_independent_of_incoming_auth(self):
+        for configured, expected in [(None, 'proxy-secret'), ('control-secret', 'control-secret')]:
+            env = {'DATABASE_URL': 'postgresql://user:password@postgres/database',
+                   'AUTH_PROXY_SECRET': 'proxy-secret'}
+            if configured is not None:
+                env['BACKUP_CONTROL_SECRET'] = configured
+                env['AUTH_PROXY_SECRET'] = ''
+            with patch.dict(os.environ, env, clear=True):
+                app = ConfigTarget()
+                RuntimeSettings.from_environment().apply(app)
+                self.assertEqual(app.config['BACKUP_CONTROL_SECRET'], expected)
+                self.assertEqual(app.config['AUTH_PROXY_SECRET'], env['AUTH_PROXY_SECRET'])
+
     def test_database_url_rejects_other_schemes(self):
         with patch.dict(os.environ, {'DATABASE_URL': 'mysql://localhost/incoming'}, clear=True):
             with self.assertRaisesRegex(ValueError, 'postgresql://'):

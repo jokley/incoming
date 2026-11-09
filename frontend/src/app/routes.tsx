@@ -42,4 +42,4 @@ export const createAppRouter = () => createBrowserRouter([
       { path: "administration", lazy: lazyAdminComponent(() => import("./components/Administration"), "Administration") },
     ],
   },
-]);
+], { basename: import.meta.env.BASE_URL });
