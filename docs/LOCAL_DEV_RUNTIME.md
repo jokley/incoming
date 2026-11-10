@@ -32,6 +32,16 @@ shared restore lease and backup health before starting either process.
 This guard protects helper starts; arbitrary manual Flask starts can bypass it.
 No automatic schema upgrade or event grant is performed.
 
+The actual `AUTH_DEV_USER` fallback with an admin role can read, select and edit
+all active championships without persisted `EventAccess` grants, including after
+a restore. This exception requires `FLASK_ENV=development`, an empty configured
+`AUTH_PROXY_SECRET` and no supplied proxy secret or authenticated username header.
+The authentication layer marks this identity explicitly; the username alone
+never enables the exception. Proxy identities and TEST/PROD keep their grant rules.
+For this local admin, `OPERATIONAL_EVENT_ID` is only the default for requests
+without an explicit event header; it does not restrict event selection. Ownership
+checks still isolate each request to its selected event.
+
 At startup only, it sets:
 
 - `AUTH_PROXY_SECRET=`; `AUTH_DEV_USER=local-admin`; `AUTH_DEV_GROUPS=incoming-admin`.

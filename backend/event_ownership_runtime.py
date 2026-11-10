@@ -24,6 +24,13 @@ def deployment_event_id():
     return int(raw)
 
 
+def operational_event_is_pinned():
+    """Only the local development admin may select beyond the deployment pin."""
+    from auth import current_user
+    user = current_user() if has_request_context() else None
+    return bool(current_app.config.get('OPERATIONAL_EVENT_ID') and not (user and user.is_dev_admin))
+
+
 def authorize_event(value, *, write=False, respect_pin=True, active=True, allow_superadmin=True):
     """Role checks remain app-wide. Grants never imply functional permissions."""
     from auth import current_user
@@ -33,10 +40,10 @@ def authorize_event(value, *, write=False, respect_pin=True, active=True, allow_
     user = current_user()
     if user is None:
         abort(401)
-    if respect_pin and current_app.config.get('OPERATIONAL_EVENT_ID'):
+    if respect_pin and operational_event_is_pinned():
         if owner != deployment_event_id():
             raise OperationalEventError('Request conflicts with the pinned championship')
-    if allow_superadmin and user.is_superadmin:
+    if allow_superadmin and (user.is_superadmin or user.is_dev_admin):
         query = db.session.query(Event.id).filter(Event.id == owner)
         if active:
             query = query.filter(Event.active.is_(True))
