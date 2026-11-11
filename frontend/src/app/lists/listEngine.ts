@@ -9,8 +9,11 @@ import { competitionDisplayList, competitionMembershipList, previewEventGroupLab
 
 export type ListKind = 'none' | 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
+export type ListSegment = Pick<ListRow, 'bookingId' | 'hotelId' | 'hotel' | 'contingent' | 'room' | 'roomType' | 'arrival' | 'departure' | 'roommate' | 'quotaEvaluation' | 'stayWindow' | 'hotelStayNote' | 'eventPeriod' | 'allowedStay' | 'assessedStay'> & { countsAsSingle: boolean };
+
 export interface ListRow {
   id: string;
+  segments: ListSegment[];
   hotelId: string;
   bookingId: string;
   hotel: string;
@@ -153,10 +156,12 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
     entries.push(inventory);
     inventoriesByHotelAndRoomType.set(key, entries);
   }));
-  const assignments = new Map<string, { booking: RoomBooking; roommate: string }>();
+  const assignments = new Map<string, Array<{ booking: RoomBooking; roommate: string }>>();
   const counters = new Map<string, number>();
   const displayRoomByBooking = new Map<string, string>();
-  bookings.forEach(booking => {
+  const sortedBookings = [...bookings].sort((a,b) => iso(a.checkInDate).localeCompare(iso(b.checkInDate))
+    || iso(a.checkOutDate).localeCompare(iso(b.checkOutDate)) || a.hotel.name.localeCompare(b.hotel.name,'de') || a.id.localeCompare(b.id));
+  sortedBookings.forEach(booking => {
     if(booking.hotel.accommodationType==='EXTERNAL'){displayRoomByBooking.set(booking.id,'Extern');return;}
     const code = roomTypeCode(booking.roomType?.name);
     const key = `${booking.hotel.id}/${code}`;
@@ -165,32 +170,47 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
     const supplied = booking.roomNumber?.replace(/^(?:Zimmer|Slot)\s*/i, '').trim();
     displayRoomByBooking.set(booking.id, `${code} ${supplied || String(next).padStart(2, '0')}`);
   });
-  bookings.forEach((booking) => booking.occupants.forEach((occupant) => {
+  sortedBookings.forEach((booking) => booking.occupants.forEach((occupant) => {
     const roommate = booking.occupants
       .filter((candidate) => candidate.athlete.id !== occupant.athlete.id)
       .map((candidate) => `${candidate.athlete.firstname} ${candidate.athlete.lastname}`.trim())
       .join(', ');
-    assignments.set(occupant.athlete.id, { booking, roommate });
+    const entries = assignments.get(occupant.athlete.id) || [];
+    if (!entries.some(entry => entry.booking.id === booking.id)) entries.push({ booking, roommate });
+    assignments.set(occupant.athlete.id, entries);
   }));
 
   return athletes.map((athlete) => {
-    const assignment = assignments.get(athlete.id);
-    const booking = assignment?.booking;
-    const assessment=booking?.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow;
-    const inventory = booking && inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
-      item.roomType.id === booking.roomType?.id
-      && (!booking.checkInDate || item.availableUntil >= booking.checkInDate.slice(0, 10))
-      && (!booking.checkOutDate || item.availableFrom <= booking.checkOutDate.slice(0, 10)));
+    const personAssignments = assignments.get(athlete.id) || [];
+    const segments: ListSegment[] = personAssignments.map(({booking,roommate}) => {
+      const assessment=booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow;
+      const inventory=inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
+        (!booking.checkInDate || item.availableUntil >= iso(booking.checkInDate)) && (!booking.checkOutDate || item.availableFrom <= iso(booking.checkOutDate)));
+      return {bookingId:booking.id,hotelId:booking.hotel.id,hotel:value(booking.hotel.name),
+        contingent:`${booking.hotel.name} → ${inventory?.roomType.name || (booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name)}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}`,
+        room:displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber),
+        roomType:value(booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name || athlete.roomType),
+        arrival:iso(booking.checkInDate || athlete.arrivalDate),departure:iso(booking.checkOutDate || athlete.departureDate),
+        countsAsSingle:Boolean(booking.countsAsSingle),quotaEvaluation:isEvaluatedAsSingle(booking)?'EZ':'DZ',roommate:value(roommate || athlete.sharedWithName),
+        stayWindow:stayWindowText(assessment),hotelStayNote:stayWindowHotelNote(assessment),
+        eventPeriod:assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
+        allowedStay:assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
+        assessedStay:assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:'',
+      };
+    });
+    const firstSegment = segments[0];
+    const assessment=segments.length===1?personAssignments[0].booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow:athlete.stayWindow;
     return {
       id: athlete.id,
-      hotelId: booking?.hotel.id || '',
-      bookingId: booking?.id || '',
-      hotel: athlete.accommodationRequirement==='NO_ROOM' && !booking ? '—' : value(booking?.hotel.name),
-      contingent: booking ? `${booking.hotel.name} → ${inventory?.roomType.name || (booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name)}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}` : '—',
+      segments,
+      hotelId: firstSegment?.hotelId || '',
+      bookingId: firstSegment?.bookingId || '',
+      hotel: firstSegment?.hotel || '—',
+      contingent: firstSegment?.contingent || '—',
       accommodationRequirement: athlete.accommodationRequirement || 'REQUIRED',
       accommodationStatus: personAccommodation(athlete).label,
-      room: athlete.accommodationRequirement==='NO_ROOM' && !booking ? 'No room' : booking ? displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber) : '—',
-      roomType: value(booking?.hotel.accommodationType==='EXTERNAL' ? 'Extern' : booking?.roomType?.name || athlete.roomType),
+      room: firstSegment?.room || (athlete.accommodationRequirement==='NO_ROOM'?'No room':'—'),
+      roomType: firstSegment?.roomType || value(athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
       discipline: value(competitionDisplayList(athlete.disciplines, athlete.discipline)),
@@ -202,8 +222,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       eventPeriod: assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
       allowedStay: assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
       assessedStay: assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:'',
-      arrival: iso(booking?.checkInDate || athlete.arrivalDate),
-      departure: iso(booking?.checkOutDate || athlete.departureDate),
+      arrival: firstSegment?.arrival || iso(athlete.arrivalDate),
+      departure: firstSegment?.departure || iso(athlete.departureDate),
       firstMeal: value(athlete.firstMeal),
       lastMeal: value(athlete.lastMeal),
       specialMeal: value(athlete.specialMeal),
@@ -211,11 +231,11 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       surcharge: !accommodationSurcharge(athlete).applicable ? '—' : accommodationSurcharge(athlete).hasAccommodationSurcharge ? 'Ja' : 'Nein',
       singleRoomSpecialStatus: singleRoomSpecialStatusLabel(
         athlete.single_room_status, athlete.singleRoomQuotaExemptReason),
-      quotaEvaluation: booking ? (isEvaluatedAsSingle(booking) ? 'EZ' : 'DZ') : '—',
-      roommate: value(assignment?.roommate || athlete.sharedWithName),
+      quotaEvaluation: firstSegment?.quotaEvaluation || '—',
+      roommate: firstSegment?.roommate || value(athlete.sharedWithName),
       athleteRemark: value(athlete.additionalItems),
       internalNote: value(athlete.internalNote),
-      assigned: Boolean(booking),
+      assigned: Boolean(firstSegment),
       workCategory: athleteWorkCategory(athlete),
       importChanged: Boolean(athlete.importChangeTypes?.length || athlete.hasPendingRoomlistReview),
       roomChanged: Boolean(athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')),
@@ -226,50 +246,57 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
 
 export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFilters) {
   const query = filters.search.trim().toLocaleLowerCase('de');
-  return rows.filter((row) => {
+  return (kind==='hotels'||kind==='contingents'?segmentListRows(rows):rows).filter((row) => {
     if (filters.assignedOnly && !row.assigned) return false;
     const selection = kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : kind === 'disciplines' ? row.discipline : kind === 'roles' ? row.role : row.contingent;
     if (filters.selection && selection !== filters.selection) return false;
     if (filters.discipline && row.discipline !== filters.discipline) return false;
     if (filters.nation && row.nation !== filters.nation) return false;
     if (filters.role && row.role !== filters.role) return false;
-    if (filters.hotel && row.hotel !== filters.hotel) return false;
+    if (filters.hotel && row.hotel !== filters.hotel && !row.segments.some(segment=>segment.hotel===filters.hotel)) return false;
     if (filters.status && row.workCategory !== filters.status) return false;
     if (filters.hint === 'internal' && row.internalNote === '—') return false;
     if (filters.hint === 'athlete' && row.athleteRemark === '—') return false;
     if (filters.hint === 'import' && !row.importChanged) return false;
     if (filters.hint === 'room-change' && !row.roomChanged) return false;
-    if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.singleRoomPending) return false;
+    if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.segments.some(segment=>segment.countsAsSingle) && !row.singleRoomPending) return false;
     if (filters.hint === 'surcharge' && row.surcharge !== 'Ja') return false;
     if (filters.hint === 'without-room' && (row.assigned || row.accommodationRequirement==='NO_ROOM')) return false;
     if (filters.hint === 'no-room' && row.accommodationRequirement!=='NO_ROOM') return false;
     if (filters.movement) {
-      const date = filters.movement === 'arrival' ? row.arrival : row.departure;
       const base = new Date(); base.setUTCHours(0, 0, 0, 0);
       const tomorrow = new Date(base); tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
       const week = new Date(base); week.setUTCDate(week.getUTCDate() + 7);
-      const isoDate = date ? new Date(`${date}T00:00:00Z`) : null;
-      if (!isoDate) return false;
-      if (filters.period === 'today' && isoDate.getTime() !== base.getTime()) return false;
-      if (filters.period === 'tomorrow' && isoDate.getTime() !== tomorrow.getTime()) return false;
-      if (filters.period === 'week' && (isoDate < base || isoDate >= week)) return false;
+      const dates=(row.segments.length?row.segments:[row]).map(segment=>filters.movement==='arrival'?segment.arrival:segment.departure);
+      if (!dates.some(date=>{
+        if (!date) return false;
+        const day=new Date(`${date}T00:00:00Z`);
+        if (filters.period==='today') return day.getTime()===base.getTime();
+        if (filters.period==='tomorrow') return day.getTime()===tomorrow.getTime();
+        if (filters.period==='week') return day>=base && day<week;
+        return true;
+      })) return false;
     }
     if (filters.athleteRemark && !row.athleteRemark.toLocaleLowerCase('de').includes(filters.athleteRemark.trim().toLocaleLowerCase('de'))) return false;
     if (filters.internalNote && !row.internalNote.toLocaleLowerCase('de').includes(filters.internalNote.trim().toLocaleLowerCase('de'))) return false;
-    return !query || Object.values(row).some((item) => String(item).toLocaleLowerCase('de').includes(query));
+    return !query || [...Object.values(row),...row.segments.flatMap(segment=>Object.values(segment))].some((item) => String(item).toLocaleLowerCase('de').includes(query));
   });
+}
+
+export function segmentListRows(rows: ListRow[]): ListRow[] {
+  return rows.flatMap(row=>row.segments.length?row.segments.map(segment=>({...row,...segment,segments:[segment]})):[row]);
 }
 
 export function groupListRows(rows: ListRow[], kind: ListKind) {
   const groups = new Map<string, ListRow[]>();
-  rows.forEach((row) => {
+  (kind==='hotels'||kind==='contingents'?segmentListRows(rows):rows).forEach((row) => {
     const primary = kind === 'none' ? 'Alle Personen' : kind === 'hotels' ? row.hotel : kind === 'nations' ? row.nation : kind === 'disciplines' ? row.discipline : kind === 'roles' ? row.role : row.contingent;
     if (!groups.has(primary)) groups.set(primary, []);
     groups.get(primary)!.push(row);
   });
   return [...groups].sort(([a], [b]) => a.localeCompare(b, 'de')).map(([label, entries]) => ({
     label,
-    count: entries.length,
+    count: new Set(entries.map(row=>row.id)).size,
     rows: entries.sort((a, b) => {
       const section = kind === 'hotels' || kind === 'contingents'
         ? a.room.localeCompare(b.room, 'de', { numeric: true })

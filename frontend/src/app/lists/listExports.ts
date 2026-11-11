@@ -1,4 +1,4 @@
-import type { ContingentRow, HotelContactRow, ListKind, ListRow } from './listEngine';
+import { segmentListRows, type ContingentRow, type HotelContactRow, type ListKind, type ListRow } from './listEngine.ts';
 
 export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['hotel', 'Hotel'], ['room', 'Zimmer'], ['roomType', 'Zimmerart'], ['name', 'Name'],
@@ -7,6 +7,7 @@ export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
   ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'], ['roommate', 'Zimmerpartner'],
   ['athleteRemark', 'Bemerkung Athlet'], ['internalNote', 'Bemerkung Intern'],
+  ['quotaEvaluation', 'EZ-Nutzung (countsAsSingle)'],
 ];
 
 const download = (blob: Blob, filename: string) => {
@@ -51,8 +52,12 @@ function zip(files: Array<[string, string]>) {
 }
 
 export function exportExcel(rows: ListRow[], kind: ListKind) {
+  rows = kind==='hotels'||kind==='contingents' ? segmentListRows(rows) : rows;
   const cells = (values: string[]) => values.map((value, index) => `<c r="${String.fromCharCode(65 + index)}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(personExportColumns.map(([, label]) => label))}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(personExportColumns.map(([key]) => String(row[key])))}</row>`).join('')}</sheetData></worksheet>`;
+  const display=(row:ListRow,key:keyof ListRow)=>row.segments.length && key in row.segments[0]
+    ? row.segments.map(segment=>key==='quotaEvaluation'?(segment.countsAsSingle?'Ja':'Nein'):String(segment[key as keyof typeof segment] ?? '')).join('\n')
+    : String(row[key] ?? '');
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(personExportColumns.map(([, label]) => label))}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(personExportColumns.map(([key]) => display(row,key)))}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
     ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
