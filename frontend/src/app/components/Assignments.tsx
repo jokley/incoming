@@ -877,6 +877,7 @@ export function Assignments() {
               if(unit) setSelected({type:'unit',id:unit.unitId});
             }}/>
           <DetailPanel
+              additionalCostPersonIds={additionalCostPersonIds}
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
               quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.slot.capacity,
@@ -1909,7 +1910,7 @@ function HotelDetailView({
                                 fallbackDeparture={entry.booking.checkOutDate}
                                 hideNation
                                 hideDiscipline
-                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
+                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={entry.booking.countsAsSingle && additionalCostPersonIds.has(occupant.athleteId)} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
                           </div>
@@ -2330,7 +2331,7 @@ function SingleRoomDecisionGroup({ title, people, status }: { title: string; peo
       <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
       <SingleRoomAssignmentBadges status={status} />
     </header>
-    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]"><span>{person.name}</span><SingleRoomAssignmentBadges status={status} countsAsSingle exemptReason={person.exemptReason}/></li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
+    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]"><span>{person.name}</span><SingleRoomAssignmentBadges status={status} countsAsSingle exemptReason={person.exemptReason} activeSurcharge={status==='APPROVED_EXTRA'}/></li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
   </section>;
 }
 
@@ -2339,6 +2340,7 @@ function DetailSection({ icon, title, children }: { icon: ReactNode; title: stri
 }
 
 function DetailPanel({
+  additionalCostPersonIds,
   quotaReason,
   selectedUnit,
   selectedBookingContext,
@@ -2351,6 +2353,7 @@ function DetailPanel({
   onAcknowledgeImportChanges,
   onShowDecision,
 }: {
+  additionalCostPersonIds: Set<string>;
   quotaReason?:string;
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
@@ -2399,7 +2402,7 @@ function DetailPanel({
                 hideNation
                 hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
-                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
+                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={booking.countsAsSingle && additionalCostPersonIds.has(occupant.athleteId)} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}

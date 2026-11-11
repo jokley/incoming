@@ -3,13 +3,13 @@ import test from 'node:test';
 
 import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, singleRoomBadgeLabels, singleRoomSpecialStatusLabel, uniqueQuotaContext } from './quotaEvaluation.ts';
 
-test('single-room and surcharge badges follow independent persisted state', () => {
-  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), ['EZ genehmigt', 'Einzelzimmer', 'Mehrpreis']);
+test('single-room and surcharge badges separate persisted state from current applicability', () => {
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA', null, true), ['EZ genehmigt', 'Einzelzimmer', 'Mehrpreis']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'NONE'), []);
-  assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: true } }), true);
-  assert.equal(hasSingleRoomSurcharge({ single_room_status: 'APPROVED_EXTRA', assignment: { countsAsSingle: false } }), false);
+  assert.equal(hasSingleRoomSurcharge({ personId: 'active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaDisciplines: ['HP'] }), true);
+  assert.equal(hasSingleRoomSurcharge({ personId: 'historical', bookingId: '2', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaContexts: [] }), false);
   assert.deepEqual(calculateAdditionalCosts([
     { personId: 'approved-active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaDisciplines: ['HP'] },
     { personId: 'approved-inactive', bookingId: '2', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: false, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaDisciplines: ['HP'] },
@@ -33,7 +33,7 @@ test('approval reassignment moves the durable approval badge', () => {
 
 test('assigned room cards use the shared single-room presentation', () => {
   assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
-  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA'), [
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA', null, true), [
     'EZ genehmigt', 'Einzelzimmer', 'Mehrpreis',
   ]);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
@@ -115,6 +115,19 @@ test('approved room usage is restricted to the backend-resolved approval group',
     { ...person, discipline: 'Snowboard' }, { ...person, discipline: 'Freestyle' },
     { ...person, discipline: 'Snowboard', approvedQuotaDisciplines: undefined },
   ], 1).map(p => p.additionalCost), [true, false, false]);
+});
+
+test('approved additional costs require current context, single use and no quota exemption', () => {
+  const active = { personId: 'A', bookingId: '1', nationCode: 'AUT', discipline: 'Ski Cross', gender: 'M',
+    countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA' as const,
+    approvedQuotaContexts: [{ nationCode: 'AUT', discipline: 'Ski Cross', gender: 'M' }] };
+  assert.deepEqual(calculateAdditionalCosts([
+    active,
+    { ...active, personId: 'historical', approvedQuotaContexts: [] },
+    { ...active, personId: 'double', countsAsSingle: false },
+    { ...active, personId: 'world-champion', singleRoomQuotaExemptReason: 'WORLD_CHAMPION' as const },
+    { ...active, personId: 'other', singleRoomQuotaExemptReason: 'OTHER' as const },
+  ], 0).map(person => person.additionalCost), [true, false, false, false, false]);
 });
 
 

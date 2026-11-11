@@ -63,20 +63,17 @@ export function matchesQuotaAllowanceContext(person: {
 export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | null) =>
   Boolean(booking?.countsAsSingle);
 
-/** An active surcharge requires both approval and current operational use. */
-export const hasSingleRoomSurcharge = (person?: {
-  single_room_status?: string | null;
-  assignment?: { countsAsSingle?: boolean } | null;
-} | null) => person?.single_room_status === 'APPROVED_EXTRA'
-  && Boolean(person.assignment?.countsAsSingle);
+/** Uses the same current context evaluation as disposition and list consumers. */
+export const hasSingleRoomSurcharge = (assignment?: QuotaAssignment | null) =>
+  Boolean(assignment && calculateAdditionalCosts([assignment], 0)[0]?.additionalCost);
 
 /** Labels for operational use, durable approval, and active surcharge. */
-export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null, exemptReason?: string | null) => [
+export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null, exemptReason?: string | null, activeSurcharge = false) => [
   ...(exemptReason === 'WORLD_CHAMPION' ? ['👑 WM'] : []),
   ...(exemptReason === 'OTHER' ? ['EZ ✓'] : []),
   ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['EZ genehmigt'] : []),
   ...(countsAsSingle ? ['Einzelzimmer'] : []),
-  ...(countsAsSingle && singleRoomStatus === 'APPROVED_EXTRA' ? ['Mehrpreis'] : []),
+  ...(activeSurcharge ? ['Mehrpreis'] : []),
 ];
 
 export const singleRoomSpecialStatusLabel = (singleRoomStatus?: string | null, exemptReason?: string | null) =>
@@ -150,6 +147,7 @@ export function calculateAdditionalCosts(assignments: QuotaAssignment[], _allowe
     groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender),
     additionalCost: assignment.countsAsSingle
       && assignment.singleRoomStatus === 'APPROVED_EXTRA'
+      && !assignment.singleRoomQuotaExemptReason
       && (assignment.approvedQuotaContexts !== undefined
         ? assignment.approvedQuotaContexts.some(context => quotaUsageKey(context.nationCode, context.discipline, context.gender)
           === quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender))

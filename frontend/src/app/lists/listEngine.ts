@@ -3,13 +3,13 @@ import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
 import type { Athlete, Hotel, RoomBooking } from '../types';
 import type { OfficialQuotaUsage } from '../services/fisRules';
-import { isEvaluatedAsSingle, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation.ts';
+import { evaluateAllQuotaGroups, isEvaluatedAsSingle, quotaAssignmentsFromBookings, singleRoomSpecialStatusLabel } from '../services/quotaEvaluation.ts';
 import { athleteWorkCategory, type WorkCategory } from '../services/workflowStatus.ts';
 import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel } from '../services/competitionPresentation.ts';
 
 export type ListKind = 'none' | 'hotels' | 'nations' | 'disciplines' | 'roles' | 'contingents';
 
-export type ListSegment = Pick<ListRow, 'bookingId' | 'hotelId' | 'hotel' | 'contingent' | 'room' | 'roomType' | 'arrival' | 'departure' | 'roommate' | 'quotaEvaluation' | 'stayWindow' | 'hotelStayNote' | 'eventPeriod' | 'allowedStay' | 'assessedStay'> & { countsAsSingle: boolean };
+export type ListSegment = Pick<ListRow, 'bookingId' | 'hotelId' | 'hotel' | 'contingent' | 'room' | 'roomType' | 'arrival' | 'departure' | 'roommate' | 'quotaEvaluation' | 'stayWindow' | 'hotelStayNote' | 'eventPeriod' | 'allowedStay' | 'assessedStay' | 'surcharge' | 'specialRateSurcharge' | 'approvedExtraSingleSurcharge'> & { countsAsSingle: boolean };
 
 export interface ListRow {
   id: string;
@@ -38,6 +38,8 @@ export interface ListRow {
   specialMeal: string;
   lateCheckout: string;
   surcharge: string;
+  specialRateSurcharge: string;
+  approvedExtraSingleSurcharge: string;
   accommodationRequirement?: string;
   accommodationStatus?: string;
   singleRoomSpecialStatus: string;
@@ -148,7 +150,9 @@ export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] 
 }
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
-export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = [], _quotaUsage: OfficialQuotaUsage[] = []): ListRow[] {
+export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hotels: Hotel[] = [], quotaUsage: OfficialQuotaUsage[] = []): ListRow[] {
+  const activeApprovedExtraPersonIds = new Set(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromBookings(bookings))
+    .flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId)));
   const inventoriesByHotelAndRoomType = new Map<string, NonNullable<Hotel['roomInventories']>>();
   hotels.forEach(hotel => (hotel.roomInventories || []).forEach(inventory => {
     const key = `${hotel.id}/${inventory.roomType.id}`;
@@ -183,6 +187,11 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
   return athletes.map((athlete) => {
     const personAssignments = assignments.get(athlete.id) || [];
     const segments: ListSegment[] = personAssignments.map(({booking,roommate}) => {
+      const segmentSurcharge = accommodationSurcharge(athlete,
+        Boolean(booking.countsAsSingle) && activeApprovedExtraPersonIds.has(athlete.id));
+      const surchargeLabel = (reason?: 'SPECIAL_RATE' | 'APPROVED_EXTRA_SINGLE') => !segmentSurcharge.applicable ? '—'
+        : reason ? (segmentSurcharge.surchargeReasons.includes(reason) ? 'Ja' : 'Nein')
+          : segmentSurcharge.hasAccommodationSurcharge ? 'Ja' : 'Nein';
       const assessment=booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow;
       const inventory=inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
         (!booking.checkInDate || item.availableUntil >= iso(booking.checkInDate)) && (!booking.checkOutDate || item.availableFrom <= iso(booking.checkOutDate)));
@@ -192,6 +201,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
         roomType:value(booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name || athlete.roomType),
         arrival:iso(booking.checkInDate || athlete.arrivalDate),departure:iso(booking.checkOutDate || athlete.departureDate),
         countsAsSingle:Boolean(booking.countsAsSingle),quotaEvaluation:isEvaluatedAsSingle(booking)?'EZ':'DZ',roommate:value(roommate || athlete.sharedWithName),
+        surcharge:surchargeLabel(),specialRateSurcharge:surchargeLabel('SPECIAL_RATE'),approvedExtraSingleSurcharge:surchargeLabel('APPROVED_EXTRA_SINGLE'),
         stayWindow:stayWindowText(assessment),hotelStayNote:stayWindowHotelNote(assessment),
         eventPeriod:assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
         allowedStay:assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
@@ -199,6 +209,11 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       };
     });
     const firstSegment = segments[0];
+    const personSurcharge = accommodationSurcharge(athlete,
+      segments.some(segment => segment.approvedExtraSingleSurcharge === 'Ja'));
+    const surchargeLabel = (reason?: 'SPECIAL_RATE' | 'APPROVED_EXTRA_SINGLE') => !personSurcharge.applicable ? '—'
+      : reason ? (personSurcharge.surchargeReasons.includes(reason) ? 'Ja' : 'Nein')
+        : personSurcharge.hasAccommodationSurcharge ? 'Ja' : 'Nein';
     const assessment=segments.length===1?personAssignments[0].booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow:athlete.stayWindow;
     return {
       id: athlete.id,
@@ -228,7 +243,9 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       lastMeal: value(athlete.lastMeal),
       specialMeal: value(athlete.specialMeal),
       lateCheckout: athlete.lateCheckout ? 'Ja' : 'Nein',
-      surcharge: !accommodationSurcharge(athlete).applicable ? '—' : accommodationSurcharge(athlete).hasAccommodationSurcharge ? 'Ja' : 'Nein',
+      surcharge: surchargeLabel(),
+      specialRateSurcharge: surchargeLabel('SPECIAL_RATE'),
+      approvedExtraSingleSurcharge: surchargeLabel('APPROVED_EXTRA_SINGLE'),
       singleRoomSpecialStatus: singleRoomSpecialStatusLabel(
         athlete.single_room_status, athlete.singleRoomQuotaExemptReason),
       quotaEvaluation: firstSegment?.quotaEvaluation || '—',

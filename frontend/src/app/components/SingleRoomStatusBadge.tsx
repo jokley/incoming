@@ -26,8 +26,8 @@ export function SingleRoomStatusBadge({ status, className = '' }: { status?: Sin
 }
 
 /** Assignment presentation keeps operational single use independent from surcharge. */
-export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, exemptReason, className = '' }: { status?: SingleRoomStatus | null; countsAsSingle?: boolean; exemptReason?: SingleRoomQuotaExemptReason; className?: string }) {
-  const labels = singleRoomBadgeLabels(countsAsSingle, status, exemptReason);
+export function SingleRoomAssignmentBadges({ status, countsAsSingle = false, exemptReason, activeSurcharge = false, className = '' }: { status?: SingleRoomStatus | null; countsAsSingle?: boolean; exemptReason?: SingleRoomQuotaExemptReason; activeSurcharge?: boolean; className?: string }) {
+  const labels = singleRoomBadgeLabels(countsAsSingle, status, exemptReason, activeSurcharge);
   if (!labels.length) return null;
 
   return <span className="inline-flex flex-wrap gap-1">

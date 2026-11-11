@@ -80,3 +80,17 @@ test('Excel retains all segment values in one person row or separate hotel rows'
   URL.createObjectURL=originalCreate;globalThis.setTimeout=originalTimeout;
  }
 });
+
+test('Excel contains separate special-rate and approved-extra surcharge columns with segment values',async()=>{
+ const approved={...guest,gender:'M',single_room_status:'APPROVED_EXTRA',accommodationRateCategory:'SPECIAL',competitions:[{quotaDiscipline:'Ski Cross'}],approvedQuotaContexts:[{nationCode:'AUT',discipline:'Ski Cross',gender:'M'}]} as unknown as Athlete;
+ const rooms=[booking('single','Hotel B','2027-03-15',true),booking('double','Hotel A','2027-03-10',false)].map(room=>({...room,occupants:[{athlete:approved}]})) as RoomBooking[];
+ const quota=[{nationCode:'AUT',discipline:'Ski Cross',gender:'M',singleRoomsAllowed:0,singleRoomAllocations:[{personId:approved.id,status:'APPROVED_EXTRA',context:['AUT','Ski Cross','M']}]}] as never;
+ const rows=createListRows([approved],rooms,[],quota);
+ const originalDocument=Object.getOwnPropertyDescriptor(globalThis,'document');const originalCreate=URL.createObjectURL;const originalTimeout=globalThis.setTimeout;let blob:Blob|undefined;
+ try{
+  Object.defineProperty(globalThis,'document',{configurable:true,value:{createElement:()=>({click(){}})}});URL.createObjectURL=(value)=>{blob=value as Blob;return 'blob:test';};globalThis.setTimeout=(()=>0) as unknown as typeof setTimeout;
+  exportExcel(rows,'nations');const xml=await blob!.text();
+  assert.match(xml,/Sondertarif/);assert.match(xml,/Genehmigtes zusätzliches EZ/);assert.match(xml,/Nein\nJa/);assert.match(xml,/<c r="AA"/);
+  exportExcel(rows,'hotels');const hotelXml=await blob!.text();assert.match(hotelXml,/Genehmigtes zusätzliches EZ/);assert.match(hotelXml,/Hotel A/);assert.match(hotelXml,/Hotel B/);
+ }finally{if(originalDocument)Object.defineProperty(globalThis,'document',originalDocument);else Reflect.deleteProperty(globalThis,'document');URL.createObjectURL=originalCreate;globalThis.setTimeout=originalTimeout;}
+});
