@@ -76,7 +76,7 @@ export function exportExcel(rows: ListRow[], kind: ListKind) {
 
 /** Exports the complete hotel directory, including master-data contacts and notes. */
 export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
-  const fields: Array<[keyof HotelContactRow, string]> = [['hotel', 'Hotel'], ['region', 'Region'], ['location', 'Ort'], ['contactPerson', 'Ansprechpartner'], ['phone', 'Telefon'], ['email', 'E-Mail'], ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contingents', 'Kontingente'], ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Belegte Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Freie Betten'], ['comment', 'Kommentar']];
+  const fields: Array<[keyof HotelContactRow, string]> = [['capacityDate', 'Stichtag'], ['hotel', 'Hotel'], ['region', 'Region'], ['location', 'Ort'], ['contactPerson', 'Ansprechpartner'], ['phone', 'Telefon'], ['email', 'E-Mail'], ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contingents', 'Kontingente'], ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Untergebrachte Personen'], ['blockedBeds', 'Durch Einzelbelegung blockierte Betten'], ['singleUseRooms', 'Einzelgenutzte Zimmer'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Zuweisbare Betten'], ['comment', 'Kommentar']];
   const cells = (values: string[]) => values.map((value, index) => `<c r="${columnName(index)}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
   const display = (row: HotelContactRow, key: keyof HotelContactRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key]);
   const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(fields.map(([, label]) => label))}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(fields.map(([key]) => display(row, key)))}</row>`).join('')}</sheetData></worksheet>`;
@@ -92,9 +92,9 @@ export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
 
 export function exportContingentsExcel(rows: ContingentRow[]) {
   const contingentColumns: Array<[keyof ContingentRow, string]> = [
-    ['hotel', 'Hotel'], ['roomType', 'Zimmerart'], ['region', 'Region'], ['availableFrom', 'Von'], ['availableUntil', 'Bis'],
-    ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Freie Betten'],
-    ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Belegte Betten'], ['occupancy', 'Auslastung %'],
+    ['capacityDate', 'Stichtag'], ['hotel', 'Hotel'], ['roomType', 'Zimmerart'], ['region', 'Region'], ['availableFrom', 'Von'], ['availableUntil', 'Bis'],
+    ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Zuweisbare Betten'],
+    ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Untergebrachte Personen'], ['blockedBeds', 'Durch Einzelbelegung blockierte Betten'], ['singleUseRooms', 'Einzelgenutzte Zimmer'], ['occupancy', 'Auslastung %'],
     ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contactPerson', 'Ansprechpartner'],
     ['phone', 'Telefon'], ['email', 'E-Mail'], ['comment', 'Kontingent-Kommentar'],
   ];

@@ -19,7 +19,7 @@ test('capacity counts distinct physical people across groups, including exempt a
     server:{middlewareMode:true,watch:null},appType:'custom'});
   t.after(()=>server.close());
   const {buildCapacityTimeline} = await server.ssrLoadModule('/src/app/services/planningCalculations.ts');
-  const timeline = buildCapacityTimeline({hotels:[],events:[],athletes:[],bookings});
+  const timeline = buildCapacityTimeline({hotels:[],events:[],athletes:[],bookings:bookings.map(booking=>({...booking,hotel:{id:'hotel',name:'Hotel'},roomType:{id:'dz',name:'DZ',maxPersons:2}}))});
   assert.equal(timeline[0].assignedEz, 3);
   assert.equal(timeline[0].assignedBeds, 4);
 });
