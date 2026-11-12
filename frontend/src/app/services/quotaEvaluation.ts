@@ -68,11 +68,16 @@ export const hasSingleRoomSurcharge = (assignment?: QuotaAssignment | null) =>
   Boolean(assignment && calculateAdditionalCosts([assignment], 0)[0]?.additionalCost);
 
 /** Labels for operational use, durable approval, and active surcharge. */
-export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null, exemptReason?: string | null, activeSurcharge = false) => [
+export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null, exemptReason?: string | null, activeSurcharge = false,
+  allocationStatus?: PersonQuotaEvaluation['allocationStatus'], approvalApplicable?: boolean) => [
   ...(exemptReason === 'WORLD_CHAMPION' ? ['👑 WM'] : []),
   ...(exemptReason === 'OTHER' ? ['EZ ✓'] : []),
-  ...(singleRoomStatus === 'APPROVED_EXTRA' ? ['EZ genehmigt'] : []),
+  ...(singleRoomStatus === 'APPROVED_EXTRA' && !exemptReason
+    ? [approvalApplicable === false || (countsAsSingle && allocationStatus !== undefined && !activeSurcharge) ? 'EZ-Genehmigung prüfen'
+      : !countsAsSingle ? 'EZ-Genehmigung inaktiv' : activeSurcharge ? 'EZ genehmigt' : 'EZ-Genehmigung hinterlegt'] : []),
   ...(countsAsSingle ? ['Einzelzimmer'] : []),
+  ...(countsAsSingle && allocationStatus === 'COVERED' ? ['EZ in Quote'] : []),
+  ...(countsAsSingle && allocationStatus === 'PENDING' ? ['Entscheidung offen'] : []),
   ...(activeSurcharge ? ['Mehrpreis'] : []),
 ];
 
@@ -86,6 +91,15 @@ export const quotaUsageKey = (nation?: string | null, discipline?: string | null
 
 export const quotaRequiresAction = (row: Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals'>) =>
   row.quotaStatus === 'DECISION_REQUIRED' || row.openApprovals > 0;
+
+/** Presentation of existing allocation evidence; arithmetic excess is not a price. */
+export function quotaStatusLabel(row: Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals' | 'singleRoomsPending' | 'quotaExemptSingleRooms' | 'singleRoomAllocations' | 'registeredOfficials' | 'assignedOfficials' | 'officialQuota'>): string {
+  if (quotaRequiresAction(row) || (row.singleRoomsPending ?? 0) > 0) return 'EZ-Entscheidung offen';
+  if ((row.registeredOfficials ?? row.assignedOfficials) > row.officialQuota) return 'Officials-Limit überschritten';
+  if (row.singleRoomAllocations?.some(person => person.status === 'APPROVED_EXTRA')) return 'EZ-Mehrpreis genehmigt';
+  if ((row.quotaExemptSingleRooms ?? 0) > 0) return 'Kostenfreie EZ-Ausnahme';
+  return 'Quote erfüllt';
+}
 
 export const actionableQuotaCaseCount = (rows: Array<Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals'>>) =>
   rows.filter(quotaRequiresAction).length;
@@ -257,9 +271,10 @@ export function evaluateAllQuotaGroups(definitions: QuotaDefinition[], assignmen
 }
 
 /** Central interpretation for authoritative usage rows returned by the API. */
-export function evaluateQuotaUsageRow(row: Pick<OfficialQuotaUsage, 'nationCode' | 'discipline' | 'gender' | 'singleRoomsUsed' | 'singleRoomsAllowed'>): QuotaGroupEvaluation {
+export function evaluateQuotaUsageRow(row: Pick<OfficialQuotaUsage, 'nationCode' | 'discipline' | 'gender' | 'singleRoomsUsed' | 'singleRoomsAllowed' | 'singleRoomsPending'>): QuotaGroupEvaluation {
   const overflow = Math.max(0, row.singleRoomsUsed - row.singleRoomsAllowed);
-  return { key: quotaUsageKey(row.nationCode, row.discipline, row.gender), allowedSingleRooms: row.singleRoomsAllowed, usedSingleRooms: row.singleRoomsUsed, overflow, hasViolation: overflow > 0, people: [] };
+  return { key: quotaUsageKey(row.nationCode, row.discipline, row.gender), allowedSingleRooms: row.singleRoomsAllowed, usedSingleRooms: row.singleRoomsUsed, overflow,
+    hasViolation: (row.singleRoomsPending ?? overflow) > 0, people: [] };
 }
 
 /** Sums disjoint allocation rows, not overlapping eligibility views. Exempt and
