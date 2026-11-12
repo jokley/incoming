@@ -1,16 +1,16 @@
 # Compose >= 2.24.4. incoming.test.env is the sole runtime configuration.
 x-test-env: &test-env
   env_file: !override [incoming.test.env]
-  environment: !reset {}
   ports: !reset []
 
 services:
   backend:
     container_name: incoming-test-backend
     depends_on: !override
-      incoming-test-postgres: {condition: service_healthy}
-      incoming-test-backup: {condition: service_healthy}
+      postgres: {condition: service_healthy}
+      backup: {condition: service_healthy}
     <<: *test-env
+    environment: !reset {}
     volumes: !override
       - test-postgres-backups:/backups:ro
     networks: !override
@@ -18,17 +18,14 @@ services:
       dev-net:
         aliases: [incoming-test-backend]
 
-  # Remove inherited keys: Compose always registers the service key in DNS.
-  postgres: !reset null
-  backup: !reset null
-
-  incoming-test-postgres:
+  postgres:
     image: postgres:17-alpine
     <<: *test-env
+    environment: !reset {}
     container_name: incoming-test-postgres
-    volumes:
+    volumes: !override
       - test-postgres-data:/var/lib/postgresql/data
-    networks:
+    networks: !override
       incoming-test-net:
         aliases: [incoming-test-postgres]
       dev-net:
@@ -40,18 +37,19 @@ services:
       timeout: 5s
       retries: 5
 
-  incoming-test-backup:
+  backup:
     build:
       context: .
       dockerfile: backup/Dockerfile
     <<: *test-env
+    environment: !reset {}
     container_name: incoming-test-backup
-    volumes:
+    volumes: !override
       - test-postgres-backups:/backups
-    depends_on:
-      incoming-test-postgres:
+    depends_on: !override
+      postgres:
         condition: service_healthy
-    networks:
+    networks: !override
       incoming-test-net:
         aliases: [incoming-test-backup]
       dev-net:
@@ -68,8 +66,9 @@ services:
   etl:
     container_name: incoming-test-etl
     depends_on: !override
-      incoming-test-postgres: {condition: service_healthy}
+      postgres: {condition: service_healthy}
     <<: *test-env
+    environment: !reset {}
     volumes: !reset []
     networks: !override
       incoming-test-net: {}
