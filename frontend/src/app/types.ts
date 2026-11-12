@@ -418,6 +418,7 @@ export interface AssignmentSlot {
     availableFrom?: string | null;
     availableUntil?: string | null;
     coversRequestedRange: boolean;
+    intervals?: Array<{availableFrom:string;availableUntil:string}>;
   };
   bookings: AssignmentGridBooking[];
 }

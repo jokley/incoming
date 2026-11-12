@@ -142,3 +142,28 @@ test('hotel and contingent XLSX exports retain the selected daily values', async
     }
   } finally { globalThis.document=originalDocument; URL.createObjectURL=originalCreate; URL.revokeObjectURL=originalRevoke; }
 });
+
+import {createListRows, filterListRows, type ListFilters} from './listEngine.ts';
+import {exportExcel} from './listExports.ts';
+test('all three XLSX exports handle large filtered datasets without argument-limit errors',async()=>{
+ const blobs:Blob[]=[];
+ const originalDocument=globalThis.document,originalCreate=URL.createObjectURL,originalRevoke=URL.revokeObjectURL;
+ globalThis.document={createElement:()=>({click(){},href:'',download:''})} as unknown as Document;
+ URL.createObjectURL=blob=>{blobs.push(blob as Blob);return 'blob:test';};URL.revokeObjectURL=()=>{};
+ try {
+  const people=Array.from({length:200},(_,i)=>({id:String(i),firstname:`Person ${i}`,lastname:'Synthetic',nationCode:i%2?'AUT':'SUI',single_room_status:'NONE',internalNote:'Note & <data> '.repeat(300)} as Athlete));
+  const rows=createListRows(people,[]);
+  const filters={search:'',athleteRemark:'',internalNote:'',selection:'',discipline:'',nation:'AUT',role:'',hotel:'',status:'',hint:'',movement:'',period:'',assignedOnly:false} as ListFilters;
+  const filtered=filterListRows(rows,'none',filters);
+  exportExcel(filtered,'none');
+  const [hotel]=createHotelContactRows([capacityHotel],[],'2027-03-15');
+  exportHotelOverviewExcel(Array.from({length:200},(_,i)=>({...hotel,id:String(i),comment:'Long note '.repeat(300)})));
+  const [contingent]=createContingentRows([capacityHotel],[],'2027-03-15');
+  exportContingentsExcel(Array.from({length:200},(_,i)=>({...contingent,id:String(i),comment:'Long note '.repeat(300)})));
+  assert.equal(blobs.length,3);
+  for(const blob of blobs){const text=await blob.text();assert.ok(blob.size>500000);assert.match(text,/xl\/worksheets\/sheet1.xml/);assert.doesNotMatch(text,/<c r="[A-Z]+"/);assert.match(text,/<c r="A1"/);}
+  const text=await blobs[0].text();assert.match(text,/Person 199/);assert.doesNotMatch(text,/>Person 198</);
+  exportExcel([],'hotels');exportHotelOverviewExcel([]);exportContingentsExcel([]);
+  assert.equal(blobs.length,6);
+ }finally{globalThis.document=originalDocument;URL.createObjectURL=originalCreate;URL.revokeObjectURL=originalRevoke;}
+});

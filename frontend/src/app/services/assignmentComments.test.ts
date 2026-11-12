@@ -20,3 +20,14 @@ test('contingent comments retain exact inventory scope and remain distinct from 
   assert.deepEqual(contingentComments(undefined),[]);
   assert.equal(visibleAssignmentComment(hotel.comment),'Hotel note');
 });
+
+import {contingentPeriodLabel} from './assignmentComments.ts';
+test('category inventory periods preserve gaps, deduplicate slots and include uncommented inventories',()=>{
+ const coverage={coversRequestedRange:true,availableFrom:'2027-03-01',availableUntil:'2027-03-22',intervals:[
+  {availableFrom:'2027-03-11',availableUntil:'2027-03-22'},
+  {availableFrom:'2027-03-04',availableUntil:'2027-03-09'},
+ ]};
+ assert.equal(contingentPeriodLabel([{dateCoverage:coverage},{dateCoverage:coverage}]),'Kontingent: 04.03.–09.03.2027 · 11.03.–22.03.2027');
+ assert.equal(contingentPeriodLabel([{dateCoverage:{...coverage,intervals:undefined}}]),'Kontingent: Zeitraum nicht verfügbar');
+ assert.equal(contingentPeriodLabel([{dateCoverage:{...coverage,intervals:[{availableFrom:'2027-03-04',availableUntil:'2027-03-22'}]}}]),'Kontingent: 04.03.–22.03.2027');
+});

@@ -82,6 +82,8 @@ def test_multi_inventory_envelope_is_not_valid_contingent(state):
     db.session.add(HotelRoomInventory(hotel=state[2],room_type=state[3],room_count=10,available_from=date(2027,3,20),available_until=date(2027,3,31)))
     db.session.commit()
     assert projection(state)['hotels'][str(state[2].id)]['state']=='NO_FIT'
+    slot=routes._build_assignment_planning_view(set())['hotels'][0]['slots'][0]
+    assert slot['dateCoverage']['intervals']==[{'availableFrom':'2027-03-01','availableUntil':'2027-03-18'}, {'availableFrom':'2027-03-20','availableUntil':'2027-03-31'}]
 
 
 def test_adjacent_uses_can_reuse_room(state):
@@ -131,3 +133,42 @@ def test_legacy_validator_cannot_append_to_single_use_booking(state):
     with state[0].application.test_request_context():
         _,_,error=routes._validate_booking_payload({**data(state,14,27),'athleteIds':[str(p.id) for p in state[1][:2]],'countsAsSingle':True},existing_booking=row)
         assert error[0].get_json()['reasonCode']=='ROOM_SINGLE_USE'
+
+@pytest.mark.parametrize('capacity,start,end,expected', [(2,9,21,True),(1,9,21,False),(2,1,9,False)])
+def test_two_person_apartment_projection_matches_write_validation(state,capacity,start,end,expected):
+    state[3].name='APP: 1 DZ + DU';state[3].max_persons=capacity
+    inv=HotelRoomInventory.query.one();inv.room_count=1
+    inv.available_from=date(2027,3,4);inv.available_until=date(2027,3,22)
+    for person in state[1][:2]:
+        person.arrival_date=date(2027,3,start);person.departure_date=date(2027,3,end)
+    db.session.commit()
+    planning=routes._build_assignment_planning_view(set())
+    need={'key':'pair','athleteIds':[str(p.id) for p in state[1][:2]],'checkInDate':f'2027-03-{start:02}','checkOutDate':f'2027-03-{end:02}'}
+    result=project(planning,[need],set())
+    target=result['targets']['pair'][0]
+    assert (target['status']=='valid') is expected,target
+    if start==1:
+        assert '04.03.2027' in target['messages'][0]
+        assert '01.03.2027' in target['messages'][0]
+    response=state[0].post('/api/assignments/segments',json={**data(state,start,end),'athleteIds':need['athleteIds']})
+    assert response.status_code==(201 if expected else 400),response.json
+    assert RoomBooking.query.count()==int(expected)
+    if expected:
+        assert len(RoomBooking.query.one().occupants)==2
+        assert all(result['targets'][f"pair:athlete:{p.id}"][0]['status']=='valid' for p in state[1][:2])
+
+
+def test_apartment_overlap_and_checkout_remain_authoritative(state):
+    state[3].name='APP: 1 DZ + DU';HotelRoomInventory.query.one().room_count=1
+    state[1][2].arrival_date=date(2027,3,9);state[1][2].departure_date=date(2027,3,14)
+    db.session.commit()
+    add(state,9,14,person=2,countsAsSingle=True)
+    # Existing use ends at check-in, so the room can be reused for the pair.
+    planning=routes._build_assignment_planning_view(set())
+    need={'key':'pair','athleteIds':[str(p.id) for p in state[1][:2]],'checkInDate':'2027-03-14','checkOutDate':'2027-03-27'}
+    assert project(planning,[need],set())['targets']['pair'][0]['status']=='valid'
+    booking=RoomBooking.query.one();booking.check_out_date=date(2027,3,15);db.session.commit()
+    assert project(planning,[need],set())['targets']['pair'][0]['status']=='blocked'
+    response=state[0].post('/api/assignments/segments',json={**data(state,14,27),'athleteIds':need['athleteIds']})
+    assert response.status_code==400
+    assert response.json['reasonCode']=='KONTINGENT_EXCEEDED'
