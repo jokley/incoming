@@ -10,7 +10,9 @@ from accommodation_defaults import default_counts_as_single
 def inventory_guard(inventories, bookings, start, end):
     rooms = sum(i.room_count for i in inventories if i.available_from <= start and i.available_until >= end)
     if not rooms:
-        return 'NO_KONTINGENT', 'Kein Kontingent für den benötigten Zeitraum.'
+        intervals = ', '.join(sorted({f'{i.available_from:%d.%m.%Y}–{i.available_until:%d.%m.%Y}' for i in inventories}))
+        return 'NO_KONTINGENT', (f'Kein Kontingent deckt den gesamten Aufenthalt {start:%d.%m.%Y}–{end:%d.%m.%Y} (Check-out) ab. '
+            + (f'Kontingentintervalle: {intervals}.' if intervals else 'Keine Kontingentintervalle vorhanden.'))
     overlapping = [b for b in bookings if booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end)]
     if physical_room_usage(overlapping) >= rooms:
         return 'KONTINGENT_EXCEEDED', 'Zimmer im benötigten Zeitraum nicht verfügbar.'
@@ -97,6 +99,10 @@ def project(planning, needs, population_ids, loaded=None):
         if slot['capacity'] < len(ids):
             return f"Nur {slot['capacity']} Platz verfügbar."
         allowed = ['single', 'double'] if len(ids) == 1 else ['double']
+        # A two-place apartment can accommodate the same one/two-person needs.
+        # Keep larger apartments and all capacity/date/occupancy guards unchanged.
+        if slot['capacity'] == 2:
+            allowed.append('appartment')
         if _room_type_label(slot['roomTypeName']) not in allowed:
             return 'Zimmer passt nicht zum Zimmerwunsch.'
         key = (hotel['hotelId'], slot['roomTypeId'])

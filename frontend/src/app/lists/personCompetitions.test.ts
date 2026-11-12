@@ -90,7 +90,7 @@ test('Excel contains separate special-rate and approved-extra surcharge columns 
  try{
   Object.defineProperty(globalThis,'document',{configurable:true,value:{createElement:()=>({click(){}})}});URL.createObjectURL=(value)=>{blob=value as Blob;return 'blob:test';};globalThis.setTimeout=(()=>0) as unknown as typeof setTimeout;
   exportExcel(rows,'nations');const xml=await blob!.text();
-  assert.match(xml,/Sondertarif/);assert.match(xml,/Genehmigtes zusätzliches EZ/);assert.match(xml,/Nein\nJa/);assert.match(xml,/<c r="AA"/);
+  assert.match(xml,/Sondertarif/);assert.match(xml,/Genehmigtes zusätzliches EZ/);assert.match(xml,/Nein\nJa/);assert.match(xml,/<c r="AA1"/);
   exportExcel(rows,'hotels');const hotelXml=await blob!.text();assert.match(hotelXml,/Genehmigtes zusätzliches EZ/);assert.match(hotelXml,/Hotel A/);assert.match(hotelXml,/Hotel B/);
  }finally{if(originalDocument)Object.defineProperty(globalThis,'document',originalDocument);else Reflect.deleteProperty(globalThis,'document');URL.createObjectURL=originalCreate;globalThis.setTimeout=originalTimeout;}
 });

@@ -1168,6 +1168,9 @@ def _build_virtual_slots(hotel, room_type, inventories, bookings):
                 'availableFrom': min(inv.available_from for inv in inventories).isoformat() if inventories else None,
                 'availableUntil': max(inv.available_until for inv in inventories).isoformat() if inventories else None,
                 'coversRequestedRange': True,
+                'intervals': [{'availableFrom': inv.available_from.isoformat(),
+                    'availableUntil': inv.available_until.isoformat()}
+                    for inv in sorted(inventories, key=lambda inv: (inv.available_from, inv.available_until))],
             },
             'bookings': slot_bookings,
         })

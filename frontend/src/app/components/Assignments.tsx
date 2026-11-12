@@ -14,7 +14,7 @@ import { dispositionItems, itemContainsPeople, periodLabel as intervalLabel, typ
 import { PersonAccommodationPanel } from './assignment/PersonAccommodationPanel';
 import { unitCoverageComplete } from '../services/segmentWorkflow';
 import { AssignmentComment } from './assignment/AssignmentComment';
-import { contingentComments, visibleAssignmentComment } from '../services/assignmentComments';
+import { contingentComments, contingentPeriodLabel, visibleAssignmentComment } from '../services/assignmentComments';
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { Profiler, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
@@ -1830,6 +1830,7 @@ function HotelDetailView({
                     <div className="mt-0.5 text-xs font-mono text-[var(--ops-assignment-text-muted)]">
                       {summary.usedRooms}/{summary.totalRooms} Zimmer · {summary.usedBeds}/{summary.totalBeds} Betten
                     </div>
+                    <div className="mt-0.5 text-[11px] text-[var(--ops-assignment-text-muted)]">{contingentPeriodLabel(group.slots)}</div>
                   </div>
                   <div className="w-32">
                     <CapacityBar pct={summary.percent} />
@@ -1949,7 +1950,7 @@ function HotelDetailView({
                         <div className="text-sm font-extrabold">
                           {draggingUnitId && !canDrop ? (slotValidation?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : dragOverRoomTypeKey === roomTargetKey
                             ? 'Loslassen, um neue Zuweisung anzulegen'
-                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : 'Frei'}
+                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : 'Physisch frei'}
                         </div>
                         {dragOverRoomTypeKey !== roomTargetKey && (
                           <div className="mt-1 text-xs font-medium text-[var(--ops-assignment-text-muted)]">{draggingUnitId ? 'Hier ablegen oder zum Zuweisen klicken' : 'Offenen Aufenthalt hierher ziehen oder links zuweisen.'}</div>
