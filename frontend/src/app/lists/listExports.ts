@@ -81,9 +81,9 @@ export function exportExcel(rows: ListRow[], kind: ListKind) {
 
 /** Exports the complete hotel directory, including master-data contacts and notes. */
 export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
-  const fields: Array<[keyof HotelContactRow, string]> = [['capacityDate', 'Stichtag'], ['hotel', 'Hotel'], ['region', 'Region'], ['location', 'Ort'], ['contactPerson', 'Ansprechpartner'], ['phone', 'Telefon'], ['email', 'E-Mail'], ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contingents', 'Kontingente'], ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Untergebrachte Personen'], ['blockedBeds', 'Durch Einzelbelegung blockierte Betten'], ['singleUseRooms', 'Einzelgenutzte Zimmer'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Zuweisbare Betten'], ['comment', 'Kommentar']];
+  const fields: Array<[keyof HotelContactRow, string]> = [['hotel','Hotel'],['region','Region'],['location','Ort'],['contactPerson','Ansprechpartner'],['phone','Telefon'],['email','E-Mail'],['hasHalfBoard','HP'],['hasSR','SR'],['contingents','Kontingente'],['inventoryPeriods','Kontingentintervalle'],['totalRooms','Vereinbarte Zimmer (Kontingentsumme)'],['totalBeds','Vereinbarte Betten (Kontingentsumme)'],['assignedBookings','Buchungen (gesamt)'],['assignedPersons','Personen (eindeutig im Hotel)'],['peakRooms','Spitze belegte Zimmer'],['peakPersons','Spitze Personen'],['peakBlockedBeds','Spitze zusätzlich blockierte Betten'],['comment','Kommentar']];
   const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const display = (row: HotelContactRow, key: keyof HotelContactRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key]);
+  const display = (row: HotelContactRow, key: keyof HotelContactRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key] ?? '—');
   const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(fields.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(fields.map(([key]) => display(row, key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
@@ -97,14 +97,12 @@ export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
 
 export function exportContingentsExcel(rows: ContingentRow[]) {
   const contingentColumns: Array<[keyof ContingentRow, string]> = [
-    ['capacityDate', 'Stichtag'], ['hotel', 'Hotel'], ['roomType', 'Zimmerart'], ['region', 'Region'], ['availableFrom', 'Von'], ['availableUntil', 'Bis'],
-    ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Zuweisbare Betten'],
-    ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Untergebrachte Personen'], ['blockedBeds', 'Durch Einzelbelegung blockierte Betten'], ['singleUseRooms', 'Einzelgenutzte Zimmer'], ['occupancy', 'Auslastung %'],
-    ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contactPerson', 'Ansprechpartner'],
-    ['phone', 'Telefon'], ['email', 'E-Mail'], ['comment', 'Kontingent-Kommentar'],
+    ['hotel','Hotel'],['roomType','Zimmerart'],['region','Region'],['availableFrom','Von'],['availableUntil','Bis'],
+    ['totalRooms','Vereinbarte Zimmer'],['totalBeds','Vereinbarte Betten'],['hasHalfBoard','HP'],['hasSR','SR'],
+    ['contactPerson','Ansprechpartner'],['phone','Telefon'],['email','E-Mail'],['comment','Kontingent-Kommentar'],
   ];
   const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const display = (row: ContingentRow, key: keyof ContingentRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : key === 'occupancy' ? row.occupancy.toFixed(0) : String(row[key]);
+  const display = (row: ContingentRow, key: keyof ContingentRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key] ?? '—');
   const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(contingentColumns.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(contingentColumns.map(([key]) => display(row, key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
