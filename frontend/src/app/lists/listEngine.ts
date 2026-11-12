@@ -1,4 +1,4 @@
-import { hotelCapacityOnDay, type HotelDayCapacity } from '../services/planningCalculations.ts';
+import { buildHotelRiskRows } from '../services/planningCalculations.ts';
 import {stayWindowText,stayWindowHotelNote} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
@@ -71,7 +71,7 @@ export interface ListFilters {
   assignedOnly: boolean;
 }
 
-export interface ContingentRow extends HotelDayCapacity {
+export interface ContingentRow {
   id: string;
   hotelId: string;
   hotel: string;
@@ -85,11 +85,6 @@ export interface ContingentRow extends HotelDayCapacity {
   availableUntil: string;
   totalRooms: number;
   totalBeds: number;
-  freeRooms: number;
-  freeBeds: number;
-  occupiedRooms: number;
-  occupiedBeds: number;
-  occupancy: number;
   hasHalfBoard: boolean;
   hasSR: boolean;
 }
@@ -101,10 +96,9 @@ export interface ContingentFilters {
   region: string;
   halfBoard: boolean;
   skiRoom: boolean;
-  availability: '' | 'available' | 'occupied';
 }
 
-export interface HotelContactRow extends HotelDayCapacity {
+export interface HotelContactRow {
   id: string;
   hotel: string;
   location: string;
@@ -118,17 +112,18 @@ export interface HotelContactRow extends HotelDayCapacity {
   contingents: number;
   totalRooms: number;
   totalBeds: number;
-  freeRooms: number;
-  freeBeds: number;
-  occupiedRooms: number;
-  occupiedBeds: number;
+  inventoryPeriods: string;
+  assignedBookings: number;
+  assignedPersons: number;
+  peakRooms: number | null;
+  peakPersons: number | null;
+  peakBlockedBeds: number | null;
 }
 
-export function summarizeHotelContactRows(rows: ReadonlyArray<Pick<HotelContactRow, 'occupiedBeds' | 'freeBeds'>>) {
-  return rows.reduce((sum, row) => ({
-    occupied: sum.occupied + row.occupiedBeds,
-    free: sum.free + row.freeBeds,
-  }), { occupied: 0, free: 0 });
+export function summarizeHotelContactRows(rows: ReadonlyArray<Pick<HotelContactRow, 'assignedBookings' | 'totalRooms' | 'totalBeds'>>) {
+  // Peaks and distinct people per hotel must not be summed across hotel changes.
+  return rows.reduce((sum,row)=>({bookings:sum.bookings+row.assignedBookings,
+    rooms:sum.rooms+row.totalRooms,beds:sum.beds+row.totalBeds}),{bookings:0,rooms:0,beds:0});
 }
 
 const value = (entry?: string | null) => entry?.trim() || '—';
@@ -137,13 +132,24 @@ const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)
 const roomTypeCode = (name?: string | null) => name?.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || 'ZI';
 
 /** Read-only hotel master-data projection for the event contact directory. */
-export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] = [], date = new Date().toISOString().slice(0,10)): HotelContactRow[] {
+export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] = []): HotelContactRow[] {
+  const risks=buildHotelRiskRows(hotels,bookings);
   return hotels.map(hotel => {
-    const inventories = hotel.roomInventories || [];
-    const capacity = hotelCapacityOnDay(hotel, bookings, date);
-    return { id: hotel.id, hotel: hotel.name, location: value(hotel.location), region: value(hotel.region), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment), hasHalfBoard: inventories.some(inventory => inventory.hasHalfBoard), hasSR: inventories.some(inventory => inventory.hasSR), contingents: inventories.length, ...capacity };
-  })
-    .sort((a, b) => a.hotel.localeCompare(b.hotel, 'de'));
+    const inventories = hotel.accommodationType==='EXTERNAL'?[]:hotel.roomInventories || [];
+    const assigned=[...new Map(bookings.filter(b=>b.hotel.id===hotel.id).map(b=>[b.id,b])).values()];
+    const daily=risks.find(row=>row.hotel.id===hotel.id)?.daily || [];
+    const peak=(key:'occupiedRooms'|'occupiedBeds'|'blockedBeds')=>hotel.accommodationType==='EXTERNAL'?null
+      : daily.reduce((max,day)=>Math.max(max,day[key]),0);
+    return { id: hotel.id, hotel: hotel.name, location: value(hotel.location), region: value(hotel.region), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment), hasHalfBoard: inventories.some(inventory => inventory.hasHalfBoard), hasSR: inventories.some(inventory => inventory.hasSR), contingents: inventories.length,
+      // Agreement sums describe inventory entries, never simultaneous room supply.
+      totalRooms:inventories.reduce((sum,i)=>sum+i.roomCount,0),
+      totalBeds:inventories.reduce((sum,i)=>sum+i.roomCount*i.roomType.maxPersons,0),
+      inventoryPeriods:[...new Set([...inventories].sort((a,b)=>a.availableFrom.localeCompare(b.availableFrom)||a.id.localeCompare(b.id))
+        .map(i=>`${i.roomType.name}: ${iso(i.availableFrom)}–${iso(i.availableUntil)}`))].join(' · ') || '—',
+      assignedBookings:assigned.length,assignedPersons:new Set(assigned.flatMap(b=>b.occupants.map(o=>o.athlete.id))).size,
+      peakRooms:peak('occupiedRooms'),peakPersons:peak('occupiedBeds'),peakBlockedBeds:peak('blockedBeds'),
+    };
+  }).sort((a,b)=>a.hotel.localeCompare(b.hotel,'de'));
 }
 
 /** Creates the one shared, read-only projection consumed by every list and export. */
@@ -320,10 +326,9 @@ export function groupListRows(rows: ListRow[], kind: ListKind) {
   }));
 }
 
-/** Mirrors the capacity calculation used by the hotel detail for every inventory. */
-export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[], date = new Date().toISOString().slice(0,10)): ContingentRow[] {
+/** Agreed inventory entries with their actual intervals; assignments have no inventory FK. */
+export function createContingentRows(hotels: Hotel[]): ContingentRow[] {
   return hotels.filter(h=>h.accommodationType!=='EXTERNAL').flatMap((hotel) => (hotel.roomInventories || []).map((inventory) => {
-    const capacity = hotelCapacityOnDay(hotel, bookings, date, inventory);
     return {
       id: inventory.id,
       hotelId: hotel.id,
@@ -336,7 +341,8 @@ export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[], d
       comment: value(inventory.comment),
       availableFrom: iso(inventory.availableFrom),
       availableUntil: iso(inventory.availableUntil),
-      ...capacity,
+      totalRooms:inventory.roomCount,
+      totalBeds:inventory.roomCount*inventory.roomType.maxPersons,
       hasHalfBoard: Boolean(inventory.hasHalfBoard),
       hasSR: Boolean(inventory.hasSR),
     };
@@ -351,8 +357,6 @@ export function filterContingentRows(rows: ContingentRow[], filters: ContingentF
     if (filters.region && row.region !== filters.region) return false;
     if (filters.halfBoard && !row.hasHalfBoard) return false;
     if (filters.skiRoom && !row.hasSR) return false;
-    if (filters.availability === 'available' && row.freeRooms === 0) return false;
-    if (filters.availability === 'occupied' && row.occupiedRooms === 0) return false;
     return !query || [row.hotel, row.roomType, row.region, row.comment].some(value => value.toLocaleLowerCase('de').includes(query));
   });
 }
