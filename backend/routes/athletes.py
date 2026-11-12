@@ -6,7 +6,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
-from stay_window import assess_stay, load_stay_schedule
+from stay_window import assess_stay, assess_booked_stay, load_stay_schedule
 from accommodation_scope import accommodation_event_id
 from accommodation_coverage import person_accommodation_coverage
 
@@ -81,7 +81,9 @@ def get_athletes():
             a.arrival_date, a.departure_date,
             [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])], a.accommodation_requirement)
         competitions = {competition.id: competition for record in records for competition in record.competitions}
-        data['stayWindow'] = assess_stay(a.arrival_date,a.departure_date,list(competitions.values()),schedule,a.accommodation_requirement)
+        actual_bookings = [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])]
+        data['stayWindow'] = (assess_booked_stay(actual_bookings,list(competitions.values()),schedule,a.accommodation_requirement)
+            if actual_bookings else assess_stay(a.arrival_date,a.departure_date,list(competitions.values()),schedule,a.accommodation_requirement))
         data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
         data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
         if not data['disciplines']:
@@ -168,7 +170,9 @@ def get_athlete(athlete_id):
         RoomBookingOccupant.athlete_id == athlete.id).options(
             db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     data = athlete.to_dict()
-    data['stayWindow'] = assess_stay(athlete.arrival_date,athlete.departure_date,athlete.competitions,load_stay_schedule(athlete.event_id),athlete.accommodation_requirement)
+    schedule = load_stay_schedule(athlete.event_id)
+    data['stayWindow'] = (assess_booked_stay(bookings,athlete.competitions,schedule,athlete.accommodation_requirement)
+        if bookings else assess_stay(athlete.arrival_date,athlete.departure_date,athlete.competitions,schedule,athlete.accommodation_requirement))
     data['accommodationCoverage'] = person_accommodation_coverage(
         athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
     coverage = data['accommodationCoverage']['coverageStatus']

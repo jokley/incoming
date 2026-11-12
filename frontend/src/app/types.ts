@@ -169,6 +169,7 @@ export interface StayWindow {
  eventStart:string|null;eventEnd:string|null;allowedStart:string|null;allowedEnd:string|null;
  arrivalDate:string|null;departureDate:string|null;nightsBefore:number|null;nightsAfter:number|null;
  outsideNights:number|null;reason:string|null;
+ intervals?: Array<{checkInDate:string;checkOutDate:string}>;
 }
 
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {

@@ -1,5 +1,5 @@
 import { buildHotelRiskRows } from '../services/planningCalculations.ts';
-import {stayWindowText,stayWindowHotelNote} from '../services/stayWindow.ts';
+import {stayWindowDeviationText,stayWindowHotelNote} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
 import type { Athlete, Hotel, RoomBooking } from '../types';
@@ -195,7 +195,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       const surchargeLabel = (reason?: 'SPECIAL_RATE' | 'APPROVED_EXTRA_SINGLE') => !segmentSurcharge.applicable ? '—'
         : reason ? (segmentSurcharge.surchargeReasons.includes(reason) ? 'Ja' : 'Nein')
           : segmentSurcharge.hasAccommodationSurcharge ? 'Ja' : 'Nein';
-      const assessment=booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow??athlete.stayWindow;
+      const assessment=booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow;
       const inventory=inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
         (!booking.checkInDate || item.availableUntil >= iso(booking.checkInDate)) && (!booking.checkOutDate || item.availableFrom <= iso(booking.checkOutDate)));
       return {bookingId:booking.id,hotelId:booking.hotel.id,hotel:value(booking.hotel.name),
@@ -205,10 +205,10 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
         arrival:iso(booking.checkInDate || athlete.arrivalDate),departure:iso(booking.checkOutDate || athlete.departureDate),
         countsAsSingle:Boolean(booking.countsAsSingle),quotaEvaluation:isEvaluatedAsSingle(booking)?'EZ':'DZ',roommate:value(roommate || athlete.sharedWithName),
         surcharge:surchargeLabel(),specialRateSurcharge:surchargeLabel('SPECIAL_RATE'),approvedExtraSingleSurcharge:surchargeLabel('APPROVED_EXTRA_SINGLE'),
-        stayWindow:stayWindowText(assessment),hotelStayNote:stayWindowHotelNote(assessment),
+        stayWindow:assessment?stayWindowDeviationText(assessment):'Bewertung nicht verfügbar',hotelStayNote:stayWindowHotelNote(assessment),
         eventPeriod:assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
         allowedStay:assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
-        assessedStay:assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:'',
+        assessedStay:assessment?.intervals?.map(i=>`${i.checkInDate} – ${i.checkOutDate}`).join(' · ') || (assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:''),
       };
     });
     const firstSegment = segments[0];
@@ -235,11 +235,11 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       eventGroups: previewEventGroupLabel(athlete.quotaDisciplines),
       competitionNames: competitionMembershipList(athlete.competitions),
       role: value(athlete.function),
-      stayWindow: stayWindowText(assessment),
+      stayWindow: stayWindowDeviationText(assessment),
       hotelStayNote:stayWindowHotelNote(assessment),
       eventPeriod: assessment?.eventStart?`${assessment.eventStart} – ${assessment.eventEnd}`:'',
       allowedStay: assessment?.allowedStart?`${assessment.allowedStart} – ${assessment.allowedEnd} (Abreise)`:'',
-      assessedStay: assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:'',
+      assessedStay: assessment?.intervals?.map(i=>`${i.checkInDate} – ${i.checkOutDate}`).join(' · ') || (assessment?.arrivalDate?`${assessment.arrivalDate} – ${assessment.departureDate}`:''),
       arrival: firstSegment?.arrival || iso(athlete.arrivalDate),
       departure: firstSegment?.departure || iso(athlete.departureDate),
       firstMeal: value(athlete.firstMeal),
