@@ -3,7 +3,7 @@ import { segmentListRows, type ContingentRow, type HotelContactRow, type ListKin
 export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['hotel', 'Hotel'], ['room', 'Zimmer'], ['roomType', 'Zimmerart'], ['name', 'Name'],
   ['nation', 'Nation'], ['discipline', 'Disziplin / Event'], ['role', 'Funktion'],
-  ['stayWindow','Eventfenster'], ['hotelStayNote','Hotelhinweis Zusatznächte'], ['eventPeriod','Eventzeitraum'], ['allowedStay','Zulässiger Aufenthalt'], ['assessedStay','Bewerteter Aufenthalt'], ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
+  ['stayWindow','Zusatznächte'], ['hotelStayNote','Hotelhinweis Zusatznächte'], ['eventPeriod','Eventzeitraum'], ['allowedStay','Zulässiger Aufenthalt'], ['assessedStay','Bewerteter Aufenthalt'], ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
   ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'],
   ['specialRateSurcharge', 'Sondertarif'], ['approvedExtraSingleSurcharge', 'Genehmigtes zusätzliches EZ'], ['roommate', 'Zimmerpartner'],
@@ -65,7 +65,7 @@ function zip(files: Array<[string, string]>) {
 export function exportExcel(rows: ListRow[], kind: ListKind) {
   rows = kind==='hotels'||kind==='contingents' ? segmentListRows(rows) : rows;
   const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const display=(row:ListRow,key:keyof ListRow)=>row.segments.length && key in row.segments[0]
+  const display=(row:ListRow,key:keyof ListRow)=>['stayWindow','hotelStayNote','assessedStay'].includes(key) ? String(row[key] ?? '') : row.segments.length && key in row.segments[0]
     ? row.segments.map(segment=>key==='quotaEvaluation'?(segment.countsAsSingle?'Ja':'Nein'):String(segment[key as keyof typeof segment] ?? '')).join('\n')
     : String(row[key] ?? '');
   const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(personExportColumns.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(personExportColumns.map(([key]) => display(row,key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
