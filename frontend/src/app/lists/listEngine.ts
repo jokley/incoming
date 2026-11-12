@@ -1,3 +1,4 @@
+import { hotelCapacityOnDay, type HotelDayCapacity } from '../services/planningCalculations.ts';
 import {stayWindowText,stayWindowHotelNote} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
@@ -70,7 +71,7 @@ export interface ListFilters {
   assignedOnly: boolean;
 }
 
-export interface ContingentRow {
+export interface ContingentRow extends HotelDayCapacity {
   id: string;
   hotelId: string;
   hotel: string;
@@ -103,7 +104,7 @@ export interface ContingentFilters {
   availability: '' | 'available' | 'occupied';
 }
 
-export interface HotelContactRow {
+export interface HotelContactRow extends HotelDayCapacity {
   id: string;
   hotel: string;
   location: string;
@@ -136,15 +137,11 @@ const roomLabel = (entry?: string | null) => value(entry).replace(/^Slot\s+(\d+)
 const roomTypeCode = (name?: string | null) => name?.toUpperCase().match(/(?:^|\s|\/)(EZ|DZ|APP)(?=\s|\/|:|$)/)?.[1] || 'ZI';
 
 /** Read-only hotel master-data projection for the event contact directory. */
-export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] = []): HotelContactRow[] {
+export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] = [], date = new Date().toISOString().slice(0,10)): HotelContactRow[] {
   return hotels.map(hotel => {
     const inventories = hotel.roomInventories || [];
-    const hotelBookings = bookings.filter(booking => hotel.accommodationType!=='EXTERNAL' && booking.hotel.id === hotel.id);
-    const totalRooms = inventories.reduce((sum, inventory) => sum + inventory.roomCount, 0);
-    const totalBeds = inventories.reduce((sum, inventory) => sum + inventory.roomCount * inventory.roomType.maxPersons, 0);
-    const occupiedRooms = hotelBookings.length;
-    const occupiedBeds = hotelBookings.reduce((sum, booking) => sum + Math.max(booking.occupants.length, booking.countsAsSingle ? 1 : 0), 0);
-    return { id: hotel.id, hotel: hotel.name, location: value(hotel.location), region: value(hotel.region), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment), hasHalfBoard: inventories.some(inventory => inventory.hasHalfBoard), hasSR: inventories.some(inventory => inventory.hasSR), contingents: inventories.length, totalRooms, totalBeds, freeRooms: Math.max(0, totalRooms - occupiedRooms), freeBeds: Math.max(0, totalBeds - occupiedBeds), occupiedRooms, occupiedBeds };
+    const capacity = hotelCapacityOnDay(hotel, bookings, date);
+    return { id: hotel.id, hotel: hotel.name, location: value(hotel.location), region: value(hotel.region), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment), hasHalfBoard: inventories.some(inventory => inventory.hasHalfBoard), hasSR: inventories.some(inventory => inventory.hasSR), contingents: inventories.length, ...capacity };
   })
     .sort((a, b) => a.hotel.localeCompare(b.hotel, 'de'));
 }
@@ -324,20 +321,9 @@ export function groupListRows(rows: ListRow[], kind: ListKind) {
 }
 
 /** Mirrors the capacity calculation used by the hotel detail for every inventory. */
-export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[]): ContingentRow[] {
-  const bookingsByHotelAndRoomType = new Map<string, RoomBooking[]>();
-  bookings.filter(b=>b.hotel.accommodationType!=='EXTERNAL').forEach(booking => {
-    const key = `${booking.hotel.id}/${booking.roomType?.id}`;
-    const entries = bookingsByHotelAndRoomType.get(key) || [];
-    entries.push(booking);
-    bookingsByHotelAndRoomType.set(key, entries);
-  });
+export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[], date = new Date().toISOString().slice(0,10)): ContingentRow[] {
   return hotels.filter(h=>h.accommodationType!=='EXTERNAL').flatMap((hotel) => (hotel.roomInventories || []).map((inventory) => {
-    const matching = bookingsByHotelAndRoomType.get(`${hotel.id}/${inventory.roomType.id}`) || [];
-    const totalRooms = inventory.roomCount;
-    const totalBeds = totalRooms * inventory.roomType.maxPersons;
-    const occupiedRooms = matching.length;
-    const occupiedBeds = matching.reduce((sum, booking) => sum + Math.max(booking.occupants.length, booking.countsAsSingle ? 1 : 0), 0);
+    const capacity = hotelCapacityOnDay(hotel, bookings, date, inventory);
     return {
       id: inventory.id,
       hotelId: hotel.id,
@@ -350,13 +336,7 @@ export function createContingentRows(hotels: Hotel[], bookings: RoomBooking[]): 
       comment: value(inventory.comment),
       availableFrom: iso(inventory.availableFrom),
       availableUntil: iso(inventory.availableUntil),
-      totalRooms,
-      totalBeds,
-      freeRooms: Math.max(0, totalRooms - occupiedRooms),
-      freeBeds: Math.max(0, totalBeds - occupiedBeds),
-      occupiedRooms,
-      occupiedBeds,
-      occupancy: totalRooms ? Math.min(100, occupiedRooms / totalRooms * 100) : 0,
+      ...capacity,
       hasHalfBoard: Boolean(inventory.hasHalfBoard),
       hasSR: Boolean(inventory.hasSR),
     };
