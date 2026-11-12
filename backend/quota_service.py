@@ -280,12 +280,15 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None):
     if errors:
         raise QuotaGenderValidationError(errors)
     athletes = {}
+    officials = {}
     assigned = {}
     keys = set()
     for person, key in _distinct_memberships(people):
         keys.add(key)
         if (person.get('function') or '').strip().lower() == 'athlete':
             athletes[key] = athletes.get(key, 0) + 1
+        else:
+            officials[key] = officials.get(key, 0) + 1
     for person, key in _distinct_memberships(assigned_people, people):
         keys.add(key)
         if (person.get('function') or '').strip().lower() != 'athlete':
@@ -301,6 +304,10 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None):
             'gender': gender,
             'athletesEntered': athletes.get(key, 0),
             'officialQuota': official_quota,
+            'registeredOfficials': officials.get(key, 0),
+            # Preserve the documented policy; expose its basis rather than
+            # silently substituting roster or accommodation assignment counts.
+            'singleRoomOfficialBasis': official_quota,
             'singleRoomsAllowed': compute_single_room_entitlement(official_quota, rules['singleRooms']),
             'assignedOfficials': assigned.get(key, 0),
             'singleRoomsUsed': 0,

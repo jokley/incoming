@@ -1,11 +1,40 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, singleRoomBadgeLabels, singleRoomSpecialStatusLabel, uniqueQuotaContext } from './quotaEvaluation.ts';
+import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, quotaStatusLabel, singleRoomBadgeLabels, singleRoomSpecialStatusLabel, uniqueQuotaContext } from './quotaEvaluation.ts';
+
+test('operational badges distinguish current allocation from approval history', () => {
+  assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA', null, false, 'COVERED'), ['Einzelzimmer', 'EZ in Quote']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA', null, false, 'PENDING'), ['Einzelzimmer', 'Entscheidung offen']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA', null, false, undefined, true), ['EZ-Genehmigung inaktiv']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA', null, false, 'PENDING', false), ['EZ-Genehmigung prüfen', 'Einzelzimmer', 'Entscheidung offen']);
+  assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA', null, false, 'COVERED', false), ['EZ-Genehmigung prüfen', 'Einzelzimmer', 'EZ in Quote']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA', null, false, undefined, false), ['EZ-Genehmigung prüfen']);
+});
+
+test('quota row warnings use unresolved allocation rather than arithmetic excess', async () => {
+  const { evaluateQuotaUsageRow } = await import('./quotaEvaluation.ts');
+  const row = { nationCode: 'AUT', discipline: 'Ski Cross', gender: 'M', singleRoomsAllowed: 1, singleRoomsUsed: 2 };
+  assert.equal(evaluateQuotaUsageRow({ ...row, singleRoomsPending: 0 }).hasViolation, false);
+  assert.equal(evaluateQuotaUsageRow({ ...row, singleRoomsPending: 1 }).hasViolation, true);
+  assert.equal(evaluateQuotaUsageRow({ ...row, singleRoomsUsed: 1, singleRoomsPending: 1 }).hasViolation, true);
+  assert.equal(evaluateQuotaUsageRow(row).hasViolation, true); // Legacy response without allocation evidence.
+});
+
+test('quota cards explain unresolved, paid and free allocations without inventing costs', () => {
+  const row = { quotaStatus: 'FULFILLED' as const, openApprovals: 0, assignedOfficials: 1, registeredOfficials: 2, officialQuota: 3 };
+  assert.equal(quotaStatusLabel(row), 'Quote erfüllt');
+  assert.equal(quotaStatusLabel({ ...row, singleRoomsPending: 1 }), 'EZ-Entscheidung offen');
+  assert.equal(quotaStatusLabel({ ...row, quotaStatus: 'DECISION_REQUIRED' }), 'EZ-Entscheidung offen');
+  assert.equal(quotaStatusLabel({ ...row, singleRoomAllocations: [{ personId: 'paid', status: 'APPROVED_EXTRA', context: ['AUT', 'Ski Cross', 'M'] }] }), 'EZ-Mehrpreis genehmigt');
+  assert.equal(quotaStatusLabel({ ...row, quotaExemptSingleRooms: 1 }), 'Kostenfreie EZ-Ausnahme');
+  assert.equal(quotaStatusLabel({ ...row, quotaStatus: 'EXCEPTION_APPROVED' }), 'Quote erfüllt'); // Historical decision, no active extra.
+  assert.equal(quotaStatusLabel({ ...row, registeredOfficials: 4 }), 'Officials-Limit überschritten');
+});
 
 test('single-room and surcharge badges separate persisted state from current applicability', () => {
   assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA', null, true), ['EZ genehmigt', 'Einzelzimmer', 'Mehrpreis']);
-  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ-Genehmigung inaktiv']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA'), ['Einzelzimmer']);
   assert.deepEqual(singleRoomBadgeLabels(false, 'NONE'), []);
   assert.equal(hasSingleRoomSurcharge({ personId: 'active', bookingId: '1', nationCode: 'BRA', discipline: 'HP', gender: 'M', countsAsSingle: true, singleRoomStatus: 'APPROVED_EXTRA', approvedQuotaDisciplines: ['HP'] }), true);
@@ -27,12 +56,12 @@ test('approval reassignment moves the durable approval badge', () => {
     B: singleRoomBadgeLabels(false, 'APPROVED_EXTRA'),
   };
 
-  assert.deepEqual(before, { A: ['EZ genehmigt'], B: [] });
-  assert.deepEqual(after, { A: [], B: ['EZ genehmigt'] });
+  assert.deepEqual(before, { A: ['EZ-Genehmigung inaktiv'], B: [] });
+  assert.deepEqual(after, { A: [], B: ['EZ-Genehmigung inaktiv'] });
 });
 
 test('assigned room cards use the shared single-room presentation', () => {
-  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ genehmigt']);
+  assert.deepEqual(singleRoomBadgeLabels(false, 'APPROVED_EXTRA'), ['EZ-Genehmigung inaktiv']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'APPROVED_EXTRA', null, true), [
     'EZ genehmigt', 'Einzelzimmer', 'Mehrpreis',
   ]);

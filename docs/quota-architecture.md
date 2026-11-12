@@ -126,6 +126,17 @@ Art. 9.1.3 provides the Officials allowance used by Art. 13.3 single-room alloca
 Evaluating these formulas separately for six Event Groups and athlete gender can
 change totals compared with the previous broad grouping.
 
+PR 4a clarification: the current evaluator passes the **maximum Officials
+allowance**, not registered or assigned Officials, into the single-room tier.
+It exposes `registeredOfficials`, `assignedOfficials`, and
+`singleRoomOfficialBasis` separately. The catalogue references above do not
+contain a verifiable rule excerpt resolving maximum allowance versus actual
+registered Officials capped by that allowance. That requested change therefore
+remains a policy question; PR 4a preserves the existing formula and approval
+evidence. Arithmetic excess alone is neither an open decision nor an approved
+surcharge: displays use the existing allocation statuses and current approval
+applicability.
+
 Keep these independent concepts separate:
 
 - `RoomBooking.room_type_id`: physical room type.

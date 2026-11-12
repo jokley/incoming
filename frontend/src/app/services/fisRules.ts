@@ -13,6 +13,8 @@ export interface OfficialQuotaUsage {
   gender: string;
   athletesEntered: number;
   officialQuota: number;
+  registeredOfficials?: number;
+  singleRoomOfficialBasis?: number;
   singleRoomsAllowed: number;
   assignedOfficials: number;
   singleRoomsUsed: number;
