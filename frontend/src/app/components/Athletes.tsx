@@ -28,8 +28,8 @@ import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHe
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
-import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
-import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel, competitionDisplayName } from '../services/competitionPresentation';
+import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, sportAreaOptions, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
+import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel, competitionDisplayName, sportAreaValue } from '../services/competitionPresentation';
 import { accommodationSurcharge } from '../services/accommodationSurcharge';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
@@ -312,7 +312,6 @@ export function Athletes() {
 
   const groups = useMemo(() => ({
     nation: countValues(athletes, athlete => athlete.nationCode),
-    sport: countValues(athletes, athlete => athlete.competitions?.[0]?.sport || ''),
     competitions: competitionFilterGroups(athletes),
     gender: countValues(athletes, athlete => genderLabel(athlete.gender || athlete.forGender)),
     function: personFunctionOptions(athletes),
@@ -327,7 +326,7 @@ export function Athletes() {
     notes: [{ value: 'present', label: 'Mit Hinweisen', count: athletes.filter(athlete => Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim())).length }],
   }), [athletes]);
 
-  const filtered = useMemo(() => athletes.filter(athlete => {
+  const areaCandidates = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
@@ -338,7 +337,6 @@ export function Athletes() {
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
-      && (!filters.sport || athlete.competitions?.some(competition => competition.sport === filters.sport))
       && matchesCompetitionSelection(athlete, filters.competitions)
       && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
       && (!filters.rate || (athlete.accommodationRateCategory || 'STANDARD')===filters.rate)
@@ -349,6 +347,9 @@ export function Athletes() {
       && reviewMatches
       && movementMatches;
   }), [athletes, filters, requestedDate, requestedMovement, requestedReview, requestedSingleRoomStatus, search]);
+
+  const areaOptions = useMemo(() => sportAreaOptions(areaCandidates, filters.competitions), [areaCandidates, filters.competitions]);
+  const filtered = useMemo(() => areaCandidates.filter(athlete => matchesCompetitionSelection(athlete, filters.competitions, filters.sport)), [areaCandidates, filters.competitions, filters.sport]);
 
   const activeFilterCount = Object.entries(filters).filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value)).length;
   const setFilter = (key: FilterKey, value: string) => setFilters(current => ({ ...current, [key]: value }));
@@ -367,8 +368,8 @@ export function Athletes() {
         </div>
         <nav aria-label="Athletenfilter" className="space-y-5 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           <FilterGroup title="Nationen" filterKey="nation" items={groups.nation} selected={filters.nation} onSelect={setFilter} />
-          <FilterGroup title="Sport" filterKey="sport" items={groups.sport} selected={filters.sport} onSelect={setFilter} />
-          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || item.sports.includes(filters.sport))} selected={filters.competitions} onToggle={group => setFilters(current => ({ ...current, competitions: toggleCompetitionGroup(group, current.competitions) }))} />
+          <FilterGroup title="Bereich" filterKey="sport" items={areaOptions} selected={filters.sport} onSelect={setFilter} />
+          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || item.sports.some(sport => sportAreaValue(sport) === filters.sport))} selected={filters.competitions} onToggle={group => setFilters(current => ({ ...current, competitions: toggleCompetitionGroup(group, current.competitions) }))} />
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Unterkunftstarif" filterKey="rate" items={[{value:"STANDARD",label:"Standard",count:athletes.filter(p=>p.accommodationRateCategory!=="SPECIAL").length},{value:"SPECIAL",label:"Sondertarif",count:athletes.filter(p=>p.accommodationRateCategory==="SPECIAL").length}]} selected={filters.rate} onSelect={setFilter}/>
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />

@@ -50,7 +50,7 @@ test('family tile surfaces CAN one and GER two unresolved positions without summ
 
 
 test('partial preview labels the file roster, not the combined nation population',()=>{
- for(const [family,label,count] of [['Snowboard','Snowboard (SB)',4],['Freestyle','Freestyle/Freeski (FS)',7]] as const){
+ for(const [family,label,count] of [['Snowboard','Snowboard (SB)',4],['Freestyle','Freestyle / Freeski (FS)',7]] as const){
   const data={...preview,replacementScope:{kind:'SPORT_FAMILY',family},people:Array.from({length:count},()=>({firstname:'Synthetic',lastname:'Person'}))};
   const html=renderToStaticMarkup(createElement(Preview,{preview:data,peopleRows:[],roomRows:[],onOpen:()=>{}}));
   assert.ok(html.includes(`Teilmeldung · ${label}`));

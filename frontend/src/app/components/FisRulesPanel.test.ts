@@ -34,6 +34,9 @@ test('renders all FAQ answers and complete expandable competition reference', ()
   assert.match(html, /<dl class="fis-faq">/);
   assert.ok(html.includes('Warum hat ein DZ Mehrpreis?'));
   assert.equal((html.match(/<details /g) || []).length, 6);
+  assert.equal((html.match(/<h3><svg[^]*?<\/h3>/g) || []).filter(heading => heading.includes('Freestyle / Freeski') || heading.includes('Snowboard')).length, 2);
+  assert.ok(!html.includes('</svg>Freeski</h3>'));
+  assert.ok(!html.includes('</svg>Freestyle Ski</h3>'));
   for (const name of ['Snowboard Alpine', 'Snowboard Park &amp; Pipe', 'Snowboard Cross', 'Freeski Park &amp; Pipe', 'Freestyle', 'Ski Cross', 'Mixed Parallel Team', 'Dual Moguls Team', 'Aerials Team', 'Ski Cross Team']) assert.ok(html.includes(name), name);
 });
 test('distinguishes FIS official categories from raw imported Function', () => {

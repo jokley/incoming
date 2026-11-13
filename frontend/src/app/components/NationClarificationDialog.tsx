@@ -1,3 +1,4 @@
+import { sportAreaLabel } from '../services/competitionPresentation';
 import { useState } from 'react';
 import type { ImportSession, NationClarification } from '../data/importSessions';
 import { EnterpriseDialog, OpsButton } from '../design-system';
@@ -57,11 +58,11 @@ export function NationClarificationDialog({session,action,item,onSave,onClose,on
             <option value="SPORT">Sportbereich / Disziplin</option><option value="NATION">Gesamte Nation</option>
           </select></label>
           {draft.targetType==='SPORT'&&<label className="block">Sportbereich / Disziplin<select aria-label="Sportbereich / Disziplin" className={input} value={draft.sport} disabled={busy} onChange={e=>patch({sport:e.target.value})}>
-            <option value="">Bitte auswählen</option>{sports.map(s=><option key={s} value={s}>{s==='Freestyle'?'Freestyle/Freeski':s}</option>)}
+            <option value="">Bitte auswählen</option>{sports.map(s=><option key={s} value={s}>{sportAreaLabel(s)}</option>)}
           </select></label>}
           {['PEOPLE','FINDING'].includes(draft.targetType)&&<>
             <label className="block">Problemgruppe<select aria-label="Problemgruppe" className={input} value={draft.groupKey} disabled={busy} onChange={e=>patch({groupKey:e.target.value})}>
-              <option value="">Freie Rückfrage ohne Importhinweis</option>{groups.map(g=><option key={g.key} value={g.key}>{g.label}{g.families?.length?` · ${g.families.map(f=>f==='Freestyle'?'Freestyle/Freeski':f==='*'?'Nation':f).join(' / ')}`:''} · {g.personKeys.length} Personen</option>)}
+              <option value="">Freie Rückfrage ohne Importhinweis</option>{groups.map(g=><option key={g.key} value={g.key}>{g.label}{g.families?.length?` · ${g.families.map(f=>f==='*'?'Nation':sportAreaLabel(f)).join(' / ')}`:''} · {g.personKeys.length} Personen</option>)}
             </select></label>
             {group&&<div className="rounded border border-[var(--ops-border)] p-2">
               <p>{suggestedPeople(group.personKeys,people).length} passende Personen vorgeschlagen</p>
@@ -77,7 +78,7 @@ export function NationClarificationDialog({session,action,item,onSave,onClose,on
               </label>)}
             </fieldset>
           </>}
-          <p className="text-xs">Betroffener Importumfang: {families.map(f=>f==='Freestyle'?'Freestyle/Freeski':f==='*'?'Nationsmeldung':f).join(' / ')||'Bitte Bezug auswählen'}</p>
+          <p className="text-xs">Betroffener Importumfang: {families.map(f=>f==='*'?'Nationsmeldung':sportAreaLabel(f)).join(' / ')||'Bitte Bezug auswählen'}</p>
           <label className="block"><input type="checkbox" disabled={busy} checked={draft.required} onChange={e=>patch({required:e.target.checked})}/> Vor Freigabe klären</label>
           <details><summary>Kontakt · {draft.contactMethod==='EMAIL'?'E-Mail':draft.contactMethod==='PHONE'?'Telefon':'Sonstiges'} · {draft.contactDate}</summary>
             <div className="mt-2 flex flex-wrap gap-3"><label>Kontaktweg<select aria-label="Kontaktweg" className={input} disabled={busy} value={draft.contactMethod} onChange={e=>patch({contactMethod:e.target.value})}><option value="EMAIL">E-Mail</option><option value="PHONE">Telefon</option><option value="OTHER">Sonstiges</option></select></label>

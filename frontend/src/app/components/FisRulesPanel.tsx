@@ -1,3 +1,4 @@
+import { sportAreaLabel } from '../services/competitionPresentation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../services/api';
 import type { EventQuotaRules } from '../types';
@@ -11,8 +12,8 @@ const sports = [
     { name: 'Snowboard Park & Pipe', events: ['Halfpipe M/W', 'Big Air M/W', 'Slopestyle M/W'] },
     { name: 'Snowboard Cross', events: ['Snowboard Cross M/W', 'Mixed Snowboard Cross Team'] },
   ] },
-  { name: 'Freeski', groups: [{ name: 'Freeski Park & Pipe', events: ['Halfpipe M/W', 'Big Air M/W', 'Slopestyle M/W'] }] },
-  { name: 'Freestyle Ski', groups: [
+  { name: 'Freestyle', groups: [
+    { name: 'Freeski Park & Pipe', events: ['Halfpipe M/W', 'Big Air M/W', 'Slopestyle M/W'] },
     { name: 'Freestyle', events: ['Moguls M/W', 'Dual Moguls M/W', 'Dual Moguls Team', 'Aerials M/W', 'Aerials Team'] },
     { name: 'Ski Cross', events: ['Ski Cross M/W', 'Ski Cross Team'] },
   ] },
@@ -106,8 +107,8 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
         <dl className="fis-faq">{faq.map(([q, a]) => <div key={q}><dt><CircleHelp aria-hidden="true" />{q}</dt><dd>{a}</dd></div>)}</dl>
       </Section>
       <Section number={7} title="Was ist eine Event Group?" className="fis-half fis-extended">
-        <p>Event Groups bündeln einzelne Wettbewerbe für die Quotenbetrachtung.</p>
-        <div className="fis-sports">{sports.map(sport => <div key={sport.name}><h3><MountainSnow aria-hidden="true" />{sport.name}</h3>{sport.groups.map(group => <details key={group.name} className="fis-group"><summary><Snowflake aria-hidden="true" />{group.name}</summary><ul>{group.events.map(event => <li key={event}>{event}</li>)}</ul></details>)}</div>)}</div>
+        <p>Die zwei Bereiche entsprechen den Athleten-Quotenfamilien. Darunter bleiben sechs Event Groups für die Officials-/EZ-Quote; sie bündeln die einzelnen Wettbewerbe.</p>
+        <div className="fis-sports">{sports.map(sport => <div key={sport.name}><h3><MountainSnow aria-hidden="true" />{sportAreaLabel(sport.name)}</h3>{sport.groups.map(group => <details key={group.name} className="fis-group"><summary><Snowflake aria-hidden="true" />{group.name}</summary><ul>{group.events.map(event => <li key={event}>{event}</li>)}</ul></details>)}</div>)}</div>
         <Note>M/W = Männer / Frauen. Mixed- und Teamwettbewerbe sind Wettbewerbsnamen; sie bilden keinen zusätzlichen Gender-Quotenpool.</Note>
       </Section>
       <Section number={8} title="Welche Officials-Arten gibt es?" className="fis-half fis-extended">
@@ -125,7 +126,7 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
           <div><Hotel aria-hidden="true" /><h3>External</h3><p>Unterkunft vorhanden, aber außerhalb der normalen LOC-Disposition.</p></div></div>
         <p className="fis-distinction"><b>No room ≠ External</b><b>Sondertarif ≠ EZ-Mehrpreis</b></p>
       </Section>
-      <Section number={10} title="Athleten-/Disziplinquoten" className="fis-full"><p>Je Nation und Quotenfamilie; eine Person zählt innerhalb einer Familie einmal.</p><div className="fis-layers">{Object.entries(config.athletes).map(([family,rule])=><div key={family}><Users aria-hidden="true"/><h3>{family==='Freestyle'?'Freestyle / Freeski':family}</h3><p>{rule.enabled?`${rule.totalLimit} Athleten gesamt · ${rule.genderLimit} je Geschlecht`:'Spezielle Athletenquote deaktiviert'}</p></div>)}</div><Note>Überschreitungen benötigen eine dokumentierte Ausnahmeentscheidung. Keine automatische Auswahl kostenpflichtiger Personen; keine Änderung von Sondertarif oder EZ-Status. World-Champion-EZ-Ausnahmen sind keine Athletenzulassungsausnahme.</Note></Section>
+      <Section number={10} title="Athleten-/Disziplinquoten" className="fis-full"><p>Je Nation und Quotenfamilie; eine Person zählt innerhalb einer Familie einmal.</p><div className="fis-layers">{Object.entries(config.athletes).map(([family,rule])=><div key={family}><Users aria-hidden="true"/><h3>{sportAreaLabel(family)}</h3><p>{rule.enabled?`${rule.totalLimit} Athleten gesamt · ${rule.genderLimit} je Geschlecht`:'Spezielle Athletenquote deaktiviert'}</p></div>)}</div><Note>Überschreitungen benötigen eine dokumentierte Ausnahmeentscheidung. Keine automatische Auswahl kostenpflichtiger Personen; keine Änderung von Sondertarif oder EZ-Status. World-Champion-EZ-Ausnahmen sind keine Athletenzulassungsausnahme.</Note></Section>
       <Section number={11} title="Quellen / FIS Rules" className="fis-full fis-sources">
         <p><BookOpen aria-hidden="true" /><b>FIS Rules for the Organisation of FIS World Championships</b><span>Fassung 19.03.2023</span></p>
         <ul>{references.map(([article, label]) => <li key={article} data-fis-reference={article}><b>{article}</b> — {label}</li>)}</ul>

@@ -1,7 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
-import { competitionMembershipList, disciplineDisplayName, matchesDisciplineAndGender, matchesDisciplineMembership } from './competitionPresentation.ts';
+import { competitionMembershipList, disciplineDisplayName, matchesDisciplineAndGender, matchesDisciplineMembership, sportAreaLabel } from './competitionPresentation.ts';
+
+test('area labels normalize existing sport names without inferring competition identities', () => {
+  assert.equal(sportAreaLabel('Snowboard'), 'Snowboard');
+  for (const value of ['Freestyle', 'Freeski', 'Freestyle Ski']) assert.equal(sportAreaLabel(value), 'Freestyle / Freeski');
+  for (const value of ['Unknown', 'Ski Cross', 'Freeski Park & Pipe', 'WSC_HP_M_8171']) assert.equal(sportAreaLabel(value), value);
+  assert.equal(sportAreaLabel(null), '—');
+});
+
+test('display aliases agree with the existing central catalogue for all 31 competitions', () => {
+  // Read the authoritative catalogue, rather than maintaining a second group map.
+  const rows = JSON.parse(execFileSync('python', ['-c',
+    'import json; from competitions import COMPETITIONS, competition_athlete_family; print(json.dumps([dict(sport=c.sport, family=competition_athlete_family(c), group=c.quota_discipline) for c in COMPETITIONS]))'],
+    { cwd: fileURLToPath(new URL('../../../../backend/', import.meta.url)), encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' } }));
+  assert.equal(rows.length, 31);
+  assert.equal(new Set(rows.map((row: {group:string}) => row.group)).size, 6);
+  for (const row of rows) assert.equal(sportAreaLabel(row.sport), sportAreaLabel(row.family));
+});
 
 test('discipline labels omit competition gender and redundant sport qualifiers', () => {
   assert.equal(disciplineDisplayName("Men's Snowboard Big Air"), 'Big Air');
