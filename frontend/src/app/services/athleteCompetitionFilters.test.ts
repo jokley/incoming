@@ -1,7 +1,36 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Competition } from '../types.ts';
-import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection } from './athleteCompetitionFilters.ts';
+import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, sportAreaOptions } from './athleteCompetitionFilters.ts';
+
+test('two area options count every membership once and combine with concrete competitions', () => {
+  const sb = competition('sb', 'Halfpipe', 'Snowboard Halfpipe');
+  const fs = { ...competition('fs', 'Halfpipe', 'Freeski Halfpipe'), sport: 'Freeski', quotaDiscipline: 'Freeski Park & Pipe' };
+  const mo = { ...competition('mo', 'Moguls', 'Moguls'), sport: 'Freestyle Ski', quotaDiscipline: 'Freestyle' };
+  const rows = [
+    { id: 's', competitions: [sb] },
+    { id: 'f', competitions: [fs, mo, fs] },
+    { id: 'both', competitions: [fs, sb] },
+    { id: 'unknown', competitions: [{ ...sb, id: 'unknown', sport: 'Unknown' }] },
+    { id: 'none', competitions: [] },
+  ];
+  const options = sportAreaOptions(rows);
+  assert.deepEqual(options, [
+    { value: 'Snowboard', label: 'Snowboard', count: 2 },
+    { value: 'Freestyle', label: 'Freestyle / Freeski', count: 2 },
+  ]);
+  assert.deepEqual(sportAreaOptions([...rows, rows[1]]), options);
+  for (const option of options) assert.equal(rows.filter(p => matchesCompetitionSelection(p, [], option.value)).length, option.count);
+  assert.deepEqual(rows.filter(p => matchesCompetitionSelection(p, ['fs'], 'Freestyle')).map(p => p.id), ['f', 'both']);
+  assert.deepEqual(rows.filter(p => matchesCompetitionSelection(p, ['fs'], 'Snowboard')), []);
+  assert.deepEqual(rows.filter(p => matchesCompetitionSelection(p, ['sb'], 'Snowboard')).map(p => p.id), ['s', 'both']);
+  assert.equal(matchesCompetitionSelection(rows[3], [], 'Freestyle'), false);
+  assert.equal(matchesCompetitionSelection({competitions:[{...fs,sport:'Freestyle / Freeski'}]}, [], 'Freestyle'), false);
+  assert.equal(matchesCompetitionSelection(rows[0], [], 'Unknown'), false);
+  assert.equal(matchesCompetitionSelection(rows[4], [], ''), true);
+  assert.deepEqual(sportAreaOptions(rows, ['mo']).map(o => o.count), [0, 1]);
+  assert.deepEqual(sportAreaOptions([]).map(o => o.count), [0, 0]);
+});
 
 const competition = (id:string,name:string,displayName:string):Competition => ({
   id,name,displayName,importCode:id,code:id,sport:'Snowboard',gender:name.startsWith("Men's")?'M':'W',

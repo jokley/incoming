@@ -1,5 +1,5 @@
 import type { Athlete } from '../types.ts';
-import { disciplineDisplayName } from './competitionPresentation.ts';
+import { disciplineDisplayName, sportAreaLabel, sportAreaValue } from './competitionPresentation.ts';
 
 export type CompetitionFilterGroup = {
   value: string; label: string; count: number;
@@ -32,6 +32,15 @@ export function toggleCompetitionGroup(group: CompetitionFilterGroup, selected: 
   return competitionGroupSelected(group,selected) ? others : [...others,...group.competitionIds];
 }
 
-export function matchesCompetitionSelection(athlete: Pick<Athlete,'competitions'>, selected: string[]): boolean {
-  return !selected.length || Boolean(athlete.competitions?.some(c=>selected.includes(c.id) || selected.includes(c.name)));
+export function matchesCompetitionSelection(athlete: Pick<Athlete,'competitions'>, selected: string[], area = ''): boolean {
+  if (!selected.length && !area) return true;
+  return Boolean(athlete.competitions?.some(c =>
+    (!area || sportAreaValue(c.sport) === area)
+    && (!selected.length || selected.includes(c.id) || selected.includes(c.name))));
+}
+
+/** Existing family keys; every concrete membership participates, each person once. */
+export function sportAreaOptions(athletes: Pick<Athlete,'id'|'competitions'>[], selected: string[] = []) {
+  return ['Snowboard', 'Freestyle'].map(value => ({ value, label: sportAreaLabel(value),
+    count: new Set(athletes.filter(person => matchesCompetitionSelection(person, selected, value)).map(person => person.id)).size }));
 }

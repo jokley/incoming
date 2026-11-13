@@ -1,3 +1,4 @@
+import { sportAreaLabel } from '../services/competitionPresentation';
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
 import type {ImportControl,FisImportPreview,QuotaOverview} from '../types';
@@ -9,7 +10,6 @@ type Nation=QuotaOverview['nations'][number];
 type Family=Nation['athleteFamilies'][number];
 type Navigate=(filter:QuotaPeopleFilter)=>void;
 const numberCell='px-1 py-2 text-right tabular-nums sm:px-3';
-const familyName=(value:string)=>value==='Freestyle'?'Freestyle / Freeski':value;
 const genderName=(value:string)=>value==='M'?'Männer':['W','F'].includes(value)?'Frauen':`Unbekannt (${value||'—'})`;
 
 function PeopleCount({count,filter,onPeople,label}:{count:number;filter:QuotaPeopleFilter;onPeople?:Navigate;label:string}) {
@@ -30,7 +30,7 @@ function AthleteOverview({nation,fixed,control,preview,onPeople,focusSport}:{nat
    <caption className="sr-only">Autoritative Athletenquoten: Gemeldet / erlaubt</caption>
    <thead><tr>{['Familienquote · gemeldet / erlaubt','Männer','Frauen','Gesamt'].map((label,i)=><th scope="col" key={label} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{nation.athleteFamilies.map(row=><tr key={row.topLevelDiscipline} className="border-t border-[var(--ops-divider)]">
-    <th scope="row" className="ops-table-wrap px-1 py-2 text-left sm:px-3"><span className="block">{familyName(row.topLevelDiscipline)}</span><AthleteState row={row} incomplete={incomplete}/></th>
+    <th scope="row" className="ops-table-wrap px-1 py-2 text-left sm:px-3"><span className="block">{sportAreaLabel(row.topLevelDiscipline)}</span><AthleteState row={row} incomplete={incomplete}/></th>
     {(['M','F','total'] as const).map(key=>{
      const used=key==='total'?row.athleteQuotaUsed:row.athleteGenderUsed[key];
      const limit=key==='total'?row.athleteQuotaLimit:row.athleteGenderLimit;
@@ -38,7 +38,7 @@ function AthleteOverview({nation,fixed,control,preview,onPeople,focusSport}:{nat
      const approved=row.approvedExtent?.[key]??0,open=row.uncoveredExtent?.[key];
      const unknown=incomplete||row.athleteQuotaStatus==='INCOMPLETE';
      return <td key={key} className={`${numberCell} align-top ${excess>0&&!unknown?((open??0)>0?'bg-[var(--ops-tone-warning-surface)]':'bg-[var(--ops-tone-info-surface)]'):''}`}>
-      <span className="whitespace-nowrap"><PeopleCount count={used} filter={{nation:nation.nationCode,role:'athletes',family:row.topLevelDiscipline,...(key==='total'?{}:{gender:key})}} onPeople={onPeople} label={`${familyName(row.topLevelDiscipline)}: ${key==='total'?'alle Athleten':genderName(key)} anzeigen`}/> / {limit}</span>
+      <span className="whitespace-nowrap"><PeopleCount count={used} filter={{nation:nation.nationCode,role:'athletes',family:row.topLevelDiscipline,...(key==='total'?{}:{gender:key})}} onPeople={onPeople} label={`${sportAreaLabel(row.topLevelDiscipline)}: ${key==='total'?'alle Athleten':genderName(key)} anzeigen`}/> / {limit}</span>
       <span className={`block text-xs font-semibold ${unknown||open?'text-[var(--ops-warning)]':excess?'text-[var(--ops-info)]':'text-[var(--ops-success)]'}`}>
        {unknown?'Fachlich prüfen':excess?`+${excess}`:'OK'}
       </span>

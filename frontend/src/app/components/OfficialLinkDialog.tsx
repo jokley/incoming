@@ -1,3 +1,4 @@
+import { sportAreaLabel } from '../services/competitionPresentation';
 import {useState} from 'react';
 import {EnterpriseDialog,OpsButton} from '../design-system';
 export interface OfficialLinkProposal {
@@ -29,7 +30,7 @@ export function OfficialLinkChoices({candidates,selected,busy,onToggle}:{candida
    <span className="flex items-start gap-2"><input className="mt-1 shrink-0" type="checkbox" aria-label={`${person.name} zur Zuordnung auswählen`} disabled={busy} checked={selected.includes(person.key)} onChange={e=>onToggle(person.key,e.target.checked)}/><strong className="min-w-0">{person.name}</strong></span>
    {differentFunctions&&<span className="mt-1 inline-block rounded bg-amber-100 px-2 text-xs font-semibold text-amber-900">Unterschiedliche Funktionen</span>}
    <span className="mt-1 grid min-w-0 gap-1 sm:grid-cols-2">{person.identities.map(i=><span key={i.family} className="min-w-0">
-    <span className="block">{i.family==='Freestyle'?'Freestyle/Freeski':i.family} · Staff-ID {i.staffId}</span>
+    <span className="block">{sportAreaLabel(i.family)} · Staff-ID {i.staffId}</span>
     <span className={differentFunctions?'block font-semibold':'block'}>{i.function}</span>
     <span className="block text-xs text-[var(--ops-text-muted)]">Zeile {i.row}{i.sourceVersionId?` · Quellversion ${i.sourceVersionId}`:''}</span>
    </span>)}</span>
