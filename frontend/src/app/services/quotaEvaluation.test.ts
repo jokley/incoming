@@ -3,6 +3,19 @@ import test from 'node:test';
 
 import { actionableQuotaCaseCount, calculateAdditionalCosts, hasSingleRoomSurcharge, quotaRequiresAction, quotaStatusLabel, singleRoomBadgeLabels, singleRoomSpecialStatusLabel, uniqueQuotaContext } from './quotaEvaluation.ts';
 
+test('applicable advance approval does not activate a surcharge before single-room use', async () => {
+  const { hasApplicableSingleRoomApproval } = await import('./quotaEvaluation.ts');
+  const advance = {personId:'A',bookingId:'',nationCode:'AUT',discipline:'Ski Cross',gender:'W',countsAsSingle:false,
+    singleRoomStatus:'APPROVED_EXTRA' as const,approvedQuotaContexts:[{nationCode:'AUT',discipline:'Ski Cross',gender:'W'}]};
+  assert.equal(hasApplicableSingleRoomApproval(advance),true);
+  assert.equal(calculateAdditionalCosts([advance],0)[0].additionalCost,false);
+  assert.equal(calculateAdditionalCosts([{...advance,countsAsSingle:true}],0)[0].additionalCost,true);
+  assert.equal(hasApplicableSingleRoomApproval({...advance,approvedQuotaContexts:[]}),false);
+  assert.equal(hasApplicableSingleRoomApproval({...advance,gender:'M'}),false);
+  assert.equal(hasApplicableSingleRoomApproval({...advance,singleRoomQuotaExemptReason:'WORLD_CHAMPION'}),false);
+  assert.equal(advance.countsAsSingle,false);
+});
+
 test('operational badges distinguish current allocation from approval history', () => {
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA', null, false, 'COVERED'), ['Einzelzimmer', 'EZ in Quote']);
   assert.deepEqual(singleRoomBadgeLabels(true, 'IN_QUOTA', null, false, 'PENDING'), ['Einzelzimmer', 'Entscheidung offen']);

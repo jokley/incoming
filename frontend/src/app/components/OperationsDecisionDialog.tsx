@@ -9,7 +9,7 @@ import { canApproveSingleRoomSelection } from '../services/importPreview';
 
 export { buildOperationsTask, quotaViolationLabel } from '../services/importDecision';
 export type { OperationsTask } from '../services/importDecision';
-import { type OperationsTask } from '../services/importDecision';
+import { type OperationsTask, initialSingleRoomSelection } from '../services/importDecision';
 
 function taskTitle(task: OperationsTask) {
   if (task.approval.type === 'PRESERVED_APPROVED_EXTRA') return task.approval.description;
@@ -35,8 +35,8 @@ export function OperationsDecisionDialog({ canWrite=true, task, saving, onClose,
   const [contact, setContact] = useState(''); const [method,setMethod]=useState<'EMAIL'|'PHONE'>('EMAIL');
   const [date,setDate]=useState(now); const [subject,setSubject]=useState(''); const [deadline,setDeadline]=useState('');
   const [costCoverage,setCostCoverage]=useState('');
-  const [approvedPersonKeys,setApprovedPersonKeys]=useState<string[]>([]);
-  useEffect(() => { setTariffEffect(task?.approval.quotaDetails?.tariffEffect ?? 'NONE'); setExtent(task?.approval.decision==='APPROVED'?task.approval.quotaDetails?.approvedExtent ?? {total:0,M:0,F:0}:task?.approval.quotaDetails?.uncoveredExtent ?? {total:0,M:0,F:0}); setDecision('nation'); setOrganizerApproval(false); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setCostCoverage(task?.approval.costCoverage??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); setApprovedPersonKeys(task?.approval.approvedPersonKeys??[]); }, [task]);
+  const [approvedPersonKeys,setApprovedPersonKeys]=useState<string[]>(()=>initialSingleRoomSelection(task));
+  useEffect(() => { setTariffEffect(task?.approval.quotaDetails?.tariffEffect ?? 'NONE'); setExtent(task?.approval.decision==='APPROVED'?task.approval.quotaDetails?.approvedExtent ?? {total:0,M:0,F:0}:task?.approval.quotaDetails?.uncoveredExtent ?? {total:0,M:0,F:0}); setDecision(task?.approval.decision==='NEW_LIST_ANNOUNCED'?'newList':'nation'); setOrganizerApproval(task?.approval.approvalType==='ORGANIZER_APPROVED'); setComment(task?.approval.comment ?? ''); setContact(task?.approval.approvalBy??''); setMethod(task?.approval.approvalMethod??'EMAIL'); setDate(task?.approval.approvalDate?.slice(0,16)??now()); setSubject(task?.approval.contactSubject??''); setCostCoverage(task?.approval.costCoverage??''); setDeadline(task?.approval.deadlineAt?.slice(0,16)??''); setApprovedPersonKeys(initialSingleRoomSelection(task)); }, [task]);
 
   return <Dialog open={Boolean(task)} onClose={saving ? undefined : onClose} fullWidth maxWidth="md" slotProps={{ paper: { sx: { maxHeight: 'calc(100dvh - 32px)', display: 'flex', overflow: 'hidden' } } }}>
     {task && <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-[var(--ops-surface)] text-[var(--ops-text)]">

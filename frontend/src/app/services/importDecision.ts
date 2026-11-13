@@ -1,5 +1,6 @@
 import type { SingleRoomQuotaExemptReason } from '../types.ts';
 import type { ImportApproval, ImportSession } from '../data/importSessions.ts';
+import { canApproveSingleRoomSelection } from './importPreview.ts';
 
 export type OperationsTask = {
   approval: ImportApproval;
@@ -15,6 +16,18 @@ export type OperationsTask = {
   singleRoomReviewPeople: Array<{ personKey: string; name: string; function?: string; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }>;
   excessCount: number;
 };
+
+/** Saved decisions win; only a unique actionable EZ candidate is a safe default. */
+export function initialSingleRoomSelection(task: OperationsTask | null): string[] {
+  if (!task) return [];
+  const saved = task.approval.approvedPersonKeys ?? [];
+  if (saved.length || task.approval.decision !== 'PENDING') return [...saved];
+  if (task.approval.quotaDetails?.decisionKind === 'ATHLETE_QUOTA' || task.singleRoomCandidates.length !== 1) return [];
+  const candidate = task.singleRoomCandidates[0];
+  return candidate.personKey && !candidate.singleRoomQuotaExemptReason
+    && task.singleRoomReviewPeople.some(person => person.personKey === candidate.personKey)
+    && canApproveSingleRoomSelection([candidate.personKey], task.excessCount) ? [candidate.personKey] : [];
+}
 
 export function quotaViolationLabel(label: string, current: number, allowed: number) {
   return `${label} überschritten (${current} / ${allowed})`;

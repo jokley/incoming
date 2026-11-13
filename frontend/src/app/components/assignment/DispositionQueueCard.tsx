@@ -1,9 +1,11 @@
+import { hasApplicableSingleRoomApproval, matchesQuotaAllowanceContext, singleRoomBadgeLabels } from '../../services/quotaEvaluation';
+import { semanticToneClasses } from '../../design-system/components/primitives';
 import {queueRoomRequest} from '../../services/assignmentPresentation';
 import { queueFunctionLabel } from '../../services/queuePersonType';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { DispositionDragContext } from './DispositionDragContext';
 import { useContext, useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { Crown, MoreHorizontal } from 'lucide-react';
 import { IconButton, Menu, MenuItem } from '@mui/material';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
@@ -51,10 +53,15 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.canAssign ? 'Offen' : 'Prüfen'}</span>
     </div>
     <div className="mt-2 space-y-1">
-      {unit.occupants.map(person=><div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
-        <div className="min-w-0"><span className="flex items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span>{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
+      {unit.occupants.map(person=>{
+        const approved = person.approvedQuotaContexts?.some(context => matchesQuotaAllowanceContext(person,context)
+          && hasApplicableSingleRoomApproval({...context,singleRoomStatus:person.single_room_status,
+            singleRoomQuotaExemptReason:person.singleRoomQuotaExemptReason,approvedQuotaContexts:person.approvedQuotaContexts}));
+        const champion = singleRoomBadgeLabels(false,undefined,person.singleRoomQuotaExemptReason).includes('👑 WM');
+        return <div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
+        <div className="min-w-0"><span className="flex flex-wrap items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span>{champion && <span title="Weltmeister – hinterlegte EZ-Ausnahme" aria-label="Weltmeister"><Crown className="h-3.5 w-3.5 text-amber-500 fill-amber-200"/></span>}{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}{approved && <span title="Aktuell anwendbare kostenpflichtige EZ-Vorabgenehmigung; vor Zuteilung noch kein aktiver EZ-Mehrpreis." className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${semanticToneClasses.success}`}>Mehrpreis genehmigt</span>}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
         {enabled && action([person.athleteId],unit.occupants.length===1 ? 'Person' : person.firstname)}
-      </div>)}
+      </div>;})}
     </div>
     {unit.previous.length>0 && <div className="mt-2 text-[10px] leading-snug text-[var(--ops-text-muted)]" title={unit.previous.join('\n')}><span className="font-semibold">Bisher: </span><span className="line-clamp-2 break-words">{unit.previous.join(' · ')}</span></div>}
     {enabled && <>
