@@ -67,6 +67,16 @@ export const isEvaluatedAsSingle = (booking?: { countsAsSingle?: boolean } | nul
 export const hasSingleRoomSurcharge = (assignment?: QuotaAssignment | null) =>
   Boolean(assignment && calculateAdditionalCosts([assignment], 0)[0]?.additionalCost);
 
+/** Current approval evidence, independent of whether an EZ is actually booked. */
+export function hasApplicableSingleRoomApproval(assignment: Omit<QuotaAssignment, 'personId' | 'bookingId' | 'countsAsSingle'>): boolean {
+  return assignment.singleRoomStatus === 'APPROVED_EXTRA'
+    && !assignment.singleRoomQuotaExemptReason
+    && (assignment.approvedQuotaContexts !== undefined
+      ? assignment.approvedQuotaContexts.some(context => quotaUsageKey(context.nationCode, context.discipline, context.gender)
+        === quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender))
+      : Boolean(assignment.discipline && assignment.approvedQuotaDisciplines?.includes(assignment.discipline)));
+}
+
 /** Labels for operational use, durable approval, and active surcharge. */
 export const singleRoomBadgeLabels = (countsAsSingle: boolean, singleRoomStatus?: string | null, exemptReason?: string | null, activeSurcharge = false,
   allocationStatus?: PersonQuotaEvaluation['allocationStatus'], approvalApplicable?: boolean) => [
@@ -159,13 +169,7 @@ export function calculateAdditionalCosts(assignments: QuotaAssignment[], _allowe
   return assignments.map(assignment => ({
     ...assignment,
     groupKey: quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender),
-    additionalCost: assignment.countsAsSingle
-      && assignment.singleRoomStatus === 'APPROVED_EXTRA'
-      && !assignment.singleRoomQuotaExemptReason
-      && (assignment.approvedQuotaContexts !== undefined
-        ? assignment.approvedQuotaContexts.some(context => quotaUsageKey(context.nationCode, context.discipline, context.gender)
-          === quotaUsageKey(assignment.nationCode, assignment.discipline, assignment.gender))
-        : Boolean(assignment.discipline && assignment.approvedQuotaDisciplines?.includes(assignment.discipline))),
+    additionalCost: assignment.countsAsSingle && hasApplicableSingleRoomApproval(assignment),
   }));
 }
 
