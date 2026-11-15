@@ -162,3 +162,18 @@ test('general exemption and approved extra are distinct; missing or conflicting 
  people.push({...people[0],matchKey:'conflicting-source',singleRoomAllocation:{...people[0].singleRoomAllocation,context:[nation.nationCode,'different-group','W']}});
  const conflicting=html(overview,'officials',{preview});assert.ok(text(conflicting).includes('unvollständig'));assert.ok(!conflicting.includes('data-tone="success"'));
 });
+
+
+test('optional area headers preserve every official context, aggregate and gender cell',()=>{
+ const data=copy(),before=structuredClone(data);
+ const control={quotaGroups:data.nations[0].groups.map(g=>({name:g.name,family:'Freestyle'}))};
+ const flat=html(data,'officials',{control}),off=html(data,'officials',{control,grouped:false});
+ assert.equal(off,flat);
+ const grouped=html(data,'officials',{control,grouped:true});
+ const cells=(value:string)=>[...value.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(m=>m[1]);
+ assert.deepEqual(cells(grouped),cells(flat));
+ assert.equal((grouped.match(/scope="rowgroup"/g)||[]).length,1);
+ assert.match(grouped,/Freestyle \/ Freeski/);
+ assert.deepEqual(data,before);
+ const unknown=html(data,'officials',{grouped:true});assert.match(unknown,/Nicht zugeordnet/);
+});

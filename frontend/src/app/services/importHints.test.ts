@@ -1,4 +1,35 @@
 import test from 'node:test';
+import {groupImportItems,personImportPlacement,roomImportPlacement,quotaImportPlacement} from './importHints.ts';
+
+test('optional grouping partitions existing references without changing memberships, rows or allocations',()=>{
+ const people=[
+  {matchKey:'a',athleteQuotaFamilies:['Area A'],quotaDisciplines:['Custom Group'],singleRoomAllocation:{context:['AUT','Custom Group','M'],status:'COVERED'}},
+  {matchKey:'b',athleteQuotaFamilies:['Area A'],quotaDisciplines:['Custom Group','Other Group']},
+  {matchKey:'c',athleteQuotaFamilies:['Area A','Area B'],quotaDisciplines:['Custom Group','Third Group']},
+  {matchKey:'d',athleteQuotaFamilies:[],quotaDisciplines:[]},
+ ] as unknown as import('../types.ts').FisImportPreview['people'];
+ const preview={people,rooms:[],submissionSources:{'Area A':10,'Area B':20},errors:[{code:'BLOCKED'}]} as unknown as import('../types.ts').FisImportPreview;
+ const original=JSON.stringify(preview);
+ const grouped=groupImportItems(people,personImportPlacement);
+ assert.equal(grouped.flatMap(g=>g.items).length,people.length);
+ for(const p of people)assert.equal(grouped.flatMap(g=>g.items).filter(item=>item===p).length,1);
+ assert.deepEqual(grouped.map(g=>[g.area,g.group]),[['Area A','Custom Group'],['Area A','Mehrere Event Groups'],['Gemeinsam / mehrere Zuordnungen',undefined],['Nicht zugeordnet',undefined]]);
+ const room={person1Key:'a',person2Key:'b',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2}]} as import('../types.ts').FisImportPreviewRoom;
+ assert.deepEqual(roomImportPlacement(room,preview),{area:'Area A'});
+ const both={...room,sourceRows:[...room.sourceRows!,{versionId:20,version:2,row:2}]};
+ const rows=[room,both,{...room,person2Key:'missing'}];
+ const roomGroups=groupImportItems(rows,r=>roomImportPlacement(r,preview));
+ assert.equal(roomGroups.flatMap(g=>g.items).length,3);
+ assert.equal(roomGroups[1].area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(roomGroups[1].items[0],both);assert.equal(both.sourceRows.length,2);
+ assert.equal(roomImportPlacement({...room,person2Key:null},preview).area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(roomImportPlacement({...room,person2Key:'c'},preview).area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(roomImportPlacement({...room,sourceRows:[{versionId:99,version:1,row:2}]},preview).area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(quotaImportPlacement('Custom Group',{quotaGroups:[{name:'Custom Group',family:'Area A'}]} as any).area,'Area A');
+ assert.equal(quotaImportPlacement('Unknown').area,'Nicht zugeordnet');
+ assert.equal(JSON.stringify(preview),original);
+ assert.deepEqual(groupImportItems([],personImportPlacement),[]);
+});
 import type {FisImportPreview} from '../types.ts';
 import assert from 'node:assert/strict';
 import { importHintCategories } from './importHints.ts';

@@ -13,6 +13,21 @@ def build_import_control(preview, context):
     from models import db, Event
     from sport_entry_plausibility import project_entries, active_competitions
     event = db.session.get(Event, context.event_id) if getattr(context, 'event_id', None) else None
+    from competitions import competition_athlete_family, athlete_top_level_discipline
+    # Read-only display evidence. Never repair saved memberships from today's catalogue.
+    mappings = {m.competition_id: m for m in event.competition_mappings if m.active} if event else {}
+    def display_family(person, member, competition):
+        if not event or str(preview.get('eventId')) != str(event.id) or competition is None:
+            return None
+        mapping = mappings.get(competition.id)
+        frozen = person.get('athleteQuotaFamilies')
+        if (not mapping or member.get('importCode') != mapping.import_code
+                or member.get('quotaDiscipline') != competition.quota_discipline or not frozen):
+            return None
+        family = competition_athlete_family(competition)
+        # Nonstandard groups need a unique frozen family; ambiguous old evidence stays open.
+        expected = athlete_top_level_discipline(member.get('quotaDiscipline'))
+        return family if family and family in frozen and (expected == family or frozen == [family]) else None
     sport = project_entries(preview.get('people', []), context.competitions_by_id, event)
     people=preview.get('people',[]);rooms=preview.get('rooms',[])
     by_key={str(p.get('matchKey')):p for p in people if p.get('matchKey') is not None}
@@ -33,14 +48,17 @@ def build_import_control(preview, context):
             keys={str(details['personKey'])} if details.get('personKey') is not None else by_room.get(row,set()) if source=='Room List' else {by_entry[row]} if source=='Entry List' and row in by_entry else set()
             messages={'ROOM_PARTNER_NOT_FOUND':'Der angegebene Zimmerpartner konnte nicht eindeutig zugeordnet werden.', 'ROOM_PERSON_NOT_FOUND':'Die Room-List-Zeile konnte keiner gemeldeten Person eindeutig zugeordnet werden.'}
             add('error' if kind=='error' else 'clarification' if code in CLARIFY else 'info',code,messages.get(code,issue['message']),keys,source,row)
-    rows=[];competitions={}
+    rows=[];competitions={};group_families=defaultdict(set)
     existing={p.id:p for p in context.athletes}
     for key,p in by_key.items():
         memberships=[]
         for member in p.get('competitionMemberships',[]):
             cid=str(member.get('competitionId'));c=context.competitions_by_id.get(int(cid)) if cid.isdecimal() else None
             label=c.name if c else member.get('importCode') or 'Zuordnung nicht hinterlegt'
-            membership=dict(id=cid,name=label,group=member.get('quotaDiscipline'),gender=c.gender if c else None)
+            membership=dict(id=cid,name=label,group=member.get('quotaDiscipline'),gender=c.gender if c else None,
+                            family=display_family(p,member,c))
+            if membership['group']:
+                group_families[membership['group']].add(membership['family'])
             if cid not in {m['id'] for m in memberships}:memberships.append(membership)
             entry=competitions.setdefault(cid,dict(**membership,people=set(),athletes=set()))
             entry['people'].add(key)
@@ -68,8 +86,15 @@ def build_import_control(preview, context):
                 add('clarification','TITLE_REFERENCE_UNCLEAR','Weltmeister-EZ-Ausnahme vorhanden; eindeutige Titel-/Disziplinreferenz ist in diesem Prüfstand nicht hinterlegt. Kein sportliches Startrecht daraus ableiten.',[key],'Bestehende Bewertung')
     # Include active zero-entry counterparts for an explicit 0 / rule-value.
     for cid,c in active_competitions(event,context.competitions_by_id).items() if event else []:
-        competitions.setdefault(cid,dict(id=cid,name=c.name,group=c.quota_discipline,gender=c.gender,people=set(),athletes=set()))
-    return dict(people=rows,issues=issues,competitions=[{**{k:v for k,v in c.items() if k not in {'people','athletes'}},'people':len(c['people']),'athletes':len(c['athletes']),'sportEntries':sport.get(c['id'],[])} for c in sorted(competitions.values(),key=lambda c:(c['group'] or '',c['name']))])
+        families=group_families.get(c.quota_discipline,set())
+        family=next(iter(families)) if len(families)==1 and None not in families else None
+        competitions.setdefault(cid,dict(id=cid,name=c.name,group=c.quota_discipline,gender=c.gender,
+            family=family if mappings.get(c.id) and competition_athlete_family(c)==family else None,people=set(),athletes=set()))
+    names={c['group'] for c in competitions.values() if c['group']}
+    names.update(g['name'] for n in (preview.get('quotaOverview') or {}).get('nations',[]) for g in n['groups'])
+    quota_groups=[dict(name=name,family=next(iter(group_families[name]))
+        if len(group_families[name])==1 and None not in group_families[name] else None) for name in sorted(names)]
+    return dict(people=rows,issues=issues,quotaGroups=quota_groups,competitions=[{**{k:v for k,v in c.items() if k not in {'people','athletes'}},'people':len(c['people']),'athletes':len(c['athletes']),'sportEntries':sport.get(c['id'],[])} for c in sorted(competitions.values(),key=lambda c:(c['group'] or '',c['name']))])
 
 
 # Explicit append-only documents in the existing history, separate from approvals.

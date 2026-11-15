@@ -1,6 +1,6 @@
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import {Fragment,useEffect,useRef,type ReactNode} from 'react';
-import {sportClarifications} from '../services/importHints';
+import {groupImportItems,quotaImportPlacement,sportClarifications} from '../services/importHints';
 import type {QuotaPeopleFilter} from '../services/importHints';
 import type {FisImportPreview,FisImportPreviewPerson,ImportControl} from '../types';
 import type {ImportSession} from '../data/importSessions';
@@ -33,7 +33,7 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
 export function ImportPersonDialog({person,preview,session,onClose}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void}) {
  return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
-export function CompetitionDistribution({control,preview,nation,onPeople,focusSport}:{control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
+export function CompetitionDistribution({grouped=false,control,preview,nation,onPeople,focusSport}:{grouped?:boolean;control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
  const tableRef=useRef<HTMLDivElement>(null);
  useEffect(()=>{if(focusSport)tableRef.current?.querySelector('[data-sport-review="true"]')?.scrollIntoView({block:'center'});},[focusSport,control,nation]);
  if(!control||!preview)return null;
@@ -94,7 +94,7 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
   <table className="w-full table-fixed text-[11px] sm:table-auto sm:text-sm"><caption className="pb-2 text-left text-xs text-[var(--ops-text-muted)]">Sportliche Meldungen · FIS-Zuteilung nicht bestätigt</caption>
    <colgroup><col className="w-[24%] sm:w-auto"/><col className="w-[18%] sm:w-auto"/><col className="w-[18%] sm:w-auto"/><col className="w-[40%] sm:w-auto"/></colgroup>
    <thead><tr><th scope="col" rowSpan={2} className="ops-table-wrap px-1 py-2 text-left sm:px-2">Wettbewerb</th><th scope="colgroup" colSpan={2} className="ops-table-wrap px-1 py-1 text-center font-normal sm:px-2">Gemeldet / regulär</th><th scope="col" rowSpan={2} className="ops-table-wrap px-1 py-2 text-left sm:px-2">Bewertung</th></tr><tr>{['Männer','Frauen'].map(label=><th scope="col" key={label} className="px-1 pb-2 text-right sm:px-2">{label}</th>)}</tr></thead>
-   <tbody>{groups.map(group=>{
+   <tbody>{(grouped?groupImportItems(groups,group=>({area:quotaImportPlacement(group??'',control).area})):[{area:'',items:groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={4} className="bg-[var(--ops-surface-elevated)] px-1 py-2 text-left sm:px-2">{section.area}</th></tr>}{section.items.map(group=>{
     const list=competitions.filter(c=>c.group===group);
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
     const groupCounts=counts(new Set(list.map(c=>c.id)));
@@ -102,7 +102,7 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
      <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span></th></tr>
      {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'border-l-2 border-l-[var(--ops-warning)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-1 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
-   })}</tbody>
+   })}</Fragment>)}</tbody>
   </table>
   <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Keine FIS-Startfreigabe. Wettbewerbe nicht addieren.</p>
  </div>;

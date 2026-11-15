@@ -150,3 +150,15 @@ test('read-only users can inspect the import but cannot upload, recheck, release
   assert.match(html,/disabled=""/);
  }
 });
+
+
+test('grouping switch leaves the four canonical tile totals and primary blockers unchanged',()=>{
+ const props={preview,peopleRows:[],roomRows:[],onOpen:()=>{},onGrouped:()=>{}};
+ const render=(grouped:boolean)=>renderToStaticMarkup(createElement(Preview,{...props,grouped}));
+ const tileText=(value:string)=>value.slice(value.indexOf('<div class="mt-4 grid'));
+ assert.equal(tileText(render(true)),tileText(render(false)));
+ const session={...sourceSession,status:'DRAFT',errors:1,approvals:[]};
+ const args={canWrite:true,session,preview:{...preview,isValid:false,errors:[{code:'ROOM_PERSON_NOT_FOUND',message:'Unknown partner'}]},files:[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
+ const blocked=renderToStaticMarkup(createElement(PrimaryAction,args));
+ assert.ok(blocked.includes('Prüfung fortsetzen')&&!blocked.includes('>Freigeben<'));
+});

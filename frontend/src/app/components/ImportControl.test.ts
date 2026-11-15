@@ -83,7 +83,10 @@ test('new individual sports use the same server status and neutral team rows hav
 test('a shared pool excess remains a review even when each competition is within four',()=>{
  const member={...person,matchKey:'m',function:'Athlete',gender:'M',nationCode:'X'};
  const row={...competition,name:"Men's Snowboard Slopestyle",sportEntries:[{nation:'X',reported:4,regularMax:4,status:'REVIEW_REQUIRED',personKeys:['m'],poolPersonKeys:['m','pool-other'],sharedPoolReported:8,sharedPoolRegularMax:4,sharedPoolUnverifiedAdditional:4,champions:[]}]};
- const html=renderToStaticMarkup(createElement(CompetitionDistribution,{nation:'X',onPeople:()=>{},control:{...control,competitions:[row],people:[{personKey:'m',competitions:[row]}]},preview:{...preview,people:[member]}}));
+ const props={nation:'X',onPeople:()=>{},control:{...control,quotaGroups:[{name:row.group,family:'Snowboard'}],competitions:[row],people:[{personKey:'m',competitions:[row]}]},preview:{...preview,people:[member]}};
+ const html=renderToStaticMarkup(createElement(CompetitionDistribution,props));
+ const grouped=renderToStaticMarkup(createElement(CompetitionDistribution,{...props,grouped:true}));
+ assert.equal(grouped.replace(/<tr><th scope="rowgroup" colSpan="4"[^>]*>Snowboard<\/th><\/tr>/,''),html);
  assert.ok(html.includes('4</button> / 4')&&html.includes('gemeinsamen Pool klären – Personen anzeigen'));
  assert.ok(html.includes('8 eindeutige Personen dieses Geschlechts / 4 regulär'));
  assert.ok(!html.includes('data-tone="success"'));
@@ -104,4 +107,17 @@ test('sport rows explain server evidence without a legend, including partial tit
  const covered=render({...base,status:'TITLE_COVERED',reported:5,aboveRegular:1,unverifiedAdditional:0,championStarters:2,champions:[{personKey:'m',source:'https://example.test/result'},{personKey:'other',source:'https://example.test/result'}]});
  assert.ok(covered.includes('4 regulär + 1 WM')&&!covered.includes('4 regulär + 2 WM'));
  assert.ok(covered.includes('verifiziertes Weltmeisterrecht – Personen anzeigen'));
+});
+
+
+test('area grouping adds headings without splitting competition pools or changing existing rows',()=>{
+ const male={...competition,name:"Men's Snowboard Halfpipe"};
+ const athlete={...person,function:'Athlete',nationCode:'CAN'};
+ const view={...control,quotaGroups:[{name:competition.group,family:'Snowboard'}],competitions:[male],people:[{personKey:'a',competitions:[male]}]};
+ const props={control:view,preview:{...preview,people:[athlete]},nation:'CAN'};
+ const render=(extra={})=>renderToStaticMarkup(createElement(CompetitionDistribution,{...props,...extra}));
+ const flat=render();assert.equal(render({grouped:false}),flat);
+ const grouped=render({grouped:true});
+ assert.equal(grouped.replace(/<tr><th scope="rowgroup" colSpan="4"[^>]*>Snowboard<\/th><\/tr>/,''),flat);
+ assert.equal((grouped.match(/Halfpipe<\/th>/g)||[]).length,1);
 });
