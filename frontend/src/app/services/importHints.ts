@@ -18,10 +18,8 @@ export function familyImportPlacement(values?:string[]):ImportPlacement {
 }
 export function personImportPlacement(person?:FisImportPreviewPerson):ImportPlacement {
  const families=[...new Set(person?.athleteQuotaFamilies??[])];
- if(!families.length||families.some(f=>!f))return {area:'Nicht zugeordnet'};
- if(families.length>1)return {area:'Gemeinsam / mehrere Zuordnungen'};
- const groups=[...new Set(person?.quotaDisciplines??[])].filter(Boolean);
- return {area:sportAreaLabel(families[0]),group:groups.length>1?'Mehrere Event Groups':groups[0]??'Nicht zugeordnet'};
+ return {area:families.length===1&&families[0]&&families[0]!=='*'
+  ?sportAreaLabel(families[0]):'Gemeinsam / nicht eindeutig zugeordnet'};
 }
 export function quotaImportPlacement(name:string,control?:ImportControl):ImportPlacement {
  const family=control?.quotaGroups?.find(g=>g.name===name)?.family;
