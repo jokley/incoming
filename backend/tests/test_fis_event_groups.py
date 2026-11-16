@@ -323,3 +323,52 @@ def test_mapped_official_without_athletes_is_explicit_preview_review(database):
     recalculate_fis_import_preview(preview)
     assert preview['quotaChecks'] == []
     assert any(w['code'] == 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED' for w in preview['warnings'])
+
+
+def test_grouping_families_require_unchanged_event_and_snapshot_evidence(database):
+    from competitions import competition_athlete_family
+    from imports.read_context import ImportReadContext
+    from import_control import build_import_control
+    c = Competition(**COMPETITION_BY_IMPORT_CODE['WSC_SXT_A_8185']._asdict())
+    db.session.add(c); db.session.flush()
+    owner = prepare_import_championship([c])
+    other = Event(name='Other display event')
+    db.session.add(other); db.session.flush()
+    mapping = next(m for m in owner.competition_mappings if m.active)
+    competition = mapping.competition
+    family = competition_athlete_family(competition)
+    person = dict(matchKey='display-only', function='Athlete', gender='M', nationCode='AUT',
+                  athleteQuotaFamilies=[family], quotaDisciplines=[competition.quota_discipline],
+                  competitionMemberships=[dict(competitionId=str(competition.id),
+                    importCode=mapping.import_code, quotaDiscipline=competition.quota_discipline)])
+    preview = dict(eventId=owner.id, people=[person], rooms=[], errors=[], warnings=[])
+    original = deepcopy(preview)
+    context = ImportReadContext(owner.id)
+    view = build_import_control(preview, context)
+    assert next(c for c in view['competitions'] if c['id']==str(competition.id))['family']==family
+    assert next(g for g in view['quotaGroups'] if g['name']==competition.quota_discipline)['family']==family
+    assert preview==original
+    old_group = competition.quota_discipline
+    competition.quota_discipline = 'Changed after review'
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    old_sport = competition.sport
+    competition.sport = 'Freeski'  # Explicit evidence recognized by the central resolver.
+    competition.quota_discipline = 'Configured custom group'
+    person['competitionMemberships'][0]['quotaDiscipline'] = competition.quota_discipline
+    person['quotaDisciplines'] = [competition.quota_discipline]
+    view = build_import_control(preview, context)
+    assert next(g for g in view['quotaGroups'] if g['name']==competition.quota_discipline)['family']==family
+    assert old_group not in {g['name'] for g in view['quotaGroups']}
+    competition.quota_discipline = old_group
+    person['competitionMemberships'][0]['quotaDiscipline'] = old_group
+    person['quotaDisciplines'] = [old_group]
+    competition.sport = old_sport
+    person.pop('athleteQuotaFamilies')
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    person['athleteQuotaFamilies']=[family]
+    mapping.active=False
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    mapping.active=True
+    preview['eventId']=other.id
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    db.session.rollback()
