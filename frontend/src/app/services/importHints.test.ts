@@ -13,7 +13,8 @@ test('optional grouping partitions existing references without changing membersh
  const grouped=groupImportItems(people,personImportPlacement);
  assert.equal(grouped.flatMap(g=>g.items).length,people.length);
  for(const p of people)assert.equal(grouped.flatMap(g=>g.items).filter(item=>item===p).length,1);
- assert.deepEqual(grouped.map(g=>[g.area,g.group]),[['Area A','Custom Group'],['Area A','Mehrere Event Groups'],['Gemeinsam / mehrere Zuordnungen',undefined],['Nicht zugeordnet',undefined]]);
+ assert.deepEqual(grouped.map(g=>[g.area,g.group,g.items.length]),[['Area A',undefined,2],['Gemeinsam / nicht eindeutig zugeordnet',undefined,2]]);
+ assert.equal(grouped.reduce((sum,g)=>sum+g.items.length,0),people.length);
  const room={person1Key:'a',person2Key:'b',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2}]} as import('../types.ts').FisImportPreviewRoom;
  assert.deepEqual(roomImportPlacement(room,preview),{area:'Area A'});
  const both={...room,sourceRows:[...room.sourceRows!,{versionId:20,version:2,row:2}]};
