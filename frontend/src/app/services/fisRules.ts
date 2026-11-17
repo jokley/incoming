@@ -1,3 +1,16 @@
+export interface UnallocatedSingleRoom {
+  personId: string;
+  name: string;
+  nationCode: string;
+  status: 'PENDING';
+  context: null;
+  reason: string;
+}
+export interface OfficialQuotaOverview {
+  rows: OfficialQuotaUsage[];
+  unallocatedSingleRooms: UnallocatedSingleRoom[];
+}
+
 export type ComplianceStatus = 'ok' | 'over' | 'missing';
 
 export interface OfficialQuotaUsage {

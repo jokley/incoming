@@ -1709,7 +1709,7 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
     db.session.flush()
 
 
-def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
+def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None, *, include_unallocated=False):
     from approval_projection import projected_approval_groups
     athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions))
     if nation_code:
@@ -1753,7 +1753,8 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             'singleRoomStatus': athlete.single_room_status,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence)] if athlete.single_room_status == 'APPROVED_EXTRA' else []})
-    rows = evaluate_quota_usage(roster, assigned,rules_for_event(accommodation_event_id()))
+    evaluation = evaluate_quota_usage(roster, assigned, rules_for_event(accommodation_event_id()), include_unallocated=True)
+    rows = evaluation['rows']
     disposition = disposition_by_quota_group(roster, booking_by_athlete)
     allocation_by_person = {item['personId']: item for row in rows for item in row['singleRoomAllocations']}
     approved_by_key = {}
@@ -1852,8 +1853,18 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         row['unresolvedHistoricalApprovalIds'] = sorted(set(unresolved_approvals))
         row['quotaStatus'] = ('DECISION_REQUIRED' if row['singleRoomsPending'] > 0 else
             'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
-    return [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
+    rows = [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
             and (not discipline or row['discipline'] == discipline)]
+    if include_unallocated:
+        by_id = {p['personId']: p for p in roster}
+        # These people have no group/gender to filter by. The roster is already
+        # scoped to the authorized event and optional nation, before allocation.
+        return {'rows': rows, 'unallocatedSingleRooms': [dict(
+            personId=str(item['personId']), name=by_id[item['personId']]['name'],
+            nationCode=by_id[item['personId']]['nationCode'], status='PENDING', context=None,
+            reason='Kein gültiger Quotenkontext zuordenbar')
+            for item in evaluation['unallocatedSingleRooms']]}
+    return rows
 
 
 CRITICAL_ROUTE_ALIASES = [
@@ -3340,7 +3351,8 @@ def get_official_quotas():
             rows = _build_official_quota_usage_rows(
                 nation_code=nation_code,
                 discipline=discipline,
-                gender=gender
+                gender=gender,
+                include_unallocated=request.args.get('includeUnallocated') == 'true'
             )
     except QuotaGenderValidationError as error:
         return quota_gender_review_response(error)

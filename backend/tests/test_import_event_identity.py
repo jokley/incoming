@@ -345,3 +345,37 @@ def test_foreign_current_version_is_rejected(events):
     response=app.test_client().get(f'/api/import/sessions/{own.id}?eventId={a.id}',headers={'X-Championship-Event-ID':str(a.id)})
     assert response.status_code==409
     assert response.json['error']=='IMPORT_SESSION_VERSION_MISMATCH'
+
+
+@pytest.mark.parametrize('remove_memberships',[False,True])
+def test_live_quota_api_exposes_contextless_people_once_without_changing_rows(events,remove_memberships):
+    from test_event_quota_rules import bind
+    a,b=events;bind(a)
+    c1,c2=Competition.query.limit(2).all()
+    p=person(a,function='Official',gender='M',competitions=[c1,c2])
+    if remove_memberships:
+        person(a,fis='basis',staff='basis',function='Athlete',gender='M',competitions=[c1])
+    hotel=Hotel(name='Contextless');room=RoomType(name='Double',max_persons=2)
+    foreign=person(b,fis='foreign',staff='foreign',function='Official',gender='M')
+    for owner in (p,foreign):
+        own_hotel=hotel if owner==p else Hotel(name='Foreign')
+        for flag in (False,True,True):
+            db.session.add(RoomBookingOccupant(athlete=owner,room_booking=RoomBooking(event_id=owner.event_id,hotel=own_hotel,room_type=room,counts_as_single=flag)))
+    db.session.commit()
+    client=app.test_client();url=f'/api/fis/official-quotas?eventId={a.id}'
+    if remove_memberships:
+        initial=client.get(url+'&includeUnallocated=true')
+        assert initial.status_code==200 and initial.json['unallocatedSingleRooms']==[]
+        assert any(item['status']=='COVERED' for row in initial.json['rows'] for item in row['singleRoomAllocations'])
+        p.competitions=[]
+        p.single_room_status='APPROVED_EXTRA'  # Historical marker alone cannot cover the lost context.
+        db.session.commit()
+    legacy=client.get(url);response=client.get(url+'&includeUnallocated=true')
+    assert legacy.status_code==response.status_code==200
+    view=response.json
+    assert view['rows']==legacy.json
+    if not remove_memberships: assert view['rows']==[]
+    assert view['unallocatedSingleRooms']==[dict(personId=str(p.id),name='Test Identity',nationCode='JPN',status='PENDING',context=None,reason='Kein gültiger Quotenkontext zuordenbar')]
+    # Context filters cannot assign or hide a contextless person; nation filtering still applies.
+    assert client.get(url+'&includeUnallocated=true&discipline=Other&gender=W').json['unallocatedSingleRooms']==view['unallocatedSingleRooms']
+    assert client.get(url+'&includeUnallocated=true&nationCode=AUT').json['unallocatedSingleRooms']==[]

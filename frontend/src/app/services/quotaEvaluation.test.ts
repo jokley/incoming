@@ -276,3 +276,10 @@ test('external segments retain countsAsSingle and distinct-person quota consumpt
   const assignments=quotaAssignmentsFromPlanning(hotels);
   assert.equal(assignments.length,2);assert.equal(calculateQuotaUsage(assignments),1);
 });
+
+test('contextless people remain actionable once even without any quota rows',()=>{
+ const orphan={personId:'42'};
+ assert.equal(actionableQuotaCaseCount([], [orphan,{...orphan}]),1);
+ assert.equal(actionableQuotaCaseCount([{quotaStatus:'FULFILLED',openApprovals:0}],[orphan]),1);
+ assert.equal(actionableQuotaCaseCount([{quotaStatus:'DECISION_REQUIRED',openApprovals:0}],[orphan]),2);
+});
