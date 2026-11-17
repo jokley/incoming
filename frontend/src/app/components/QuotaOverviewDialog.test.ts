@@ -177,3 +177,15 @@ test('optional area headers preserve every official context, aggregate and gende
  assert.deepEqual(data,before);
  const unknown=html(data,'officials',{grouped:true});assert.match(unknown,/Nicht zugeordnet/);
 });
+
+test('live quota view exposes contextless pending people instead of an empty or fulfilled overall result',async()=>{
+ const Panel=(await server.ssrLoadModule('/src/app/components/Assignments.tsx')).QuotasPanel;
+ const props={rows:[],allUnits:[],assignedUnits:[],onSelect:()=>{},filterNation:'',onFilterNation:()=>{},filterDiscipline:'',onFilterDiscipline:()=>{},filterGender:'',onFilterGender:()=>{},nationOptions:[],disciplineOptions:[],genderOptions:[],refreshing:false};
+ const person={personId:'42',name:'Synthetic Official',nationCode:'AUT',status:'PENDING',context:null,reason:'Kein gültiger Quotenkontext zuordenbar'};
+ const output=renderToStaticMarkup(createElement(Panel,{...props,unallocated:[person]}));
+ const visible=text(output);
+ for(const label of ['1 offene EZ-Klärungsfälle','Synthetic Official','Person 42',person.reason,'Handlungsbedarf'])assert.ok(visible.includes(label),label);
+ assert.ok(!visible.includes('Keine Quoten verfügbar')&&!visible.includes('Quote erfüllt'));
+ const flat=renderToStaticMarkup(createElement(Panel,props));
+ assert.equal(renderToStaticMarkup(createElement(Panel,{...props,unallocated:[]})),flat);
+});

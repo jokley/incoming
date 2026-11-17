@@ -53,7 +53,7 @@ import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
 import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
-import type { OfficialQuotaUsage } from '../services/fisRules';
+import type { OfficialQuotaUsage, OfficialQuotaOverview, UnallocatedSingleRoom } from '../services/fisRules';
 import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, matchesQuotaAllowanceContext, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, quotaStatusLabel, uniqueQuotaContext, type PersonQuotaEvaluation } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
@@ -123,7 +123,8 @@ export function Assignments() {
   const validationRequestsRef = useRef(new Map<string, Promise<AssignmentValidationResult[]>>());
   const validationGenerationRef = useRef(0);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
+  const [quotaOverview, setQuotaOverview] = useState<OfficialQuotaOverview>({rows:[],unallocatedSingleRooms:[]});
+  const {rows:quotaUsage,unallocatedSingleRooms}=quotaOverview;
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [manualQuotaValues,setManualQuotaValues]=useState<Record<string,boolean>>({});
@@ -288,12 +289,12 @@ export function Assignments() {
   const loadQuotaUsage = async () => {
     try {
       setQuotaRefreshing(true);
-      const rows = await api.getOfficialQuotaUsage({
+      const overview = await api.getOfficialQuotaOverview({
         nationCode: filterNation || undefined,
         discipline: filterDiscipline || undefined,
         gender: filterGender || undefined,
       });
-      setQuotaUsage(rows);
+      setQuotaOverview(overview);
     } catch (err) {
       console.error(err);
     } finally {
@@ -439,8 +440,8 @@ export function Assignments() {
   }, [allUnitsCombined]);
 
   const actionableQuotaCases = useMemo(
-    () => actionableQuotaCaseCount(currentQuotaUsage),
-    [currentQuotaUsage]
+    () => actionableQuotaCaseCount(currentQuotaUsage,unallocatedSingleRooms),
+    [currentQuotaUsage,unallocatedSingleRooms]
   );
   const pendingQuotaDecisions = useMemo(
     () => currentQuotaUsage.filter((row) => row.quotaStatus === 'DECISION_REQUIRED' || row.openApprovals > 0),
@@ -843,6 +844,7 @@ export function Assignments() {
             {view === 'quotas' && (
               <AssignmentPerformanceBoundary id="Quotas">
               <QuotasPanel
+                unallocated={unallocatedSingleRooms}
                 rows={currentQuotaUsage}
                 assignedUnits={assignedUnits}
                 allUnits={allUnitsCombined}
@@ -2136,12 +2138,13 @@ function officialBasisTooltip(card: QuotaCard) {
   return `${card.registeredOfficials} Officials gemeldet; ${card.assignedOfficials} zugewiesen; maximal ${card.officialQuota} regulär zulässig. Aktuelle EZ-Berechnungsbasis: ${card.singleRoomOfficialBasis} (Officials-Limit, nicht Meldestand).`;
 }
 
-function QuotasPanel({
-  rows, allUnits, assignedUnits, onSelect,
+export function QuotasPanel({
+  unallocated=[], rows, allUnits, assignedUnits, onSelect,
   filterNation, onFilterNation, filterDiscipline, onFilterDiscipline,
   filterGender, onFilterGender, nationOptions, disciplineOptions, genderOptions, refreshing,
 }: {
   rows: OfficialQuotaUsage[];
+  unallocated?: UnallocatedSingleRoom[];
   allUnits: RoomBookingUnit[];
   assignedUnits: RoomBookingUnit[];
   onSelect: (key: string) => void;
@@ -2157,7 +2160,7 @@ function QuotasPanel({
   refreshing: boolean;
 }) {
   const cards = buildQuotaCards(rows);
-  const issues = cards.filter(quotaRequiresAction).length;
+  const issues = actionableQuotaCaseCount(cards,unallocated);
   return (
     <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
       <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
@@ -2179,6 +2182,11 @@ function QuotasPanel({
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Herren', F: 'Damen' }} />
         </div>
       </div>
+      {unallocated.length>0&&<section aria-label="EZ ohne Quotenkontext" className="mb-5 rounded-xl border border-[var(--ops-warning)] bg-[var(--ops-surface-raised)] p-4 text-sm">
+        <h3 className="font-bold text-[var(--ops-warning)]">{unallocated.length} offene EZ-Klärungsfälle ohne Quotenkontext</h3>
+        <p className="mt-1 text-xs text-[var(--ops-text-muted)]">Personenbezogen; unabhängig von Event-Group- und Genderfiltern. Der Nationenfilter gilt weiterhin.</p>
+        <ul className="mt-2 space-y-2">{unallocated.map(person=><li key={person.personId}><strong>{person.name}</strong> · {person.nationCode} · Person {person.personId}<span className="block text-[var(--ops-text-muted)]">{person.reason}</span></li>)}</ul>
+      </section>}
       <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
         {cards.map((card) => {
           const state = getQuotaState(card);
@@ -2223,7 +2231,7 @@ function QuotasPanel({
           );
         })}
 
-        {!cards.length && (
+        {!cards.length && !unallocated.length && (
           <div className="col-span-full py-20 text-center text-sm text-[var(--ops-text-muted)]">Keine Quoten verfügbar</div>
         )}
       </div>

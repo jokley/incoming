@@ -111,8 +111,9 @@ export function quotaStatusLabel(row: Pick<OfficialQuotaUsage, 'quotaStatus' | '
   return 'Quote erfüllt';
 }
 
-export const actionableQuotaCaseCount = (rows: Array<Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals'>>) =>
-  rows.filter(quotaRequiresAction).length;
+export const actionableQuotaCaseCount = (rows: Array<Pick<OfficialQuotaUsage, 'quotaStatus' | 'openApprovals'>>,
+  unallocated: ReadonlyArray<{personId:string}> = []) =>
+  rows.filter(quotaRequiresAction).length + new Set(unallocated.map(person=>person.personId)).size;
 
 /** Numeric quota KPIs are meaningful only for one nation/discipline/gender context. */
 export function uniqueQuotaContext<T extends Pick<OfficialQuotaUsage, 'nationCode' | 'discipline' | 'gender'>>(rows: T[]): T | null {

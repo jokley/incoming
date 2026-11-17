@@ -391,3 +391,25 @@ def test_partial_reimport_retains_athlete_singles_and_foreign_family_memberships
     confirm_fis_import('partial-athletes',change_plan=plan)
     assert {p.fis_code:(p.id,{c.id for c in p.competitions}) for p in Athlete.query.all()}==people_before
     assert RoomBooking.query.count()==2 and all(b.counts_as_single for b in RoomBooking.query.all())
+
+
+@pytest.mark.parametrize('extra', [{}, {'singleRoomStatus':'APPROVED_EXTRA','approvedQuotaContexts':[dict(nationCode='AUT',discipline='Ski Cross',gender='M')]}])
+def test_contextless_pending_allocations_survive_optional_projection(extra):
+    p=official('orphan',('Ski Cross','Freestyle'),**extra)
+    view=evaluate_quota_usage([p],[p,deepcopy(p)],include_unallocated=True)
+    assert view['rows']==evaluate_quota_usage([p],[p,deepcopy(p)])==[]
+    assert len(view['unallocatedSingleRooms'])==1
+    assert view['unallocatedSingleRooms'][0]['status']=='PENDING'
+    assert view['unallocatedSingleRooms'][0]['context'] is None
+    assert view['unallocatedSingleRooms'][0]['personId']=='orphan'
+
+
+def test_optional_projection_preserves_covered_approved_and_exempt_rows():
+    people=[official('normal'),official('paid',singleRoomStatus='APPROVED_EXTRA',approvedQuotaContexts=[dict(nationCode='AUT',discipline='Ski Cross',gender='W')]),official('free',singleRoomQuotaExemptReason='OTHER')]
+    roster=[*athletes(),*people]
+    view=evaluate_quota_usage(roster,people,include_unallocated=True)
+    assert view['rows']==evaluate_quota_usage(roster,people)
+    assert view['unallocatedSingleRooms']==[]
+    assert {p['status'] for r in view['rows'] for p in r['singleRoomAllocations']}=={'COVERED','APPROVED_EXTRA','EXEMPT'}
+    exempt=official('unmapped-free',(),singleRoomQuotaExemptReason='OTHER')
+    assert evaluate_quota_usage([exempt],[exempt],include_unallocated=True)['unallocatedSingleRooms']==[]

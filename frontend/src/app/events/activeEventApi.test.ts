@@ -20,8 +20,14 @@ test('actual API facade applies context to JSON, multipart, globals and download
   api.eventScope.activate('7');
   for (const call of [() => api.getAthletes(), () => api.getHotels(), () => api.getEvents(),
     () => api.getRoomTypes(), () => api.getImportSessions(), () => api.getOfficialQuotaUsage(),
+    () => api.getOfficialQuotaOverview({nationCode:'AUT',discipline:'Ski Cross',gender:'M'}),
     () => api.getAuditEvents(), () => api.previewFisImport([], true, undefined, '7')]) await call();
   assert.ok(calls.slice(2).every(c => new Headers(c.init?.headers).get('X-Championship-Event-ID') === '7'));
+  const overviewCall=calls.find(c=>c.url.includes('includeUnallocated=true'));
+  assert.ok(overviewCall);
+  assert.match(overviewCall.url,/nationCode=AUT/);
+  assert.match(overviewCall.url,/discipline=Ski\+Cross/);
+  assert.match(overviewCall.url,/gender=M/);
   const multipart = calls.at(-1)!;
   assert.equal(new Headers(multipart.init?.headers).has('Content-Type'), false);
   assert.equal((multipart.init!.body as FormData).get('eventId'), '7');

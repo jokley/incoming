@@ -22,7 +22,7 @@ import type {
 } from '../types';
 import type { ChampionshipEvent, EventCompetitionMapping } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
-import type { OfficialQuotaUsage } from './fisRules';
+import type { OfficialQuotaUsage, OfficialQuotaOverview } from './fisRules';
 import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
 import { finishAssignmentRequest, isMeasuredAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
 import { downloadResponse } from './download';
@@ -1008,6 +1008,13 @@ class ApiService {
 
   async getFisMockFiles(): Promise<FisMockFilePair[]> {
     return this.request<FisMockFilePair[]>('/import/fis/mock-files');
+  }
+
+  async getOfficialQuotaOverview(params?: { nationCode?: string; discipline?: string; gender?: string }): Promise<OfficialQuotaOverview> {
+    if (USE_MOCK_DATA) return {rows:[],unallocatedSingleRooms:[]};
+    const query = new URLSearchParams({includeUnallocated:'true'});
+    for (const [key,value] of Object.entries(params ?? {})) if (value) query.set(key,value);
+    return this.request<OfficialQuotaOverview>(`/fis/official-quotas?${query}`);
   }
 
   // FIS official quotas
