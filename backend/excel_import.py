@@ -798,7 +798,7 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
             RoomBookingOccupant.athlete_id.in_(imported_by_existing_id)).options(
             db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type)).all():
         person = imported_by_existing_id.get(membership.athlete_id)
-        if not person or normalize_string(person.get('function')) == 'athlete':
+        if not person:
             continue
         booking = membership.room_booking
         projected.append({**person, 'countsAsSingle': bool(booking and booking.counts_as_single)})
@@ -978,8 +978,7 @@ def preserved_single_room_approvals(people, rooms, *, read_context=None):
         room = room_by_person.get(person.get('matchKey'))
         existing = _find_existing_athlete(person, athlete_maps)
         incoming_single = bool(person.get('accommodationRequirement') != 'NO_ROOM' and room and normalize_string(room.get('roomType')) == 'single')
-        retained_single = bool(existing and existing.id in retained_ids
-            and normalize_string(person.get('function')) != 'athlete')
+        retained_single = bool(existing and existing.id in retained_ids)
         if not incoming_single and not retained_single:
             continue
         staged = person.get('_reviewApproval')
