@@ -1709,13 +1709,25 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
     db.session.flush()
 
 
-def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None, *, include_unallocated=False):
+def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None, *, include_unallocated=False, include_people=False,
+                                     sport_family=None, person_type=None, personal_gender=None):
     from approval_projection import projected_approval_groups
     athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions))
+    if include_people:
+        athletes = athletes.options(db.selectinload(Athlete.single_room_decision).joinedload(ImportApproval.session))
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     # Allocate across all eligible groups before applying display filters.
     athletes = athletes.all()
+    if include_people:
+        # Keep immutable version evidence alive in the identity map. The canonical
+        # resolver uses session.get; distinct historical decisions must not turn
+        # this read into one version query per person.
+        version_ids = {a.single_room_decision.version_id for a in athletes
+                       if a.single_room_decision and a.single_room_decision.version_id}
+        approval_versions = ImportSessionVersion.query.join(ImportSession,
+            ImportSession.id == ImportSessionVersion.session_id).filter(
+            ImportSession.event_id == accommodation_event_id(), ImportSessionVersion.id.in_(version_ids)).all() if version_ids else []
     roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
                'quotaDisciplines': quota_disciplines(a.competitions),
                'gender': a.gender, 'forGender': a.for_gender,
@@ -1745,15 +1757,19 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     # The persisted assignment flag is the sole source of truth for operational
     # quota usage. The physical room type and import entitlement stay unchanged.
     assigned = []
+    person_approvals = {}
     for athlete, person in zip(athletes, roster):
-        if athlete.id not in booking_by_athlete:
+        if athlete.id not in booking_by_athlete and not include_people:
             continue
         evidence = projected_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
+        person_approvals[athlete.id] = evidence
+        if athlete.id not in booking_by_athlete:
+            continue
         assigned.append({**person, 'countsAsSingle': booking_by_athlete[athlete.id],
             'singleRoomStatus': athlete.single_room_status,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence)] if athlete.single_room_status == 'APPROVED_EXTRA' else []})
-    evaluation = evaluate_quota_usage(roster, assigned, rules_for_event(accommodation_event_id()), include_unallocated=True)
+    evaluation = evaluate_quota_usage(roster, assigned, rules_for_event(accommodation_event_id()), include_unallocated=True, include_allocations=include_people)
     rows = evaluation['rows']
     disposition = disposition_by_quota_group(roster, booking_by_athlete)
     allocation_by_person = {item['personId']: item for row in rows for item in row['singleRoomAllocations']}
@@ -1855,15 +1871,51 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
     rows = [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
             and (not discipline or row['discipline'] == discipline)]
-    if include_unallocated:
+    if include_unallocated or include_people:
         by_id = {p['personId']: p for p in roster}
         # These people have no group/gender to filter by. The roster is already
         # scoped to the authorized event and optional nation, before allocation.
-        return {'rows': rows, 'unallocatedSingleRooms': [dict(
+        result = {'rows': rows, 'unallocatedSingleRooms': [dict(
             personId=str(item['personId']), name=by_id[item['personId']]['name'],
             nationCode=by_id[item['personId']]['nationCode'], status='PENDING', context=None,
             reason='Kein gültiger Quotenkontext zuordenbar')
             for item in evaluation['unallocatedSingleRooms']]}
+        if include_people:
+            from accommodation_coverage import person_disposition_status, summarize_person_disposition
+            from competitions import competition_athlete_family
+            allocations = {item['personId']: item for item in evaluation['singleRoomAllocations']}
+            people = []
+            for athlete, person in zip(athletes, roster):
+                families = sorted({family for c in athlete.competitions if (family := competition_athlete_family(c))})
+                kind = 'ATHLETE' if (athlete.function or '').strip().lower() == 'athlete' else 'OFFICIAL'
+                if person_type and kind != person_type:
+                    continue
+                if personal_gender and normalize_gender(athlete.gender) != normalize_gender(personal_gender):
+                    continue
+                contexts = quota_keys(person, allowance_contexts=allowance_contexts)
+                allocation = allocations.get(athlete.id)
+                contextless = bool(allocation and allocation['status'] == 'PENDING' and allocation['context'] is None)
+                matches = ((not sport_family or sport_family in families) and
+                           (not discipline or discipline in person['quotaDisciplines']) and
+                           (not gender or any(c[2] == normalize_gender(gender) for c in contexts)))
+                if not matches and not contextless:
+                    continue
+                data = {**person, 'personId': str(athlete.id), 'eventId': str(athlete.event_id),
+                        'personalGender': normalize_gender(athlete.gender), 'personType': kind,
+                        'sportFamilies': families, 'roomRequest': athlete.room_type,
+                        'singleRoomStatus': athlete.single_room_status,
+                        'singleRoomDecisionId': str(athlete.single_room_decision_id) if athlete.single_room_decision_id else None}
+                projected = person_disposition_status(data, coverage_by_id[str(athlete.id)],
+                    all_person_bookings.get(athlete.id, []), allocation,
+                    room_request_kind=_room_type_label(athlete.room_type), quota_contexts=contexts,
+                    approved_contexts=person_approvals.get(athlete.id, set()))
+                projected['matchesContextFilters'] = matches
+                people.append(projected)
+            result.update(personStatuses=people, personSummary=summarize_person_disposition(people),
+                          personFilters=dict(nationCode=nation_code, discipline=discipline, gender=gender,
+                              sportFamily=sport_family, personType=person_type, personalGender=personal_gender,
+                              contextlessPendingIncluded=True))
+        return result
     return rows
 
 
@@ -3346,13 +3398,20 @@ def get_official_quotas():
     nation_code = request.args.get('nationCode')
     discipline = request.args.get('discipline')
     gender = request.args.get('gender')
+    if request.args.get('includePeople') == 'true':
+        if (request.args.get('personType') not in {None, 'ATHLETE', 'OFFICIAL'} or
+                (request.args.get('personalGender') and normalize_gender(request.args['personalGender']) not in {'M', 'W'})):
+            return jsonify(error='INVALID_PERSON_FILTER', message='Personenart oder persönliches Geschlecht ungültig.'), 400
     try:
         with _assignment_phase('quota'):
             rows = _build_official_quota_usage_rows(
                 nation_code=nation_code,
                 discipline=discipline,
                 gender=gender,
-                include_unallocated=request.args.get('includeUnallocated') == 'true'
+                include_unallocated=request.args.get('includeUnallocated') == 'true',
+                include_people=request.args.get('includePeople') == 'true',
+                sport_family=request.args.get('sportFamily'), person_type=request.args.get('personType'),
+                personal_gender=request.args.get('personalGender')
             )
     except QuotaGenderValidationError as error:
         return quota_gender_review_response(error)

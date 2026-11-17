@@ -266,7 +266,7 @@ def single_room_usage_by_quota_group(people, single_room_person_ids=(), exempt_p
             for r in evaluate_quota_usage(people, assigned) if r['singleRoomsUsed']}
 
 
-def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unallocated=False):
+def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unallocated=False, include_allocations=False):
     """Return quota rows for a roster and its assigned officials.
 
     ``people`` is the authoritative roster. ``assigned_people`` contains one
@@ -325,9 +325,12 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
         row['singleRoomAllocations'] = routed
         row['singleRoomsCovered'] = sum(p['status'] == 'COVERED' for p in routed)
         row['singleRoomsPending'] = sum(p['status'] == 'PENDING' for p in routed)
-    if include_unallocated:
-        return {'rows': rows, 'unallocatedSingleRooms': [p for p in allocation
+    if include_unallocated or include_allocations:
+        result = {'rows': rows, 'unallocatedSingleRooms': [p for p in allocation
             if p['status'] == 'PENDING' and p['context'] is None]}
+        if include_allocations:
+            result['singleRoomAllocations'] = allocation
+        return result
     return rows
 
 
