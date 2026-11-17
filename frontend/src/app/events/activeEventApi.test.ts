@@ -28,7 +28,13 @@ test('actual API facade applies context to JSON, multipart, globals and download
   assert.match(overviewCall.url,/nationCode=AUT/);
   assert.match(overviewCall.url,/discipline=Ski\+Cross/);
   assert.match(overviewCall.url,/gender=M/);
-  const multipart = calls.at(-1)!;
+  const personCallCount=calls.length;
+  await api.getOfficialQuotaOverview({includePeople:true,sportFamily:'Snowboard',personType:'OFFICIAL',personalGender:'W'});
+  const personQuery=new URL(calls.at(-1)!.url,'https://example.test').searchParams;
+  assert.equal(personQuery.get('includePeople'),'true');assert.equal(personQuery.get('sportFamily'),'Snowboard');
+  assert.equal(personQuery.get('personType'),'OFFICIAL');assert.equal(personQuery.get('personalGender'),'W');
+  assert.equal(new Headers(calls.at(-1)!.init?.headers).get('X-Championship-Event-ID'),'7');
+  const multipart = calls[personCallCount-1]!;
   assert.equal(new Headers(multipart.init?.headers).has('Content-Type'), false);
   assert.equal((multipart.init!.body as FormData).get('eventId'), '7');
   const before = calls.length;

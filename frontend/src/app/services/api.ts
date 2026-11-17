@@ -1010,10 +1010,10 @@ class ApiService {
     return this.request<FisMockFilePair[]>('/import/fis/mock-files');
   }
 
-  async getOfficialQuotaOverview(params?: { nationCode?: string; discipline?: string; gender?: string }): Promise<OfficialQuotaOverview> {
+  async getOfficialQuotaOverview(params?: { nationCode?: string; discipline?: string; gender?: string; includePeople?: boolean; sportFamily?: string; personType?: 'ATHLETE' | 'OFFICIAL'; personalGender?: string }): Promise<OfficialQuotaOverview> {
     if (USE_MOCK_DATA) return {rows:[],unallocatedSingleRooms:[]};
     const query = new URLSearchParams({includeUnallocated:'true'});
-    for (const [key,value] of Object.entries(params ?? {})) if (value) query.set(key,value);
+    for (const [key,value] of Object.entries(params ?? {})) if (value) query.set(key,String(value));
     return this.request<OfficialQuotaOverview>(`/fis/official-quotas?${query}`);
   }
 
