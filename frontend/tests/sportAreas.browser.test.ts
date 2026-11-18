@@ -134,3 +134,53 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  await page.screenshot({path:'/tmp/incoming-grouped-mobile.png',animations:'disabled'});
  assert.deepEqual(requests,initialRequests);assert.deepEqual(errors,[]);
 });
+
+test('person list edits arrival planning independently and shows personal gender and booking warnings',async t=>{
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-arrival-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
+ t.after(()=>vite.close());await vite.listen();
+ const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
+ const page=await browser.newPage();page.setDefaultTimeout(10000);
+ const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
+ const people:any[]=[{id:'1',firstname:'Synthetic',lastname:'Athlete',function:'Athlete',gender:'W',forGender:'M',arrivalStatus:'UNDECIDED',arrivalStatusSource:'DEFAULT',assignment:{hasAssignment:true,bookingId:'42',hotelName:'Synthetic Hotel',roomTypeName:'DZ'}},{id:'2',firstname:'Synthetic',lastname:'Official',function:'NSA Coach',gender:'M',arrivalStatus:'EXPECTED',arrivalStatusSource:'DEFAULT'},{id:'3',firstname:'Unknown',lastname:'Gender',function:'Athlete',forGender:'W',arrivalStatus:'UNDECIDED',arrivalStatusSource:'DEFAULT'}].map(p=>({...p,nationCode:'AUT',single_room_status:'NONE',competitions:[],accommodationRequirement:'REQUIRED'}));
+ const event={id:'1',name:'Synthetic arrival event',active:true};
+ const writes:any[]=[];let fail=false,reader=false;
+ await page.route('**/api/**',async route=>{
+  const req=route.request(),path=new URL(req.url()).pathname.slice(4);
+  if(req.method()==='PATCH'&&path.startsWith('/athletes/')){
+   const data=req.postDataJSON();writes.push(data);
+   if(fail)return route.fulfill({status:503,json:{error:'Synthetic save failure'}});
+   const person=people.find(p=>path===`/athletes/${p.id}`);Object.assign(person,data,{arrivalStatusSource:'MANUAL'});
+   return route.fulfill({json:person});
+  }
+  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:[reader?'incoming-viewer':'incoming-editor'],permissions:reader?['data.read']:['data.read','data.write']},'/active-event-context':{events:[{...event,canRead:true,canWrite:!reader}],selectedEventId:'1',switchingAllowed:false},'/athletes':people};
+  return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
+ });
+ const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+ await page.goto(`${origin}/athletes`);
+ await page.getByRole('columnheader',{name:'Gender',exact:true}).waitFor();
+ await page.getByRole('columnheader',{name:'Anreisestatus',exact:true}).waitFor();
+ const row=page.locator('tbody tr').filter({hasText:'Synthetic Athlete'});
+ assert.equal(await row.getByRole('cell',{name:'Damen',exact:true}).count(),1);
+ assert.equal(await page.locator('tbody tr').filter({hasText:'Unknown Gender'}).getByRole('cell',{name:'Nicht angegeben',exact:true}).count(),1);
+ assert.equal(await row.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'');
+ assert.equal(await page.getByLabel('Anreisestatus Synthetic Official').locator('option:checked').textContent(),'Erwartet (Standard)');
+ await row.getByLabel('Anreisestatus Synthetic Athlete').selectOption('NOT_TRAVELLING');
+ await row.getByText(/Nicht anreisend, aber Unterkunft gebucht/).waitFor();
+ assert.deepEqual(writes,[{arrivalStatus:'NOT_TRAVELLING'}]);
+ await page.reload();await page.getByLabel('Anreisestatus Synthetic Athlete').waitFor();
+ assert.equal(await page.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'NOT_TRAVELLING');
+ await row.getByText('Synthetic Athlete',{exact:true}).click();
+ const dialog=page.getByRole('dialog');await dialog.waitFor();
+ await dialog.getByLabel('Anreisestatus Synthetic Athlete').selectOption('CONFIRMED');
+ await dialog.getByRole('button',{name:/Speichern/}).click();await dialog.waitFor({state:'hidden'});
+ assert.equal(await row.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'CONFIRMED');
+ assert.equal(writes[1].arrivalStatus,'CONFIRMED');
+ assert.equal(await row.getByRole('cell',{name:'Zugewiesen',exact:true}).count(),1);
+ fail=true;await row.getByLabel('Anreisestatus Synthetic Athlete').selectOption('EXPECTED');
+ await page.getByText('Synthetic save failure',{exact:false}).waitFor();
+ assert.equal(await row.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'CONFIRMED');
+ reader=true;await page.reload();await page.getByLabel('Anreisestatus Synthetic Athlete').waitFor();
+ assert.equal(await page.getByLabel('Anreisestatus Synthetic Athlete').isDisabled(),true);
+ assert.deepEqual(errors,[]);
+});

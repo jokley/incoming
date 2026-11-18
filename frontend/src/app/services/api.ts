@@ -579,7 +579,7 @@ class ApiService {
 
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
-  async updateAthlete(id: string, data: { accommodationRequirement?: 'REQUIRED' | 'NO_ROOM' | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
+  async updateAthlete(id: string, data: { arrivalStatus?: import('../types').ArrivalStatus | null; accommodationRequirement?: 'REQUIRED' | 'NO_ROOM' | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
     return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 

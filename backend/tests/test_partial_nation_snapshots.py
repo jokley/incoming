@@ -469,3 +469,19 @@ def test_changed_source_facts_invalidate_current_composed_review(owner):
     response=app.test_client().post(f"/api/import/sessions/{b['session']['id']}/import?eventId={owner.id}",json={'versionId':combined.json['currentVersionId']})
     assert response.status_code==409 and response.json['error']=='STALE_PREVIEW'
     assert Athlete.query.count()==0
+
+
+def test_partial_reimport_preserves_arrival_decisions_in_both_families(owner):
+    initial=upload(owner,'SB');run(initial,owner)
+    run(upload(owner,'FS'),owner)
+    people=Athlete.query.all()
+    for index,p in enumerate(people):p.arrival_status=['EXPECTED','CONFIRMED','NOT_TRAVELLING','UNDECIDED'][index%4]
+    db.session.commit()
+    before={p.id:(p.arrival_status,tuple(sorted(c.id for c in p.competitions)),p.shared_with_name) for p in people}
+    room=booking(people[:2])
+    booking_state=lambda:({c.name:getattr(room,c.name) for c in room.__table__.columns},sorted((o.id,o.athlete_id,o.role) for o in room.occupants))
+    room_before=booking_state()
+    current=upload(owner,'SB');run(current,owner)
+    db.session.expire_all()
+    assert {p.id:(p.arrival_status,tuple(sorted(c.id for c in p.competitions)),p.shared_with_name) for p in Athlete.query.all()}==before
+    assert booking_state()==room_before
