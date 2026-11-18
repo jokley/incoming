@@ -745,3 +745,7 @@ export interface ArrivalPlanningRow {
 }
 export interface ArrivalPlanningOverview {eventId:string;nationCode:string|null;reportedCount:number;rows:ArrivalPlanningRow[]}
 export interface ArrivalForecastInput {baseToken:string;expectedTotal:number|null;checkInDate:string|null;checkOutDate:string|null;note:string|null}
+
+
+export interface NNPlanningChoice {areaId:string;baseToken:string;expectedTotal:number|null}
+export interface ImportNNPlanning extends ArrivalPlanningOverview {versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}

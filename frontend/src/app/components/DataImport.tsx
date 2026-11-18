@@ -1,3 +1,5 @@
+import {ArrivalPlanning,checkedNNChoices} from './ArrivalPlanning';
+import type {NNPlanningChoice} from '../types';
 import {OfficialLinkDialog,type OfficialLinkProposal} from './OfficialLinkDialog';
 import { usePermissions } from '../auth/AuthProvider';
 import { NationClarificationDialog } from './NationClarificationDialog';
@@ -74,6 +76,7 @@ export function DataImport() {
   const permissions = usePermissions();
   const importAllowed = permissions.canManageImports;
   const [searchParams] = useSearchParams();
+  const [nnChoices,setNNChoices]=useState<NNPlanningChoice[]>([]);
   const [selected, setSelected] = useState<ImportSession | null>(null);
   const [closingSession,setClosingSession]=useState<ImportSession|null>(null);
   const [closeError,setCloseError]=useState<string|null>(null);
@@ -103,16 +106,17 @@ export function DataImport() {
   const { eventId, selectedEvent } = useActiveEvent();
   useActiveEventBlocker(Boolean(selected || preview || files.length || loading || confirming || savingTask), 'Bitte den laufenden Import-Review zuerst abschließen oder verlassen.');
 
+  useEffect(()=>{setNNChoices([]);},[selected?.id,selected?.currentVersionId]);
   const refreshSessions = async () => setSessions(await api.getImportSessions());
   useEffect(() => { setShownDecisionId(searchParams.get('decisionId')); }, [searchParams]);
-  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
+  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : searchParams.get('nation') ? loaded.find(session=>session.nation===searchParams.get('nation')&&!['CANCELLED','REPLACED'].includes(session.status)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
   const selectSession = async (session: ImportSession) => {
     setLoading(true);
     try {
       const full = await api.getImportSession(session.id);
       if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
       setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);setCloseRefreshWarning(null);
-      const selection = importAllowed ? nationReviewSelection(full) : undefined;
+      const selection = importAllowed && full.status!=='IMPORTED' ? nationReviewSelection(full) : undefined;
       const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
       setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
       if (selection) await refreshSessions();
@@ -146,8 +150,9 @@ export function DataImport() {
   };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
       if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);} setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
-  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale))); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const [updated, loaded] = await reloadImportSession(selected.id, api); setSelected(updated); setPreview(updated.preview ?? null); setSessions(loaded); } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale),nnPlanning:checkedNNChoices(nnChoices)})); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
+  const applyNN = async () => {if(!selected)return;setSavingTask(true);setError(null);try {const updated=await api.decideNNPlanning(selected.id,selected.currentVersionId,checkedNNChoices(nnChoices));setSelected(updated);setPreview(updated.preview??null);setNNChoices([]);await refreshSessions();}catch(e){setError(e instanceof Error?e.message:'NN-Entscheidung fehlgeschlagen');}finally{setSavingTask(false);}};
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const [updated, loaded] = await reloadImportSession(selected.id, api); setSelected(updated); setPreview(updated.preview ?? null); setSessions(loaded); setNNChoices([]); } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const recheck = async () => {
     if(!selected)return;
     setConfirming(true);setError(null);
@@ -324,6 +329,7 @@ export function DataImport() {
               </section>}
 
               </>}
+              {selected.nnPlanning&&<ArrivalPlanning planning={selected.nnPlanning} choices={selected.status==='APPROVED'?selected.nnPlanning.decisions:nnChoices} onChange={setNNChoices} disabled={!importAllowed||loading||confirming||savingTask||selected.status==='APPROVED'||Boolean(preview?.planStale)} onApply={['IMPORTED','ARCHIVED'].includes(selected.status)?applyNN:undefined}/>}
               <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
             </div>

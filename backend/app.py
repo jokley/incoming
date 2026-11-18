@@ -751,6 +751,8 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         label = response.get('nation') or payload.get('nation') or 'Importsession'
         if request.path.endswith('/approve'):
             title = 'Import freigegeben'
+        elif request.path.endswith('/nn-planning'):
+            title='NN-Unterkunftsplanung entschieden'
         elif request.path.endswith('/import'):
             title = 'Import durchgeführt'
         elif '/approvals/' in request.path:
@@ -2374,6 +2376,11 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
         payload['importControl'] = build_import_control(payload['preview'],read_context)
         from import_control import nation_clarifications
         payload['nationClarifications'] = nation_clarifications(session, payload['preview'], payload['importControl'])
+        from arrival_planning import import_projection
+        payload['nnPlanning']=import_projection(session,payload['preview'],payload['importControl'],live=session.status in {'IMPORTED','ARCHIVED'},read_context=read_context)
+    if include_preview and session.status=='ARCHIVED':
+        from arrival_planning import import_projection
+        payload['nnPlanning']=import_projection(session,{}, {},live=True)
     return payload
 
 
@@ -2805,6 +2812,26 @@ def reconcile_single_room_tasks(session):
     session.status = 'WAITING_FOR_NATION' if any(a.decision != 'APPROVED' for a in session.current_approvals) else 'EXCEPTION_APPROVED'
 
 
+@app.route('/api/import/sessions/<int:session_id>/nn-planning',methods=['POST'])
+def decide_import_nn_planning(session_id):
+    lock_accommodation_writes()
+    session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    data=request.get_json(silent=True) or {}
+    if session.status not in {'IMPORTED','ARCHIVED'} or str(data.get('versionId'))!=str(session.current_version_id):
+        return jsonify(error='STALE_PREVIEW',message='Nur den aktuell übernommenen Bestand bearbeiten.'),409
+    from arrival_planning import import_projection,prepare_import_decisions,apply_import_decisions
+    try:
+        decisions=prepare_import_decisions(session,import_projection(session,{}, {},live=True),data.get('nnPlanning',[]))
+        apply_import_decisions(session,decisions,current_user().username)
+        db.session.commit()
+        return jsonify(_current_session_payload(session,include_preview=True))
+    except ImportValidationError as exc:
+        db.session.rollback();return jsonify(exc.to_dict()),409
+    except Exception:
+        db.session.rollback();app.logger.exception('NN decision rolled back')
+        return jsonify(error='NN_PLANNING_FAILED',message='NN-Planung vollständig zurückgerollt.'),400
+
+
 @app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
 def approve_import_session(session_id):
     lock_accommodation_writes()
@@ -2831,6 +2858,13 @@ def approve_import_session(session_id):
         return jsonify(error='IMPORT_SCOPE_CONFIRMATION_REQUIRED',message='Aktuellen Ersetzungsbereich und Änderungsplan bestätigen.'),409
     if plan['requiresDestructiveConfirmation'] and data.get('confirmDestructiveChanges') is not True:
         return jsonify(error='IMPORT_DELETION_CONFIRMATION_REQUIRED',message='Entfernungen einschließlich Buchungsfolgen ausdrücklich bestätigen.'),409
+    from arrival_planning import import_projection,prepare_import_decisions
+    from quota_rules import fingerprint
+    try:
+        nn=prepare_import_decisions(session,import_projection(session,stored,{}),data.get('nnPlanning',[]))
+    except ImportValidationError as exc:
+        db.session.rollback();return jsonify(exc.to_dict()),409
+    workflow.update(nnPlanning=nn,nnPlanningDigest=fingerprint(nn))
     workflow.update(state='APPROVED',approvedDigest=plan['digest'],confirmedScope=plan['snapshotScope'],
         destructiveConfirmed=data.get('confirmDestructiveChanges') is True)
     stored['_workflow']=workflow
@@ -2872,6 +2906,12 @@ def import_approved_session(session_id):
         decisions.update({key:value['decisionId'] for key,value in preview.get('preservedSingleRoomApprovals',{}).items()})
         token=session.current_version.preview_token
         result=confirm_fis_import(token,decisions,confirmer=current_user().username,persisted_preview=preview,change_plan=plan)
+        from arrival_planning import apply_import_decisions
+        from quota_rules import fingerprint
+        if workflow.get('nnPlanning'):
+            if fingerprint(workflow['nnPlanning'])!=workflow.get('nnPlanningDigest'):
+                raise ImportValidationError('STALE_PREVIEW','NN-Entscheidung wurde nach Freigabe geändert.')
+            apply_import_decisions(session,workflow['nnPlanning'],current_user().username)
         session.status,session.imported_at='IMPORTED',datetime.utcnow()
         workflow.update(state='IMPORTED',result=result)
         preview['_workflow']=workflow
