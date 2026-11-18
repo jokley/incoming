@@ -1,8 +1,7 @@
 """Exclusive operative athlete forecasts. No admission, quota or booking writes.
 
-Confirmed follow-up policy: Officials' EZ tiers must use actual arriving Officials,
-capped by their admissible contingent. This PR deliberately leaves that evaluator
-unchanged; Officials continue to be planned as named people.
+Operational policy: Officials' EZ tiers must use actual arriving Officials,
+capped by their admissible contingent. Officials continue to be planned as named people.
 """
 from collections import defaultdict
 from datetime import date, datetime
@@ -31,7 +30,7 @@ def forecast_values(row):
                     expectedTotal=None,checkInDate=None,checkOutDate=None,note=None,revision=0,updatedBy=None,updatedAt=None)
 
 
-def project(nation=None, *, people_override=None):
+def project(nation=None, *, people_override=None, expected_overrides=None):
     owner=accommodation_event_id()
     query=event_query(Athlete).options(db.selectinload(Athlete.competitions))
     forecasts=event_query(AthleteArrivalForecast)
@@ -65,6 +64,8 @@ def project(nation=None, *, people_override=None):
     for key in sorted(set(groups)|set(saved),key=lambda k:tuple(v or '' for v in k)):
         members=sorted(groups.get(key,[]),key=lambda p:p['personId'])
         forecast=saved.get(key);values=forecast_values(forecast)
+        override=(expected_overrides or {}).get(area_id(owner,*key))
+        if override is not None:values['expectedTotal']=override['expectedTotal']
         expected=values['expectedTotal']
         reasons=[]
         if key[1] is None:
@@ -72,7 +73,7 @@ def project(nation=None, *, people_override=None):
             reasons.extend(sorted({reason for person in members for reason in person['reasons']}))
         roster_digest=fingerprint([{'personId':p['personId'],'gender':normalize_gender(p['personalGender']),'disciplines':p['disciplines']} for p in members])
         maintained=expected is not None or values['checkInDate'] or values['note']
-        if forecast and maintained and forecast.roster_digest!=roster_digest:reasons.append('Gemeldeter Bestand oder Zuordnung seit der letzten Prognose geändert. Prognose prüfen und erneut speichern.')
+        if forecast and maintained and override is None and forecast.roster_digest!=roster_digest:reasons.append('Gemeldeter Bestand oder Zuordnung seit der letzten Prognose geändert. Prognose prüfen und erneut speichern.')
         if forecast and maintained and not members:reasons.append('Gespeicherter Planungsbereich hat keine gemeldeten Athleten mehr. Prognose prüfen oder zurücksetzen.')
         virtual_planning=key[1] is not None and expected is not None and expected!=len(members)
         if virtual_planning and any(p['hasBooking'] for p in members):
@@ -143,14 +144,14 @@ def operative_projection(overview):
 
 
 
-def import_projection(session, preview, control, *, live=False, read_context=None):
+def import_projection(session, preview, control, *, live=False, read_context=None, choices=None):
     """Same forecast model over effective parsed people, never a preview write."""
     from types import SimpleNamespace
     from imports.read_context import ImportReadContext
+    context=read_context or ImportReadContext(session.event_id)
     if live:
         result=project(session.nation)
     else:
-        context=read_context or ImportReadContext(session.event_id)
         records=[]
         for index,person in enumerate(preview.get('evaluationPeople',preview.get('people',[]))):
             if person.get('nationCode')!=session.nation:continue
@@ -160,11 +161,66 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
                 gender=person.get('gender'),fis_code=person.get('fisCode'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
                 competitions=[context.competitions_by_id[int(cid)] for cid in ids if str(cid).isdecimal() and int(cid) in context.competitions_by_id]))
         result=project(session.nation,people_override=records)
+    # A local draft is validated like an approval, without writing any forecast.
+    if choices is not None:
+        prepare_import_decisions(session,result,choices)
+        result=project(session.nation,people_override=None if live else records,expected_overrides={choice['areaId']:choice for choice in choices})
     for row in result['rows']:
         row['quotaHints']=[dict(name=c['name'],regularMax=entry['regularMax']) for c in control.get('competitions',[]) if c.get('group')==row['discipline'] and normalize_gender(c.get('gender'))==row['personalGender']
             for entry in c.get('sportEntries',[]) if entry.get('nation')==session.nation]
+    roster=[];demands=[]
+    if live:
+        from approval_projection import projected_approval_groups
+        from quota_history import person_keys
+        for person in context.athletes:
+            if session.nation and person.nation_code!=session.nation:continue
+            record=dict(personId=person.id,matchKey=person.fis_code or person.competitor_id or next(iter(sorted(person_keys(person))),str(person.id)),nationCode=person.nation_code,function=person.function,
+                gender=person.gender,quotaDisciplines=quota_disciplines(person.competitions),singleRoomQuotaExemptReason=person.single_room_quota_exempt_reason)
+            roster.append(record)
+            groups=projected_approval_groups(person.single_room_decision,person,roster=context.athletes)
+            demands.append(dict(record,countsAsSingle=any(m.room_booking.counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement!='NO_ROOM' and str(person.room_type or '').strip().lower()=='single'),
+                singleRoomStatus=person.single_room_status,approvedQuotaContexts=[dict(nationCode=n,discipline=d,gender=g) for n,d,g in groups]))
+    else:
+        allocations={item['personKey']:item for check in preview.get('quotaChecks',[]) for item in check.get('singleRoomAllocations',[])}
+        for person in preview.get('evaluationPeople',preview.get('people',[])):
+            if person.get('nationCode')!=session.nation:continue
+            record=dict(person,discipline=person.get('industryName'))
+            roster.append(record)
+            allocation=allocations.get(person.get('matchKey')) or person.get('singleRoomAllocation') or {}
+            approved=allocation.get('status')=='APPROVED_EXTRA'
+            ctx=allocation.get('context')
+            demands.append(dict(record,countsAsSingle=bool(allocation),singleRoomStatus='APPROVED_EXTRA' if approved else None,
+                approvedQuotaContexts=[dict(nationCode=ctx[0],discipline=ctx[1],gender=ctx[2])] if approved and ctx else []))
+    from quota_rules import rules_for_event
+    result['operationalQuota']=operational_quota_projection(result,roster,demands,rules_for_event(session.event_id))
     result.update(versionId=str(session.current_version_id),mode='LIVE' if live else 'IMPORT',decisions=[] if live else (preview.get('_workflow') or {}).get('nnPlanning',[]))
     return result
+
+
+def operational_athlete_basis(overview):
+    return {(row['nationCode'],row['discipline'],row['personalGender']):row['expectedTotal']
+        for row in overview['rows'] if row['editable'] and row['expectedTotal'] is not None}
+
+
+def operational_quota_projection(overview, roster, demands, rules):
+    """Read-only alternative basis; allocation and formulas stay in quota_service."""
+    from quota_service import evaluate_quota_usage,quota_gender_errors
+    errors=quota_gender_errors(roster)
+    if errors:return dict(rows=[],conflict=True,reasons=[e['message'] for e in errors])
+    bases=operational_athlete_basis(overview)
+    official=evaluate_quota_usage(roster,demands,rules)
+    operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True)
+    by_key={(row['nationCode'],row['discipline'],row['gender']):row for row in official}
+    for row in operative['rows']:
+        previous=by_key[(row['nationCode'],row['discipline'],row['gender'])]
+        row.update(fisOfficialQuota=previous['officialQuota'],fisSingleRoomsAllowed=previous['singleRoomsAllowed'],
+            singleRoomsRequested=len(row['singleRoomAllocations']),
+            approvedExtraSingleRooms=sum(a['status']=='APPROVED_EXTRA' for a in row['singleRoomAllocations']),
+            officialsExceeded=row['registeredOfficials']>row['officialQuota'],
+            coverageChanged=any(a['status']!=next((p['status'] for p in previous['singleRoomAllocations'] if p['identity']==a['identity']),None) for a in row['singleRoomAllocations']))
+    reasons=[reason for row in overview['rows'] if row['conflict'] for reason in row['reasons']]
+    return dict(rows=operative['rows'],conflict=bool(reasons or operative['unallocatedSingleRooms']),reasons=reasons,
+        unallocatedSingleRooms=operative['unallocatedSingleRooms'])
 
 
 def prepare_import_decisions(session, overview, choices):

@@ -184,7 +184,13 @@ def test_forecasts_preserve_booking_single_use_and_live_person_status(planning,b
     assert response.status_code==200
     assert [booking.to_dict() for booking in bookings]==before
     current=client.get('/api/fis/official-quotas?includePeople=true').json
-    assert current['rows']==projection['rows'] and current['personStatuses']==projection['personStatuses']
+    # The explicitly requested operative quota basis changes; physical person
+    # coverage, approvals and the protected booking records do not.
+    assert current['personStatuses']==projection['personStatuses']
+    assert current['rows'][0]['athletesEntered']==projection['rows'][0]['athletesEntered']==8
+    assert current['rows'][0]['expectedAthletes']==total
+    assert current['rows'][0]['officialQuota']==(total+2 if total else 0)
+    assert current['rows'][0]['singleRoomOfficialBasis']==0
     assert current['personSummary']['pendingSingleRoomPeople']==projection['personSummary']['pendingSingleRoomPeople']
     assert response.json['conflict'] and response.json['virtualPlaces']==0
     assert response.json['replacedPersonIds']==[]

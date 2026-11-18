@@ -266,7 +266,7 @@ def single_room_usage_by_quota_group(people, single_room_person_ids=(), exempt_p
             for r in evaluate_quota_usage(people, assigned) if r['singleRoomsUsed']}
 
 
-def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unallocated=False, include_allocations=False):
+def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unallocated=False, include_allocations=False, operational_athletes=None):
     """Return quota rows for a roster and its assigned officials.
 
     ``people`` is the authoritative roster. ``assigned_people`` contains one
@@ -299,7 +299,9 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
     rows = []
     for nation, discipline, gender in sorted(keys):
         key = (nation, discipline, gender)
-        official_quota = compute_official_quota(athletes.get(key, 0), rules['officials']['allowance'])
+        athlete_basis = athletes.get(key, 0) if operational_athletes is None else operational_athletes.get(key, athletes.get(key, 0))
+        official_quota = compute_official_quota(athlete_basis, rules['officials']['allowance'])
+        single_basis = official_quota if operational_athletes is None else min(officials.get(key, 0), official_quota)
         rows.append({
             'nationCode': nation,
             'discipline': discipline,
@@ -307,14 +309,16 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
             'athletesEntered': athletes.get(key, 0),
             'officialQuota': official_quota,
             'registeredOfficials': officials.get(key, 0),
-            # Preserve the documented policy; expose its basis rather than
-            # silently substituting roster or accommodation assignment counts.
-            'singleRoomOfficialBasis': official_quota,
-            'singleRoomsAllowed': compute_single_room_entitlement(official_quota, rules['singleRooms']),
+            # Official FIS projection stays unchanged. Operational reads explicitly
+            # opt into forecast athletes and the capped, distinct Officials basis.
+            'singleRoomOfficialBasis': single_basis,
+            'singleRoomsAllowed': compute_single_room_entitlement(single_basis, rules['singleRooms']),
             'assignedOfficials': assigned.get(key, 0),
             'singleRoomsUsed': 0,
             'quotaExemptSingleRooms': 0,
         })
+    if operational_athletes is not None:
+        for row in rows:row['expectedAthletes']=operational_athletes.get((row['nationCode'],row['discipline'],row['gender']),row['athletesEntered'])
     capacities = {(r['nationCode'], r['discipline'], r['gender']): r['singleRoomsAllowed'] for r in rows}
     allocation = allocate_single_rooms(assigned_people, capacities, people)
     for row in rows:

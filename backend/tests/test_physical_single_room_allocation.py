@@ -383,7 +383,17 @@ def test_partial_reimport_retains_athlete_singles_and_foreign_family_memberships
     assert set(next(p for p in preview['evaluationPeople'] if p['matchKey']=='M')['quotaDisciplines'])=={'Ski Cross','Snowboard Cross'}
     checks=preview['quotaChecks'];live=_build_official_quota_usage_rows()
     assert sum(c['singleRoomsRequested'] for c in checks)==sum(r['singleRoomsUsed'] for r in live)==2
-    assert {p['personKey']:p['status'] for c in checks for p in c['singleRoomAllocations']}=={p['personKey']:p['status'] for r in live for p in r['singleRoomAllocations']}
+    # FIS review remains unchanged. Operative entitlement now requires actual
+    # Officials, while both retained physical athlete singles remain explicit.
+    from arrival_planning import operational_quota_projection,project
+    from quota_rules import rules_for_event
+    by_key={p['personKey']:p for check in checks for p in check['singleRoomAllocations']}
+    effective=preview['evaluationPeople']
+    demands=[dict(p,countsAsSingle=p['matchKey'] in by_key) for p in effective]
+    operational=operational_quota_projection(project(),effective,demands,rules_for_event())['rows']
+    assert {p['personKey']:p['status'] for c in operational for p in c['singleRoomAllocations']}=={p['personKey']:p['status'] for r in live for p in r['singleRoomAllocations']}
+    assert sum(r['singleRoomsPending'] for r in live)==2
+
     from imports.change_plan import build_plan
     from imports.read_context import ImportReadContext
     plan=build_plan(preview,ImportReadContext(preview['eventId']))
@@ -413,3 +423,50 @@ def test_optional_projection_preserves_covered_approved_and_exempt_rows():
     assert {p['status'] for r in view['rows'] for p in r['singleRoomAllocations']}=={'COVERED','APPROVED_EXTRA','EXEMPT'}
     exempt=official('unmapped-free',(),singleRoomQuotaExemptReason='OTHER')
     assert evaluate_quota_usage([exempt],[exempt],include_unallocated=True)['unallocatedSingleRooms']==[]
+
+
+@pytest.mark.parametrize('expected,official_count,cap,basis',[(None,10,11,10),(4,10,6,6),(4,3,6,3),(5,10,7,7),(0,10,0,0)])
+def test_operational_forecast_uses_configured_rules_and_actual_officials(expected,official_count,cap,basis):
+    from quota_rules import standard_rules
+    from fis_rules import compute_single_room_entitlement
+    rules=standard_rules();rules['officials']['allowance']=2
+    rules['singleRooms']=[{'upTo':3,'rooms':1},{'upTo':6,'rooms':2},{'upTo':None,'rooms':4}]
+    roster=[dict(personId=f'a{i}',function='Athlete',nationCode='AUT',gender='M',quotaDisciplines=['Ski Cross','Ski Cross']) for i in range(9)]
+    staff=[official(str(i)) for i in range(official_count)]
+    # Multiple identical roster/membership records cannot inflate either basis.
+    all_people=[*roster,*roster[:1],*staff,*staff[:1]]
+    original=evaluate_quota_usage(all_people,staff,rules)[0]
+    bases={} if expected is None else {X:expected}
+    row=evaluate_quota_usage(all_people,staff,rules,operational_athletes=bases)[0]
+    assert row['athletesEntered']==9 and row['registeredOfficials']==official_count
+    assert row['officialQuota']==cap and row['singleRoomOfficialBasis']==basis
+    assert row['singleRoomsAllowed']==compute_single_room_entitlement(basis,rules['singleRooms'])
+    assert len(row['singleRoomAllocations'])==official_count
+    assert row['singleRoomsPending']==max(0,official_count-row['singleRoomsAllowed'])
+    assert original['officialQuota']==11 and original['singleRoomOfficialBasis']==11
+
+
+def test_operational_contexts_and_approved_exempt_people_stay_independent():
+    from quota_rules import standard_rules
+    roster=[dict(personId=f'a{g}{i}',function='Athlete',nationCode='AUT',gender=g,quotaDisciplines=['Ski Cross']) for g in ('M','W') for i in range(9)]
+    staff=[official('paid',singleRoomStatus='APPROVED_EXTRA',approvedQuotaContexts=[dict(nationCode=X[0],discipline=X[1],gender=X[2])]),official('champ',singleRoomQuotaExemptReason='WORLD_CHAMPION'),*[official(str(i)) for i in range(8)]]
+    before=__import__('copy').deepcopy(staff)
+    initial=evaluate_quota_usage([*roster,*staff],staff,standard_rules(),operational_athletes={})
+    changed=evaluate_quota_usage([*roster,*staff],staff,standard_rules(),operational_athletes={X:4})
+    assert changed[0]['officialQuota']==6
+    assert changed[1]['officialQuota']==initial[1]['officialQuota']==11
+    assert changed[1]['singleRoomsAllowed']==initial[1]['singleRoomsAllowed']
+    allocations=[a for row in changed for a in row['singleRoomAllocations']]
+    assert len(allocations)==len({a['identity'] for a in allocations})==10
+    assert next(a for a in allocations if a['identity']=='paid')['status']=='APPROVED_EXTRA'
+    assert next(a for a in allocations if a['identity']=='champ')['status']=='EXEMPT'
+    assert staff==before
+
+
+def test_operational_official_allowance_is_an_event_parameter():
+    from quota_rules import standard_rules
+    rules=standard_rules();rules['officials']['allowance']=5
+    roster=[dict(personId=f'a{i}',function='Athlete',nationCode='AUT',gender='M',quotaDisciplines=['Ski Cross']) for i in range(9)]
+    staff=[official(str(i)) for i in range(10)]
+    row=evaluate_quota_usage([*roster,*staff],staff,rules,operational_athletes={X:4})[0]
+    assert row['officialQuota']==9 and row['singleRoomOfficialBasis']==9

@@ -69,7 +69,7 @@ test('guide uses server examples and configured family limits',()=>{
 });
 
 test('guide states the current basis and separates valid, free, open and historical decisions', () => {
-  for (const text of ['Officials-Limit, nicht die Zahl gemeldeter', 'fachliche Regelbestätigung', 'aktuell anwendbare kostenpflichtige Genehmigung', 'gültige kostenfreie Ausnahme', 'inaktiv erhalten', 'offene Entscheidung ist noch kein genehmigter Mehrpreis']) assert.ok(html.includes(text), text);
+  for (const text of ['gemeldeter anrechenbarer Officials', 'operative Officials-Obergrenze', 'aktuell anwendbare kostenpflichtige Genehmigung', 'gültige kostenfreie Ausnahme', 'inaktiv erhalten', 'offene Entscheidung ist noch kein genehmigter Mehrpreis']) assert.ok(html.includes(text), text);
 });
 
 test('operational badges render all current and historical states with explanatory tooltips', () => {
