@@ -121,3 +121,60 @@ test('person overview drills into assigned people, refreshes after persistence, 
  await page.screenshot({path:'/workspace/artifacts/disposition-status-mobile-light.png',animations:'disabled'});
  assert.deepEqual(errors,[]);
 });
+
+test('reduced forecasts replace named queue tasks without becoming drag sources; normal people remain draggable',async t=>{
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-virtual-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
+ t.after(()=>vite.close());await vite.listen();
+ const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
+ const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
+ const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
+ const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
+ let total:number|null=null;
+ const people=Array.from({length:8},(_,i)=>({id:String(i+1),firstname:'Real'+i,lastname:'Athlete',name:'Real'+i+' Athlete',nationCode:'FIN',function:'Athlete',gender:'M',quotaDisciplines:['Freeski Park & Pipe'],roomType:'Double shared',arrivalDate:interval.checkInDate,departureDate:interval.checkOutDate,single_room_status:'NONE',accommodationRequirement:'REQUIRED',accommodationCoverage:{overallInterval:interval,coverageStatus:'UNASSIGNED',segments:[],coveredIntervals:[],openIntervals:[interval],conflicts:[]}}));
+ const row=()=>({areaId:'stable-area',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:total,usesVirtualPlanning:total!==null&&total<8,virtualPlaces:total!==null&&total<8?total:0,replacedPersonIds:total!==null&&total<8?people.map(p=>p.id):[],bookedPeopleCount:0,status:total===null?'NOT_SET':'PLANNED',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],...interval,note:null,baseToken:'current',revision:1,updatedBy:'tester',updatedAt:'2026-11-18T10:00:00Z'});
+ const policy=()=>({replacedPersonIds:row().replacedPersonIds,groups:row().usesVirtualPlanning&&total!>0?[row()]:[],zeroGroups:total===0?[row()]:[],controlledAreas:row().usesVirtualPlanning?1:0,zeroAreas:total===0?1:0,virtualPlaces:row().virtualPlaces,conflicts:0});
+ const units=people.map(p=>({unitId:'u'+p.id,nationCode:'FIN',sourceRowKey:p.id,occupants:[{...p,athleteId:p.id}],roomType:'Double shared',roomTypeLabel:'double',roomCategoryLabel:'dz',occupantCount:1,...interval,specialMealFlags:[],statusBadges:[],assignmentWarnings:[],isFullyAssigned:false}));
+ const projected=()=>people.map(p=>({personId:p.id,eventId:'1',name:p.name,nationCode:'FIN',personalGender:'M',personType:'ATHLETE',function:'Athlete',accommodationRequirement:'REQUIRED',sportFamilies:['Freestyle'],quotaDisciplines:p.quotaDisciplines,quotaContexts:[],matchesContextFilters:true,accommodation:p.accommodationCoverage,roomPreference:{reportedValue:p.roomType,reportedKind:'DOUBLE',status:'UNASSIGNED',hasMismatch:false,segments:[]},singleRoom:{status:'NO_SINGLE_USE',hasSingleUse:false,context:null,eligibleContexts:[],bookingIds:[],storedApprovalId:null,applicableApprovalId:null,approvalApplicable:false,approvedContexts:[],exemptionReason:null,reason:null}}));
+ const event={id:'1',name:'Virtual synthetic',active:true};const errors:string[]=[],writes:string[]=[];
+ page.on('pageerror',e=>errors.push(e.message));
+ await page.route('**/api/**',async route=>{
+  const req=route.request(),url=new URL(req.url()),path=url.pathname.slice(4);
+  if(req.method()==='PUT'&&path==='/athletes/arrival-planning/stable-area'){total=req.postDataJSON().expectedTotal;writes.push(path);return route.fulfill({json:row()});}
+  if(path==='/fis/official-quotas')return route.fulfill({json:{rows:[],unallocatedSingleRooms:[],personStatuses:projected(),personPlanning:policy(),personSummary:{peopleTotal:8,accommodationPeopleRequired:row().usesVirtualPlanning?0:8,fullyAssigned:0,unassigned:row().usesVirtualPlanning?0:8,partiallyAssigned:0,accommodationConflicts:0,roomPreferenceMismatches:0,pendingSingleRoomPeople:0,contextlessPendingSingleRoomPeople:0,operationalAccommodationDemand:row().usesVirtualPlanning?row().virtualPlaces:8,virtualPlaces:row().virtualPlaces,virtualGroups:policy().groups.length,planningConflicts:0},personFilters:{nationCode:url.searchParams.get('nationCode'),discipline:url.searchParams.get('discipline'),gender:url.searchParams.get('gender'),sportFamily:url.searchParams.get('sportFamily'),personType:url.searchParams.get('personType'),personalGender:null,contextlessPendingIncluded:true}}});
+  if(path==='/assignments/availability')return route.fulfill({json:{targets:{},hotels:{}}});
+  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/athletes':people,'/athletes/arrival-planning':{eventId:'1',nationCode:url.searchParams.get('nationCode'),reportedCount:8,rows:[row()]},'/assignments/planning-view':{timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units,assigned:[]},hotels:[],validationByUnit:{},athletePlanning:policy()}};
+  return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
+ });
+ await page.goto(`${origin}/assignments`);
+ await page.getByText('8 namentliche Aufgaben · 0 vorläufige Gruppen',{exact:true}).waitFor();
+ assert.equal(await page.locator('aside div[role="group"][draggable="true"]').count(),8);
+ const source=page.locator('aside div[role="group"][draggable="true"]').first();
+ const transfer=await page.evaluateHandle(()=>new DataTransfer());await source.dispatchEvent('dragstart',{dataTransfer:transfer});
+ assert.match(await transfer.evaluate(value=>value.getData('text/plain')),/^need:/);await source.dispatchEvent('dragend');
+ await page.goto(`${origin}/athletes?nation=FIN&planning=1`);
+ await page.getByRole('columnheader',{name:'Gender',exact:true}).waitFor();
+ assert.equal(await page.getByRole('columnheader',{name:'Anreisestatus',exact:true}).count(),0);
+ const forecast=page.getByRole('table',{name:'Athletenprognosen'});
+ await forecast.getByRole('button',{name:'Prognose bearbeiten'}).click();
+ await page.getByRole('dialog').getByLabel('Erwartete Gesamtzahl').fill('4');await page.getByRole('dialog').getByRole('button',{name:'Speichern',exact:true}).click();
+ await page.getByRole('dialog').waitFor({state:'hidden'});
+ await page.goto(`${origin}/assignments`);
+ const card=page.getByRole('article',{name:'Virtuelle Gruppe FIN Freeski Park & Pipe M',exact:true});await card.waitFor();
+ assert.match(await card.innerText(),/4 Plätze vorläufig/);assert.match(await card.innerText(),/Noch nicht disponierbar/);
+ assert.equal(await card.getAttribute('draggable'),'false');assert.equal(await page.locator('aside div[role="group"][draggable="true"]').count(),0);
+ await page.getByRole('button',{name:'Vollständig 0 / 4',exact:true}).waitFor();
+ await page.keyboard.press('Escape');
+ assert.ok(!(await page.locator('aside').innerText()).includes('Real0 Athlete'));
+ await mkdir('/workspace/artifacts',{recursive:true});await page.screenshot({path:'/workspace/artifacts/virtual-group-dark.png',animations:'disabled'});
+ const selects=page.locator('aside select');
+ await selects.nth(0).selectOption('FIN');await selects.nth(1).selectOption('Freeski Park & Pipe');await selects.nth(2).selectOption('M');await card.waitFor();
+ await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();await page.screenshot({path:'/workspace/artifacts/virtual-group-light.png',animations:'disabled'});
+ for(const [value,count] of [[0,0],[5,1],[8,0],[null,0]] as const){
+  total=value;await page.reload();
+  await page.getByRole('button',{name:`Vollständig 0 / ${value===null||value===8?8:value}`,exact:true}).waitFor();
+  assert.equal(await page.getByRole('article',{name:'Virtuelle Gruppe FIN Freeski Park & Pipe M',exact:true}).count(),count);
+  assert.equal(await page.locator('aside div[role="group"][draggable="true"]').count(),value===null||value===8?8:0);
+ }
+ assert.deepEqual(writes,['/athletes/arrival-planning/stable-area']);assert.deepEqual(errors,[]);
+});

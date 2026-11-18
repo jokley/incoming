@@ -697,8 +697,6 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         ref('personId', athlete_id)
         label = ' '.join(filter(None, [response.get('firstname') or payload.get('firstname'), response.get('lastname') or payload.get('lastname')])).strip() or 'Athlet'
         title = 'Athlet angelegt' if action == 'create' else 'Athlet bearbeitet'
-        if 'arrivalStatus' in payload:
-            details.append(f"Anreisestatus: {(snapshot or {}).get('arrivalStatus')} → {response.get('arrivalStatus')}")
         if 'accommodationRateCategory' in payload:
             old_rate = (snapshot or {}).get('accommodationRateCategory', 'STANDARD')
             details.append(f"Unterkunftstarif: {old_rate} → {response.get('accommodationRateCategory')}")
@@ -794,11 +792,6 @@ def audit_successful_mutation(response):
                        if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
         if payload and entity_type == 'athlete-arrival-forecast':
             payload={**payload,'previousForecast':getattr(g,'audit_snapshot',None),'newRevision':(response.get_json(silent=True) or {}).get('revision')}
-        if payload and 'arrivalStatus' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
-            updated = response.get_json(silent=True) or {}
-            payload = {**payload, 'arrival_status': {
-                'old': g.audit_snapshot.get('arrivalStatus'), 'new': updated.get('arrivalStatus')},
-                'arrival_status_source': {'old': g.audit_snapshot.get('arrivalStatusSource'), 'new': updated.get('arrivalStatusSource')}}
         if payload and 'accommodationRequirement' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
             payload = {**payload, 'accommodation_requirement': {'old': g.audit_snapshot.get('accommodationRequirement', 'REQUIRED'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirement')},
                 'accommodation_requirement_source': {'old': g.audit_snapshot.get('accommodationRequirementSource', 'DEFAULT'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirementSource')}}
@@ -1539,7 +1532,9 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
         else:
             unassigned_units.append(unit)
 
+    from arrival_planning import project,operative_projection
     return {
+        'athletePlanning':operative_projection(project()),
         'timeline': {
             'startDate': timeline_start,
             'endDate': timeline_end,
@@ -1928,7 +1923,18 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                     approved_contexts=person_approvals.get(athlete.id, set()))
                 projected['matchesContextFilters'] = matches
                 people.append(projected)
-            result.update(personStatuses=people, personSummary=summarize_person_disposition(people),
+            from arrival_planning import project,operative_projection
+            forecast=project(nation_code)
+            forecast['rows']=[row for row in forecast['rows'] if (not person_type or person_type=='ATHLETE')
+                and (not discipline or row['discipline']==discipline or not row['editable'])
+                and (not sport_family or sport_family in row['sportFamilies'])
+                and (not gender or row['personalGender']==normalize_gender(gender) or not row['editable'])
+                and (not personal_gender or row['personalGender']==normalize_gender(personal_gender))]
+            planning=operative_projection(forecast)
+            summary=summarize_person_disposition(people,planning['replacedPersonIds'])
+            summary.update(virtualPlaces=planning['virtualPlaces'],virtualGroups=len(planning['groups']),planningConflicts=planning['conflicts'],
+                operationalAccommodationDemand=summary['accommodationPeopleRequired']+planning['virtualPlaces'])
+            result.update(personPlanning=planning,personStatuses=people, personSummary=summary,
                           personFilters=dict(nationCode=nation_code, discipline=discipline, gender=gender,
                               sportFamily=sport_family, personType=person_type, personalGender=personal_gender,
                               contextlessPendingIncluded=True))
@@ -3314,9 +3320,7 @@ def import_athletes(lines, section_info, end_line):
 def _update_athlete_operations(athlete, data):
     """Update only accommodation-team-owned fields; FIS fields stay read-only."""
     if 'arrivalStatus' in data:
-        value = data['arrivalStatus']
-        if value is not None and (not isinstance(value, str) or value not in {'UNDECIDED', 'EXPECTED', 'CONFIRMED', 'NOT_TRAVELLING'}):
-            return jsonify(error='arrivalStatus must be UNDECIDED, EXPECTED, CONFIRMED, NOT_TRAVELLING or null'), 400
+        return jsonify(error='REMOVED_PERSON_FIELD',message='Individueller Anreisestatus wird nicht mehr verwendet.'),400
     if 'accommodationRateCategory' in data:
         try:
             category = validate_category(data['accommodationRateCategory'])
@@ -3395,8 +3399,6 @@ def _update_athlete_operations(athlete, data):
         athlete.accommodation_rate_category = category
         athlete.accommodation_rate_source = 'MANUAL'
         athlete.accommodation_rate_approval_id = None
-    if 'arrivalStatus' in data:
-        athlete.arrival_status = data['arrivalStatus']
     db.session.commit()
     from routes.athletes import get_athlete
     return get_athlete(athlete.id)

@@ -33,12 +33,13 @@ export interface PersonDispositionStatus {
 }
 export type PersonDispositionSummary = Record<'peopleTotal' | 'accommodationPeopleRequired' | 'fullyAssigned' |
   'unassigned' | 'partiallyAssigned' | 'accommodationConflicts' | 'roomPreferenceMismatches' |
-  'pendingSingleRoomPeople' | 'contextlessPendingSingleRoomPeople', number>;
+  'pendingSingleRoomPeople' | 'contextlessPendingSingleRoomPeople', number> & {operationalAccommodationDemand?:number;virtualPlaces?:number;virtualGroups?:number;planningConflicts?:number};
 
 export interface OfficialQuotaOverview {
   rows: OfficialQuotaUsage[];
   unallocatedSingleRooms: UnallocatedSingleRoom[];
   /** Present only when includePeople=true; absence is not an evaluated green state. */
+  personPlanning?:import('../types').OperativeAthletePlanning;
   personStatuses?: PersonDispositionStatus[];
   personSummary?: PersonDispositionSummary;
   personFilters?: {nationCode:string|null;discipline:string|null;gender:string|null;sportFamily:string|null;

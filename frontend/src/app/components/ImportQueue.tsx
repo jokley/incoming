@@ -73,6 +73,7 @@ function QueueHintDetails({session}:{session:ImportSession}) {
           <p><strong>{loaded.approvals.filter(a=>a.decision==='PENDING').length} offene Entscheidungen</strong><br/>Erfordern eine fachliche Klärung vor der Freigabe.</p>
           <p><strong>{loaded.errors} blockierende Fehler</strong><br/>Müssen vor dem Import korrigiert werden.</p>
         </>}
+        {loaded?.status==='IMPORTED'&&!hasOpenSubmissions(loaded)&&<a className="text-[var(--ops-primary)] underline" href={`${import.meta.env.BASE_URL}athletes?nation=${encodeURIComponent(session.nation)}&planning=1`}>Athletenprognose nach Import bearbeiten</a>}
         <p className="text-xs text-[var(--ops-text-muted)]">Officials über Basis sind informativ und erzeugen allein keinen Handlungsbedarf.</p>
       </div>
     </Popover>

@@ -6,7 +6,7 @@ import { queueFunctionLabel } from '../../services/queuePersonType';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { DispositionDragContext } from './DispositionDragContext';
 import { useContext, useState } from 'react';
-import { Crown, MoreHorizontal } from 'lucide-react';
+import { Crown, MoreHorizontal, UsersRound } from 'lucide-react';
 import { IconButton, Menu, MenuItem } from '@mui/material';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
@@ -77,4 +77,20 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       </>}
     </div>}
   </div>;
+}
+
+
+/** Forecast read model only. Never a booking unit, drag source or drop target. */
+export function VirtualDispositionQueueCard({group,onOpen}:{group:import('../../types').ArrivalPlanningRow;onOpen:()=>void}) {
+ return <article title="Gender dieser Gruppe bezeichnet das persönliche Geschlecht; es ist kein zusätzlicher Quotenkontext." aria-label={`${group.usesVirtualPlanning?'Virtuelle Gruppe':'Planungsklärung'} ${group.nationCode} ${group.discipline||'Klärung'} ${group.personalGender||''}`} draggable={false} onDragStart={event=>{event.preventDefault();event.stopPropagation();}} className="rounded-xl border border-dashed border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-3 text-xs">
+  <strong className="flex gap-2"><UsersRound className="h-4 w-4 shrink-0"/>{group.nationCode} · {group.discipline||'Zuordnung klären'} · {group.personalGender==='M'?'Herren':group.personalGender==='W'?'Damen':'Personennachweise prüfen'}</strong>
+  <p className="my-1 font-semibold">{group.usesVirtualPlanning?'Virtuelle Gruppe · Vorläufig':'Planungsklärung · keine virtuellen Plätze'}</p><p>{group.reportedCount} gemeldet · {group.expectedTotal??'nicht gepflegt'} erwartet</p>
+  <p className="my-1 font-bold">{group.conflict?'Klärungsbedarf · keine zusätzlichen Plätze':`${group.virtualPlaces} Plätze vorläufig`}</p>
+  <p>{group.checkInDate&&group.checkOutDate?periodLabel(group):'Geplanter Zeitraum offen'}</p>
+  {group.bookedPeopleCount>0&&<p>{group.bookedPeopleCount} Personen bereits gebucht · Bestand bleibt erhalten</p>}
+  {group.worldChampionCount>0&&<p title="Vorhandene Kennzeichnung oder Titelreferenz. Keine automatische EZ-Genehmigung."><Crown className="mr-1 inline h-3.5 w-3.5 text-amber-500 fill-amber-200"/>{group.worldChampionCount} Weltmeister / Titelreferenz</p>}
+  {group.conflict&&<p className="my-1 text-[var(--ops-warning)]">{group.reasons.join(' ')}</p>}
+  <p className="my-1 font-semibold">Noch nicht disponierbar · keine Reservierung</p>
+  <button type="button" className="text-[var(--ops-primary)] underline" onClick={onOpen}>Prognose / Nachweise öffnen</button>
+ </article>;
 }

@@ -9,7 +9,7 @@ import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount, slotOperationalUsed, bookingFreeCapacity } from '../services/assignmentRoomUsage';
 import {hotelFitLabel,queueDemandSummary,matchesHotelFit,compareHotelFit,type HotelFit} from '../services/assignmentSuitability';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
-import { DispositionQueueCard } from './assignment/DispositionQueueCard';
+import { DispositionQueueCard,VirtualDispositionQueueCard } from './assignment/DispositionQueueCard';
 import { SplitAssignmentDialog } from './assignment/SplitAssignmentDialog';
 import { dispositionItems, itemContainsPeople, periodLabel as intervalLabel, type DispositionItem } from '../services/dispositionItems';
 import { PersonAccommodationPanel } from './assignment/PersonAccommodationPanel';
@@ -308,7 +308,7 @@ export function Assignments() {
       if(requestId!==quotaRequest.current)return;
       if(!overview.personSummary || !overview.personStatuses || !overview.personFilters
         || overview.personSummary.peopleTotal!==new Set(overview.personStatuses.map(p=>p.personId)).size
-        || personTaskCategories.some(category=>personTaskPeople(overview.personStatuses!,category.key).length!==overview.personSummary![category.key]))
+        || personTaskCategories.some(category=>personTaskPeople(overview.personStatuses!,category.key,overview.personPlanning?.replacedPersonIds).length!==overview.personSummary![category.key]))
         throw new Error('Die Personenbewertung ist unvollständig oder widersprüchlich.');
       setQuotaOverview(overview);setPersonStatusError(null);
     } catch (err) {
@@ -330,7 +330,8 @@ export function Assignments() {
   const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
   const currentQuotaUsage = useMemo(() => evaluateCurrentQuotaUsage(quotaUsage, quotaAssignmentsFromPlanning(allHotels)), [allHotels, quotaUsage]);
   const singleRoomEvaluations = useMemo(() => new Map(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.map(person => [person.personId, person] as const))), [allHotels, quotaUsage]);
-  const openItems=useMemo(()=>dispositionItems(allUnitsCombined,allHotels),[allUnitsCombined,allHotels]);
+  const replacedQueuePeople=useMemo(()=>new Set(planning?.athletePlanning?.replacedPersonIds??[]),[planning]);
+  const openItems=useMemo(()=>dispositionItems(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>!replacedQueuePeople.has(person.athleteId))})),allHotels),[allUnitsCombined,allHotels,replacedQueuePeople]);
   const unitById = useMemo(() => {
     const map = new Map<string, RoomBookingUnit>();
     for (const unit of [...allUnitsCombined,...openItems]) map.set(unit.unitId, unit);
@@ -358,8 +359,8 @@ export function Assignments() {
   }, [allHotels]);
 
   const nationOptions = useMemo(
-    () => Array.from(new Set(allUnitsCombined.map((unit) => unit.nationCode).filter(Boolean))).sort(),
-    [allUnitsCombined]
+    () => Array.from(new Set([...allUnitsCombined.map((unit) => unit.nationCode),...(planning?.athletePlanning?.groups??[]).map(group=>group.nationCode)].filter(Boolean))).sort(),
+    [allUnitsCombined,planning?.athletePlanning]
   );
 
   const disciplineOptions = useMemo(() => {
@@ -370,8 +371,9 @@ export function Assignments() {
         disciplines.forEach((discipline) => values.add(discipline));
       }
     }
+    planning?.athletePlanning?.groups.forEach(group=>{if(group.discipline)values.add(group.discipline);});
     return Array.from(values).sort((a, b) => disciplineDisplayName(a).localeCompare(disciplineDisplayName(b)));
-  }, [allUnitsCombined]);
+  }, [allUnitsCombined,planning?.athletePlanning]);
 
   const genderOptions = useMemo(() => {
     const values = new Set<string>();
@@ -381,8 +383,9 @@ export function Assignments() {
         if (gender) values.add(gender);
       }
     }
+    planning?.athletePlanning?.groups.forEach(group=>{if(group.personalGender)values.add(group.personalGender);});
     return Array.from(values).sort();
-  }, [allUnitsCombined]);
+  }, [allUnitsCombined,planning?.athletePlanning]);
 
   const importReviewCount = useMemo(
     () => allUnitsCombined.filter((unit) => unit.occupants.some((occupant) => occupant.hasPendingReview)).length,
@@ -411,7 +414,7 @@ export function Assignments() {
   );
 
   // Matching assigned people remain part of the context for "Bereits genutzt".
-  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType]);
+  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>!replacedQueuePeople.has(person.athleteId)&&matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType,replacedQueuePeople]);
   useEffect(()=>{
     if(filterMode!=='synchronized' && !activeHotelId) {setHotelFits({});setQueueTargets({});return;}
     let current=true;
@@ -456,7 +459,7 @@ export function Assignments() {
     percent:personStatusReady&&quotaOverview.personSummary!.accommodationPeopleRequired?Math.round(100*quotaOverview.personSummary!.fullyAssigned/quotaOverview.personSummary!.accommodationPeopleRequired):0};
   const personStatusContext=useMemo(()=>({people:personStatusMap,ready:personStatusReady,onOpen:setStatusPersonId}),[personStatusMap,personStatusReady]);
   const selectedStatusPerson=statusPersonId?personStatusMap.get(statusPersonId):undefined;
-  const taskPeople=personCategory&&personStatusReady?personTaskPeople(quotaOverview.personStatuses!,personCategory):[];
+  const taskPeople=personCategory&&personStatusReady?personTaskPeople(quotaOverview.personStatuses!,personCategory,quotaOverview.personPlanning?.replacedPersonIds):[];
   const openPersonDetails=(id:string,bookingId?:string)=>{
     setStatusPersonId(null);setPersonCategory(null);
     const segment=personStatusMap.get(id)?.accommodation.segments.find(segment=>!bookingId||segment.bookingId===bookingId);
@@ -753,7 +756,7 @@ export function Assignments() {
           view={view}
           onViewChange={setView}
           progress={queueProgress}
-          progressReady={personStatusReady} progressScope={statusScope}
+          progressReady={personStatusReady&&!quotaOverview.personSummary?.virtualGroups&&!quotaOverview.personSummary?.planningConflicts} progressScope={statusScope}
           actionableQuotaCases={actionableQuotaCases}
           saving={saving}
           onRefresh={handleRefresh}
@@ -773,6 +776,9 @@ export function Assignments() {
           {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
             <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
+              virtualGroups={(planning?.athletePlanning?.groups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline||!group.editable)&&(!filterGender||group.personalGender===filterGender||!group.editable)&&!filterRoomCategory&&!filterImportReview&&(!queueSearch||`${group.nationCode} ${group.discipline??''}`.toLowerCase().includes(queueSearch.toLowerCase())))}
+              onOpenForecast={nation=>navigate(`/athletes?nation=${encodeURIComponent(nation)}&planning=1`)}
+              zeroAreas={(planning?.athletePlanning?.zeroGroups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline)&&(!filterGender||group.personalGender===filterGender)).length}
               units={queueUnits}
               onExternal={setExternalItem}
               onSplit={setSplitBookingId}
@@ -1149,6 +1155,7 @@ function AlertBanner({
 }
 
 function QueueSidebar({
+  virtualGroups=[],onOpenForecast,zeroAreas,
   units,
   filterMode,
   onFilterMode,
@@ -1185,6 +1192,7 @@ function QueueSidebar({
   pendingAction,
   hotelName,highlightedItems,onSplit,splitOptionsFor,onExternal,
 }: {
+  virtualGroups?:import('../types').ArrivalPlanningRow[];onOpenForecast:(nation:string)=>void;zeroAreas:number;
   hotelName?:string;highlightedItems:string[];
   onSplit:(bookingId:string)=>void;
   onExternal:(unit:DispositionItem)=>void;
@@ -1237,11 +1245,12 @@ function QueueSidebar({
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
-            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} offene Zuweisungen</div>
+            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} namentliche Aufgaben · {virtualGroups.length} vorläufige Gruppen</div>
           </div>
         </div>
 
         {filterMode==='synchronized' && <QueueDemandSummary units={units} context={[filterNation,filterDiscipline && disciplineDisplayName(filterDiscipline),filterGender,filterPersonType==='athletes' ? 'Athleten' : filterPersonType==='officials' ? 'Officials' : '',search].filter(Boolean).join(' · ')}/>}
+        {zeroAreas>0&&<p className="text-xs text-[var(--ops-text-muted)]">{zeroAreas} Bereiche mit expliziter Nullprognose: kein zusätzlicher offener Bedarf.</p>}
         <SearchInput value={search} onChange={onSearch} placeholder="Athleten suchen..." />
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
@@ -1279,6 +1288,7 @@ function QueueSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-3 py-3">
           <div className="space-y-2">
+            {virtualGroups.map(group=><VirtualDispositionQueueCard key={group.areaId} group={group} onOpen={()=>onOpenForecast(group.nationCode)}/>)}
             {shareRequests.map(({ unit }) => (
                 <DispositionQueueCard
                   key={unit.unitId}
@@ -1315,7 +1325,7 @@ function QueueSidebar({
                 pending={pendingAction?.unitId === unit.unitId}
               />
             ))}
-            {!regularUnits.length && !shareRequests.length && (
+            {!regularUnits.length && !shareRequests.length && !virtualGroups.length && (
               <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-[var(--ops-assignment-text-body)]">
                 Keine Einheiten mit den aktuellen Filtern.
               </div>

@@ -419,7 +419,7 @@ def test_person_status_api_is_read_only_unique_filtered_and_recomputed(events):
     lost=records[str(orphan.id)]['singleRoom']
     assert lost['status']=='PENDING' and lost['context'] is None and lost['applicableApprovalId'] is None
     totals=full['personSummary']
-    assert totals==dict(peopleTotal=5,accommodationPeopleRequired=4,fullyAssigned=2,unassigned=1,partiallyAssigned=1,accommodationConflicts=0,roomPreferenceMismatches=2,pendingSingleRoomPeople=1,contextlessPendingSingleRoomPeople=1)
+    assert totals==dict(peopleTotal=5,accommodationPeopleRequired=4,fullyAssigned=2,unassigned=1,partiallyAssigned=1,accommodationConflicts=0,roomPreferenceMismatches=2,pendingSingleRoomPeople=1,contextlessPendingSingleRoomPeople=1,operationalAccommodationDemand=4,virtualPlaces=0,virtualGroups=0,planningConflicts=0)
     # Filter only after evaluating the complete population; even a nonmatching
     # context filter retains unresolved people, explicitly marked as such.
     for query in ['&discipline=Ski%20Cross&gender=M','&sportFamily=Snowboard','&personType=OFFICIAL']:

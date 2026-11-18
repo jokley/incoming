@@ -172,10 +172,7 @@ export interface StayWindow {
  intervals?: Array<{checkInDate:string;checkOutDate:string}>;
 }
 
-export type ArrivalStatus = 'UNDECIDED' | 'EXPECTED' | 'CONFIRMED' | 'NOT_TRAVELLING';
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
-  arrivalStatus?: ArrivalStatus;
-  arrivalStatusSource?: 'DEFAULT' | 'MANUAL';
   stayWindow?:StayWindow;
   accommodationCoverage?: AccommodationCoverage;
   id: string;
@@ -439,7 +436,9 @@ export interface AssignmentGridHotel {
   slots: AssignmentSlot[];
 }
 
+export interface OperativeAthletePlanning {replacedPersonIds:string[];groups:ArrivalPlanningRow[];zeroGroups?:ArrivalPlanningRow[];controlledAreas:number;zeroAreas:number;virtualPlaces:number;conflicts:number}
 export interface AssignmentPlanningView {
+  athletePlanning?:OperativeAthletePlanning;
   timeline: {
     startDate?: string | null;
     endDate?: string | null;
@@ -734,15 +733,15 @@ export interface QuotaOverview {
 
 
 export interface ArrivalPlanningPerson {
- personId:string;name:string;arrivalStatus:ArrivalStatus;personalGender:string|null;
+ personId:string;name:string;personalGender:string|null;
  disciplines:string[];sportFamilies:string[];reasons:string[];hasBooking:boolean;
  worldChampionMarked:boolean;titleReferences:Array<{id:string;championship:string;championshipYear:number;discipline:string;eventGroup:string}>;
 }
 export interface ArrivalPlanningRow {
  areaId:string;eventId:string;nationCode:string;discipline:string|null;personalGender:string|null;sportFamilies:string[];
- reportedCount:number;expectedTotal:number|null;namedExpectedCount:number;anonymousRemaining:number|null;undecidedCount:number;notTravellingCount:number;
+ reportedCount:number;expectedTotal:number|null;bookedPeopleCount:number;usesVirtualPlanning:boolean;virtualPlaces:number;replacedPersonIds:string[];
  status:'NOT_SET'|'PLANNED'|'CONFLICT';conflict:boolean;reasons:string[];editable:boolean;people:ArrivalPlanningPerson[];worldChampionCount:number;
  checkInDate:string|null;checkOutDate:string|null;note:string|null;revision:number;updatedBy:string|null;updatedAt:string|null;baseToken:string;
 }
-export interface ArrivalPlanningOverview {eventId:string;nationCode:string|null;reportedCount:number;namedExpectedCount:number;rows:ArrivalPlanningRow[]}
+export interface ArrivalPlanningOverview {eventId:string;nationCode:string|null;reportedCount:number;rows:ArrivalPlanningRow[]}
 export interface ArrivalForecastInput {baseToken:string;expectedTotal:number|null;checkInDate:string|null;checkOutDate:string|null;note:string|null}
