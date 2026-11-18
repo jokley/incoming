@@ -172,7 +172,10 @@ export interface StayWindow {
  intervals?: Array<{checkInDate:string;checkOutDate:string}>;
 }
 
+export type ArrivalStatus = 'UNDECIDED' | 'EXPECTED' | 'CONFIRMED' | 'NOT_TRAVELLING';
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
+  arrivalStatus?: ArrivalStatus;
+  arrivalStatusSource?: 'DEFAULT' | 'MANUAL';
   stayWindow?:StayWindow;
   accommodationCoverage?: AccommodationCoverage;
   id: string;

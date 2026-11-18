@@ -655,6 +655,7 @@ class Athlete(db.Model):
         db.CheckConstraint("accommodation_requirement_import_value IS NULL OR accommodation_requirement_import_value IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement_import_value'),
         db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement'),
         db.CheckConstraint("accommodation_requirement_source IN ('DEFAULT', 'IMPORT', 'MANUAL')", name='accommodation_requirement_source'),
+        db.CheckConstraint("arrival_status IS NULL OR arrival_status IN ('UNDECIDED', 'EXPECTED', 'CONFIRMED', 'NOT_TRAVELLING')", name='arrival_status'),
         db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
         db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL', 'APPROVAL')", name='accommodation_rate_source'),
     )
@@ -668,6 +669,8 @@ class Athlete(db.Model):
     accommodation_rate_category = db.Column(db.String(10), nullable=False, default='STANDARD', server_default='STANDARD')
     accommodation_rate_source = db.Column(db.String(10), nullable=False, default='DEFAULT', server_default='DEFAULT')
     accommodation_rate_approval_id = db.Column(db.Integer, db.ForeignKey('import_approval.id', name='fk_athlete_rate_approval'), nullable=True, index=True)
+    # NULL follows the role default; only explicit operational decisions are stored.
+    arrival_status = db.Column(db.String(20), nullable=True)
     function = db.Column(db.String(50))  # Athlete, NSA Coach, etc.
     competitor_id = db.Column(db.String(50))
     accred_id = db.Column(db.String(50))
@@ -757,11 +760,14 @@ class Athlete(db.Model):
 
     def to_dict(self):
         from quota_history import approved_quota_disciplines, approved_quota_contexts
+        from quota_service import is_athlete
         return {
             'id': str(self.id),
             **rate_projection(self),
             **requirement_projection(self),
             'importAccommodationRequirement': self.accommodation_requirement_import_value,
+            'arrivalStatus': self.arrival_status or ('UNDECIDED' if is_athlete({'function': self.function}) else 'EXPECTED'),
+            'arrivalStatusSource': 'MANUAL' if self.arrival_status else 'DEFAULT',
             'function': self.function,
             'competitorId': self.competitor_id,
             'accredId': self.accred_id,
