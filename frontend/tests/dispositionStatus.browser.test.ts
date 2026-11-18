@@ -130,10 +130,10 @@ test('reduced forecasts replace named queue tasks without becoming drag sources;
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
- let total:number|null=null;
+ let total:number|null=null,blocked=false;
  const people=Array.from({length:8},(_,i)=>({id:String(i+1),firstname:'Real'+i,lastname:'Athlete',name:'Real'+i+' Athlete',nationCode:'FIN',function:'Athlete',gender:'M',quotaDisciplines:['Freeski Park & Pipe'],roomType:'Double shared',arrivalDate:interval.checkInDate,departureDate:interval.checkOutDate,single_room_status:'NONE',accommodationRequirement:'REQUIRED',accommodationCoverage:{overallInterval:interval,coverageStatus:'UNASSIGNED',segments:[],coveredIntervals:[],openIntervals:[interval],conflicts:[]}}));
- const row=()=>({areaId:'stable-area',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:total,usesVirtualPlanning:total!==null&&total<8,virtualPlaces:total!==null&&total<8?total:0,replacedPersonIds:total!==null&&total<8?people.map(p=>p.id):[],bookedPeopleCount:0,status:total===null?'NOT_SET':'PLANNED',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],...interval,note:null,baseToken:'current',revision:1,updatedBy:'tester',updatedAt:'2026-11-18T10:00:00Z'});
- const policy=()=>({replacedPersonIds:row().replacedPersonIds,groups:row().usesVirtualPlanning&&total!>0?[row()]:[],zeroGroups:total===0?[row()]:[],controlledAreas:row().usesVirtualPlanning?1:0,zeroAreas:total===0?1:0,virtualPlaces:row().virtualPlaces,conflicts:0});
+ const row=()=>({areaId:'stable-area',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:total,usesVirtualPlanning:total!==null&&total<8,virtualPlaces:!blocked&&total!==null&&total<8?total:0,replacedPersonIds:!blocked&&total!==null&&total<8?people.map(p=>p.id):[],bookedPeopleCount:blocked?2:0,status:blocked?'CONFLICT':total===null?'NOT_SET':'PLANNED',conflict:blocked,reasons:blocked?['Reduzierte Prognose mit bestehenden namentlichen Buchungen. Bestand zuerst klären; keine zusätzlichen virtuellen Plätze.']:[],editable:true,worldChampionCount:1,people:[],...interval,note:null,baseToken:'current',revision:1,updatedBy:'tester',updatedAt:'2026-11-18T10:00:00Z'});
+ const policy=()=>({replacedPersonIds:row().replacedPersonIds,groups:row().usesVirtualPlanning&&total!>0?[row()]:[],zeroGroups:!blocked&&total===0?[row()]:[],controlledAreas:row().usesVirtualPlanning?1:0,zeroAreas:!blocked&&total===0?1:0,virtualPlaces:row().virtualPlaces,conflicts:blocked?1:0});
  const units=people.map(p=>({unitId:'u'+p.id,nationCode:'FIN',sourceRowKey:p.id,occupants:[{...p,athleteId:p.id}],roomType:'Double shared',roomTypeLabel:'double',roomCategoryLabel:'dz',occupantCount:1,...interval,specialMealFlags:[],statusBadges:[],assignmentWarnings:[],isFullyAssigned:false}));
  const projected=()=>people.map(p=>({personId:p.id,eventId:'1',name:p.name,nationCode:'FIN',personalGender:'M',personType:'ATHLETE',function:'Athlete',accommodationRequirement:'REQUIRED',sportFamilies:['Freestyle'],quotaDisciplines:p.quotaDisciplines,quotaContexts:[],matchesContextFilters:true,accommodation:p.accommodationCoverage,roomPreference:{reportedValue:p.roomType,reportedKind:'DOUBLE',status:'UNASSIGNED',hasMismatch:false,segments:[]},singleRoom:{status:'NO_SINGLE_USE',hasSingleUse:false,context:null,eligibleContexts:[],bookingIds:[],storedApprovalId:null,applicableApprovalId:null,approvalApplicable:false,approvedContexts:[],exemptionReason:null,reason:null}}));
  const event={id:'1',name:'Virtual synthetic',active:true};const errors:string[]=[],writes:string[]=[];
@@ -141,7 +141,7 @@ test('reduced forecasts replace named queue tasks without becoming drag sources;
  await page.route('**/api/**',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname.slice(4);
   if(req.method()==='PUT'&&path==='/athletes/arrival-planning/stable-area'){total=req.postDataJSON().expectedTotal;writes.push(path);return route.fulfill({json:row()});}
-  if(path==='/fis/official-quotas')return route.fulfill({json:{rows:[],unallocatedSingleRooms:[],personStatuses:projected(),personPlanning:policy(),personSummary:{peopleTotal:8,accommodationPeopleRequired:row().usesVirtualPlanning?0:8,fullyAssigned:0,unassigned:row().usesVirtualPlanning?0:8,partiallyAssigned:0,accommodationConflicts:0,roomPreferenceMismatches:0,pendingSingleRoomPeople:0,contextlessPendingSingleRoomPeople:0,operationalAccommodationDemand:row().usesVirtualPlanning?row().virtualPlaces:8,virtualPlaces:row().virtualPlaces,virtualGroups:policy().groups.length,planningConflicts:0},personFilters:{nationCode:url.searchParams.get('nationCode'),discipline:url.searchParams.get('discipline'),gender:url.searchParams.get('gender'),sportFamily:url.searchParams.get('sportFamily'),personType:url.searchParams.get('personType'),personalGender:null,contextlessPendingIncluded:true}}});
+  if(path==='/fis/official-quotas')return route.fulfill({json:{rows:[],unallocatedSingleRooms:[],personStatuses:projected(),personPlanning:policy(),personSummary:{peopleTotal:8,accommodationPeopleRequired:!blocked&&row().usesVirtualPlanning?0:8,fullyAssigned:blocked?2:0,unassigned:blocked?6:row().usesVirtualPlanning?0:8,partiallyAssigned:0,accommodationConflicts:0,roomPreferenceMismatches:0,pendingSingleRoomPeople:0,contextlessPendingSingleRoomPeople:0,operationalAccommodationDemand:!blocked&&row().usesVirtualPlanning?row().virtualPlaces:8,virtualPlaces:row().virtualPlaces,virtualGroups:policy().groups.length,planningConflicts:blocked?1:0},personFilters:{nationCode:url.searchParams.get('nationCode'),discipline:url.searchParams.get('discipline'),gender:url.searchParams.get('gender'),sportFamily:url.searchParams.get('sportFamily'),personType:url.searchParams.get('personType'),personalGender:null,contextlessPendingIncluded:true}}});
   if(path==='/assignments/availability')return route.fulfill({json:{targets:{},hotels:{}}});
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/athletes':people,'/athletes/arrival-planning':{eventId:'1',nationCode:url.searchParams.get('nationCode'),reportedCount:8,rows:[row()]},'/assignments/planning-view':{timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units,assigned:[]},hotels:[],validationByUnit:{},athletePlanning:policy()}};
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
@@ -176,5 +176,20 @@ test('reduced forecasts replace named queue tasks without becoming drag sources;
   assert.equal(await page.getByRole('article',{name:'Virtuelle Gruppe FIN Freeski Park & Pipe M',exact:true}).count(),count);
   assert.equal(await page.locator('aside div[role="group"][draggable="true"]').count(),value===null||value===8?8:0);
  }
+ // The server's blocking conflict must restore every real open task.
+ total=4;blocked=true;
+ people.slice(0,2).forEach(person=>Object.assign(person.accommodationCoverage,{coverageStatus:'FULLY_ASSIGNED',openIntervals:[],coveredIntervals:[interval]}));
+ await page.reload();await card.waitFor();
+ await page.getByText('6 namentliche Aufgaben · 1 vorläufige Gruppen',{exact:true}).waitFor();
+ assert.equal(await page.locator('aside div[role="group"][draggable="true"]').count(),6);
+ assert.match(await card.innerText(),/keine zusätzlichen Plätze/);
+ assert.equal(await card.getAttribute('draggable'),'false');
+ await page.getByRole('button',{name:'Vollständig 2 / Klärung',exact:true}).waitFor();
+ assert.match(await page.locator('section[aria-label="Personen Soll/Ist"]').innerText(),/0 virtuelle Plätze.*1 Klärungsfälle/);
+ await page.getByRole('button',{name:'Nicht zugewiesen 6',exact:true}).click();
+ const affected=page.getByRole('dialog').getByRole('list',{name:'Betroffene Personen'});
+ assert.equal(await affected.locator('li').count(),6);
+ assert.ok(!(await affected.innerText()).includes('Real0 Athlete'));
+ await page.keyboard.press('Escape');
  assert.deepEqual(writes,['/athletes/arrival-planning/stable-area']);assert.deepEqual(errors,[]);
 });

@@ -166,32 +166,41 @@ def test_forecast_migration_is_additive_and_reversible():
             assert connection.scalar(text('SELECT count(*) FROM championship_event'))==1
 
 
-def test_forecasts_preserve_booking_single_use_and_live_person_status(planning):
-    from datetime import date
+@pytest.mark.parametrize('booked_count',[1,2])
+@pytest.mark.parametrize('total',[0,4])
+def test_forecasts_preserve_booking_single_use_and_live_person_status(planning,booked_count,total):
     from models import RoomBooking,RoomBookingOccupant,Hotel,RoomType
     client,event,people=planning
-    person=people[0]
-    person.arrival_date=date(2027,3,11);person.departure_date=date(2027,3,23)
     hotel=Hotel(name='Forecast test');rt=RoomType(name='Single',max_persons=1)
     db.session.add_all([hotel,rt]);db.session.flush()
-    booking=RoomBooking(event_id=event.id,hotel=hotel,room_type=rt,room_number='1',check_in_date=person.arrival_date,check_out_date=person.departure_date,counts_as_single=True)
-    db.session.add(booking);db.session.flush();db.session.add(RoomBookingOccupant(room_booking_id=booking.id,athlete_id=person.id));db.session.commit()
-    before=booking.to_dict()
+    bookings=[]
+    for index,person in enumerate(people[:booked_count]):
+        booking=RoomBooking(event_id=event.id,hotel=hotel,room_type=rt,room_number=str(index+1),check_in_date=person.arrival_date,check_out_date=person.departure_date,counts_as_single=True)
+        db.session.add(booking);db.session.flush();db.session.add(RoomBookingOccupant(room_booking_id=booking.id,athlete_id=person.id));bookings.append(booking)
+    db.session.commit()
+    before=[booking.to_dict() for booking in bookings]
     projection=client.get('/api/fis/official-quotas?includePeople=true').json
-    response=save(client,rows(client)[0],4)
+    response=save(client,rows(client)[0],total)
     assert response.status_code==200
-    assert booking.to_dict()==before
+    assert [booking.to_dict() for booking in bookings]==before
     current=client.get('/api/fis/official-quotas?includePeople=true').json
-    assert current['rows']==projection['rows']
-    assert current['personStatuses']==projection['personStatuses']
+    assert current['rows']==projection['rows'] and current['personStatuses']==projection['personStatuses']
     assert current['personSummary']['pendingSingleRoomPeople']==projection['personSummary']['pendingSingleRoomPeople']
     assert response.json['conflict'] and response.json['virtualPlaces']==0
-    assert len(response.json['replacedPersonIds'])==7 and str(person.id) not in response.json['replacedPersonIds']
+    assert response.json['replacedPersonIds']==[]
     assert current['personSummary']['planningConflicts']==1
-    db.session.commit()
-    current=rows(client)[0]
-    assert current['conflict'] and 'bestehenden namentlichen Buchungen' in ' '.join(current['reasons'])
-    assert booking.counts_as_single and len(booking.occupants)==1
+    assert current['personSummary']['fullyAssigned']==booked_count
+    assert current['personSummary']['unassigned']==8-booked_count
+    assert current['personSummary']['accommodationPeopleRequired']==current['personSummary']['operationalAccommodationDemand']==8
+    assert current['personPlanning']['replacedPersonIds']==[]
+    assert current['personPlanning']['virtualPlaces']==current['personPlanning']['zeroAreas']==0
+    assert current['personPlanning']['zeroGroups']==[]
+    view=client.get('/api/assignments/planning-view?includeValidations=false').json
+    assert view['athletePlanning']['replacedPersonIds']==[] and view['athletePlanning']['conflicts']==1
+    open_ids={p['athleteId'] for unit in view['units']['unassigned'] for p in unit['occupants'] if p['accommodationCoverage']['openIntervals']}
+    assert open_ids=={str(p.id) for p in people[booked_count:]}
+    assert view['athletePlanning']['groups'][0]['conflict']
+    assert all(booking.counts_as_single and len(booking.occupants)==1 for booking in bookings)
 
 
 def test_explicit_zero_is_not_an_unset_forecast(planning):
@@ -220,3 +229,39 @@ def test_removal_migration_refuses_manual_values_then_preserves_people():
             assert connection.scalar(text('SELECT firstname FROM athlete'))=='Original'
             module.downgrade()
             assert connection.scalar(text('SELECT arrival_status FROM athlete')) is None
+
+
+@pytest.mark.parametrize('change',['added','removed','removed_all','regrouped','multiple_groups','missing_gender'])
+def test_blocked_forecast_keeps_all_current_person_tasks(planning,change):
+    client,_,people=planning
+    original=save(client,rows(client)[0],4).json
+    assert len(original['replacedPersonIds'])==8
+    if change=='added':
+        db.session.add(Athlete(firstname='New',lastname='Member',nation_code='FIN',function='Athlete',gender='M',competitions=people[0].competitions,arrival_date=people[0].arrival_date,departure_date=people[0].departure_date))
+    elif change=='removed':db.session.delete(people[-1])
+    elif change=='removed_all':
+        for person in people:db.session.delete(person)
+    elif change=='regrouped':people[0].competitions=[Competition.query.filter_by(quota_discipline='Snowboard Cross',gender='M').first()]
+    elif change=='multiple_groups':people[0].competitions.append(Competition.query.filter_by(quota_discipline='Snowboard Cross',gender='M').first())
+    else:people[0].gender=None
+    db.session.commit()
+    view=client.get('/api/assignments/planning-view?includeValidations=false').json
+    policy=view['athletePlanning']
+    assert policy['replacedPersonIds']==[] and policy['virtualPlaces']==0 and policy['conflicts']>0
+    assert any(group['conflict'] for group in policy['groups'])
+    count=Athlete.query.count()
+    assert sum(len(unit['occupants']) for unit in view['units']['unassigned'])==count
+    response=client.get('/api/fis/official-quotas?includePeople=true')
+    if change=='missing_gender':
+        # Existing quota validation remains fail-closed; the queue above still
+        # exposes all people and the UI cannot claim a successful evaluation.
+        assert response.status_code==409 and response.json['code']=='QUOTA_GENDER_REVIEW_REQUIRED'
+        assert 'personSummary' not in response.json
+        return
+    assert response.status_code==200,response.json
+    current=response.json
+    assert current['personSummary']['unassigned']==count
+    assert current['personSummary']['fullyAssigned']==0 and current['personSummary']['operationalAccommodationDemand']==count
+    assert current['personSummary']['planningConflicts']>0
+    assert current['personPlanning']['replacedPersonIds']==[]
+    assert sum(len(unit['occupants']) for unit in view['units']['unassigned'])==count

@@ -82,7 +82,7 @@ def project(nation=None):
         rows.append(dict(areaId=area_id(owner,*key),eventId=str(owner),nationCode=key[0],discipline=key[1],personalGender=key[2],
                          sportFamilies=families,reportedCount=len(members),bookedPeopleCount=sum(p['hasBooking'] for p in members),
                          usesVirtualPlanning=reduced,virtualPlaces=expected if reduced and not reasons else 0,
-                         replacedPersonIds=[p['personId'] for p in members if reduced and not p['hasBooking']],
+                         replacedPersonIds=[p['personId'] for p in members if reduced and not reasons and not p['hasBooking']],
                          status='CONFLICT' if reasons else 'NOT_SET' if expected is None else 'PLANNED',conflict=bool(reasons),reasons=reasons,
                          source='MANUAL' if forecast else None,editable=key[1] is not None,people=members,
                          worldChampionCount=sum(p['worldChampionMarked'] or bool(p['titleReferences']) for p in members),
@@ -131,12 +131,12 @@ def save(area, data, username):
 
 
 def operative_projection(overview):
-    """Read-only replacement policy; zero is explicit, bookings stay named."""
+    """Only valid forecasts replace named tasks; conflicts remain visible."""
     rows=overview['rows']
     return dict(replacedPersonIds=sorted({identity for row in rows for identity in row['replacedPersonIds']}),
                 groups=[row for row in rows if (row['usesVirtualPlanning'] and row['expectedTotal']>0) or row['conflict']],
                 controlledAreas=sum(row['usesVirtualPlanning'] for row in rows),
-                zeroAreas=sum(row['usesVirtualPlanning'] and row['expectedTotal']==0 for row in rows),
-                zeroGroups=[row for row in rows if row['usesVirtualPlanning'] and row['expectedTotal']==0],
+                zeroAreas=sum(row['usesVirtualPlanning'] and not row['conflict'] and row['expectedTotal']==0 for row in rows),
+                zeroGroups=[row for row in rows if row['usesVirtualPlanning'] and not row['conflict'] and row['expectedTotal']==0],
                 virtualPlaces=sum(row['virtualPlaces'] for row in rows),
                 conflicts=sum(row['conflict'] for row in rows))
