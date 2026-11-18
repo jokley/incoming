@@ -150,7 +150,7 @@ test('athlete quota check previews Officials and EZ live and edits committed NN 
  const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:9,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],quotaHints:[{name:'Halfpipe Herren',regularMax:4}],checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
  const planning:any={eventId:'1',nationCode:'FIN',reportedCount:9,mode:'IMPORT',versionId:'30',rows:[row],decisions:[]};
  const preview:any={eventId:'1',people,rooms:[],errors:[],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:true,changePlan:{digest:'frozen-plan',snapshotScope:'FULL_NATION',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
- preview.quotaOverview={event:{name:'NN synthetic',isWorldChampionship:true,rulesFixed:true,rulesRevision:1},nations:[{nationCode:'FIN',incomplete:false,athleteFamilies:[{topLevelDiscipline:'Freestyle',athleteQuotaUsed:9,athleteQuotaLimit:36,athleteGenderUsed:{M:9,F:0},athleteGenderLimit:22,athleteQuotaStatus:'WITHIN',decisionStatus:'NONE',requiredExtent:{}}],groups:[],officials:10,otherPeople:0,coverageReviewRequired:false,ezDecisionsOpen:0}]};
+ preview.quotaOverview={event:{name:'NN synthetic',isWorldChampionship:true,rulesFixed:true,rulesRevision:1},nations:[{nationCode:'FIN',incomplete:false,athleteFamilies:[{topLevelDiscipline:'Freestyle',athleteQuotaUsed:9,athleteQuotaLimit:36,athleteGenderUsed:{M:9,F:0},athleteGenderLimit:22,athleteQuotaStatus:'WITHIN',decisionStatus:'NONE',requiredExtent:{}}],groups:[{name:'Freeski Park & Pipe',officials:10,athletes:9,coverageReviewRequired:false,contexts:[{gender:'M',athletes:9,officialQuota:11,singleRoomsAllowed:3,singleRoomsRequested:4,singleRoomsApproved:0,singleRoomsPending:1,quotaExemptSingleRooms:0}],totals:{officialQuota:11,singleRoomsAllowed:3,singleRoomsRequested:4,singleRoomsApproved:0,singleRoomsPending:1,quotaExemptSingleRooms:0}}],officials:10,otherPeople:0,coverageReviewRequired:false,ezDecisionsOpen:0}]};
  const session:any={id:'1',nation:'FIN',status:'PROFESSIONALLY_REVIEWED',errors:0,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,nnPlanning:planning,importControl:{people:[],issues:[],competitions:[]}};
  const event={id:'1',name:'NN synthetic',active:true};let stale=false,reader=false,delayFour=false;
  const writes:any[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
@@ -158,7 +158,7 @@ test('athlete quota check previews Officials and EZ live and edits committed NN 
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
   if(req.method()==='POST'&&path==='/import/sessions/1/nn-preview'){
    const body=req.postDataJSON();const total=body.nnPlanning.length?body.nnPlanning[0].expectedTotal:row.expectedTotal;
-   const fixtures:any={'null':{expected:9,cap:11,basis:10,rooms:3},'4':{expected:4,cap:6,basis:6,rooms:2},'5':{expected:5,cap:7,basis:7,rooms:3},'0':{expected:0,cap:0,basis:0,rooms:0}};
+   const fixtures:any={'null':{expected:9,cap:11,basis:10,rooms:3},'9':{expected:9,cap:11,basis:10,rooms:3},'4':{expected:4,cap:6,basis:6,rooms:2},'5':{expected:5,cap:7,basis:7,rooms:3},'0':{expected:0,cap:0,basis:0,rooms:0}};
    const f=fixtures[String(total)];assert.ok(f);
    if(delayFour&&total===4)await new Promise(resolve=>setTimeout(resolve,500));
    return route.fulfill({json:{...planning,rows:[{...row,expectedTotal:total,virtualPlaces:total??0}],operationalQuota:{conflict:false,reasons:[],rows:[{nationCode:'FIN',discipline:row.discipline,gender:'M',athletesEntered:9,expectedAthletes:f.expected,officialQuota:f.cap,registeredOfficials:10,singleRoomOfficialBasis:f.basis,singleRoomsAllowed:f.rooms,singleRoomsRequested:4,singleRoomsPending:f.rooms===3?1:f.rooms===2?2:4,approvedExtraSingleRooms:0,quotaExemptSingleRooms:0,officialsExceeded:total!==null,coverageChanged:f.rooms!==3,fisOfficialQuota:11,fisSingleRoomsAllowed:3}]}}});
@@ -185,13 +185,31 @@ test('athlete quota check previews Officials and EZ live and edits committed NN 
  const select=section.getByLabel('NN-Entscheidung Freeski Park & Pipe M',{exact:true});
  const input=section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true});
  const value=(label:string)=>section.locator('dl > div').filter({has:page.locator('dt',{hasText:label})}).locator('dd');
+ const checkOfficials=async(cap:string,basis:string,rooms:string,screenshot?:string)=>{
+  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();
+  await page.getByRole('button',{name:/^Officials & EZ-Quote/}).first().click();
+  const officials=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
+  const operative=officials.getByLabel('Operative Quote Freeski Park & Pipe M',{exact:true});
+  const field=(name:string)=>operative.locator('dl > div').filter({has:page.locator('dt',{hasText:name})}).locator('dd');
+  await field('Operative Officials-Obergrenze').filter({hasText:cap}).waitFor();
+  assert.equal(await field('EZ-Berechnungsbasis').innerText(),basis);assert.equal(await field('Regulärer EZ-Anspruch').innerText(),rooms);
+  assert.equal(await officials.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).count(),0);
+  await officials.getByText('Offizieller FIS-Prüfstand · unveränderte Meldung',{exact:true}).waitFor();
+  if(screenshot)await page.screenshot({path:`/workspace/artifacts/${screenshot}`,animations:'disabled'});
+  // One editing surface: switch the existing dialog to the affected athlete area.
+  await operative.getByRole('button',{name:/Unterkunftsbedarf prüfen/}).click();
+  await dialog.waitFor();await value('Operative Officials-Obergrenze').filter({hasText:cap}).waitFor();
+  assert.equal(await page.getByRole('dialog').count(),1);
+ };
  await value('Operative Officials-Obergrenze').filter({hasText:'11'}).waitFor();
  await select.selectOption('NN');await input.fill('4');
  await value('Operative Officials-Obergrenze').filter({hasText:'6'}).waitFor();assert.equal(await value('EZ-Berechnungsbasis').innerText(),'6');assert.equal(await value('Regulärer EZ-Anspruch').innerText(),'2');
  assert.match(await section.getByLabel('NN-Plätze',{exact:true}).innerText(),/NN 1 · NN 2 · NN 3 · NN 4/);
  assert.equal(writes.length,0);await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/nn-quota-four-dark.png',animations:'disabled'});
+ await checkOfficials('6','6','2','officials-nn-four-dark.png');
  await input.fill('5');await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();assert.equal(await value('EZ-Berechnungsbasis').innerText(),'7');assert.equal(await value('Regulärer EZ-Anspruch').innerText(),'3');
  await page.screenshot({path:'/workspace/artifacts/nn-quota-five-dark.png',animations:'disabled'});
+ await checkOfficials('7','7','3','officials-nn-five-dark.png');
  // A late response to the older value must never replace the newer preview.
  delayFour=true;
  const oldRequest=page.waitForRequest(r=>r.url().endsWith('/nn-preview')&&r.postDataJSON().nnPlanning[0]?.expectedTotal===4);
@@ -211,6 +229,8 @@ test('athlete quota check previews Officials and EZ live and edits committed NN 
  stale=false;await page.reload();await openQuota();await select.selectOption('NN');await input.fill('5');await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();
  await Promise.all([page.waitForResponse(r=>r.url().endsWith('/nn-planning')),section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click()]);await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();assert.equal(row.expectedTotal,5);
  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();await openQuota();await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/nn-quota-five-light.png',animations:'disabled'});
+ await checkOfficials('7','7','3','officials-nn-five-light.png');
  assert.equal(writes.filter(w=>w.path.endsWith('/import')).length,1);
+ session.status='ARCHIVED';await page.reload();await openQuota();await checkOfficials('7','7','3');
  reader=true;await page.reload();await openQuota();assert.equal(await select.isDisabled(),true);assert.deepEqual(errors,[]);
 });

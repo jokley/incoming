@@ -1,15 +1,24 @@
+import {useEffect} from 'react';
 import {Crown} from 'lucide-react';
-import type {ImportNNPlanning,NNPlanningChoice} from '../types';
+import type {ImportNNPlanning,NNPlanningChoice,OperationalQuotaRow} from '../types';
 import {OpsButton} from '../design-system';
 
 export function checkedNNChoices(choices:NNPlanningChoice[]) {
  if(choices.some(choice=>choice.expectedTotal!==null&&(!Number.isInteger(choice.expectedTotal)||choice.expectedTotal<0||choice.expectedTotal>2147483647)))throw new Error('NN-Gesamtzahl muss eine nichtnegative ganze Zahl sein.');
  return choices;
 }
-export interface NNPlanningControls {planning:ImportNNPlanning;choices:NNPlanningChoice[];onChange:(choices:NNPlanningChoice[])=>void;disabled:boolean;onApply?:()=>void;busy?:boolean;error?:string|null}
+export interface NNPlanningControls {focusArea?:string;planning:ImportNNPlanning;choices:NNPlanningChoice[];onChange:(choices:NNPlanningChoice[])=>void;disabled:boolean;onApply?:()=>void;busy?:boolean;error?:string|null}
+
+/** Shared read-only values for both existing quota views; never calculates quotas. */
+export function OperationalQuotaValues({quota}:{quota:OperationalQuotaRow}) {return <>
+     <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">{[['Für Unterkunft erwartet',quota.expectedAthletes],['Operative Officials-Obergrenze',quota.officialQuota],['Tatsächlich erfasste Officials',quota.registeredOfficials],['EZ-Berechnungsbasis',quota.singleRoomOfficialBasis],['Regulärer EZ-Anspruch',quota.singleRoomsAllowed],['EZ-Anfragen / bestehende Nutzung',quota.singleRoomsRequested],['Zusätzliche EZ genehmigt',quota.approvedExtraSingleRooms],['EZ offen',quota.singleRoomsPending]].map(([label,value])=><div key={label}><dt>{label}</dt><dd className="font-bold">{value}</dd></div>)}</dl>
+     <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Offizielle FIS-Basis: {quota.athletesEntered} Athleten · Officials-Limit {quota.fisOfficialQuota} · bisheriger EZ-Anspruch {quota.fisSingleRoomsAllowed}. Operative Werte sind keine neue Genehmigung.</p>
+     {(quota.officialsExceeded||quota.singleRoomsPending>0||quota.coverageChanged)&&<p className="mt-1 text-xs font-bold text-[var(--ops-warning)]">Operativer Klärungsbedarf{quota.officialsExceeded?' · Officials über Obergrenze':''}{quota.singleRoomsPending>0?` · ${quota.singleRoomsPending} ungedeckte EZ`:''}{quota.coverageChanged?' · EZ-Deckung gegenüber FIS-Basis geändert':''}. Vorhandene Genehmigungen und Buchungen bleiben erhalten.</p>}
+ </>;}
 
 /** Embedded only in the existing athlete quota check. All dependent numbers are backend projections. */
-export function ArrivalPlanning({planning,choices,onChange,disabled,onApply,busy,error}:NNPlanningControls) {
+export function ArrivalPlanning({planning,choices,onChange,disabled,onApply,busy,error,focusArea}:NNPlanningControls) {
+ useEffect(()=>{if(focusArea)document.getElementById(`nn-area-${focusArea}`)?.scrollIntoView({block:'center'});},[focusArea]);
  const update=(row:ImportNNPlanning['rows'][number],mode:string,total?:number)=>{
   const prior=choices.find(choice=>choice.areaId===row.areaId);
   const other=choices.filter(choice=>choice.areaId!==row.areaId);
@@ -25,7 +34,7 @@ export function ArrivalPlanning({planning,choices,onChange,disabled,onApply,busy
    const choice=choices.find(choice=>choice.areaId===row.areaId);
    const mode=!choice?'KEEP':choice.expectedTotal===null?'NORMAL':'NN';
    const quota=planning.operationalQuota?.rows.find(q=>q.nationCode===row.nationCode&&q.discipline===row.discipline&&q.gender===row.personalGender);
-   return <div key={row.areaId} className="rounded border border-[var(--ops-border)] p-3" aria-label={`Unterkunftsbereich ${row.discipline??'Klärung'} ${row.personalGender??''}`}>
+   return <div id={`nn-area-${row.areaId}`} key={row.areaId} className="rounded border border-[var(--ops-border)] p-3" aria-label={`Unterkunftsbereich ${row.discipline??'Klärung'} ${row.personalGender??''}`}>
     <strong>{row.nationCode} · {row.discipline??'Zuordnung klären'} · {row.personalGender==='M'?'Herren':row.personalGender==='W'?'Damen':'Gender klären'}</strong>
     <p className="my-1 text-xs">FIS gemeldet: {row.reportedCount}{row.quotaHints?.map((hint,i)=><span key={i}> · {hint.name}: reguläre Startquote {hint.regularMax??'zu prüfen'}</span>)}</p>
     {row.worldChampionCount>0&&<p className="text-xs"><Crown className="mr-1 inline h-3.5 w-3.5 text-amber-500 fill-amber-200"/>{row.worldChampionCount} Weltmeister / Titelreferenz</p>}
@@ -33,9 +42,7 @@ export function ArrivalPlanning({planning,choices,onChange,disabled,onApply,busy
     {mode==='NN'&&<label>Erwarteter Unterkunftsbedarf <input aria-label={`NN-Anzahl ${row.discipline} ${row.personalGender}`} type="number" min={0} step={1} value={Number.isNaN(choice!.expectedTotal)?'':choice!.expectedTotal??''} disabled={disabled} onChange={event=>update(row,'NN',event.target.value===''?NaN:Number(event.target.value))} className="w-20 rounded border border-[var(--ops-border)] bg-[var(--ops-surface)] p-1"/></label>}</div>
     {row.conflict&&<p className="text-[var(--ops-warning)]">{row.reasons.join(' ')}</p>}
     {busy?<p role="status">Operative Vorschau wird berechnet …</p>:error?null:quota?<>
-     <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">{[['Für Unterkunft erwartet',quota.expectedAthletes],['Operative Officials-Obergrenze',quota.officialQuota],['Tatsächlich erfasste Officials',quota.registeredOfficials],['EZ-Berechnungsbasis',quota.singleRoomOfficialBasis],['Regulärer EZ-Anspruch',quota.singleRoomsAllowed],['EZ-Anfragen / bestehende Nutzung',quota.singleRoomsRequested],['Zusätzliche EZ genehmigt',quota.approvedExtraSingleRooms],['EZ offen',quota.singleRoomsPending]].map(([label,value])=><div key={label}><dt>{label}</dt><dd className="font-bold">{value}</dd></div>)}</dl>
-     <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Offizielle FIS-Basis: {quota.athletesEntered} Athleten · Officials-Limit {quota.fisOfficialQuota} · bisheriger EZ-Anspruch {quota.fisSingleRoomsAllowed}. Operative Werte sind keine neue Genehmigung.</p>
-     {(quota.officialsExceeded||quota.singleRoomsPending>0||quota.coverageChanged)&&<p className="mt-1 text-xs font-bold text-[var(--ops-warning)]">Operativer Klärungsbedarf{quota.officialsExceeded?' · Officials über Obergrenze':''}{quota.singleRoomsPending>0?` · ${quota.singleRoomsPending} ungedeckte EZ`:''}{quota.coverageChanged?' · EZ-Deckung gegenüber FIS-Basis geändert':''}. Vorhandene Genehmigungen und Buchungen bleiben erhalten.</p>}
+     <OperationalQuotaValues quota={quota}/>
     </>:<p className="text-xs">Kein gültiger Quotenkontext; Zuordnung klären.</p>}
     {!busy&&!error&&row.virtualPlaces>0&&<p aria-label="NN-Plätze" className="mt-2 text-xs font-semibold">{row.virtualPlaces<=10?Array.from({length:row.virtualPlaces},(_,i)=>`NN ${i+1}`).join(' · '):`NN 1–${row.virtualPlaces}`} · Noch nicht disponierbar</p>}
    </div>;
