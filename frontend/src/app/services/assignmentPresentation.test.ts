@@ -37,3 +37,18 @@ test('free virtual slots keep their identity after assigning another slot',()=>{
  const records=slots();const initial=ids(records);
  assert.deepEqual(ids([...records].reverse().map(s=>({...s,bookings:s.slotIndex===4 ? [{bookingId:'x'}] : []})) as AssignmentSlot[]),initial);
 });
+
+test('person task categories select server statuses once, including fully housed pending people',async()=>{
+ const {personTaskCategories,personTaskPeople,personStatusIndicators}=await import('./assignmentPresentation.ts');
+ const person=(id:string,coverage:string,preference:string,single:string,context:unknown=['AUT','Ski Cross','M'])=>({personId:id,accommodation:{coverageStatus:coverage},roomPreference:{status:preference,hasMismatch:preference==='MISMATCH'},singleRoom:{status:single,context,hasSingleUse:single!=='NO_SINGLE_USE',reason:'Kein gültiger Quotenkontext zuordenbar'}} as any);
+ const full=person('1','FULLY_ASSIGNED','MISMATCH','PENDING',null),partial=person('2','PARTIALLY_ASSIGNED','UNKNOWN','NO_SINGLE_USE'),open=person('3','UNASSIGNED','UNASSIGNED','NO_SINGLE_USE');
+ assert.deepEqual(personTaskPeople([full,full,partial,open],'pendingSingleRoomPeople').map(p=>p.personId),['1']);
+ assert.deepEqual(personTaskPeople([full,partial,open],'fullyAssigned').map(p=>p.personId),['1']);
+ assert.deepEqual(personTaskPeople([full,partial,open],'roomPreferenceMismatches').map(p=>p.personId),['1']);
+ assert.equal(personTaskCategories.length,6);
+ assert.equal(personStatusIndicators(full)[0].label,'EZ-Klärung erforderlich');
+ assert.ok(personStatusIndicators(full).length<=2);
+ assert.deepEqual(personStatusIndicators(undefined).map(i=>i.tone),['neutral']);
+ const conflict=person('4','CONFLICT','MISMATCH','PENDING');
+ assert.deepEqual(personStatusIndicators(conflict).map(i=>i.kind),['single','conflict']);
+});

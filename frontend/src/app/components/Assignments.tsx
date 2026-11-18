@@ -1,6 +1,7 @@
+import {PersonDispositionContext,PersonStatusIcons,PersonWorkSummary,PersonStatusDetails} from './assignment/PersonDispositionStatus';
 import {EzQuotaControl} from './assignment/EzQuotaControl';
 import {ezQuotaReason} from '../services/ezQuotaPresentation';
-import {stableRoomSlots} from '../services/assignmentPresentation';
+import {personTaskCategories,personTaskPeople,type PersonTaskCategory,stableRoomSlots} from '../services/assignmentPresentation';
 import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
@@ -52,7 +53,7 @@ import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
-import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
+import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender, sportAreaLabel } from '../services/competitionPresentation';
 import type { OfficialQuotaUsage, OfficialQuotaOverview, UnallocatedSingleRoom } from '../services/fisRules';
 import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, matchesQuotaAllowanceContext, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, quotaStatusLabel, uniqueQuotaContext, type PersonQuotaEvaluation } from '../services/quotaEvaluation';
 import type {
@@ -125,6 +126,11 @@ export function Assignments() {
   const [athletes, setAthletes] = useState<Athlete[]>([]);
   const [quotaOverview, setQuotaOverview] = useState<OfficialQuotaOverview>({rows:[],unallocatedSingleRooms:[]});
   const {rows:quotaUsage,unallocatedSingleRooms}=quotaOverview;
+  const [personStatusError,setPersonStatusError]=useState<string|null>(null);
+  const quotaRequest=useRef(0);
+  const [personCategory,setPersonCategory]=useState<PersonTaskCategory|null>(null);
+  const [statusPersonId,setStatusPersonId]=useState<string|null>(null);
+  const [statusFamily,setStatusFamily]=useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [manualQuotaValues,setManualQuotaValues]=useState<Record<string,boolean>>({});
@@ -213,7 +219,8 @@ export function Assignments() {
 
   useEffect(() => {
     void loadQuotaUsage();
-  }, [filterNation, filterDiscipline, filterGender]);
+  }, [filterNation, filterDiscipline, filterGender,filterPersonType,statusFamily]);
+  useEffect(()=>()=>{quotaRequest.current+=1;},[]);
 
   useEffect(() => {
     if (!requestedRoomTypeId || !planning || !activeHotelId) return;
@@ -287,18 +294,28 @@ export function Assignments() {
   };
 
   const loadQuotaUsage = async () => {
+    const requestId=++quotaRequest.current;
     try {
       setQuotaRefreshing(true);
       const overview = await api.getOfficialQuotaOverview({
+        includePeople:true,
+        sportFamily:statusFamily||undefined,
+        personType:filterPersonType==='athletes'?'ATHLETE':filterPersonType==='officials'?'OFFICIAL':undefined,
         nationCode: filterNation || undefined,
         discipline: filterDiscipline || undefined,
         gender: filterGender || undefined,
       });
-      setQuotaOverview(overview);
+      if(requestId!==quotaRequest.current)return;
+      if(!overview.personSummary || !overview.personStatuses || !overview.personFilters
+        || overview.personSummary.peopleTotal!==new Set(overview.personStatuses.map(p=>p.personId)).size
+        || personTaskCategories.some(category=>personTaskPeople(overview.personStatuses!,category.key).length!==overview.personSummary![category.key]))
+        throw new Error('Die Personenbewertung ist unvollständig oder widersprüchlich.');
+      setQuotaOverview(overview);setPersonStatusError(null);
     } catch (err) {
+      if(requestId===quotaRequest.current)setPersonStatusError('Personenstatus konnte nicht neu bewertet werden.');
       console.error(err);
     } finally {
-      setQuotaRefreshing(false);
+      if(requestId===quotaRequest.current)setQuotaRefreshing(false);
     }
   };
 
@@ -428,16 +445,27 @@ export function Assignments() {
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
 
-  const queueProgress = useMemo(() => {
-    const people = new Map(allUnitsCombined.flatMap(unit=>unit.occupants).filter(p=>p.accommodationRequirement!=='NO_ROOM').map(p=>[p.athleteId,p]));
-    const total = people.size;
-    const done = [...people.values()].filter(p=>p.accommodationCoverage?.coverageStatus==='FULLY_ASSIGNED').length;
-    return {
-      done,
-      total,
-      percent: total > 0 ? Math.round((done / total) * 100) : 0,
-    };
-  }, [allUnitsCombined]);
+  const statusScope=filterNation||filterDiscipline||filterGender||filterPersonType||statusFamily
+    ?`Gefilterte Personen: ${[filterNation&&`Nation ${filterNation}`,statusFamily&&`Bereich ${sportAreaLabel(statusFamily)}`,filterDiscipline&&`Event Group ${filterDiscipline}`,filterGender&&`Quoten-Gender ${filterGender}`,filterPersonType&&`Personenart ${filterPersonType==='athletes'?'Athleten':'Officials'}`].filter(Boolean).join(' · ')}`:'Eventgesamt · Personen';
+  const filters=quotaOverview.personFilters;
+  const personStatusReady=Boolean(quotaOverview.personSummary&&quotaOverview.personStatuses&&!quotaRefreshing&&!saving&&!personStatusError
+    &&filters?.nationCode===(filterNation||null)&&filters.discipline===(filterDiscipline||null)&&filters.gender===(filterGender||null)
+    &&filters.sportFamily===(statusFamily||null)&&filters.personType===(filterPersonType==='athletes'?'ATHLETE':filterPersonType==='officials'?'OFFICIAL':null));
+  const personStatusMap=useMemo(()=>new Map((quotaOverview.personStatuses??[]).map(person=>[person.personId,person])),[quotaOverview.personStatuses]);
+  const queueProgress={done:personStatusReady?quotaOverview.personSummary!.fullyAssigned:0,total:personStatusReady?quotaOverview.personSummary!.accommodationPeopleRequired:0,
+    percent:personStatusReady&&quotaOverview.personSummary!.accommodationPeopleRequired?Math.round(100*quotaOverview.personSummary!.fullyAssigned/quotaOverview.personSummary!.accommodationPeopleRequired):0};
+  const personStatusContext=useMemo(()=>({people:personStatusMap,ready:personStatusReady,onOpen:setStatusPersonId}),[personStatusMap,personStatusReady]);
+  const selectedStatusPerson=statusPersonId?personStatusMap.get(statusPersonId):undefined;
+  const taskPeople=personCategory&&personStatusReady?personTaskPeople(quotaOverview.personStatuses!,personCategory):[];
+  const openPersonDetails=(id:string,bookingId?:string)=>{
+    setStatusPersonId(null);setPersonCategory(null);
+    const segment=personStatusMap.get(id)?.accommodation.segments.find(segment=>!bookingId||segment.bookingId===bookingId);
+    const hotel=allHotels.find(h=>h.slots.some(slot=>slot.bookings.some(b=>b.bookingId===segment?.bookingId)));
+    const unit=allUnitsCombined.find(u=>u.occupants.some(p=>p.athleteId===id));
+    if(hotel&&segment){setActiveHotelId(hotel.hotelId);setSelected({type:'booking',id:segment.bookingId});}
+    else if(unit)setSelected({type:'unit',id:unit.unitId});
+    else navigate(`/athletes?athleteId=${encodeURIComponent(id)}`);
+  };
 
   const actionableQuotaCases = useMemo(
     () => actionableQuotaCaseCount(currentQuotaUsage,unallocatedSingleRooms),
@@ -699,7 +727,7 @@ export function Assignments() {
 
   return (
     <>
-    <DispositionDragContext.Provider value={{
+    <PersonDispositionContext.Provider value={personStatusContext}><DispositionDragContext.Provider value={{
       onAssignSlot:slot=>{
         if(!permissions.canManageAssignments || !focusedNeed)return;
         const validations=validationByUnit[getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds)];
@@ -725,12 +753,15 @@ export function Assignments() {
           view={view}
           onViewChange={setView}
           progress={queueProgress}
+          progressReady={personStatusReady} progressScope={statusScope}
           actionableQuotaCases={actionableQuotaCases}
           saving={saving}
           onRefresh={handleRefresh}
           quotaRows={currentQuotaUsage}
           quotaRefreshing={quotaRefreshing}
         />
+
+        {view==='dispatch'&&<PersonWorkSummary summary={quotaOverview.personSummary} ready={personStatusReady} loading={quotaRefreshing||saving} error={personStatusError} scope={statusScope} family={statusFamily} onFamily={setStatusFamily} onCategory={category=>{setStatusPersonId(null);setPersonCategory(category);}} onRetry={()=>void loadQuotaUsage()}/>}
 
         {notice && <div role="status" className="mx-3 my-2 flex justify-between gap-2 rounded-lg border border-[var(--ops-primary)] px-3 py-2 text-xs"><span>{notice}</span><button onClick={()=>setNotice('')}>Schließen</button></div>}
 
@@ -867,6 +898,13 @@ export function Assignments() {
 
         </div>
 
+        {(personCategory||statusPersonId)&&<AssignmentDialog title={statusPersonId?selectedStatusPerson?.name??'Personenstatus':personTaskCategories.find(c=>c.key===personCategory)?.label??'Personen'} subtitle={statusScope} onClose={()=>{setStatusPersonId(null);setPersonCategory(null);}}>
+          {!personStatusReady?<div role="status" className="p-4 text-sm">{personStatusError??'Personenstatus wird neu bewertet …'}</div>:statusPersonId?selectedStatusPerson?<>
+            {personCategory&&<button type="button" className="m-3 text-sm text-[var(--ops-primary)]" onClick={()=>setStatusPersonId(null)}>← Zur Personenliste</button>}
+            <PersonStatusDetails person={selectedStatusPerson} onDetails={()=>openPersonDetails(selectedStatusPerson.personId)} onBooking={id=>openPersonDetails(selectedStatusPerson.personId,id)} onDecision={id=>{setStatusPersonId(null);setPersonCategory(null);setDecisionId(id);}}/>
+          </>:<p className="p-4">Person ist im aktuellen Bezugsbereich nicht mehr enthalten.</p>:<div className="p-4"><p className="mb-3 text-xs text-[var(--ops-text-muted)]">{taskPeople.length} eindeutige Personen · Kategorien können sich überschneiden. Warteschlangensuche und Hotelfilter ändern diese Liste nicht.</p><ul className="space-y-2" aria-label="Betroffene Personen">{taskPeople.map(person=><li key={person.personId} className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--ops-border)] p-2 text-sm"><button type="button" className="text-left font-semibold text-[var(--ops-primary)]" onClick={()=>setStatusPersonId(person.personId)}>{person.name} · {person.nationCode}</button><PersonStatusIcons personId={person.personId}/>{!person.matchesContextFilters&&<span className="w-full text-xs text-[var(--ops-warning)]">Kontextloser EZ-Fall außerhalb des Kontextfilters</span>}</li>)}</ul>{!taskPeople.length&&<p>Keine betroffenen Personen.</p>}</div>}
+        </AssignmentDialog>}
+
         {selected && (
           <AssignmentDialog title="Zimmer / Zuweisung" subtitle="Bewohner, Importinformationen und Disposition im Überblick" onClose={() => setSelected(null)}>
           <PersonAccommodationPanel
@@ -931,7 +969,7 @@ export function Assignments() {
         {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
     </WorkspaceFrame>
     </div>
-    </div></DispositionDragContext.Provider>
+    </div></DispositionDragContext.Provider></PersonDispositionContext.Provider>
     <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
     </>
   );
@@ -940,7 +978,7 @@ export function Assignments() {
 function TopBar({
   view,
   onViewChange,
-  progress,
+  progress, progressReady=true, progressScope='Personen',
   actionableQuotaCases,
   saving,
   onRefresh,
@@ -950,6 +988,7 @@ function TopBar({
   view: AppView;
   onViewChange: (view: AppView) => void;
   progress: { done: number; total: number; percent: number };
+  progressReady?:boolean; progressScope?:string;
   actionableQuotaCases: number;
   saving: boolean;
   onRefresh: () => void;
@@ -993,21 +1032,22 @@ function TopBar({
         <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} refreshing={quotaRefreshing} />
         <div className="flex items-center gap-2">
           <div className="w-20">
-            <CapacityBar pct={progress.percent} />
+            {progressReady&&<CapacityBar pct={progress.percent} />}
           </div>
-          <span className="font-mono text-[var(--ops-assignment-text-muted)]" title={`${progress.done} von ${progress.total} disponiert`}>
-            <strong className="text-[var(--ops-assignment-text-body)]">{progress.total ? `${progress.percent}%` : 'Kein Unterkunftsbedarf'}</strong>
+          <span className="font-mono text-[var(--ops-assignment-text-muted)]" title={`${progressScope}: ${progressReady?`${progress.done} von ${progress.total} vollständig untergebracht`:'Bewertung ausstehend'}`}>
+            <strong className="text-[var(--ops-assignment-text-body)]">{!progressReady?'Status offen':progress.total ? `${progress.percent}%` : 'Kein Unterkunftsbedarf'}</strong>
           </span>
         </div>
 
         {actionableQuotaCases > 0 && (
           <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
-            {actionableQuotaCases} Handlungsbedarf
+            {actionableQuotaCases} offene Quotenkontexte
           </div>
         )}
 
         <button
           onClick={onRefresh}
+          aria-label="Aktualisieren"
           className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ops-assignment-text-faint)] transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]"
         >
           <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
@@ -1907,6 +1947,7 @@ function HotelDetailView({
                             <div className="mt-1.5 grid gap-1">
                               {entry.booking.occupants.map(occupant => <OccupantCard
                                 key={occupant.athleteId}
+                                statusActions={false}
                                 person={{...occupant,arrivalDate:entry.booking.checkInDate,departureDate:entry.booking.checkOutDate}}
                                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                                 fallbackArrival={entry.booking.checkInDate}

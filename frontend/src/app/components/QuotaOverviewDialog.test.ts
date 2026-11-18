@@ -189,3 +189,18 @@ test('live quota view exposes contextless pending people instead of an empty or 
  const flat=renderToStaticMarkup(createElement(Panel,props));
  assert.equal(renderToStaticMarkup(createElement(Panel,{...props,unallocated:[]})),flat);
 });
+
+test('person work summary uses supplied totals and hides stale success during evaluation',async()=>{
+ const {PersonWorkSummary,PersonStatusIcons,PersonDispositionContext}=await server.ssrLoadModule('/src/app/components/assignment/PersonDispositionStatus.tsx');
+ const summary={peopleTotal:7,accommodationPeopleRequired:7,fullyAssigned:4,unassigned:1,partiallyAssigned:1,accommodationConflicts:1,roomPreferenceMismatches:2,pendingSingleRoomPeople:3,contextlessPendingSingleRoomPeople:1};
+ const props={summary,scope:'Eventgesamt · Personen',family:'',onFamily:()=>{},onCategory:()=>{},onRetry:()=>{}};
+ const ready=renderToStaticMarkup(createElement(PersonWorkSummary,{...props,ready:true,loading:false}));
+ assert.match(text(ready),/Vollständig 4 \/ 7/);assert.match(text(ready),/EZ ungeklärt 3/);
+ const waiting=renderToStaticMarkup(createElement(PersonWorkSummary,{...props,ready:false,loading:true}));
+ assert.ok(!text(waiting).includes('4 / 7'));assert.match(text(waiting),/wird aktualisiert/);
+ const person={personId:'1',name:'Synthetic',accommodation:{coverageStatus:'FULLY_ASSIGNED'},roomPreference:{status:'MISMATCH',hasMismatch:true},singleRoom:{status:'PENDING',reason:'Kein gültiger Quotenkontext zuordenbar'}};
+ const icons=(valid:boolean)=>renderToStaticMarkup(createElement(PersonDispositionContext.Provider,{value:{people:new Map([['1',person]]),ready:valid,onOpen:()=>{}}},createElement(PersonStatusIcons,{personId:'1'})));
+ assert.equal((icons(true).match(/<button/g)||[]).length,2);
+ assert.ok(icons(true).includes('EZ-Klärung erforderlich')&&icons(true).includes('Zimmerwunsch abweichend'));
+ assert.ok(!icons(false).includes('text-[var(--ops-success)]'));
+});
