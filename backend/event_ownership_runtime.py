@@ -93,10 +93,10 @@ def validate_operational_import_event(value):
 def apply_event_ownership(session, flush_context, instances):
     """Guard unit-of-work writes, including deletions and inherited ownership."""
     from imports.event_context import normalize_event_id
-    from models import (Athlete, RoomBooking, ImportSession, HotelRoomInventory,
+    from models import (Athlete, AthleteArrivalForecast, RoomBooking, ImportSession, HotelRoomInventory,
         AccommodationEvent, ImportRun, EventQuotaRevision, WorldChampionRecognition, RoomBookingOccupant, RoomAssignment,
         FisRoomAssignment, EventRoomDemand, WorldChampion, ImportSessionVersion, ImportApproval, ImportSessionEvent)
-    required = (Athlete, RoomBooking, ImportSession, HotelRoomInventory, AccommodationEvent, ImportRun, WorldChampion, EventQuotaRevision, WorldChampionRecognition)
+    required = (Athlete, AthleteArrivalForecast, RoomBooking, ImportSession, HotelRoomInventory, AccommodationEvent, ImportRun, WorldChampion, EventQuotaRevision, WorldChampionRecognition)
     children = (ImportSessionVersion, ImportApproval, ImportSessionEvent)
     objects = session.new.union(session.dirty).union(session.deleted)
     allowed = None

@@ -731,3 +731,18 @@ export interface QuotaOverview {
       contexts:NonNullable<FisImportPreview['quotaChecks']>;totals:{officialQuota:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;singleRoomsApproved:number;quotaExemptSingleRooms:number}}>
   }>;
 }
+
+
+export interface ArrivalPlanningPerson {
+ personId:string;name:string;arrivalStatus:ArrivalStatus;personalGender:string|null;
+ disciplines:string[];sportFamilies:string[];reasons:string[];hasBooking:boolean;
+ worldChampionMarked:boolean;titleReferences:Array<{id:string;championship:string;championshipYear:number;discipline:string;eventGroup:string}>;
+}
+export interface ArrivalPlanningRow {
+ areaId:string;eventId:string;nationCode:string;discipline:string|null;personalGender:string|null;sportFamilies:string[];
+ reportedCount:number;expectedTotal:number|null;namedExpectedCount:number;anonymousRemaining:number|null;undecidedCount:number;notTravellingCount:number;
+ status:'NOT_SET'|'PLANNED'|'CONFLICT';conflict:boolean;reasons:string[];editable:boolean;people:ArrivalPlanningPerson[];worldChampionCount:number;
+ checkInDate:string|null;checkOutDate:string|null;note:string|null;revision:number;updatedBy:string|null;updatedAt:string|null;baseToken:string;
+}
+export interface ArrivalPlanningOverview {eventId:string;nationCode:string|null;reportedCount:number;namedExpectedCount:number;rows:ArrivalPlanningRow[]}
+export interface ArrivalForecastInput {baseToken:string;expectedTotal:number|null;checkInDate:string|null;checkOutDate:string|null;note:string|null}

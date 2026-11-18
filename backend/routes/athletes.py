@@ -213,3 +213,22 @@ def acknowledge_athlete_roomlist_change(athlete_id):
     data = athlete.to_dict()
     data['hasPendingRoomlistReview'] = False
     return jsonify(data)
+
+
+@athletes.route('/api/athletes/arrival-planning', methods=['GET'])
+def get_arrival_planning():
+    from arrival_planning import project
+    return jsonify(project(request.args.get('nationCode') or None))
+
+
+@athletes.route('/api/athletes/arrival-planning/<area_id>', methods=['PUT'])
+def save_arrival_forecast(area_id):
+    from arrival_planning import save, ForecastConflict
+    from auth import current_user
+    try:
+        return jsonify(save(area_id,request.get_json(silent=True) or {},current_user().username))
+    except ForecastConflict as exc:
+        return jsonify(error='STALE_ARRIVAL_FORECAST',message=str(exc)),409
+    except (ValueError,TypeError) as exc:
+        db.session.rollback()
+        return jsonify(error='INVALID_ARRIVAL_FORECAST',message=str(exc)),400

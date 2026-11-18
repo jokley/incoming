@@ -602,6 +602,8 @@ app.before_request(validate_import_request_context)
 
 
 def _audit_entity():
+    if g.api_path.startswith('/api/athletes/arrival-planning/'):
+        return 'athlete-arrival-forecast',g.api_path.rsplit('/',1)[-1]
     parts = [part for part in g.api_path.removeprefix('/api/').split('/') if part]
     entity_type = parts[0] if parts else 'api'
     entity_id = next((part for part in parts[1:] if part.isdigit()), None)
@@ -662,6 +664,12 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber')]))
         if room:
             details.append(f'Zimmer: {room}')
+
+    elif entity_type == 'athlete-arrival-forecast':
+        ref('planningAreaId',entity_id)
+        category,title='Anreiseplanung','Athletenprognose gespeichert'
+        label=' · '.join(str(response.get(k) or '') for k in ('nationCode','discipline','personalGender'))
+        details.append(f"Erwartete Gesamtzahl: {(snapshot or {}).get('expectedTotal')} → {response.get('expectedTotal')}")
 
     elif entity_type == 'hotels':
         hotel_id = entity_id or response.get('id')
@@ -784,6 +792,8 @@ def audit_successful_mutation(response):
         if payload:
             payload = {key: value for key, value in payload.items()
                        if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
+        if payload and entity_type == 'athlete-arrival-forecast':
+            payload={**payload,'previousForecast':getattr(g,'audit_snapshot',None),'newRevision':(response.get_json(silent=True) or {}).get('revision')}
         if payload and 'arrivalStatus' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
             updated = response.get_json(silent=True) or {}
             payload = {**payload, 'arrival_status': {
