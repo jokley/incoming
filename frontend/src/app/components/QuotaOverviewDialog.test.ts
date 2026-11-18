@@ -204,3 +204,22 @@ test('person work summary uses supplied totals and hides stale success during ev
  assert.ok(icons(true).includes('EZ-Klärung erforderlich')&&icons(true).includes('Zimmerwunsch abweichend'));
  assert.ok(!icons(false).includes('text-[var(--ops-success)]'));
 });
+
+
+test('person details distinguish reported request, actual accommodation and single-room coverage',async()=>{
+ const {PersonStatusDetails}=await server.ssrLoadModule('/src/app/components/assignment/PersonDispositionStatus.tsx');
+ const person={personId:'1',nationCode:'AUT',personalGender:'W',matchesContextFilters:true,
+  accommodation:{coverageStatus:'FULLY_ASSIGNED',overallInterval:{checkInDate:'2027-03-11',checkOutDate:'2027-03-23'},coveredIntervals:[],openIntervals:[],conflicts:[]},
+  roomPreference:{reportedValue:'Double shared',status:'MATCH',segments:[]},
+  singleRoom:{status:'NO_SINGLE_USE',eligibleContexts:[]}};
+ for(const [raw,label] of [['Double shared','Doppelzimmer (geteilt)'],['Single','Einzelzimmer'],['Double','Doppelzimmer'],['Twin','Zweibettzimmer'],['Custom request','Custom request'],['','Nicht angegeben']]){
+  person.roomPreference.reportedValue=raw;
+  const output=text(renderToStaticMarkup(createElement(PersonStatusDetails,{person,onDetails:()=>{},onBooking:()=>{},onDecision:()=>{}})));
+  assert.ok(output.includes(`Gemeldeter Zimmerwunsch: ${label}`));
+  assert.ok(output.includes('Tatsächliche Unterbringung'));
+  assert.ok(output.includes('EZ-Deckung'));
+  assert.ok(output.includes('Keine EZ-Nutzung'));
+  assert.ok(!output.includes('Vertragszusage'));
+  assert.equal(person.roomPreference.reportedValue,raw);
+ }
+});
