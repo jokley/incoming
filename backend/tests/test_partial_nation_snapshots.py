@@ -491,3 +491,23 @@ def test_partial_reimport_preserves_forecasts_and_bookings_and_exposes_roster_ch
     assert {r['areaId']:r['expectedTotal'] for r in current}==expected
     assert any(r['conflict'] and 'Bestand' in ' '.join(r['reasons']) for r in current)
     assert columns()==before
+
+
+def test_nn_preview_uses_effective_partial_roster_and_preserves_foreign_forecast(owner):
+    from models import AthleteArrivalForecast
+    client=app.test_client()
+    initial=upload(owner,'SB');run(initial,owner)
+    sid=initial['session']['id']
+    row=client.get(f'/api/import/sessions/{sid}').json['nnPlanning']['rows'][0]
+    decision=client.post(f'/api/import/sessions/{sid}/nn-planning',json=dict(versionId=initial['session']['currentVersionId'],nnPlanning=[dict(areaId=row['areaId'],baseToken=row['baseToken'],expectedTotal=1)]))
+    assert decision.status_code==200,decision.json
+    forecast=AthleteArrivalForecast.query.one();identity=forecast.id
+    incoming=upload(owner,'FS')
+    current=client.get(f'/api/import/sessions/{sid}').json
+    areas=current['nnPlanning']['rows']
+    assert sum(r['reportedCount'] for r in areas)==7  # 2 retained SB + 5 incoming FS.
+    assert {r['discipline'] for r in areas}=={'Snowboard Park & Pipe','Freeski Park & Pipe'}
+    assert next(r for r in areas if r['areaId']==row['areaId'])['expectedTotal']==1
+    run(incoming,owner)
+    assert AthleteArrivalForecast.query.one().id==identity
+    assert AthleteArrivalForecast.query.one().expected_total==1 and AthleteArrivalForecast.query.one().revision==1

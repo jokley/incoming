@@ -133,68 +133,67 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  assert.equal(await page.getByRole('dialog').locator('tbody tr td:first-child').count(),2);
  await page.screenshot({path:'/tmp/incoming-grouped-mobile.png',animations:'disabled'});
  assert.deepEqual(requests,initialRequests);assert.deepEqual(errors,[]);
- // A preview or aborted draft cannot write an operative forecast. The link is
- // offered only for a persisted imported session; following it remains read-only.
- await page.keyboard.press('Escape');await page.setViewportSize({width:1440,height:1050});
- await page.getByRole('button',{name:'Hinweise und Handlungsbedarf für IS-1',exact:true}).click();
- await page.getByRole('dialog',{name:'Hinweise und Handlungsbedarf'}).getByText('0 offene Entscheidungen').waitFor();
+ // Planning is embedded in the import workspace, never linked to Athletes.
  assert.equal(await page.getByRole('link',{name:'Athletenprognose nach Import bearbeiten'}).count(),0);
- await page.keyboard.press('Escape');
- session.status='IMPORTED';session.submissions=[];
- await page.reload();await page.getByRole('button',{name:'Hinweise und Handlungsbedarf für IS-1',exact:true}).click();
- const planningLink=page.getByRole('link',{name:'Athletenprognose nach Import bearbeiten'});await planningLink.waitFor();
- assert.equal(await planningLink.getAttribute('href'),'/athletes?nation=AUT&planning=1');
  assert.ok(requests.every(request=>request.startsWith('GET ')||request==='POST /auth/me'));
 });
 
 
-test('reduced forecast includes champion places without selecting people and rejects stale saves',async t=>{
+test('NN decisions are integrated in import approval and editable after import without FIS replay',async t=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
- const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-forecast-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
+ const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-nn-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
- const people=Array.from({length:8},(_,i)=>({id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],accommodationRequirement:'REQUIRED'}));
- let stale=false,reader=false;
- const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:people.map(p=>({personId:p.id,name:p.firstname+' '+p.lastname,personalGender:p.gender,disciplines:['Freeski Park & Pipe'],sportFamilies:['Freestyle'],reasons:[],hasBooking:false,worldChampionMarked:false,titleReferences:p.id==='1'?[{id:'title',championship:'Previous WSC',championshipYear:2025,discipline:'Halfpipe'}]:[]})),checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
- const event={id:'1',name:'Forecast synthetic',active:true};
+ const people=Array.from({length:8},(_,i)=>({matchKey:'p'+i,id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],quotaDisciplines:['Freeski Park & Pipe'],accommodationRequirement:'REQUIRED'}));
+ const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],quotaHints:[{name:'Halfpipe Herren',regularMax:4}],checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
+ const planning:any={eventId:'1',nationCode:'FIN',reportedCount:8,mode:'IMPORT',versionId:'30',rows:[row],decisions:[]};
+ const preview:any={eventId:'1',people,rooms:[],errors:[],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:true,changePlan:{digest:'frozen-plan',snapshotScope:'FULL_NATION',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
+ const session:any={id:'1',nation:'FIN',status:'PROFESSIONALLY_REVIEWED',errors:0,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,nnPlanning:planning,importControl:{people:[],issues:[],competitions:[]}};
+ const event={id:'1',name:'NN synthetic',active:true};let stale=false,reader=false;
  const writes:any[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
-  if(req.method()==='PUT'&&path==='/athletes/arrival-planning/forecast-scope'){
+  if(req.method()==='POST'&&path.startsWith('/import/sessions/1/')){
    const body=req.postDataJSON();writes.push({path,body});
-   if(stale)return route.fulfill({status:409,json:{error:'STALE_ARRIVAL_FORECAST',message:'Planung wurde geändert. Bitte neu laden.'}});
-   assert.equal(body.expectedTotal,5);assert.equal(body.baseToken,'original');
-   Object.assign(row,body,{virtualPlaces:5,usesVirtualPlanning:true,replacedPersonIds:people.map(p=>p.id),status:'PLANNED',baseToken:'next',revision:1,updatedBy:'tester',updatedAt:'2026-11-18T10:00:00Z'});
-   return route.fulfill({json:row});
+   if(path.endsWith('/approve')){assert.equal(body.nnPlanning[0].expectedTotal,4);planning.decisions=body.nnPlanning;session.status='APPROVED';}
+   if(path.endsWith('/import')){assert.equal(body.versionId,'30');session.status='IMPORTED';planning.mode='LIVE';Object.assign(row,{expectedTotal:4,virtualPlaces:4,usesVirtualPlanning:true});return route.fulfill({json:{success:true,summary:{peopleCreated:8,peopleUpdated:0,fisRoomsImported:0},session}});}
+   if(path.endsWith('/nn-planning')){
+    assert.equal(body.versionId,'30');assert.equal(body.nnPlanning[0].expectedTotal,5);
+    if(stale)return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Planung wurde geändert. Bitte neu laden.'}});
+    Object.assign(row,{expectedTotal:5,virtualPlaces:5,usesVirtualPlanning:true,revision:2,baseToken:'next'});
+   }
+   return route.fulfill({json:session});
   }
-  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:[reader?'incoming-viewer':'incoming-editor'],permissions:reader?['data.read']:['data.read','data.write']},'/active-event-context':{events:[{...event,canRead:true,canWrite:!reader}],selectedEventId:'1',switchingAllowed:false},'/athletes':people,'/athletes/arrival-planning':{eventId:'1',nationCode:new URL(req.url()).searchParams.get('nationCode'),reportedCount:8,rows:[row]}};
+  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:[reader?'incoming-viewer':'incoming-admin'],permissions:reader?['data.read']:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:!reader}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
- await page.goto(`${origin}/athletes`);
- const section=page.locator('details[aria-label="Athleten-Anreiseplanung"]');
- await section.locator(':scope > summary').click();
- const table=section.getByRole('table',{name:'Athletenprognosen'});
- await table.getByText('Nicht gepflegt',{exact:true}).waitFor();
- assert.match(await table.innerText(),/Normal namentlich/);
- await table.getByRole('button',{name:'Prognose bearbeiten'}).click();
- const dialog=page.getByRole('dialog');await dialog.getByLabel('Erwartete Gesamtzahl').fill('5');
- await dialog.getByLabel('Geplanter Check-in').fill('2027-03-11');await dialog.getByLabel('Geplanter Check-out').fill('2027-03-23');
- await dialog.getByRole('button',{name:'Speichern',exact:true}).click();await dialog.waitFor({state:'hidden'});
- await table.getByText('Vorläufig · noch nicht disponierbar',{exact:true}).waitFor();
- assert.equal(await table.getByRole('cell',{name:'5',exact:true}).count(),2);
- assert.deepEqual(writes.map(w=>w.path),['/athletes/arrival-planning/forecast-scope']);
- await page.screenshot({path:'/workspace/artifacts/arrival-forecast.png',animations:'disabled'});
- await table.getByText('Personen / Nachweise',{exact:true}).click();
- await table.getByRole('button',{name:'Champion Synthetic',exact:true}).click();
- await dialog.waitFor();assert.equal(await dialog.getByRole('button',{name:'Weltmeisterstatus ändern'}).getAttribute('aria-pressed'),'false');
- await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
- stale=true;await table.getByRole('button',{name:'Prognose bearbeiten'}).click();await dialog.getByLabel('Erwartete Gesamtzahl').fill('4');
- await dialog.getByRole('button',{name:'Speichern',exact:true}).click();await dialog.getByRole('alert').filter({hasText:'Planung wurde geändert. Bitte neu laden.'}).waitFor();
- assert.equal((await section.locator('table[aria-label="Athletenprognosen"] tbody tr td').nth(2).textContent())?.trim(),'5');
- await dialog.getByRole('button',{name:'Aktuellen Stand laden'}).click();await dialog.waitFor({state:'hidden'});
- reader=true;await page.reload();await section.locator(':scope > summary').click();
- await table.getByRole('button',{name:'Prognose bearbeiten'}).waitFor();assert.equal(await table.getByRole('button',{name:'Prognose bearbeiten'}).isDisabled(),true);
+ await page.goto(`${origin}/import?sessionId=1`);
+ const section=page.locator('details[aria-label="NN-Unterkunftsplanung"]');await section.locator(':scope > summary').click();
+ await section.getByText('Normal namentlich',{exact:true}).waitFor();assert.match(await section.innerText(),/Weltmeister/);
+ const select=section.getByLabel('NN-Entscheidung Freeski Park & Pipe M',{exact:true});
+ await select.selectOption('NN');await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('4');
+ assert.equal(writes.length,0); // Inputs and a discarded page never persist.
+ await page.reload();await section.locator(':scope > summary').click();assert.equal(await select.inputValue(),'KEEP');assert.equal(writes.length,0);
+ await select.selectOption('NN');await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('');
+ await page.getByRole('button',{name:'Freigeben',exact:true}).click();await page.getByText('NN-Gesamtzahl muss eine nichtnegative ganze Zahl sein.',{exact:true}).waitFor();assert.equal(writes.length,0);
+ await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('4');
+ await page.getByRole('button',{name:'Freigeben',exact:true}).click();await page.getByRole('button',{name:'Importieren',exact:true}).waitFor();
+ assert.equal(row.expectedTotal,null);assert.equal(await select.isDisabled(),true);
+ await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/import-nn-approved.png',animations:'disabled'});
+ await page.getByRole('button',{name:'Importieren',exact:true}).click();await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).waitFor();
+ assert.equal(row.expectedTotal,4);
+ await select.selectOption('NN');await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('5');
+ stale=true;await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click();await page.getByText('Planung wurde geändert. Bitte neu laden.',{exact:true}).waitFor();assert.equal(row.expectedTotal,4);
+ stale=false;await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click();await section.getByRole('cell',{name:'5',exact:true}).waitFor();
+ await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/import-nn-live.png',animations:'disabled'});
+ await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/import-nn-light.png',animations:'disabled'});
+ assert.equal(writes.filter(w=>w.path.endsWith('/import')).length,1);assert.equal(writes.filter(w=>w.path.includes('/athletes')).length,0);
+ // An imported individual submission opens its live NN decision without an automatic recheck/import.
+ session.submissions=[{family:'Freestyle',versionId:'30',people:8,status:'IMPORTED'}];preview['replacementScope']={kind:'SPORT_FAMILY',family:'Freestyle'};
+ await page.reload();await section.locator(':scope > summary').click();assert.equal(await select.isDisabled(),false);assert.equal(writes.filter(w=>w.path.endsWith('/recheck')).length,0);
+ reader=true;await page.reload();await section.locator(':scope > summary').click();assert.equal(await select.isDisabled(),true);
+ await page.goto(`${origin}/athletes`);await page.getByRole('columnheader',{name:'Gender',exact:true}).waitFor();assert.equal(await page.locator('details[aria-label="Athleten-Anreiseplanung"]').count(),0);
  assert.deepEqual(errors,[]);
 });

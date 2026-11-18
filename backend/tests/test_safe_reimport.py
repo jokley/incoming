@@ -445,3 +445,132 @@ def test_regular_snapshot_needs_plan_consent_not_a_scope_checkbox(events):
     assert c.post(f'/api/import/sessions/{sid}/approve',json={'planDigest':plan['digest'],'confirmDestructiveChanges':True}).status_code==200
     assert c.post(f'/api/import/sessions/{sid}/import',json={'versionId':db.session.get(ImportSession,int(sid)).current_version_id}).status_code==200
     assert Athlete.query.filter_by(event_id=a.id,nation_code='JPN').count()==1
+
+
+def nn_review(payload,event,total):
+    client=app.test_client();sid=payload['session']['id']
+    current=client.get(f'/api/import/sessions/{sid}?eventId={event.id}').json
+    row=next(r for r in current['nnPlanning']['rows'] if r['editable'])
+    plan=current['preview']['changePlan']
+    return client.post(f'/api/import/sessions/{sid}/approve?eventId={event.id}',json=dict(
+        snapshotScope=plan['snapshotScope'],planDigest=plan['digest'],confirmDestructiveChanges=False,
+        nnPlanning=[dict(areaId=row['areaId'],baseToken=row['baseToken'],expectedTotal=total)]))
+
+
+@pytest.mark.parametrize('total',[0,4,5,9])
+def test_nn_import_decisions_are_atomic_idempotent_and_explicit(events,total):
+    from models import AthleteArrivalForecast
+    event,_=events;client=app.test_client()
+    current=upload(event,tuple(str(9300950+i) for i in range(8)))
+    sid=current['session']['id'];version=current['session']['currentVersionId']
+    assert AthleteArrivalForecast.query.count()==0
+    approved=nn_review(current,event,total)
+    assert approved.status_code==200,approved.json
+    assert AthleteArrivalForecast.query.count()==Athlete.query.count()==0
+    assert approved.json['nnPlanning']['decisions'][0]['expectedTotal']==total
+    # Even a failure after both FIS data and forecast were flushed rolls back all.
+    with patch.object(db.session,'commit',side_effect=RuntimeError('completion fault')):
+        failed=client.post(f'/api/import/sessions/{sid}/import',json=dict(versionId=version))
+    assert failed.status_code==400,failed.json
+    assert AthleteArrivalForecast.query.count()==Athlete.query.count()==ImportRun.query.count()==0
+    result=client.post(f'/api/import/sessions/{sid}/import',json=dict(versionId=version))
+    assert result.status_code==200,result.json
+    forecast=AthleteArrivalForecast.query.one()
+    assert forecast.expected_total==total and forecast.revision==1
+    projection=client.get(f'/api/import/sessions/{sid}').json['nnPlanning']
+    assert projection['mode']=='LIVE'
+    assert projection['rows'][0]['virtualPlaces']==total
+    assert projection['rows'][0]['reportedCount']==8
+    assert client.post(f'/api/import/sessions/{sid}/import',json=dict(versionId=version)).json['idempotent']
+    assert AthleteArrivalForecast.query.one().revision==1
+    # No explicit decision on reimport must preserve forecast and stable area.
+    next_import=upload(event,tuple(str(9300950+i) for i in range(8)))
+    run(next_import,event)
+    assert AthleteArrivalForecast.query.one().revision==1
+    assert AthleteArrivalForecast.query.one().expected_total==total
+    assert client.get(f'/api/import/sessions/{sid}').json['nnPlanning']['rows'][0]['areaId']==projection['rows'][0]['areaId']
+    assert ImportSessionEvent.query.filter_by(event_type='NN_PLANNING_APPLIED').count()==1
+
+
+def test_nn_cancel_stale_review_and_new_forecast_during_approved_import(events):
+    from models import AthleteArrivalForecast
+    event,_=events;client=app.test_client()
+    pending=upload(event);sid=pending['session']['id']
+    # Merely opening/cancelling a preview never creates an operational forecast.
+    client.get(f'/api/import/sessions/{sid}')
+    assert nn_review(pending,event,1).status_code==200
+    assert AthleteArrivalForecast.query.count()==0
+    cancelled=client.post(f'/api/import/sessions/{sid}/cancel',json=dict(versionId=pending['session']['currentVersionId']))
+    assert cancelled.status_code==200,cancelled.json
+    assert AthleteArrivalForecast.query.count()==0
+    current=upload(event);assert nn_review(current,event,1).status_code==200
+    # An independently changed forecast must not be overwritten by import.
+    db.session.add(AthleteArrivalForecast(event_id=event.id,nation_code='JPN',discipline='Snowboard Alpine',gender='M',expected_total=0,revision=1,roster_digest='newer',updated_by='other'))
+    db.session.commit()
+    sid=current['session']['id']
+    result=client.post(f'/api/import/sessions/{sid}/import',json=dict(versionId=current['session']['currentVersionId']))
+    assert result.status_code==409 and result.json['error']=='STALE_PREVIEW',result.json
+    assert Athlete.query.count()==ImportRun.query.count()==0
+    assert AthleteArrivalForecast.query.one().expected_total==0
+
+
+def test_nn_imported_decision_preserves_people_bookings_and_reports_conflict(events):
+    from models import AthleteArrivalForecast
+    event,other=events;client=app.test_client();current=upload(event,tuple(str(9300950+i) for i in range(8)));run(current,event)
+    sid=current['session']['id'];version=current['session']['currentVersionId']
+    people=Athlete.query.order_by(Athlete.id).all();shared=booking(people[:2]);bid=shared.id
+    def decide(total,**extra):
+        row=client.get(f'/api/import/sessions/{sid}').json['nnPlanning']['rows'][0]
+        return client.post(f'/api/import/sessions/{sid}/nn-planning',json=dict(versionId=version,nnPlanning=[dict(areaId=row['areaId'],baseToken=row['baseToken'],expectedTotal=total)],**extra))
+    response=decide(4);assert response.status_code==200,response.json
+    row=response.json['nnPlanning']['rows'][0]
+    assert row['conflict'] and row['virtualPlaces']==0 and row['replacedPersonIds']==[]
+    assert row['bookedPeopleCount']==2
+    assert Athlete.query.count()==8 and RoomBooking.query.count()==1 and ImportRun.query.count()==1
+    assert len(db.session.get(RoomBooking,bid).occupants)==2
+    with app.test_request_context():
+        from arrival_planning import operative_projection
+        projection=operative_projection(response.json['nnPlanning'])
+        assert projection['replacedPersonIds']==[] and projection['conflicts']==1
+    stale=client.post(f'/api/import/sessions/{sid}/nn-planning',json=dict(versionId='old',nnPlanning=[]))
+    assert stale.status_code==409
+    denied=client.post(f'/api/import/sessions/{sid}/nn-planning?eventId={other.id}',json=dict(versionId=version,nnPlanning=[]))
+    assert denied.status_code==409
+    assert AthleteArrivalForecast.query.one().revision==1
+    assert ImportSessionEvent.query.filter_by(event_type='NN_PLANNING_APPLIED').count()==1
+    # Closed import histories retain a live planning entry, without reopening FIS.
+    archived=client.post(f'/api/import/sessions/{sid}/archive',json=dict(versionId=version))
+    assert archived.status_code==200,archived.json
+    changed=decide(None);assert changed.status_code==200,changed.json
+    assert changed.json['status']=='ARCHIVED' and changed.json['nnPlanning']['mode']=='LIVE'
+    assert AthleteArrivalForecast.query.one().expected_total is None and ImportRun.query.count()==1
+
+
+def test_nn_preview_rejects_stale_selection_and_cross_nation_scope(events,monkeypatch):
+    from models import AthleteArrivalForecast
+    event,_=events;client=app.test_client();current=upload(event)
+    sid=current['session']['id'];state=client.get(f'/api/import/sessions/{sid}').json
+    row=state['nnPlanning']['rows'][0];plan=state['preview']['changePlan']
+    for choice in [dict(areaId=row['areaId'],baseToken='outdated',expectedTotal=1),dict(areaId='foreign-nation',baseToken=row['baseToken'],expectedTotal=1),dict(areaId=row['areaId'],baseToken=row['baseToken'])]:
+        response=client.post(f'/api/import/sessions/{sid}/approve',json=dict(snapshotScope=plan['snapshotScope'],planDigest=plan['digest'],confirmDestructiveChanges=False,nnPlanning=[choice]))
+        assert response.status_code==409,response.json
+        assert AthleteArrivalForecast.query.count()==Athlete.query.count()==0
+    run(current,event)
+    monkeypatch.setitem(app.config,'AUTH_DEV_GROUPS','incoming-viewer')
+    denied=client.post(f'/api/import/sessions/{sid}/nn-planning',json=dict(versionId=current['session']['currentVersionId'],nnPlanning=[]))
+    assert denied.status_code==403,denied.json
+    assert AthleteArrivalForecast.query.count()==0
+
+
+def test_nn_import_preview_keeps_multiple_memberships_unique_and_ambiguity_visible(events):
+    event,_=events;client=app.test_client()
+    def memberships(people):
+        people[0]['WSC_PSL_M_6177']='YES'  # Same Snowboard Alpine area.
+        people[0]['WSC_HP_M_6174']='NO'
+        people[1]['WSC_HP_M_6174']='YES'  # Second event group: clarification only.
+    current=upload(event,changed=memberships)
+    rows=client.get(f"/api/import/sessions/{current['session']['id']}").json['nnPlanning']['rows']
+    assert sum(row['reportedCount'] for row in rows)==2
+    normal=next(row for row in rows if row['editable']);unclear=next(row for row in rows if not row['editable'])
+    assert normal['reportedCount']==1 and unclear['reportedCount']==1 and unclear['conflict']
+    assert unclear['virtualPlaces']==0 and unclear['replacedPersonIds']==[]

@@ -998,7 +998,8 @@ class ApiService {
       body: JSON.stringify(payload),
     });
   }
-  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION'|'SPORT_FAMILY';confirmDestructiveChanges:boolean}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
+  async decideNNPlanning(id:string,versionId:string|null,nnPlanning:import('../types').NNPlanningChoice[]):Promise<ImportSession>{return this.request(`/import/sessions/${id}/nn-planning`,{method:'POST',body:JSON.stringify({versionId,nnPlanning})});}
+  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION'|'SPORT_FAMILY';confirmDestructiveChanges:boolean;nnPlanning?:import('../types').NNPlanningChoice[]}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
   async recheckImportSession(id:string,selection?:{sourceVersionId?:string;sourceVersionIds?:string[]}):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST',body:JSON.stringify(selection??{})}); }
   async importSession(id: string, versionId?:string|null): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST',body:JSON.stringify({versionId}) })); }
   async archiveImportSession(id: string, versionId: string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/archive`, { method: 'POST',body:JSON.stringify({versionId}) }); }

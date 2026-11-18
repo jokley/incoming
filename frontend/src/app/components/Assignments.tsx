@@ -777,7 +777,7 @@ export function Assignments() {
             <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
               virtualGroups={(planning?.athletePlanning?.groups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline||!group.editable)&&(!filterGender||group.personalGender===filterGender||!group.editable)&&!filterRoomCategory&&!filterImportReview&&(!queueSearch||`${group.nationCode} ${group.discipline??''}`.toLowerCase().includes(queueSearch.toLowerCase())))}
-              onOpenForecast={nation=>navigate(`/athletes?nation=${encodeURIComponent(nation)}&planning=1`)}
+              onOpenForecast={nation=>navigate(`/import?nation=${encodeURIComponent(nation)}`)}
               zeroAreas={(planning?.athletePlanning?.zeroGroups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline)&&(!filterGender||group.personalGender===filterGender)).length}
               units={queueUnits}
               onExternal={setExternalItem}
