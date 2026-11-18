@@ -62,11 +62,11 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
         <p className="fis-context"><Flag aria-hidden="true" /> Nation <b>+</b> Event Group <b>+</b> Gender <b>=</b> Quotenkontext</p>
         <div className="fis-flow fis-quota-flow">
           <div><strong>{example.athletes} Athleten</strong><Figure kind="athlete" count={4} /></div><Arrow />
-          <div><strong>+ {config.officials.allowance} → {example.officials} Officials</strong><Figure kind="official" count={3} /><small>Officials-Limit · aktuelle EZ-Basis</small></div><Arrow />
+          <div><strong>+ {config.officials.allowance} → {example.officials} Officials</strong><Figure kind="official" count={3} /><small>Officials-Limit · Beispiel bei voller Besetzung</small></div><Arrow />
           <div><strong>{example.singleRooms} EZ erlaubt</strong><Figure kind="bed" count={Math.min(example.singleRooms,5)} /></div>
         </div>
         <div className="fis-rule-strip"><b>Athleten + {config.officials.allowance} = Officials-Quote</b><span>{example.scale.join(" · ")}</span><small>Fixierte Eventparameter · FIS-Referenzen 9.1.3 / 13.3 zum Vergleich</small></div>
-        <Note>Die Quote gilt je Nation + Event Group + Gender. Ohne gemeldete Athleten entsteht in der Anwendung keine reguläre Quote. Aktuell verwendet die EZ-Staffel das Officials-Limit, nicht die Zahl gemeldeter oder zugewiesener Officials. Eine Umstellung auf gemeldete Officials, begrenzt auf das Limit, benötigt eine eindeutige fachliche Regelbestätigung.</Note>
+        <Note>Die Quote gilt je Nation + Event Group + Gender. Ohne gemeldete Athleten entsteht in der Anwendung keine reguläre Quote. Die operative EZ-Basis ist die Zahl gemeldeter anrechenbarer Officials, begrenzt auf die operative Officials-Obergrenze. Diese wird bei ausdrücklicher NN-Planung aus dem erwarteten Unterkunftsbedarf berechnet. Die offizielle FIS-Meldung und ihre sportliche Quotenprüfung bleiben unverändert.</Note>
       </Section>
       <Section number={2} title="Wichtigster Merksatz" className="fis-half">
         <p className="fis-key"><Lightbulb aria-hidden="true" />Ein EZ bedeutet <em>nicht automatisch</em> Mehrpreis.</p>

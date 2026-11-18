@@ -139,22 +139,30 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
 });
 
 
-test('NN decisions are integrated in import approval and editable after import without FIS replay',async t=>{
+test('athlete quota check previews Officials and EZ live and edits committed NN without FIS replay',async t=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-nn-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
- const people=Array.from({length:8},(_,i)=>({matchKey:'p'+i,id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],quotaDisciplines:['Freeski Park & Pipe'],accommodationRequirement:'REQUIRED'}));
- const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],quotaHints:[{name:'Halfpipe Herren',regularMax:4}],checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
- const planning:any={eventId:'1',nationCode:'FIN',reportedCount:8,mode:'IMPORT',versionId:'30',rows:[row],decisions:[]};
+ const people=Array.from({length:9},(_,i)=>({matchKey:'p'+i,id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],quotaDisciplines:['Freeski Park & Pipe'],accommodationRequirement:'REQUIRED'}));
+ const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:9,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],quotaHints:[{name:'Halfpipe Herren',regularMax:4}],checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
+ const planning:any={eventId:'1',nationCode:'FIN',reportedCount:9,mode:'IMPORT',versionId:'30',rows:[row],decisions:[]};
  const preview:any={eventId:'1',people,rooms:[],errors:[],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:true,changePlan:{digest:'frozen-plan',snapshotScope:'FULL_NATION',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
+ preview.quotaOverview={event:{name:'NN synthetic',isWorldChampionship:true,rulesFixed:true,rulesRevision:1},nations:[{nationCode:'FIN',incomplete:false,athleteFamilies:[{topLevelDiscipline:'Freestyle',athleteQuotaUsed:9,athleteQuotaLimit:36,athleteGenderUsed:{M:9,F:0},athleteGenderLimit:22,athleteQuotaStatus:'WITHIN',decisionStatus:'NONE',requiredExtent:{}}],groups:[],officials:10,otherPeople:0,coverageReviewRequired:false,ezDecisionsOpen:0}]};
  const session:any={id:'1',nation:'FIN',status:'PROFESSIONALLY_REVIEWED',errors:0,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,nnPlanning:planning,importControl:{people:[],issues:[],competitions:[]}};
- const event={id:'1',name:'NN synthetic',active:true};let stale=false,reader=false;
+ const event={id:'1',name:'NN synthetic',active:true};let stale=false,reader=false,delayFour=false;
  const writes:any[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
+  if(req.method()==='POST'&&path==='/import/sessions/1/nn-preview'){
+   const body=req.postDataJSON();const total=body.nnPlanning.length?body.nnPlanning[0].expectedTotal:row.expectedTotal;
+   const fixtures:any={'null':{expected:9,cap:11,basis:10,rooms:3},'4':{expected:4,cap:6,basis:6,rooms:2},'5':{expected:5,cap:7,basis:7,rooms:3},'0':{expected:0,cap:0,basis:0,rooms:0}};
+   const f=fixtures[String(total)];assert.ok(f);
+   if(delayFour&&total===4)await new Promise(resolve=>setTimeout(resolve,500));
+   return route.fulfill({json:{...planning,rows:[{...row,expectedTotal:total,virtualPlaces:total??0}],operationalQuota:{conflict:false,reasons:[],rows:[{nationCode:'FIN',discipline:row.discipline,gender:'M',athletesEntered:9,expectedAthletes:f.expected,officialQuota:f.cap,registeredOfficials:10,singleRoomOfficialBasis:f.basis,singleRoomsAllowed:f.rooms,singleRoomsRequested:4,singleRoomsPending:f.rooms===3?1:f.rooms===2?2:4,approvedExtraSingleRooms:0,quotaExemptSingleRooms:0,officialsExceeded:total!==null,coverageChanged:f.rooms!==3,fisOfficialQuota:11,fisSingleRoomsAllowed:3}]}}});
+  }
   if(req.method()==='POST'&&path.startsWith('/import/sessions/1/')){
    const body=req.postDataJSON();writes.push({path,body});
    if(path.endsWith('/approve')){assert.equal(body.nnPlanning[0].expectedTotal,4);planning.decisions=body.nnPlanning;session.status='APPROVED';}
@@ -170,30 +178,39 @@ test('NN decisions are integrated in import approval and editable after import w
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
  await page.goto(`${origin}/import?sessionId=1`);
- const section=page.locator('details[aria-label="NN-Unterkunftsplanung"]');await section.locator(':scope > summary').click();
- await section.getByText('Normal namentlich',{exact:true}).waitFor();assert.match(await section.innerText(),/Weltmeister/);
+ const openQuota=async()=>{await page.getByRole('button',{name:/^Athleten-\/Disziplinquote/}).click();await page.getByRole('dialog',{name:'Athleten-/Disziplinquote'}).waitFor();};
+ assert.equal(await page.locator('details[aria-label="NN-Unterkunftsplanung"]').count(),0);
+ await openQuota();const dialog=page.getByRole('dialog',{name:'Athleten-/Disziplinquote'});
+ const section=dialog.locator('section[aria-label="Operative Unterkunftsplanung"]');
  const select=section.getByLabel('NN-Entscheidung Freeski Park & Pipe M',{exact:true});
- await select.selectOption('NN');await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('4');
- assert.equal(writes.length,0); // Inputs and a discarded page never persist.
- await page.reload();await section.locator(':scope > summary').click();assert.equal(await select.inputValue(),'KEEP');assert.equal(writes.length,0);
- await select.selectOption('NN');await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('');
- await page.getByRole('button',{name:'Freigeben',exact:true}).click();await page.getByText('NN-Gesamtzahl muss eine nichtnegative ganze Zahl sein.',{exact:true}).waitFor();assert.equal(writes.length,0);
- await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('4');
- await page.getByRole('button',{name:'Freigeben',exact:true}).click();await page.getByRole('button',{name:'Importieren',exact:true}).waitFor();
- assert.equal(row.expectedTotal,null);assert.equal(await select.isDisabled(),true);
- await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/import-nn-approved.png',animations:'disabled'});
- await page.getByRole('button',{name:'Importieren',exact:true}).click();await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).waitFor();
- assert.equal(row.expectedTotal,4);
- await select.selectOption('NN');await section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true}).fill('5');
- stale=true;await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click();await page.getByText('Planung wurde geändert. Bitte neu laden.',{exact:true}).waitFor();assert.equal(row.expectedTotal,4);
- stale=false;await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click();await section.getByRole('cell',{name:'5',exact:true}).waitFor();
- await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/import-nn-live.png',animations:'disabled'});
- await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/import-nn-light.png',animations:'disabled'});
- assert.equal(writes.filter(w=>w.path.endsWith('/import')).length,1);assert.equal(writes.filter(w=>w.path.includes('/athletes')).length,0);
- // An imported individual submission opens its live NN decision without an automatic recheck/import.
- session.submissions=[{family:'Freestyle',versionId:'30',people:8,status:'IMPORTED'}];preview['replacementScope']={kind:'SPORT_FAMILY',family:'Freestyle'};
- await page.reload();await section.locator(':scope > summary').click();assert.equal(await select.isDisabled(),false);assert.equal(writes.filter(w=>w.path.endsWith('/recheck')).length,0);
- reader=true;await page.reload();await section.locator(':scope > summary').click();assert.equal(await select.isDisabled(),true);
- await page.goto(`${origin}/athletes`);await page.getByRole('columnheader',{name:'Gender',exact:true}).waitFor();assert.equal(await page.locator('details[aria-label="Athleten-Anreiseplanung"]').count(),0);
- assert.deepEqual(errors,[]);
+ const input=section.getByLabel('NN-Anzahl Freeski Park & Pipe M',{exact:true});
+ const value=(label:string)=>section.locator('dl > div').filter({has:page.locator('dt',{hasText:label})}).locator('dd');
+ await value('Operative Officials-Obergrenze').filter({hasText:'11'}).waitFor();
+ await select.selectOption('NN');await input.fill('4');
+ await value('Operative Officials-Obergrenze').filter({hasText:'6'}).waitFor();assert.equal(await value('EZ-Berechnungsbasis').innerText(),'6');assert.equal(await value('Regulärer EZ-Anspruch').innerText(),'2');
+ assert.match(await section.getByLabel('NN-Plätze',{exact:true}).innerText(),/NN 1 · NN 2 · NN 3 · NN 4/);
+ assert.equal(writes.length,0);await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/nn-quota-four-dark.png',animations:'disabled'});
+ await input.fill('5');await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();assert.equal(await value('EZ-Berechnungsbasis').innerText(),'7');assert.equal(await value('Regulärer EZ-Anspruch').innerText(),'3');
+ await page.screenshot({path:'/workspace/artifacts/nn-quota-five-dark.png',animations:'disabled'});
+ // A late response to the older value must never replace the newer preview.
+ delayFour=true;
+ const oldRequest=page.waitForRequest(r=>r.url().endsWith('/nn-preview')&&r.postDataJSON().nnPlanning[0]?.expectedTotal===4);
+ const oldResponse=page.waitForResponse(r=>r.url().endsWith('/nn-preview')&&r.request().postDataJSON().nnPlanning[0]?.expectedTotal===4);
+ await input.fill('4');await oldRequest;await input.fill('5');
+ await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();await oldResponse;
+ assert.equal(await value('Operative Officials-Obergrenze').innerText(),'7');delayFour=false;
+ await input.fill('0');await value('Operative Officials-Obergrenze').filter({hasText:'0'}).waitFor();assert.equal(await value('Regulärer EZ-Anspruch').innerText(),'0');
+ await select.selectOption('NORMAL');await value('Operative Officials-Obergrenze').filter({hasText:'11'}).waitFor();assert.equal(await value('EZ-Berechnungsbasis').innerText(),'10');
+ await select.selectOption('NN');await input.fill('4');await value('Operative Officials-Obergrenze').filter({hasText:'6'}).waitFor();assert.equal(writes.length,0);
+ await page.reload();await openQuota();assert.equal(await select.inputValue(),'KEEP');await value('Operative Officials-Obergrenze').filter({hasText:'11'}).waitFor();
+ await select.selectOption('NN');await input.fill('4');await value('Operative Officials-Obergrenze').filter({hasText:'6'}).waitFor();await dialog.getByRole('button',{name:'Schließen',exact:true}).click();
+ await page.getByRole('button',{name:'Freigeben',exact:true}).click();await page.getByRole('button',{name:'Importieren',exact:true}).click();await openQuota();
+ await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).waitFor();await value('Operative Officials-Obergrenze').filter({hasText:'6'}).waitFor();assert.equal(row.expectedTotal,4);
+ await select.selectOption('NN');await input.fill('5');await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();
+ stale=true;await section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click();await section.getByRole('alert').filter({hasText:'Planung wurde geändert'}).waitFor();assert.equal(row.expectedTotal,4);
+ stale=false;await page.reload();await openQuota();await select.selectOption('NN');await input.fill('5');await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();
+ await Promise.all([page.waitForResponse(r=>r.url().endsWith('/nn-planning')),section.getByRole('button',{name:'NN-Entscheidung übernehmen'}).click()]);await value('Operative Officials-Obergrenze').filter({hasText:'7'}).waitFor();assert.equal(row.expectedTotal,5);
+ await dialog.getByRole('button',{name:'Schließen',exact:true}).click();await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();await openQuota();await section.scrollIntoViewIfNeeded();await page.screenshot({path:'/workspace/artifacts/nn-quota-five-light.png',animations:'disabled'});
+ assert.equal(writes.filter(w=>w.path.endsWith('/import')).length,1);
+ reader=true;await page.reload();await openQuota();assert.equal(await select.isDisabled(),true);assert.deepEqual(errors,[]);
 });

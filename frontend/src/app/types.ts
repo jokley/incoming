@@ -748,4 +748,5 @@ export interface ArrivalForecastInput {baseToken:string;expectedTotal:number|nul
 
 
 export interface NNPlanningChoice {areaId:string;baseToken:string;expectedTotal:number|null}
-export interface ImportNNPlanning extends ArrivalPlanningOverview {versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
+export interface OperationalQuotaRow {nationCode:string;discipline:string;gender:string;athletesEntered:number;expectedAthletes:number;officialQuota:number;registeredOfficials:number;singleRoomOfficialBasis:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;approvedExtraSingleRooms:number;quotaExemptSingleRooms:number;officialsExceeded:boolean;coverageChanged:boolean;fisOfficialQuota:number;fisSingleRoomsAllowed:number}
+export interface ImportNNPlanning extends ArrivalPlanningOverview {operationalQuota?:{rows:OperationalQuotaRow[];conflict:boolean;reasons:string[]};versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
