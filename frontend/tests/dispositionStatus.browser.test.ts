@@ -98,11 +98,26 @@ test('person overview drills into assigned people, refreshes after persistence, 
  await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor();
  await mkdir('/workspace/artifacts',{recursive:true});
  await page.screenshot({path:'/workspace/artifacts/disposition-status-dark.png',animations:'disabled'});
+ // Check the computed colors of the real MUI tooltip in both themes.
+ const checkTooltipContrast=async()=>{
+  const status=page.locator('[aria-label="Personenstatus"] button').first();
+  await status.hover();
+  const tooltip=page.getByRole('tooltip');await tooltip.waitFor();
+  const colors=await tooltip.evaluate(node=>{const style=getComputedStyle(node.querySelector('.MuiTooltip-tooltip')??node);return {text:style.color,background:style.backgroundColor};});
+  const luminance=(rgb:string)=>{const channels=rgb.match(/[\d.]+/g)!.slice(0,3).map(Number).map(n=>n/255).map(n=>n<=0.04045?n/12.92:((n+0.055)/1.055)**2.4);return channels[0]*0.2126+channels[1]*0.7152+channels[2]*0.0722;};
+  const a=luminance(colors.text),b=luminance(colors.background);
+  assert.ok((Math.max(a,b)+0.05)/(Math.min(a,b)+0.05)>=4.5,JSON.stringify(colors));
+  await page.mouse.move(0,0);await tooltip.waitFor({state:'hidden'});
+ };
+ await checkTooltipContrast();
  await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();
+ await checkTooltipContrast();
  await page.setViewportSize({width:390,height:844});
  await summary.getByRole('button',{name:'Wunschabweichungen 1',exact:true}).click();
  await page.getByRole('dialog').getByRole('button',{name:'Wunschabweichung · AUT',exact:true}).click();
- assert.match(await page.getByRole('dialog').innerText(),/Entscheidung 99/);
+ const details=await page.getByRole('dialog').innerText();
+ for(const label of ['Entscheidung 99','Gemeldeter Zimmerwunsch: Doppelzimmer (geteilt)','Tatsächliche Unterbringung','EZ-Deckung'])assert.ok(details.includes(label),label);
+ assert.ok(!details.includes('Vertragszusage'));
  await page.screenshot({path:'/workspace/artifacts/disposition-status-mobile-light.png',animations:'disabled'});
  assert.deepEqual(errors,[]);
 });
