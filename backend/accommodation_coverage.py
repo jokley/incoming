@@ -176,17 +176,19 @@ def person_disposition_status(person, coverage, bookings, allocation, *, room_re
                        'exemptionReason': person.get('singleRoomQuotaExemptReason'), 'reason': reason}}
 
 
-def summarize_person_disposition(people):
+def summarize_person_disposition(people,excluded_accommodation_ids=()):
     """Each counter is a predicate over the same unique, displayed people list.
 
     Accommodation, room preference and single-use categories can overlap; their
     sum is not a distinct total, nor is it a count of open quota contexts.
     """
     people = list({p['personId']: p for p in people}.values())
-    statuses = [p['accommodation']['coverageStatus'] for p in people]
+    excluded=set(excluded_accommodation_ids)
+    accommodation_people=[p for p in people if p['personId'] not in excluded]
+    statuses = [p['accommodation']['coverageStatus'] for p in accommodation_people]
     pending = [p for p in people if p['singleRoom']['status'] == 'PENDING']
     return {'peopleTotal': len(people),
-            'accommodationPeopleRequired': sum(p['accommodationRequirement'] != 'NO_ROOM' for p in people),
+            'accommodationPeopleRequired': sum(p['accommodationRequirement'] != 'NO_ROOM' for p in accommodation_people),
             'fullyAssigned': statuses.count('FULLY_ASSIGNED'), 'unassigned': statuses.count('UNASSIGNED'),
             'partiallyAssigned': statuses.count('PARTIALLY_ASSIGNED'), 'accommodationConflicts': statuses.count('CONFLICT'),
             'roomPreferenceMismatches': sum(p['roomPreference']['hasMismatch'] for p in people),

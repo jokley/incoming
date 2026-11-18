@@ -55,7 +55,7 @@ def project(nation=None):
         # All ambiguous people enter a single exclusive clarification bucket per nation.
         key=(person.nation_code,None,None) if reasons else (person.nation_code,disciplines[0],gender)
         entry=groups.setdefault(key,[])
-        entry.append(dict(personId=str(person.id),name=f'{person.firstname} {person.lastname}',arrivalStatus=person.arrival_status or 'UNDECIDED',
+        entry.append(dict(personId=str(person.id),name=f'{person.firstname} {person.lastname}',
                           personalGender=person.gender,disciplines=disciplines,sportFamilies=families,
                           worldChampionMarked=person.single_room_quota_exempt_reason=='WORLD_CHAMPION',
                           titleReferences=titles.get(canonical_fis_code(person.fis_code),[]),reasons=reasons,
@@ -66,7 +66,6 @@ def project(nation=None):
         members=sorted(groups.get(key,[]),key=lambda p:p['personId'])
         forecast=saved.get(key);values=forecast_values(forecast)
         expected=values['expectedTotal']
-        named=sum(p['arrivalStatus'] in {'EXPECTED','CONFIRMED'} for p in members)
         reasons=[]
         if key[1] is None:
             reasons.append('Klärungsbereich: keine sichere überschneidungsfreie Zuordnung. Keine Prognose bearbeitbar.')
@@ -75,22 +74,21 @@ def project(nation=None):
         maintained=expected is not None or values['checkInDate'] or values['note']
         if forecast and maintained and forecast.roster_digest!=roster_digest:reasons.append('Gemeldeter Bestand oder Zuordnung seit der letzten Prognose geändert. Prognose prüfen und erneut speichern.')
         if forecast and maintained and not members:reasons.append('Gespeicherter Planungsbereich hat keine gemeldeten Athleten mehr. Prognose prüfen oder zurücksetzen.')
-        if expected is not None and named>expected:reasons.append('Namentlich erwartete Athleten übersteigen die erwartete Gesamtzahl.')
         if expected is not None and expected>len(members):reasons.append('Erwartete Gesamtzahl übersteigt den aktuell gemeldeten Bestand.')
-        not_travelling=[p for p in members if p['arrivalStatus']=='NOT_TRAVELLING' and p['hasBooking']]
-        if not_travelling:reasons.append('Nicht anreisende Personen haben bestehende Buchungen: '+', '.join(p['name'] for p in not_travelling))
+        reduced=key[1] is not None and expected is not None and expected<len(members)
+        if reduced and any(p['hasBooking'] for p in members):
+            reasons.append('Reduzierte Prognose mit bestehenden namentlichen Buchungen. Bestand zuerst klären; keine zusätzlichen virtuellen Plätze.')
         families=sorted({f for p in members for f in p['sportFamilies']})
         rows.append(dict(areaId=area_id(owner,*key),eventId=str(owner),nationCode=key[0],discipline=key[1],personalGender=key[2],
-                         sportFamilies=families,reportedCount=len(members),namedExpectedCount=named,
-                         undecidedCount=sum(p['arrivalStatus']=='UNDECIDED' for p in members),
-                         notTravellingCount=sum(p['arrivalStatus']=='NOT_TRAVELLING' for p in members),
-                         anonymousRemaining=max(0,expected-named) if expected is not None and key[1] is not None else None,
+                         sportFamilies=families,reportedCount=len(members),bookedPeopleCount=sum(p['hasBooking'] for p in members),
+                         usesVirtualPlanning=reduced,virtualPlaces=expected if reduced and not reasons else 0,
+                         replacedPersonIds=[p['personId'] for p in members if reduced and not reasons and not p['hasBooking']],
                          status='CONFLICT' if reasons else 'NOT_SET' if expected is None else 'PLANNED',conflict=bool(reasons),reasons=reasons,
                          source='MANUAL' if forecast else None,editable=key[1] is not None,people=members,
                          worldChampionCount=sum(p['worldChampionMarked'] or bool(p['titleReferences']) for p in members),
                          rosterDigest=roster_digest,baseToken=fingerprint({'forecast':values,'people':members}),**values))
     return dict(eventId=str(owner),nationCode=nation,rows=rows,
-                reportedCount=len(people),namedExpectedCount=sum(p.arrival_status in {'EXPECTED','CONFIRMED'} for p in people))
+                reportedCount=len(people))
 
 
 class ForecastConflict(ValueError):
@@ -130,3 +128,15 @@ def save(area, data, username):
         raise ForecastConflict('Prognose wurde gleichzeitig bearbeitet. Bitte neu laden.') from exc
     db.session.expire_all()
     return next(r for r in project()['rows'] if r['areaId']==area)
+
+
+def operative_projection(overview):
+    """Only valid forecasts replace named tasks; conflicts remain visible."""
+    rows=overview['rows']
+    return dict(replacedPersonIds=sorted({identity for row in rows for identity in row['replacedPersonIds']}),
+                groups=[row for row in rows if (row['usesVirtualPlanning'] and row['expectedTotal']>0) or row['conflict']],
+                controlledAreas=sum(row['usesVirtualPlanning'] for row in rows),
+                zeroAreas=sum(row['usesVirtualPlanning'] and not row['conflict'] and row['expectedTotal']==0 for row in rows),
+                zeroGroups=[row for row in rows if row['usesVirtualPlanning'] and not row['conflict'] and row['expectedTotal']==0],
+                virtualPlaces=sum(row['virtualPlaces'] for row in rows),
+                conflicts=sum(row['conflict'] for row in rows))

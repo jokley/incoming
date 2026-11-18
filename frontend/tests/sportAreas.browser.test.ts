@@ -133,68 +133,31 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  assert.equal(await page.getByRole('dialog').locator('tbody tr td:first-child').count(),2);
  await page.screenshot({path:'/tmp/incoming-grouped-mobile.png',animations:'disabled'});
  assert.deepEqual(requests,initialRequests);assert.deepEqual(errors,[]);
+ // A preview or aborted draft cannot write an operative forecast. The link is
+ // offered only for a persisted imported session; following it remains read-only.
+ await page.keyboard.press('Escape');await page.setViewportSize({width:1440,height:1050});
+ await page.getByRole('button',{name:'Hinweise und Handlungsbedarf für IS-1',exact:true}).click();
+ await page.getByRole('dialog',{name:'Hinweise und Handlungsbedarf'}).getByText('0 offene Entscheidungen').waitFor();
+ assert.equal(await page.getByRole('link',{name:'Athletenprognose nach Import bearbeiten'}).count(),0);
+ await page.keyboard.press('Escape');
+ session.status='IMPORTED';session.submissions=[];
+ await page.reload();await page.getByRole('button',{name:'Hinweise und Handlungsbedarf für IS-1',exact:true}).click();
+ const planningLink=page.getByRole('link',{name:'Athletenprognose nach Import bearbeiten'});await planningLink.waitFor();
+ assert.equal(await planningLink.getAttribute('href'),'/athletes?nation=AUT&planning=1');
+ assert.ok(requests.every(request=>request.startsWith('GET ')||request==='POST /auth/me'));
 });
 
-test('person list edits arrival planning independently and shows personal gender and booking warnings',async t=>{
- const root=fileURLToPath(new URL('../',import.meta.url));
- const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-arrival-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
- t.after(()=>vite.close());await vite.listen();
- const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
- const page=await browser.newPage();page.setDefaultTimeout(10000);
- const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
- const people:any[]=[{id:'1',firstname:'Synthetic',lastname:'Athlete',function:'Athlete',gender:'W',forGender:'M',arrivalStatus:'UNDECIDED',arrivalStatusSource:'DEFAULT',assignment:{hasAssignment:true,bookingId:'42',hotelName:'Synthetic Hotel',roomTypeName:'DZ'}},{id:'2',firstname:'Synthetic',lastname:'Official',function:'NSA Coach',gender:'M',arrivalStatus:'EXPECTED',arrivalStatusSource:'DEFAULT'},{id:'3',firstname:'Unknown',lastname:'Gender',function:'Athlete',forGender:'W',arrivalStatus:'UNDECIDED',arrivalStatusSource:'DEFAULT'}].map(p=>({...p,nationCode:'AUT',single_room_status:'NONE',competitions:[],accommodationRequirement:'REQUIRED'}));
- const event={id:'1',name:'Synthetic arrival event',active:true};
- const writes:any[]=[];let fail=false,reader=false;
- await page.route('**/api/**',async route=>{
-  const req=route.request(),path=new URL(req.url()).pathname.slice(4);
-  if(req.method()==='PATCH'&&path.startsWith('/athletes/')){
-   const data=req.postDataJSON();writes.push(data);
-   if(fail)return route.fulfill({status:503,json:{error:'Synthetic save failure'}});
-   const person=people.find(p=>path===`/athletes/${p.id}`);Object.assign(person,data,{arrivalStatusSource:'MANUAL'});
-   return route.fulfill({json:person});
-  }
-  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:[reader?'incoming-viewer':'incoming-editor'],permissions:reader?['data.read']:['data.read','data.write']},'/active-event-context':{events:[{...event,canRead:true,canWrite:!reader}],selectedEventId:'1',switchingAllowed:false},'/athletes':people};
-  return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
- });
- const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
- await page.goto(`${origin}/athletes`);
- await page.getByRole('columnheader',{name:'Gender',exact:true}).waitFor();
- await page.getByRole('columnheader',{name:'Anreisestatus',exact:true}).waitFor();
- const row=page.locator('tbody tr').filter({hasText:'Synthetic Athlete'});
- assert.equal(await row.getByRole('cell',{name:'Damen',exact:true}).count(),1);
- assert.equal(await page.locator('tbody tr').filter({hasText:'Unknown Gender'}).getByRole('cell',{name:'Nicht angegeben',exact:true}).count(),1);
- assert.equal(await row.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'');
- assert.equal(await page.getByLabel('Anreisestatus Synthetic Official').locator('option:checked').textContent(),'Erwartet (Standard)');
- await row.getByLabel('Anreisestatus Synthetic Athlete').selectOption('NOT_TRAVELLING');
- await row.getByText(/Nicht anreisend, aber Unterkunft gebucht/).waitFor();
- assert.deepEqual(writes,[{arrivalStatus:'NOT_TRAVELLING'}]);
- await page.reload();await page.getByLabel('Anreisestatus Synthetic Athlete').waitFor();
- assert.equal(await page.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'NOT_TRAVELLING');
- await row.getByText('Synthetic Athlete',{exact:true}).click();
- const dialog=page.getByRole('dialog');await dialog.waitFor();
- await dialog.getByLabel('Anreisestatus Synthetic Athlete').selectOption('CONFIRMED');
- await dialog.getByRole('button',{name:/Speichern/}).click();await dialog.waitFor({state:'hidden'});
- assert.equal(await row.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'CONFIRMED');
- assert.equal(writes[1].arrivalStatus,'CONFIRMED');
- assert.equal(await row.getByRole('cell',{name:'Zugewiesen',exact:true}).count(),1);
- fail=true;await row.getByLabel('Anreisestatus Synthetic Athlete').selectOption('EXPECTED');
- await page.getByText('Synthetic save failure',{exact:false}).waitFor();
- assert.equal(await row.getByLabel('Anreisestatus Synthetic Athlete').inputValue(),'CONFIRMED');
- reader=true;await page.reload();await page.getByLabel('Anreisestatus Synthetic Athlete').waitFor();
- assert.equal(await page.getByLabel('Anreisestatus Synthetic Athlete').isDisabled(),true);
- assert.deepEqual(errors,[]);
-});
 
-test('athlete forecast edits include extra champion travel without selecting people and reject stale saves',async t=>{
+test('reduced forecast includes champion places without selecting people and rejects stale saves',async t=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-forecast-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
- const people=Array.from({length:8},(_,i)=>({id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',arrivalStatus:i===0?'EXPECTED':'UNDECIDED',arrivalStatusSource:i===0?'MANUAL':'DEFAULT',competitions:[],accommodationRequirement:'REQUIRED'}));
+ const people=Array.from({length:8},(_,i)=>({id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],accommodationRequirement:'REQUIRED'}));
  let stale=false,reader=false;
- const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,namedExpectedCount:1,expectedTotal:null,anonymousRemaining:null,undecidedCount:7,notTravellingCount:0,status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:people.map(p=>({personId:p.id,name:p.firstname+' '+p.lastname,arrivalStatus:p.arrivalStatus,personalGender:p.gender,disciplines:['Freeski Park & Pipe'],sportFamilies:['Freestyle'],reasons:[],hasBooking:false,worldChampionMarked:false,titleReferences:p.id==='1'?[{id:'title',championship:'Previous WSC',championshipYear:2025,discipline:'Halfpipe'}]:[]})),checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
+ const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:8,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:people.map(p=>({personId:p.id,name:p.firstname+' '+p.lastname,personalGender:p.gender,disciplines:['Freeski Park & Pipe'],sportFamilies:['Freestyle'],reasons:[],hasBooking:false,worldChampionMarked:false,titleReferences:p.id==='1'?[{id:'title',championship:'Previous WSC',championshipYear:2025,discipline:'Halfpipe'}]:[]})),checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
  const event={id:'1',name:'Forecast synthetic',active:true};
  const writes:any[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/**',async route=>{
@@ -203,10 +166,10 @@ test('athlete forecast edits include extra champion travel without selecting peo
    const body=req.postDataJSON();writes.push({path,body});
    if(stale)return route.fulfill({status:409,json:{error:'STALE_ARRIVAL_FORECAST',message:'Planung wurde geändert. Bitte neu laden.'}});
    assert.equal(body.expectedTotal,5);assert.equal(body.baseToken,'original');
-   Object.assign(row,body,{anonymousRemaining:4,status:'PLANNED',baseToken:'next',revision:1,updatedBy:'tester',updatedAt:'2026-11-18T10:00:00Z'});
+   Object.assign(row,body,{virtualPlaces:5,usesVirtualPlanning:true,replacedPersonIds:people.map(p=>p.id),status:'PLANNED',baseToken:'next',revision:1,updatedBy:'tester',updatedAt:'2026-11-18T10:00:00Z'});
    return route.fulfill({json:row});
   }
-  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:[reader?'incoming-viewer':'incoming-editor'],permissions:reader?['data.read']:['data.read','data.write']},'/active-event-context':{events:[{...event,canRead:true,canWrite:!reader}],selectedEventId:'1',switchingAllowed:false},'/athletes':people,'/athletes/arrival-planning':{eventId:'1',nationCode:new URL(req.url()).searchParams.get('nationCode'),reportedCount:8,namedExpectedCount:1,rows:[row]}};
+  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',displayName:'Tester',groups:[reader?'incoming-viewer':'incoming-editor'],permissions:reader?['data.read']:['data.read','data.write']},'/active-event-context':{events:[{...event,canRead:true,canWrite:!reader}],selectedEventId:'1',switchingAllowed:false},'/athletes':people,'/athletes/arrival-planning':{eventId:'1',nationCode:new URL(req.url()).searchParams.get('nationCode'),reportedCount:8,rows:[row]}};
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
  await page.goto(`${origin}/athletes`);
@@ -214,13 +177,13 @@ test('athlete forecast edits include extra champion travel without selecting peo
  await section.locator(':scope > summary').click();
  const table=section.getByRole('table',{name:'Athletenprognosen'});
  await table.getByText('Nicht gepflegt',{exact:true}).waitFor();
- assert.equal(await table.getByRole('cell',{name:'—',exact:true}).count(),1);
+ assert.match(await table.innerText(),/Normal namentlich/);
  await table.getByRole('button',{name:'Prognose bearbeiten'}).click();
  const dialog=page.getByRole('dialog');await dialog.getByLabel('Erwartete Gesamtzahl').fill('5');
  await dialog.getByLabel('Geplanter Check-in').fill('2027-03-11');await dialog.getByLabel('Geplanter Check-out').fill('2027-03-23');
  await dialog.getByRole('button',{name:'Speichern',exact:true}).click();await dialog.waitFor({state:'hidden'});
- await table.getByRole('cell',{name:'4',exact:true}).waitFor();
- assert.equal(await table.getByRole('cell',{name:'5',exact:true}).count(),1);
+ await table.getByText('Vorläufig · noch nicht disponierbar',{exact:true}).waitFor();
+ assert.equal(await table.getByRole('cell',{name:'5',exact:true}).count(),2);
  assert.deepEqual(writes.map(w=>w.path),['/athletes/arrival-planning/forecast-scope']);
  await page.screenshot({path:'/workspace/artifacts/arrival-forecast.png',animations:'disabled'});
  await table.getByText('Personen / Nachweise',{exact:true}).click();

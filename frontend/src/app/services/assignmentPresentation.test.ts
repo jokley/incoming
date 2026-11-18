@@ -45,6 +45,8 @@ test('person task categories select server statuses once, including fully housed
  assert.deepEqual(personTaskPeople([full,full,partial,open],'pendingSingleRoomPeople').map(p=>p.personId),['1']);
  assert.deepEqual(personTaskPeople([full,partial,open],'fullyAssigned').map(p=>p.personId),['1']);
  assert.deepEqual(personTaskPeople([full,partial,open],'roomPreferenceMismatches').map(p=>p.personId),['1']);
+ assert.equal(personTaskPeople([full,partial,open],'unassigned',['3']).length,0);
+ assert.equal(personTaskPeople([full],'pendingSingleRoomPeople',['1']).length,1);
  assert.equal(personTaskCategories.length,6);
  assert.equal(personStatusIndicators(full)[0].label,'EZ-Klärung erforderlich');
  assert.ok(personStatusIndicators(full).length<=2);

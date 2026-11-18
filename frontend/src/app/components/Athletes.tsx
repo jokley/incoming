@@ -39,7 +39,7 @@ import { ImportDecisionDialog } from './ImportDecisionDialog';
 import { ActivityInfoBlock } from './activity';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import type { OperationsLocationState } from '../operationsContext';
-import type { Athlete, ArrivalStatus } from '../types';
+import type { Athlete } from '../types';
 import { personFunctionOptions, matchesPersonFunction } from '../services/personFunctions';
 
 type FilterKey = 'nation' | 'sport' | 'gender' | 'function' | 'status' | 'notes' | 'rate';
@@ -121,29 +121,15 @@ function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 
   return <Tooltip><TooltipTrigger asChild><button type="button" onClick={event => { event.stopPropagation(); onOpen(athlete); }} className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.info}`}><MessageSquareText className="h-3 w-3" aria-hidden="true" />{label}</button></TooltipTrigger><TooltipContent side="top" sideOffset={5} className="max-w-80 whitespace-pre-wrap break-words bg-[var(--ops-text)] text-left text-xs leading-relaxed text-[var(--ops-surface)]">{note}</TooltipContent></Tooltip>;
 }
 
-const arrivalStatusLabels:Record<ArrivalStatus,string>={UNDECIDED:'Ungeklärt',EXPECTED:'Erwartet',CONFIRMED:'Bestätigt',NOT_TRAVELLING:'Nicht anreisend'};
-const arrivalSelection=(athlete?:Athlete|null)=>athlete?.arrivalStatusSource==='MANUAL'?athlete.arrivalStatus||'':'';
-function ArrivalStatusField({athlete,value,disabled,onChange}:{athlete:Athlete|null;value:ArrivalStatus|'';disabled:boolean;onChange:(value:ArrivalStatus|'')=>void}) {
- const warning=value==='NOT_TRAVELLING'&&Boolean(athlete?.assignment?.hasAssignment||athlete?.accommodationCoverage?.segments.length);
- return <div onClick={event=>event.stopPropagation()} onKeyDown={event=>event.stopPropagation()}>
-  <select title="Operative Anreiseplanung. Unterkunftsbedarf, bestehende Buchungen und Quoten bleiben unverändert. Standard: Athleten ungeklärt, Officials erwartet." aria-label={`Anreisestatus ${athlete?.firstname??''} ${athlete?.lastname??''}`} value={value} disabled={disabled||!athlete?.arrivalStatus} onChange={event=>onChange(event.target.value as ArrivalStatus|'')} className="max-w-full rounded border border-[var(--ops-border)] bg-[var(--ops-surface)] p-1 text-xs text-[var(--ops-text)]">
-   <option value="">{athlete?.arrivalStatusSource==='DEFAULT'?`${arrivalStatusLabels[athlete.arrivalStatus!]} (Standard)`:'Standard verwenden'}</option>
-   {Object.entries(arrivalStatusLabels).map(([key,label])=><option key={key} value={key}>{label}</option>)}
-  </select>
-  {warning&&<p role="status" className="mt-1 text-xs text-[var(--ops-warning)]">Nicht anreisend, aber Unterkunft gebucht. Buchung bitte prüfen; sie bleibt bestehen.</p>}
- </div>;
-}
-
 function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { onUpdate: (athlete: Athlete) => void; athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
-  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false, arrivalStatus:'' as ArrivalStatus|'' });
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
   useEffect(() => {
     setStay({
-      arrivalStatus:arrivalSelection(athlete),
       arrivalDate: athlete?.arrivalDate || '',
       departureDate: athlete?.departureDate || '',
       note: athlete?.internalNote || '',
@@ -158,7 +144,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
     if (!athlete) return;
     setSaving(true); setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { ...(stay.arrivalStatus!==arrivalSelection(athlete)?{arrivalStatus:stay.arrivalStatus||null}:{}), arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, ...(stay.requirementTouched ? {accommodationRequirement:stay.releaseRequirement ? null : stay.requirement} : {}), ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}) });
+      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, ...(stay.requirementTouched ? {accommodationRequirement:stay.releaseRequirement ? null : stay.requirement} : {}), ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}) });
       onUpdate(updated);
       onClose();
     } catch (error) {
@@ -207,7 +193,6 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
 
         <DialogSection icon={<CalendarDays size={18} />} title="Aufenthalt" subtitle={permissions.canEdit ? 'Operative Aufenthaltsdaten können bearbeitet werden.' : 'Für Ihre Rolle nur zur Ansicht verfügbar.'} emphasis>
           <FieldGrid>
-            <Box><Typography variant="caption" color="text.secondary">Anreisestatus</Typography><ArrivalStatusField athlete={athlete} value={stay.arrivalStatus} disabled={!permissions.canEdit||saving} onChange={arrivalStatus=>setStay(current=>({...current,arrivalStatus}))}/></Box>
             <TextField fullWidth type="date" label="Anreise" value={stay.arrivalDate} onChange={event => setStay(current => ({ ...current, arrivalDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField fullWidth type="date" label="Abreise" value={stay.departureDate} onChange={event => setStay(current => ({ ...current, departureDate: event.target.value }))} disabled={!permissions.canEdit} slotProps={{ inputLabel: { shrink: true } }} />
             <TextField fullWidth multiline minRows={3} label="Bemerkung Intern" value={stay.note} onChange={event => setStay(current => ({ ...current, note: event.target.value }))} disabled={!permissions.canEdit} placeholder={permissions.canEdit ? 'Interne Hinweise für das Unterkunftsteam' : undefined} sx={{ gridColumn: '1 / -1' }} />
@@ -291,9 +276,6 @@ function ReadonlyField({ label, value, emptyValue = '—' }: { label: string; va
 }
 
 export function Athletes() {
-  const permissions=usePermissions();
-  const [savingArrival,setSavingArrival]=useState<string|null>(null);
-  const [arrivalError,setArrivalError]=useState<string|null>(null);
   const navigate = useNavigate();
   const location = useLocation(); const operations = (location.state as OperationsLocationState | null)?.operationsContext;
   const query = new URLSearchParams(location.search);
@@ -398,7 +380,7 @@ export function Athletes() {
       </ContentCard>
 
       <ContentCard surface="raised" className="flex min-w-0 flex-col overflow-hidden xl:min-h-0 xl:flex-1">
-        <ArrivalPlanning nation={filters.nation} revision={athletes} onPerson={id=>setSelectedAthlete(athletes.find(p=>p.id===id)||null)}/>
+        <ArrivalPlanning initialOpen={query.get('planning')==='1'} nation={filters.nation} revision={athletes} onPerson={id=>setSelectedAthlete(athletes.find(p=>p.id===id)||null)}/>
         <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div><SectionHeader title="Athletenliste" /><div className="mt-1 text-sm text-[var(--ops-text-muted)]"><b className="text-[var(--ops-text)]">{filtered.length}</b> von {athletes.length} Personen</div></div>
@@ -409,24 +391,17 @@ export function Athletes() {
             </label>
           </div>
         </div>
-        {arrivalError&&<Alert severity="error" onClose={()=>setArrivalError(null)}>{arrivalError}</Alert>}
         <div className="min-h-[24rem] overflow-x-auto overflow-y-auto xl:min-h-0 xl:flex-1">
-          <table className="w-full min-w-[1250px] table-fixed border-separate border-spacing-0 text-left text-sm">
-            <colgroup>{[14,5,6,12,11,7,7,10,6,8,8,6].map((width,index)=><col key={index} style={{width:`${width}%`}}/>)}</colgroup>
+          <table className="w-full min-w-[1150px] table-fixed border-separate border-spacing-0 text-left text-sm">
+            <colgroup>{[16,5,6,13,8,8,12,7,9,9,7].map((width,index)=><col key={index} style={{width:`${width}%`}}/>)}</colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
-              <tr>{['Name', 'Nation', 'Gender', 'Wettbewerbe', 'Anreisestatus', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
+              <tr>{['Name', 'Nation', 'Gender', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><AccommodationRateChip category={athlete.accommodationRateCategory}/><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell><Cell>{genderLabel(athlete.gender)}</Cell>
                 <Cell><div className="min-w-0"><b className="ops-table-wrap block font-bold text-[var(--ops-text)]" title={previewEventGroupLabel(athlete.quotaDisciplines)}>{previewEventGroupLabel(athlete.quotaDisciplines)}</b><span className="ops-table-wrap block text-xs text-[var(--ops-text-muted)]">{competitionMembershipList(athlete.competitions)}</span><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
-                <Cell><ArrivalStatusField athlete={athlete} value={arrivalSelection(athlete)} disabled={!permissions.canEdit||savingArrival!==null} onChange={async value=>{
-                  setSavingArrival(athlete.id);setArrivalError(null);
-                  try {const updated=await api.updateAthlete(athlete.id,{arrivalStatus:value||null});setAthletes(current=>current.map(person=>person.id===updated.id?{...person,...updated}:person));}
-                  catch(error){setArrivalError(error instanceof Error?error.message:'Anreisestatus konnte nicht gespeichert werden.');}
-                  finally{setSavingArrival(null);}
-                }}/></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell><span className="block truncate" title={personAccommodation(athlete).details || personAccommodation(athlete).hotelLabel}>{personAccommodation(athlete).hotelLabel==='—' ? '—' : <InlineActionLink onClick={event=>{event.stopPropagation();navigate(personAccommodation(athlete).segments.length>1 ? assignmentWorkspaceHref({personId:athlete.id}) : `/hotels?hotelId=${personAccommodation(athlete).segments[0]?.hotelId || athlete.assignment?.hotelId || ''}`);}}>{personAccommodation(athlete).hotelLabel}</InlineActionLink>}</span></Cell>
                 <Cell><span title={personAccommodation(athlete).details}><InlineActionLink className="ops-table-wrap text-xs" onClick={event=>{event.stopPropagation();navigate(assignmentWorkspaceHref({personId:athlete.id}));}}>{roomTypeLabel(athlete)}</InlineActionLink></span></Cell>
