@@ -32,11 +32,11 @@ def accommodation_event_id():
 
 
 def ownership_clause(model, owner):
-    from models import (Athlete, RoomBooking, RoomBookingOccupant, HotelRoomInventory,
+    from models import (Athlete, AthleteArrivalForecast, RoomBooking, RoomBookingOccupant, HotelRoomInventory,
         AccommodationEvent, EventRoomDemand, RoomAssignment, FisRoomAssignment, ImportRun, ImportSession, WorldChampion)
     if model is AccommodationEvent:
         return model.championship_event_id == owner
-    if model in (Athlete, RoomBooking, HotelRoomInventory, ImportRun, ImportSession, WorldChampion):
+    if model in (Athlete, AthleteArrivalForecast, RoomBooking, HotelRoomInventory, ImportRun, ImportSession, WorldChampion):
         return model.event_id == owner
     if model is RoomBookingOccupant:
         return model.room_booking.has(RoomBooking.event_id == owner) & model.athlete.has(Athlete.event_id == owner)

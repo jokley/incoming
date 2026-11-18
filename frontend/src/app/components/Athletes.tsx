@@ -1,3 +1,4 @@
+import {ArrivalPlanning} from './ArrivalPlanning';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import { AccommodationRequirementField } from './AccommodationRequirementField';
 import type { AccommodationRequirement } from '../types';
@@ -397,6 +398,7 @@ export function Athletes() {
       </ContentCard>
 
       <ContentCard surface="raised" className="flex min-w-0 flex-col overflow-hidden xl:min-h-0 xl:flex-1">
+        <ArrivalPlanning nation={filters.nation} revision={athletes} onPerson={id=>setSelectedAthlete(athletes.find(p=>p.id===id)||null)}/>
         <div className="shrink-0 border-b border-[var(--ops-divider)] p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div><SectionHeader title="Athletenliste" /><div className="mt-1 text-sm text-[var(--ops-text-muted)]"><b className="text-[var(--ops-text)]">{filtered.length}</b> von {athletes.length} Personen</div></div>

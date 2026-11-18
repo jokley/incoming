@@ -457,3 +457,41 @@ def test_person_status_api_is_read_only_unique_filtered_and_recomputed(events):
     male.gender='A';db.session.commit()
     invalid=client.get(url+'&includePeople=true')
     assert invalid.status_code==409 and 'personSummary' not in invalid.json
+
+
+@pytest.mark.parametrize('stored',[False,True])
+def test_concurrent_forecast_writes_and_event_isolation(events,monkeypatch,stored):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from models import AthleteArrivalForecast,AuditEvent
+    a,b=events
+    competition=Competition.query.filter_by(quota_discipline='Freeski Park & Pipe',gender='M').first()
+    db.session.add_all([Athlete(event_id=owner.id,firstname=str(i),lastname='Forecast',nation_code=nation,function='Athlete',gender='M',competitions=[competition]) for owner,nation in ((a,'FIN'),(a,'AUT'),(b,'FIN')) for i in range(8)])
+    db.session.commit()
+    headers={'X-Championship-Event-ID':str(a.id)}
+    client=app.test_client()
+    row=next(r for r in client.get('/api/athletes/arrival-planning',headers=headers).json['rows'] if r['nationCode']=='FIN')
+    if stored:
+        row=client.put('/api/athletes/arrival-planning/'+row['areaId'],headers=headers,json={'baseToken':row['baseToken'],'expectedTotal':4}).json
+    barrier=Barrier(2)
+    def write(total):
+        with app.test_client() as worker:
+            barrier.wait(timeout=10)
+            response=worker.put('/api/athletes/arrival-planning/'+row['areaId'],headers=headers,json={'baseToken':row['baseToken'],'expectedTotal':total})
+            return response.status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes=list(pool.map(write,[3,4]))
+    assert sorted(codes)==[200,409]
+    db.session.expire_all()
+    assert AthleteArrivalForecast.query.count()==1
+    assert AthleteArrivalForecast.query.one().event_id==a.id
+    assert client.get('/api/athletes/arrival-planning?nationCode=AUT',headers=headers).json['rows'][0]['expectedTotal'] is None
+    other=client.get('/api/athletes/arrival-planning',headers={'X-Championship-Event-ID':str(b.id)}).json['rows'][0]
+    assert other['expectedTotal'] is None
+    assert client.put('/api/athletes/arrival-planning/'+row['areaId'],headers={'X-Championship-Event-ID':str(b.id)},json={'baseToken':row['baseToken'],'expectedTotal':1}).status_code==404
+    assert AuditEvent.query.filter_by(entity_type='athlete-arrival-forecast').count()==(2 if stored else 1)
+    from models import EventAccess
+    grant=EventAccess.query.filter_by(event_id=a.id,username='test-admin').one();grant.can_write=False;db.session.commit()
+    current=next(r for r in client.get('/api/athletes/arrival-planning',headers=headers).json['rows'] if r['nationCode']=='FIN')
+    assert client.put('/api/athletes/arrival-planning/'+current['areaId'],headers=headers,json={'baseToken':current['baseToken'],'expectedTotal':2}).status_code==403
+    assert AuditEvent.query.filter_by(entity_type='athlete-arrival-forecast').count()==(2 if stored else 1)

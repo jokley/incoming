@@ -485,3 +485,24 @@ def test_partial_reimport_preserves_arrival_decisions_in_both_families(owner):
     db.session.expire_all()
     assert {p.id:(p.arrival_status,tuple(sorted(c.id for c in p.competitions)),p.shared_with_name) for p in Athlete.query.all()}==before
     assert booking_state()==room_before
+
+
+def test_partial_reimport_preserves_forecasts_and_bookings_and_exposes_roster_changes(owner):
+    initial=upload(owner,'SB');run(initial,owner);run(upload(owner,'FS'),owner)
+    client=app.test_client()
+    areas=client.get('/api/athletes/arrival-planning').json['rows']
+    expected={}
+    for row in areas:
+        response=client.put('/api/athletes/arrival-planning/'+row['areaId'],json={'baseToken':row['baseToken'],'expectedTotal':1})
+        assert response.status_code==200,response.json
+        expected[row['areaId']]=response.json['expectedTotal']
+    room=booking(Athlete.query.filter_by(function='Athlete').all()[:2])
+    columns=lambda:({c.name:getattr(room,c.name) for c in room.__table__.columns},[(o.id,o.athlete_id) for o in room.occupants])
+    before=columns()
+    # Remove a non-booked FS athlete; SB import, room partners and bookings stay untouched.
+    corrected=rows('FS')[1:]
+    run(upload(owner,'FS',data=corrected),owner,True)
+    current=client.get('/api/athletes/arrival-planning').json['rows']
+    assert {r['areaId']:r['expectedTotal'] for r in current}==expected
+    assert any(r['conflict'] and 'Bestand' in ' '.join(r['reasons']) for r in current)
+    assert columns()==before

@@ -577,6 +577,13 @@ class ApiService {
     return this.request<Athlete[]>('/athletes');
   }
 
+  async getArrivalPlanning(nationCode?:string):Promise<import('../types').ArrivalPlanningOverview> {
+    return this.request('/athletes/arrival-planning'+(nationCode?`?nationCode=${encodeURIComponent(nationCode)}`:''));
+  }
+  async saveArrivalForecast(areaId:string,data:import('../types').ArrivalForecastInput):Promise<import('../types').ArrivalPlanningRow> {
+    return this.request(`/athletes/arrival-planning/${encodeURIComponent(areaId)}`,{method:'PUT',body:JSON.stringify(data)});
+  }
+
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
   async updateAthlete(id: string, data: { arrivalStatus?: import('../types').ArrivalStatus | null; accommodationRequirement?: 'REQUIRED' | 'NO_ROOM' | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
