@@ -1,5 +1,18 @@
-import type { FisImportIssue } from '../types.ts';
+import type { ImportNNPlanning, FisImportIssue } from '../types.ts';
 import { sportAreaLabel } from './competitionPresentation.ts';
+
+/** Join existing backend exclusions to preview keys; never select people here. */
+export function deferredImportPersonKeys(preview:FisImportPreview,planning?:ImportNNPlanning):Set<string> {
+ const excluded=new Set(planning?.rows.filter(row=>!row.conflict).flatMap(row=>row.replacedPersonIds)??[]);
+ const result=new Set<string>();
+ for(const person of preview.people){
+  if(person.function?.trim().toLowerCase()!=='athlete'||!person.matchKey)continue;
+  const liveIds=new Set(planning?.operationalQuota?.people?.filter(p=>p.matchKey===person.matchKey&&p.nationCode===person.nationCode&&p.personId!=null).map(p=>String(p.personId))??[]);
+  const identity=person.existingAthleteId!=null?String(person.existingAthleteId):planning?.mode==='IMPORT'?`preview:${person.matchKey}`:liveIds.size===1?[...liveIds][0]:undefined;
+  if(identity&&excluded.has(identity))result.add(person.matchKey);
+ }
+ return result;
+}
 
 export type ImportPlacement = {area:string;group?:string};
 /** Presentation only: partitions existing references once, never evaluates or filters them. */

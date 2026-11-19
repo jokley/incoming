@@ -263,7 +263,7 @@ test('unresolved person selections explicitly show the normal fallback in both q
  for(const kind of ['athlete','officials']) {
   const output=html(copy(),kind,{nn}),visible=text(output);
   assert.ok(visible.includes(kind==='athlete'?'Personenauswahl klären':'Personenauswahl klären · normale Athletenbasis'));
-  if(kind==='officials')assert.ok(visible.includes('9 geplant 9 FIS-gemeldet'));
+  if(kind==='officials'){assert.ok(!visible.includes('9 geplant'));assert.ok(visible.includes('Normale Basis · Auswahl ungeklärt'));}
 
 
   assert.ok(!visible.includes('Operative Officials-Obergrenze 6'));

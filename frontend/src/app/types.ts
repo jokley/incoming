@@ -754,7 +754,7 @@ export interface NNPlanningChoice {areaId:string;baseToken:string;expectedTotal:
 export interface OperationalQuotaRow {nnForecastBlocked?:boolean;nationCode:string;discipline:string;gender:string;athletesEntered:number;expectedAthletes:number;officialQuota:number;registeredOfficials:number;singleRoomOfficialBasis:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;approvedExtraSingleRooms:number;quotaExemptSingleRooms:number;officialsExceeded:boolean;coverageChanged:boolean;fisOfficialQuota:number;fisSingleRoomsAllowed:number}
 export interface ImportNNPlanning extends ArrivalPlanningOverview {operationalQuota?:{rows:OperationalQuotaRow[];conflict:boolean;reasons:string[];overview?:QuotaOverview;people?:SingleRoomSummaryPerson[]};versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
 
-export type SingleRoomSummaryPerson=Pick<FisImportPreview['people'][number],'matchKey'|'existingAthleteId'|'nationCode'|'singleRoomAllocation'|'singleRoomQuotaExemptReason'|'accommodationRequirement'>;
+export type SingleRoomSummaryPerson=Pick<FisImportPreview['people'][number],'matchKey'|'existingAthleteId'|'nationCode'|'singleRoomAllocation'|'singleRoomQuotaExemptReason'|'accommodationRequirement'> & {personId?:string|number};
 
 // Existing import-session read contract; manual NN editing is retired.
 export interface NNPlanningControls {planning:ImportNNPlanning;busy?:boolean;error?:string|null}
