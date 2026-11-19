@@ -180,3 +180,24 @@ test('contradictory personal allocation contexts retain one person but cannot im
  const before=structuredClone(preview),summary=singleRoomSummary(preview,'ITA');
  assert.equal(summary.requested,1);assert.equal(summary.counts.COVERED,1);assert.equal(summary.complete,false);assert.deepEqual(preview,before);
 });
+
+test('preview exclusions use stable backend identities, not list order or names',async()=>{
+ const {deferredImportPersonKeys}=await import('./importHints.ts');
+ const preview:any={people:[{matchKey:'new',nationCode:'FIN',function:'Athlete'},{matchKey:'saved',existingAthleteId:42,nationCode:'FIN',function:'Athlete'},{matchKey:'booked',existingAthleteId:43,nationCode:'FIN',function:'Athlete'},{matchKey:'staff',nationCode:'FIN',function:'Coach'}]};
+ const planning:any={mode:'IMPORT',rows:[{conflict:false,replacedPersonIds:['preview:new','42','preview:staff']}]};
+ const before=JSON.stringify({preview,planning});
+ assert.deepEqual([...deferredImportPersonKeys(preview,planning)],['new','saved']);
+ preview.people.reverse();assert.deepEqual([...deferredImportPersonKeys(preview,planning)].sort(),['new','saved']);preview.people.reverse();
+ assert.equal(JSON.stringify({preview,planning}),before);
+ planning.rows[0].conflict=true;assert.equal(deferredImportPersonKeys(preview,planning).size,0);
+ assert.equal(deferredImportPersonKeys(preview).size,0);
+});
+
+test('live exclusions resolve persisted read-model IDs without changing the imported snapshot',async()=>{
+ const {deferredImportPersonKeys}=await import('./importHints.ts');
+ const preview:any={people:[{matchKey:'fis-code',nationCode:'FIN',function:'Athlete'}]};
+ const planning:any={mode:'LIVE',rows:[{conflict:false,replacedPersonIds:['77']}],operationalQuota:{people:[{matchKey:'fis-code',nationCode:'FIN',personId:77},{matchKey:'fis-code',nationCode:'SWE',personId:88}]}};
+ assert.deepEqual([...deferredImportPersonKeys(preview,planning)],['fis-code']);
+ planning.operationalQuota.people.push({matchKey:'fis-code',nationCode:'FIN',personId:99});
+ assert.equal(deferredImportPersonKeys(preview,planning).size,0);
+});

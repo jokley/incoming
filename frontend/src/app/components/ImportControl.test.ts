@@ -123,7 +123,7 @@ test('area grouping adds headings without splitting competition pools or changin
 });
 
 test('competitions show one shared backend person selection without NN editors',()=>{
- const competitions=['ba','ss'].map(id=>({id,name:id==='ba'?'Big Air Herren':'Slopestyle Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[{nation:'FIN',reported:8,regularMax:4,status:'REVIEW_REQUIRED',unverifiedAdditional:4,champions:[],personKeys:['a'],aboveRegular:4,championStarters:0,sharedPoolReported:null}]}));
+ const competitions=['ba','ss'].map(id=>({id,name:id==='ba'?'Big Air Herren':'Slopestyle Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[{nation:'FIN',reported:8,regularMax:4,status:'REVIEW_REQUIRED',unverifiedAdditional:4,champions:[],personKeys:['a'],aboveRegular:4,championStarters:0,sharedPoolReported:null,sharedPoolUnverifiedAdditional:0}]}));
  const control={people:[{personKey:'a',competitions}],competitions,issues:[]};
  const preview={people:[{matchKey:'a',function:'Athlete',nationCode:'FIN',gender:'M'}]};
  const area={areaId:'shared',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',reportedCount:9,selectedCount:4};
@@ -134,4 +134,11 @@ test('competitions show one shared backend person selection without NN editors',
  assert.equal((render().match(/5 vorläufig disponiert.*?inkl. WM/g)??[]).length,2);
  assert.ok(!render().includes('Unterkunftserwartung bearbeiten'));
  assert.ok(!render().includes('<input'));
+ // Neither a below-limit competition nor a title-covered extra needs the hint.
+ competitions.forEach(c=>Object.assign(c.sportEntries[0],{reported:1,aboveRegular:0,unverifiedAdditional:0,status:'NUMERIC_OK'}));
+ assert.ok(!render().includes('vorläufig disponiert'));
+ competitions.forEach(c=>Object.assign(c.sportEntries[0],{reported:5,aboveRegular:1,championStarters:1,champions:[{personKey:'a',source:'verified'}],status:'TITLE_COVERED'}));
+ assert.ok(!render().includes('vorläufig disponiert'));
+ competitions[0].sportEntries[0].sharedPoolUnverifiedAdditional=1;
+ assert.equal((render().match(/vorläufig disponiert/g)??[]).length,1);
 });

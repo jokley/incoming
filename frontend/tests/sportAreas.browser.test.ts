@@ -146,20 +146,21 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
- const people=Array.from({length:9},(_,i)=>({matchKey:'p'+i,id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],quotaDisciplines:['Freeski Park & Pipe'],accommodationRequirement:'REQUIRED'}));
+ const people=Array.from({length:9},(_,i)=>({athleteQuotaFamilies:['Freestyle'],rowNumber:i+2,roomType:'Double shared',accommodationRateCategory:'STANDARD',matchKey:'p'+i,id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],quotaDisciplines:['Freeski Park & Pipe'],accommodationRequirement:'REQUIRED'}));
  const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:9,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],quotaHints:[{name:'Halfpipe Herren',regularMax:4}],checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
  const planning:any={eventId:'1',nationCode:'FIN',reportedCount:9,mode:'IMPORT',versionId:'30',rows:[row],decisions:[]};
  const preview:any={eventId:'1',people,rooms:[],errors:[],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:true,changePlan:{digest:'frozen-plan',snapshotScope:'FULL_NATION',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
  preview.quotaOverview={event:{name:'Provisional synthetic',isWorldChampionship:true,rulesFixed:true,rulesRevision:1},nations:[{nationCode:'FIN',incomplete:false,athleteFamilies:[{topLevelDiscipline:'Freestyle',athleteQuotaUsed:9,athleteQuotaLimit:36,athleteGenderUsed:{M:9,F:0},athleteGenderLimit:22,athleteQuotaStatus:'WITHIN',decisionStatus:'NONE',requiredExtent:{}}],groups:[{name:'Freeski Park & Pipe',officials:10,athletes:9,coverageReviewRequired:false,contexts:[{gender:'M',athletes:9,officialQuota:11,singleRoomsAllowed:3,singleRoomsRequested:3,singleRoomsApproved:0,singleRoomsPending:0,quotaExemptSingleRooms:0}],totals:{officialQuota:11,singleRoomsAllowed:3,singleRoomsRequested:3,singleRoomsApproved:0,singleRoomsPending:0,quotaExemptSingleRooms:0}}],officials:10,otherPeople:0,coverageReviewRequired:false,ezDecisionsOpen:0}]};
  const session:any={id:'1',nation:'FIN',status:'PROFESSIONALLY_REVIEWED',errors:0,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,nnPlanning:planning,importControl:{people:[],issues:[],competitions:[]}};
- const entry=(reported:number,extra:number)=>({nation:'FIN',reported,regularMax:4,status:extra?'REVIEW_REQUIRED':'TITLE_COVERED',reason:'Synthetic rule',aboveRegular:reported-4,championStarters:extra?0:1,unverifiedAdditional:extra,sharedPoolReported:null,sharedPoolUnverifiedAdditional:0,personKeys:people.slice(0,reported).map(p=>p.matchKey),champions:extra?[]:[{personKey:'p0',source:'Verified title'}],allocationConfirmed:false});
+ const entry=(reported:number,extra:number)=>({nation:'FIN',reported,regularMax:4,status:extra?'REVIEW_REQUIRED':reported>4?'TITLE_COVERED':'NUMERIC_OK',reason:'Synthetic rule',aboveRegular:reported-4,championStarters:extra||reported<=4?0:1,unverifiedAdditional:extra,sharedPoolReported:null,sharedPoolUnverifiedAdditional:0,personKeys:people.slice(0,reported).map(p=>p.matchKey),champions:extra||reported<=4?[]:[{personKey:'p0',source:'Verified title'}],allocationConfirmed:false});
  const competitions=[{id:'ba',name:'Big Air Herren',group:row.discipline,gender:'M',sportEntries:[entry(8,4)]},{id:'ss',name:'Slopestyle Herren',group:row.discipline,gender:'M',sportEntries:[entry(8,4)]},{id:'hp',name:'Halfpipe Herren',group:row.discipline,gender:'M',sportEntries:[entry(5,0)]}];
- session.importControl={people:people.map((p,i)=>({personKey:p.matchKey,competitions:competitions.filter(c=>c.id==='ba'?i<8:c.id==='ss'?i>0:i<5).map(c=>({...c,family:'Freestyle'})),quotaContexts:[]})),competitions,issues:[]};
+ session.importControl={quotaGroups:[{name:row.discipline,family:'Freestyle'}],people:people.map((p,i)=>({personKey:p.matchKey,competitions:competitions.filter(c=>c.id==='ba'?i<8:c.id==='ss'?i>0:i<5).map(c=>({...c,family:'Freestyle'})),quotaContexts:[]})),competitions,issues:[]};
  const event={id:'1',name:'Provisional synthetic',active:true};
  const writes:string[]=[],errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  const project=(count:number)=>{
   Object.assign(row,{selectedCount:count,selectedWorldChampionCount:count===5?1:0});
-  competitions[2].sportEntries=[entry(5,count===5?0:1)];
+  competitions[2].sportEntries=[entry(count===5?5:1,0)];
+  row.replacedPersonIds=people.slice(count).map(p=>'preview:'+p.matchKey);
   const context={gender:'M',athletes:count,athletesEntered:9,expectedAthletes:count,officialQuota:count===4?6:7,registeredOfficials:10,singleRoomOfficialBasis:count===4?6:7,singleRoomsAllowed:count===4?2:3,singleRoomsRequested:3,singleRoomsPending:count===4?1:0,singleRoomsApproved:0,quotaExemptSingleRooms:0};
   planning.operationalQuota={conflict:false,reasons:[],people:[],rows:[context],overview:{...preview.quotaOverview,nations:[{...preview.quotaOverview.nations[0],groups:[{name:row.discipline,officials:10,athletes:9,contexts:[context],totals:context}]}]}};
  };project(4);
@@ -169,14 +170,45 @@ test('automatic person selection is shared by athlete and Officials quota views 
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
+ preview.rooms=[
+  {rowNumber:2,sourceRowKey:'mixed',person1Key:'p0',person1Name:'Champion Synthetic',person2Key:'p4',person2Name:'Athlete4 Synthetic',roomType:'Double shared'},
+  {rowNumber:3,sourceRowKey:'deferred',person1Key:'p5',person1Name:'Athlete5 Synthetic',person2Key:'p6',person2Name:'Athlete6 Synthetic',roomType:'Double shared'},
+  {rowNumber:4,sourceRowKey:'single',person1Key:'p7',person1Name:'Athlete7 Synthetic',person2Key:null,roomType:'Single'},
+  {rowNumber:5,sourceRowKey:'unknown',person1Key:'p8',person1Name:'Athlete8 Synthetic',person2Key:null,sharedWithRawName:'Unknown partner',roomType:'Double shared'},
+ ];
  await page.goto(`${origin}/import?sessionId=1`);
+ const openPeople=async()=>{await page.getByRole('button',{name:/^Personen/}).first().click();await page.getByRole('dialog',{name:'Personen der Importvorschau'}).waitFor();};
+ await openPeople();let list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
+ assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),5);
+ await page.keyboard.press('Escape');await page.getByRole('group',{name:'Gruppieren:'}).getByRole('button',{name:'Ein',exact:true}).click();await openPeople();
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),5);assert.match(await list.locator('th[scope="rowgroup"]').innerText(),/9 Personen/);
+ const excluded=list.getByRole('button',{name:'Importdetails Athlete4 Synthetic',exact:true});assert.equal(await excluded.isEnabled(),true);
+ await excluded.click();await page.getByRole('dialog',{name:'Athlete4 Synthetic',exact:true}).waitFor();assert.equal(await page.locator('[role="dialog"]').count(),2);await page.keyboard.press('Escape');
+ await list.getByLabel('Person suchen').fill('Athlete4');assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),1);
+ await list.getByLabel('Person suchen').fill('');
+ await page.screenshot({path:'/workspace/artifacts/preview-person-selection-dark.png',animations:'disabled'});
+ await page.keyboard.press('Escape');
+ const openRooms=async()=>{await page.getByRole('button',{name:/^Zimmerzuordnungen/}).click();await page.getByRole('dialog',{name:'Zimmer der Importvorschau'}).waitFor();};
+ await openRooms();list=page.getByRole('dialog',{name:'Zimmer der Importvorschau'});
+ assert.equal(await list.locator('tbody tr:has(td)').count(),4);
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),2);
+ const mixed=list.getByRole('row').filter({hasText:'Champion Synthetic'});assert.equal(await mixed.getAttribute('data-provisional-planning'),null);assert.equal(await mixed.getByText('Vorerst nicht eingeplant',{exact:true}).count(),1);
+ const unknown=list.getByRole('row').filter({hasText:'Athlete8 Synthetic'});assert.equal(await unknown.getAttribute('data-provisional-planning'),null);assert.match(await unknown.innerText(),/Zimmerpartner ungeklärt/);
+ await list.getByLabel('Anzeigen').selectOption('partner');assert.equal(await list.locator('tbody tr:has(td)').count(),1);assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),0);
+ await list.getByLabel('Anzeigen').selectOption('all');
+ await page.screenshot({path:'/workspace/artifacts/preview-room-selection-dark.png',animations:'disabled'});
+ await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Helles Theme verwenden',exact:true}).click();await openRooms();
+ await page.screenshot({path:'/workspace/artifacts/preview-room-selection-light.png',animations:'disabled'});await page.keyboard.press('Escape');
  const openAthletes=async()=>{await page.getByRole('button',{name:/^Athleten-\/Disziplinquote/}).click();await page.getByRole('dialog',{name:'Athleten-/Disziplinquote'}).waitFor();};
  await openAthletes();
  let dialog=page.getByRole('dialog');
- assert.equal(await dialog.getByText(/9 FIS gemeldet · 4 vorläufig disponiert/).count(),3);
+ assert.equal(await dialog.getByText(/9 FIS gemeldet · 4 vorläufig disponiert/).count(),2);
+ assert.equal(await dialog.getByRole('row',{name:/^Halfpipe/}).getByText(/vorläufig disponiert/).count(),0);
  assert.equal(await dialog.getByRole('spinbutton').count(),0);
  assert.equal(await dialog.getByRole('button',{name:/Unterkunftserwartung/}).count(),0);
- await page.screenshot({path:'/workspace/artifacts/provisional-athletes-four.png',animations:'disabled'});
+ await page.screenshot({path:'/workspace/artifacts/preview-quota-excess-light.png',animations:'disabled'});
  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();
  const officials=async(cap:string,rooms:string)=>{
   await page.getByRole('button',{name:/^Officials & EZ-Quote/}).click();
@@ -191,7 +223,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await officials('6','2');
  // A new confirmed server projection supplies the additional verified champion.
  project(5);await page.reload();await openAthletes();dialog=page.getByRole('dialog');
- assert.equal(await dialog.getByText(/5 vorläufig disponiert \(inkl. WM\)/).count(),3);
+ assert.equal(await dialog.getByText(/5 vorläufig disponiert \(inkl. WM\)/).count(),2);
  await page.screenshot({path:'/workspace/artifacts/provisional-athletes-champion.png',animations:'disabled'});
  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();await officials('7','3');
  assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
