@@ -198,8 +198,9 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
 
 
 def operational_athlete_basis(overview):
+    """Only valid NN overrides; blocked scopes use the distinct normal roster."""
     return {(row['nationCode'],row['discipline'],row['personalGender']):row['expectedTotal']
-        for row in overview['rows'] if row['editable'] and row['expectedTotal'] is not None}
+        for row in overview['rows'] if row['editable'] and not row['conflict'] and row['expectedTotal'] is not None}
 
 
 def operational_quota_projection(overview, roster, demands, rules):
@@ -211,7 +212,9 @@ def operational_quota_projection(overview, roster, demands, rules):
     official=evaluate_quota_usage(roster,demands,rules)
     operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True)
     by_key={(row['nationCode'],row['discipline'],row['gender']):row for row in official}
+    blocked={(r['nationCode'],r['discipline'],r['personalGender']) for r in overview['rows'] if r['conflict']}
     for row in operative['rows']:
+        row['nnForecastBlocked']=(row['nationCode'],row['discipline'],row['gender']) in blocked
         previous=by_key[(row['nationCode'],row['discipline'],row['gender'])]
         row.update(fisOfficialQuota=previous['officialQuota'],fisSingleRoomsAllowed=previous['singleRoomsAllowed'],
             singleRoomsRequested=len(row['singleRoomAllocations']),

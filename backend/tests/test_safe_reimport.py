@@ -642,3 +642,19 @@ def test_nn_operational_preview_is_read_only_live_and_matches_imported_basis(eve
     assert cancelled.json['nnPlanning']['operationalQuota']['rows'][0]==current
     assert AthleteArrivalForecast.query.one().expected_total==5
     assert AthleteArrivalForecast.query.one().revision==2
+    # A changed real reimport keeps the saved forecast but blocks its use as
+    # quota basis until reviewed; no stale five-person entitlement may survive.
+    def changed_roster(people):
+        for person in people:
+            if person['Fiscode'] in codes[9:]:person['Function']='NSA Coach'
+    replacement=upload(event,codes[1:],changed=changed_roster)
+    run(replacement,event,destructive=True)
+    blocked=client.get(f'/api/import/sessions/{sid}').json['nnPlanning']
+    assert blocked['rows'][0]['conflict'] and blocked['rows'][0]['expectedTotal']==5
+    assert blocked['rows'][0]['virtualPlaces']==0 and blocked['rows'][0]['replacedPersonIds']==[]
+    quota=blocked['operationalQuota']['rows'][0]
+    assert quota['nnForecastBlocked']
+    assert (quota['expectedAthletes'],quota['officialQuota'],quota['singleRoomOfficialBasis'])==(8,10,10)
+    live_rows=client.get('/api/fis/official-quotas?nationCode=JPN').json
+    assert (live_rows[0]['expectedAthletes'],live_rows[0]['officialQuota'])==(8,10)
+    assert AthleteArrivalForecast.query.one().expected_total==5

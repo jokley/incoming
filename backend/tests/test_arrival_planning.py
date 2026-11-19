@@ -184,12 +184,11 @@ def test_forecasts_preserve_booking_single_use_and_live_person_status(planning,b
     assert response.status_code==200
     assert [booking.to_dict() for booking in bookings]==before
     current=client.get('/api/fis/official-quotas?includePeople=true').json
-    # The explicitly requested operative quota basis changes; physical person
-    # coverage, approvals and the protected booking records do not.
+    # A blocked forecast never changes the operative basis or physical usage.
     assert current['personStatuses']==projection['personStatuses']
     assert current['rows'][0]['athletesEntered']==projection['rows'][0]['athletesEntered']==8
-    assert current['rows'][0]['expectedAthletes']==total
-    assert current['rows'][0]['officialQuota']==(total+2 if total else 0)
+    assert current['rows'][0]['expectedAthletes']==8
+    assert current['rows'][0]['officialQuota']==10
     assert current['rows'][0]['singleRoomOfficialBasis']==0
     assert current['personSummary']['pendingSingleRoomPeople']==projection['personSummary']['pendingSingleRoomPeople']
     assert response.json['conflict'] and response.json['virtualPlaces']==0
@@ -253,6 +252,8 @@ def test_blocked_forecast_keeps_all_current_person_tasks(planning,change):
     db.session.commit()
     view=client.get('/api/assignments/planning-view?includeValidations=false').json
     policy=view['athletePlanning']
+    from arrival_planning import project,operational_athlete_basis
+    assert operational_athlete_basis(project())=={}
     assert policy['replacedPersonIds']==[] and policy['virtualPlaces']==0 and policy['conflicts']>0
     assert any(group['conflict'] for group in policy['groups'])
     count=Athlete.query.count()
@@ -271,3 +272,46 @@ def test_blocked_forecast_keeps_all_current_person_tasks(planning,change):
     assert current['personSummary']['planningConflicts']>0
     assert current['personPlanning']['replacedPersonIds']==[]
     assert sum(len(unit['occupants']) for unit in view['units']['unassigned'])==count
+
+
+@pytest.mark.parametrize('change',['booked','changed_roster','ambiguous','orphaned'])
+def test_blocked_nn_uses_normal_operative_quota_basis(planning,change):
+    from models import RoomBooking,RoomBookingOccupant,Hotel,RoomType
+    from arrival_planning import project,operational_athlete_basis,operational_quota_projection
+    from quota_rules import rules_for_event
+    client,event,people=planning
+    competition=people[0].competitions[0]
+    db.session.add_all([Athlete(firstname=f'Official{i}',lastname='Fallback',nation_code='FIN',function='NSA Coach',gender='M',competitions=[competition]) for i in range(10)])
+    db.session.commit()
+    initial=save(client,rows(client)[0],4).json
+    assert operational_athlete_basis(project())=={('FIN','Freeski Park & Pipe','M'):4}
+    if change=='booked':
+        hotel=Hotel(name='Fallback booking');room=RoomType(name='DZ',max_persons=2)
+        booking=RoomBooking(event_id=event.id,hotel=hotel,room_type=room,counts_as_single=False,check_in_date=people[0].arrival_date,check_out_date=people[0].departure_date)
+        db.session.add(booking);db.session.flush()
+        db.session.add_all([RoomBookingOccupant(room_booking_id=booking.id,athlete_id=p.id) for p in people[:2]])
+    elif change=='changed_roster':db.session.delete(people[-1])
+    elif change=='ambiguous':
+        for p in people:p.competitions.append(Competition.query.filter_by(quota_discipline='Snowboard Cross',gender='M').first())
+    else:
+        for p in people:p.competitions=[]
+    db.session.commit()
+    overview=project();assert operational_athlete_basis(overview)=={}
+    assert any(row['conflict'] for row in overview['rows'])
+    assert all(row['virtualPlaces']==0 and row['replacedPersonIds']==[] for row in overview['rows'])
+    public=client.get('/api/fis/official-quotas?includePeople=true').json
+    assert public['personPlanning']['conflicts']>0
+    assert public['personPlanning']['replacedPersonIds']==[]
+    for row in public['rows']:
+        assert row['expectedAthletes']==row['athletesEntered']
+        assert row['officialQuota']==row['athletesEntered']+2
+        assert row['singleRoomOfficialBasis']==min(row['registeredOfficials'],row['officialQuota'])
+    roster=[dict(personId=p.id,nationCode=p.nation_code,function=p.function,gender=p.gender,quotaDisciplines=[c.quota_discipline for c in p.competitions]) for p in Athlete.query.all()]
+    projected=operational_quota_projection(overview,roster,[],rules_for_event(event.id))
+    assert projected['conflict'] and projected['reasons']
+    for row in projected['rows']:
+        assert row['expectedAthletes']==row['athletesEntered']
+        assert row['officialQuota']==row['fisOfficialQuota']
+    if change in {'booked','changed_roster'}:
+        assert next(row for row in projected['rows'] if row['discipline']=='Freeski Park & Pipe')['nnForecastBlocked']
+    assert next(row for row in rows(client) if row['areaId']==initial['areaId'])['expectedTotal']==4

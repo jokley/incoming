@@ -252,3 +252,19 @@ test('Officials view hides stale operative figures during reloads or errors but 
   assert.ok(output.includes('Offizieller FIS-Prüfstand'));
  }
 });
+
+test('blocked NN forecasts explicitly show the normal fallback in both quota views',()=>{
+ const nn=operationalControls();
+ Object.assign(nn.planning.rows[0],{conflict:true,reasons:['Bestand geändert'],virtualPlaces:0});
+ Object.assign(nn.planning.operationalQuota,{conflict:true,reasons:['Bestand geändert']});
+ Object.assign(nn.planning.operationalQuota.rows[0],{nnForecastBlocked:true,expectedAthletes:9,officialQuota:11,singleRoomOfficialBasis:10,singleRoomsAllowed:3});
+ for(const kind of ['athlete','officials']) {
+  const output=html(copy(),kind,{nn}),visible=text(output);
+  assert.ok(visible.includes('NN-Prognose blockiert: Quotenbasis ist der aktuelle gemeldete Athletenbestand'));
+  assert.ok(visible.includes('Für Unterkunft erwartet 9'));
+  assert.ok(visible.includes('Operative Officials-Obergrenze 11'));
+  assert.ok(visible.includes('Regulärer EZ-Anspruch 3'));
+  assert.ok(!visible.includes('Operative Officials-Obergrenze 6'));
+  assert.ok(!output.includes('aria-label="NN-Plätze"'));
+ }
+});
