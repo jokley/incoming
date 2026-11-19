@@ -3,6 +3,9 @@ import copy
 import hashlib
 import json
 
+# Operative LOC policy for WM 2027, distinct from per-competition FIS limits.
+PROVISIONAL_HOUSING_REGULAR_LIMIT = 4
+
 FAMILIES = ('Snowboard', 'Freestyle')  # Persisted/API names retained.
 
 

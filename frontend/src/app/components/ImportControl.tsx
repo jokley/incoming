@@ -1,4 +1,4 @@
-import {InlineNNInput,type NNPlanningControls} from './ArrivalPlanning';
+import type {NNPlanningControls} from '../types';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import {Fragment,useEffect,useRef,type ReactNode} from 'react';
 import {groupImportItems,quotaImportPlacement,sportClarifications} from '../services/importHints';
@@ -86,7 +86,7 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
   return <>
    {genders.map(({competition,reported,entry},i)=><td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2" title={hint}>
     {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" style={{fontSize:'inherit'}} aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}
-    {nn&&(()=>{const area=nn.planning.rows.find(area=>area.nationCode===nation&&area.discipline===competition?.group&&area.personalGender===(i===0?'M':'W'));return area?<InlineNNInput nn={nn} area={area} reported={reported} label={`${competition?.name??area.discipline} ${i===0?'M':'W'}`} eligible={Boolean(entry&&entry.regularMax!==null&&entry.status!=='TEAM_RULE'&&entry.status!=='INCOMPLETE'&&((entry.unverifiedAdditional??0)>0||(entry.sharedPoolUnverifiedAdditional??0)>0))}/>:null;})()}
+    {nn&&(()=>{const area=nn.planning.rows.find(area=>area.nationCode===nation&&area.discipline===competition?.group&&area.personalGender===(i===0?'M':'W'));return area?<small className="mt-0.5 block text-[var(--ops-text-muted)]" title="Gemeinsame Personenauswahl für die gesamte Event Group und persönliches Gender; Wettbewerbe nicht addieren.">Gruppe: {area.reportedCount} FIS gemeldet · {area.selectedCount??'Zuordnung klären'} vorläufig disponiert{area.selectedWorldChampionCount?' (inkl. WM)':''}</small>:null;})()}
 
    </td>)}
    <td className="ops-table-wrap px-1 py-1 sm:px-2 [&_svg]:hidden sm:[&_svg]:block" title={hint}>{chip}</td>
@@ -105,7 +105,7 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
      <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span></th></tr>
      {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'border-l-2 border-l-[var(--ops-warning)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-1 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
-   })}</Fragment>)}{nn?.planning.rows.filter(area=>area.expectedTotal!==null&&!competitions.some(c=>c.group===area.discipline&&(c.gender===area.personalGender||(c.gender==='F'&&area.personalGender==='W')))).map(area=><tr key={area.areaId}><th scope="row" className="px-1 py-2 text-left">{area.discipline??'Zuordnung klären'} · {area.personalGender??'Gender klären'} · gespeicherter Bereich</th><td colSpan={3} className="text-right">{area.reportedCount} / —<InlineNNInput nn={nn} area={area} reported={area.reportedCount} eligible={false} label={area.areaId}/></td></tr>)}</tbody>
+   })}</Fragment>)}</tbody>
   </table>
   <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Keine FIS-Startfreigabe. Wettbewerbe nicht addieren.</p>
  </div>;

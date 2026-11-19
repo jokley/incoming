@@ -9,7 +9,7 @@ import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount, slotOperationalUsed, bookingFreeCapacity } from '../services/assignmentRoomUsage';
 import {hotelFitLabel,queueDemandSummary,matchesHotelFit,compareHotelFit,type HotelFit} from '../services/assignmentSuitability';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
-import { DispositionQueueCard,VirtualDispositionQueueCard } from './assignment/DispositionQueueCard';
+import { DispositionQueueCard,PlanningClarification } from './assignment/DispositionQueueCard';
 import { SplitAssignmentDialog } from './assignment/SplitAssignmentDialog';
 import { dispositionItems, itemContainsPeople, periodLabel as intervalLabel, type DispositionItem } from '../services/dispositionItems';
 import { PersonAccommodationPanel } from './assignment/PersonAccommodationPanel';
@@ -776,9 +776,7 @@ export function Assignments() {
           {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
             <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
-              virtualGroups={(planning?.athletePlanning?.groups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline||!group.editable)&&(!filterGender||group.personalGender===filterGender||!group.editable)&&!filterRoomCategory&&!filterImportReview&&(!queueSearch||`${group.nationCode} ${group.discipline??''}`.toLowerCase().includes(queueSearch.toLowerCase())))}
-              onOpenForecast={nation=>navigate(`/import?nation=${encodeURIComponent(nation)}`)}
-              zeroAreas={(planning?.athletePlanning?.zeroGroups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline)&&(!filterGender||group.personalGender===filterGender)).length}
+              planningClarifications={(planning?.athletePlanning?.groups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline||!group.editable)&&(!filterGender||group.personalGender===filterGender||!group.editable)&&!filterRoomCategory&&!filterImportReview&&(!queueSearch||`${group.nationCode} ${group.discipline??''}`.toLowerCase().includes(queueSearch.toLowerCase())))}
               units={queueUnits}
               onExternal={setExternalItem}
               onSplit={setSplitBookingId}
@@ -1155,7 +1153,7 @@ function AlertBanner({
 }
 
 function QueueSidebar({
-  virtualGroups=[],onOpenForecast,zeroAreas,
+  planningClarifications=[],
   units,
   filterMode,
   onFilterMode,
@@ -1192,7 +1190,7 @@ function QueueSidebar({
   pendingAction,
   hotelName,highlightedItems,onSplit,splitOptionsFor,onExternal,
 }: {
-  virtualGroups?:import('../types').ArrivalPlanningRow[];onOpenForecast:(nation:string)=>void;zeroAreas:number;
+  planningClarifications?:import('../types').ArrivalPlanningRow[];
   hotelName?:string;highlightedItems:string[];
   onSplit:(bookingId:string)=>void;
   onExternal:(unit:DispositionItem)=>void;
@@ -1245,12 +1243,11 @@ function QueueSidebar({
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
-            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} namentliche Aufgaben · {virtualGroups.length} vorläufige Gruppen</div>
+            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} namentliche Aufgaben · {planningClarifications.length} Planungsklärungen</div>
           </div>
         </div>
 
         {filterMode==='synchronized' && <QueueDemandSummary units={units} context={[filterNation,filterDiscipline && disciplineDisplayName(filterDiscipline),filterGender,filterPersonType==='athletes' ? 'Athleten' : filterPersonType==='officials' ? 'Officials' : '',search].filter(Boolean).join(' · ')}/>}
-        {zeroAreas>0&&<p className="text-xs text-[var(--ops-text-muted)]">{zeroAreas} Bereiche mit expliziter Nullprognose: kein zusätzlicher offener Bedarf.</p>}
         <SearchInput value={search} onChange={onSearch} placeholder="Athleten suchen..." />
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
@@ -1288,7 +1285,7 @@ function QueueSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-3 py-3">
           <div className="space-y-2">
-            {virtualGroups.map(group=><VirtualDispositionQueueCard key={group.areaId} group={group} onOpen={()=>onOpenForecast(group.nationCode)}/>)}
+            {planningClarifications.map(group=><PlanningClarification key={group.areaId} group={group}/>)}
             {shareRequests.map(({ unit }) => (
                 <DispositionQueueCard
                   key={unit.unitId}
@@ -1325,7 +1322,7 @@ function QueueSidebar({
                 pending={pendingAction?.unitId === unit.unitId}
               />
             ))}
-            {!regularUnits.length && !shareRequests.length && !virtualGroups.length && (
+            {!regularUnits.length && !shareRequests.length && !planningClarifications.length && (
               <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-[var(--ops-assignment-text-body)]">
                 Keine Einheiten mit den aktuellen Filtern.
               </div>

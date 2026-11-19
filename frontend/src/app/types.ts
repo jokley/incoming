@@ -305,6 +305,8 @@ export interface RoomBooking {
 }
 
 export interface RoomBookingUnitOccupant extends AccommodationRateFields, AccommodationRequirementFields {
+  provisionalAccommodation?: boolean;
+  provisionalWorldChampion?: boolean;
   accommodationCoverage?: AccommodationCoverage;
   athleteId: string;
   name: string;
@@ -436,7 +438,7 @@ export interface AssignmentGridHotel {
   slots: AssignmentSlot[];
 }
 
-export interface OperativeAthletePlanning {replacedPersonIds:string[];groups:ArrivalPlanningRow[];zeroGroups?:ArrivalPlanningRow[];controlledAreas:number;zeroAreas:number;virtualPlaces:number;conflicts:number}
+export interface OperativeAthletePlanning {provisionalPersonIds?:string[];replacedPersonIds:string[];groups:ArrivalPlanningRow[];zeroGroups?:ArrivalPlanningRow[];controlledAreas:number;zeroAreas:number;virtualPlaces:number;conflicts:number}
 export interface AssignmentPlanningView {
   athletePlanning?:OperativeAthletePlanning;
   timeline: {
@@ -738,6 +740,7 @@ export interface ArrivalPlanningPerson {
  worldChampionMarked:boolean;titleReferences:Array<{id:string;championship:string;championshipYear:number;discipline:string;eventGroup:string}>;
 }
 export interface ArrivalPlanningRow {
+ selectedCount?:number|null;selectedWorldChampionCount?:number;legacyForecastInactive?:boolean;
  areaId:string;eventId:string;nationCode:string;discipline:string|null;personalGender:string|null;sportFamilies:string[];
  reportedCount:number;expectedTotal:number|null;bookedPeopleCount:number;usesVirtualPlanning:boolean;virtualPlaces:number;replacedPersonIds:string[];
  status:'NOT_SET'|'PLANNED'|'CONFLICT';conflict:boolean;reasons:string[];editable:boolean;people:ArrivalPlanningPerson[];worldChampionCount:number;
@@ -752,3 +755,6 @@ export interface OperationalQuotaRow {nnForecastBlocked?:boolean;nationCode:stri
 export interface ImportNNPlanning extends ArrivalPlanningOverview {operationalQuota?:{rows:OperationalQuotaRow[];conflict:boolean;reasons:string[];overview?:QuotaOverview;people?:SingleRoomSummaryPerson[]};versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
 
 export type SingleRoomSummaryPerson=Pick<FisImportPreview['people'][number],'matchKey'|'existingAthleteId'|'nationCode'|'singleRoomAllocation'|'singleRoomQuotaExemptReason'|'accommodationRequirement'>;
+
+// Existing import-session read contract; manual NN editing is retired.
+export interface NNPlanningControls {planning:ImportNNPlanning;busy?:boolean;error?:string|null}
