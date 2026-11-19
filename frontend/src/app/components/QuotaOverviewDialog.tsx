@@ -1,4 +1,4 @@
-import {ArrivalPlanning,OperationalQuotaValues,type NNPlanningControls} from './ArrivalPlanning';
+import {OperationalQuotaValues,type NNPlanningControls} from './ArrivalPlanning';
 import { sportAreaLabel } from '../services/competitionPresentation';
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
@@ -23,10 +23,10 @@ function AthleteState({row,incomplete}:{row:Family;incomplete:boolean}) {
  if(row.athleteQuotaStatus==='EXCEEDED')return <StatusChip tone="warning">Fachlich prüfen</StatusChip>;
  return <StatusChip tone="success">Innerhalb der Quote</StatusChip>;
 }
-function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople,focusSport}:{onEditPlanning?:(areaId:string)=>void;nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
+function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
  const incomplete=nation.incomplete||!fixed;
  return <div className="space-y-3">
-  <CompetitionDistribution grouped={grouped} control={control} preview={preview} nation={nation.nationCode} onPeople={onPeople} focusSport={focusSport}/>
+  <CompetitionDistribution nn={nn} grouped={grouped} control={control} preview={preview} nation={nation.nationCode} onPeople={onPeople} focusSport={focusSport}/>
   <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Athletenquoten – gemeldet, erlaubt und Abweichung"><table className="w-full text-xs sm:text-sm">
    <caption className="sr-only">Autoritative Athletenquoten: Gemeldet / erlaubt</caption>
    <thead><tr>{['Familienquote · gemeldet / erlaubt','Männer','Frauen','Gesamt'].map((label,i)=><th scope="col" key={label} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead>
@@ -50,11 +50,14 @@ function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople
     })}
    </tr>)}</tbody>
   </table></div>
-  {nn&&<ArrivalPlanning {...nn} planning={{...nn.planning,rows:nn.planning.rows.filter(row=>row.nationCode===nation.nationCode)}}/>}
+  {nn&&(nn.busy||nn.error||nn.planning.operationalQuota?.conflict||nn.choices.length>0||nn.planning.rows.some(area=>area.expectedTotal!==null))&&<div className="text-xs" aria-label="Status Unterkunftsprognose">
+   {nn.busy?'Operative Vorschau wird berechnet …':nn.error?<span role="alert">{nn.error}</span>:nn.planning.operationalQuota?.conflict?<span className="text-[var(--ops-warning)]">NN-Prognose blockiert · normale Athletenbasis. {nn.planning.operationalQuota.reasons.join(' ')}</span>:nn.choices.length?'Unterkunftsprognose lokal · noch nicht gespeichert. Operative Ergebnisse unter Officials & EZ-Quote':'Operative Ergebnisse unter Officials & EZ-Quote'}
+   {nn.planning.mode==='LIVE'&&nn.onApply&&nn.choices.length>0&&<OpsButton disabled={nn.disabled||nn.busy||Boolean(nn.error)||!nn.choices.length} onClick={nn.onApply}>Unterkunftsprognose speichern</OpsButton>}
+  </div>}
   {!nation.athleteFamilies.length&&<p className="text-sm">Keine aktive Athletenquote · Fachlich prüfen</p>}
  </div>;
 }
-function OfficialsOverview({nn,onEditPlanning,grouped=false,nation,fixed,onPeople,preview,control}: {nn?:NNPlanningControls;onEditPlanning?:(areaId:string)=>void;grouped?:boolean;nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
+function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,control}: {nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
  const incomplete=nation.incomplete||!fixed;
 
  const ez=preview?singleRoomSummary(preview,nation.nationCode):null;
@@ -85,11 +88,11 @@ function OfficialsOverview({nn,onEditPlanning,grouped=false,nation,fixed,onPeopl
    {nn.busy?<p role="status">Operative Vorschau wird berechnet …</p>:nn.error?<p role="alert" className="text-[var(--ops-error)]">{nn.error}</p>:<>
     {nn.planning.operationalQuota?.conflict&&<p className="text-[var(--ops-warning)]">Klärungsbedarf: {nn.planning.operationalQuota.reasons.join(' ')}</p>}
     {nn.planning.operationalQuota?.rows.filter(row=>row.nationCode===nation.nationCode).map(row=>{
-     const area=nn.planning.rows.find(area=>area.nationCode===row.nationCode&&area.discipline===row.discipline&&area.personalGender===row.gender);
+
      return <div key={`${row.discipline}/${row.gender}`} aria-label={`Operative Quote ${row.discipline} ${row.gender}`} className="rounded border border-[var(--ops-border)] p-3">
       <strong className="mb-2 block text-sm">{row.discipline} · {genderName(row.gender)}</strong>
       <OperationalQuotaValues quota={row}/>
-      {area&&onEditPlanning&&<button type="button" className="mt-2 text-xs font-bold text-[var(--ops-primary)] underline" onClick={()=>onEditPlanning(area.areaId)}>Unterkunftsbedarf prüfen · {row.discipline} · {genderName(row.gender)}</button>}
+
      </div>;
     })}
     {!nn.planning.operationalQuota?.rows.some(row=>row.nationCode===nation.nationCode)&&<p className="text-xs">Keine gültigen operativen Quotenkontexte. Zuordnung prüfen.</p>}
@@ -137,15 +140,15 @@ function OfficialsOverview({nn,onEditPlanning,grouped=false,nation,fixed,onPeopl
   {nation.officialsWithoutContext>0&&<p className="text-xs text-[var(--ops-warning)]"><PeopleCount count={nation.officialsWithoutContext} filter={{nation:nation.nationCode,role:'people',personKeys:withoutContext}} onPeople={control?onPeople:undefined} label="Officials ohne Quotenkontext anzeigen"/> Officials ohne eindeutigen Quotenkontext</p>}
  </div>;
 }
-export function QuotaOverviewContent({onEditPlanning,nn,grouped=false,overview,kind,control,preview,onPeople,focusSport}:{onEditPlanning?:(areaId:string)=>void;nn?:NNPlanningControls;grouped?:boolean;overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
+export function QuotaOverviewContent({nn,grouped=false,overview,kind,control,preview,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
  return <div className="space-y-4"><div className="flex flex-wrap gap-2 text-xs"><span>{overview.event.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'} · Revision {overview.event.rulesRevision} · {overview.event.rulesFixed?'fixiert':'Entwurf'}</span></div>
-  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nn={nn} grouped={grouped} nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview nn={nn} onEditPlanning={onEditPlanning} grouped={grouped} nation={nation} fixed={overview.event.rulesFixed} onPeople={onPeople} preview={preview} control={control}/>}</section>)}
+  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nn={nn} grouped={grouped} nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview nn={nn} grouped={grouped} nation={nation} fixed={overview.event.rulesFixed} onPeople={onPeople} preview={preview} control={control}/>}</section>)}
  </div>;
 }
-export function QuotaOverviewDialog({onEditPlanning,nn,grouped=false,preview,kind,onClose,control,onPeople,focusSport}:{onEditPlanning?:(areaId:string)=>void;nn?:NNPlanningControls;grouped?:boolean;preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate;focusSport?:boolean}) {
+export function QuotaOverviewDialog({nn,grouped=false,preview,kind,onClose,control,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate;focusSport?:boolean}) {
  const overview=preview?.quotaOverview;
  return <EnterpriseDialog open title={kind==='athlete'?'Athleten-/Disziplinquote':'Officials & EZ-Quote'} description={overview?.event.name||'Gespeicherter Prüfstand'} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}>
-  {overview?<QuotaOverviewContent onEditPlanning={onEditPlanning} nn={nn} grouped={grouped} overview={overview} kind={kind} control={control} preview={preview??undefined} onPeople={preview?onPeople:undefined} focusSport={focusSport}/>:kind==='athlete'&&nn?<ArrivalPlanning {...nn}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen Prüfstand ist keine Quotenübersicht verfügbar."/>}
+  {overview?<QuotaOverviewContent nn={nn} grouped={grouped} overview={overview} kind={kind} control={control} preview={preview??undefined} onPeople={preview?onPeople:undefined} focusSport={focusSport}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen Prüfstand ist keine Quotenübersicht verfügbar."/>}
  </EnterpriseDialog>;
 }
 
