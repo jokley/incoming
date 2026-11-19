@@ -35,7 +35,8 @@ def build_quota_overview(people, quota_checks, athlete_checks, event, errors=())
             group_officials={key for key in officials if group in members[key]['groups']}
             group_athletes={key for key in athletes if group in members[key]['groups']}
             totals={field:sum(q.get(field,0) for q in group_checks) for field in
-                    ('officialQuota','singleRoomsAllowed','singleRoomsRequested','singleRoomsPending','singleRoomsApproved','quotaExemptSingleRooms')}
+                    ('officialQuota','singleRoomsAllowed','singleRoomsRequested','singleRoomsPending','singleRoomsApproved','quotaExemptSingleRooms')+
+                    (('expectedAthletes','singleRoomOfficialBasis') if any('expectedAthletes' in q for q in group_checks) else ())}
             groups.append({'name':group,'athletes':len(group_athletes),'officials':len(group_officials),
                 'contexts':[{k:v for k,v in q.items() if k!='singleRoomAllocations'} for q in group_checks],'totals':totals,'coverageReviewRequired':not group_checks or any(q.get('officialsExceeded') for q in group_checks)})
         shared=sum(len(members[key]['groups'])>1 for key in officials)

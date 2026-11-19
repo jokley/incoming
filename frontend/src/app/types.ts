@@ -624,7 +624,7 @@ export interface FisImportPreview {
     requiredExtent?:QuotaExtent;approvedExtent?:QuotaExtent;uncoveredExtent?:QuotaExtent;
     decisionStatus?:'PENDING'|'APPROVED'|'WITHIN_QUOTA';approvalIds?:number[];
   }>;
-  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
+  quotaChecks?: Array<{ expectedAthletes?:number;athletesEntered?:number;singleRoomOfficialBasis?:number;nnForecastBlocked?:boolean;nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
     changes: ImportChange[];
@@ -727,7 +727,7 @@ export interface QuotaOverview {
     athletesApprovedDistinct:number|null;athleteApprovalFamilies:number;
     athleteFamilies:NonNullable<FisImportPreview['athleteQuotaChecks']>;
     groups:Array<{name:string;athletes:number;officials:number;coverageReviewRequired:boolean;
-      contexts:NonNullable<FisImportPreview['quotaChecks']>;totals:{officialQuota:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;singleRoomsApproved:number;quotaExemptSingleRooms:number}}>
+      contexts:NonNullable<FisImportPreview['quotaChecks']>;totals:{expectedAthletes?:number;singleRoomOfficialBasis?:number;officialQuota:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;singleRoomsApproved:number;quotaExemptSingleRooms:number}}>
   }>;
 }
 
@@ -749,4 +749,6 @@ export interface ArrivalForecastInput {baseToken:string;expectedTotal:number|nul
 
 export interface NNPlanningChoice {areaId:string;baseToken:string;expectedTotal:number|null}
 export interface OperationalQuotaRow {nnForecastBlocked?:boolean;nationCode:string;discipline:string;gender:string;athletesEntered:number;expectedAthletes:number;officialQuota:number;registeredOfficials:number;singleRoomOfficialBasis:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;approvedExtraSingleRooms:number;quotaExemptSingleRooms:number;officialsExceeded:boolean;coverageChanged:boolean;fisOfficialQuota:number;fisSingleRoomsAllowed:number}
-export interface ImportNNPlanning extends ArrivalPlanningOverview {operationalQuota?:{rows:OperationalQuotaRow[];conflict:boolean;reasons:string[]};versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
+export interface ImportNNPlanning extends ArrivalPlanningOverview {operationalQuota?:{rows:OperationalQuotaRow[];conflict:boolean;reasons:string[];overview?:QuotaOverview;people?:SingleRoomSummaryPerson[]};versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
+
+export type SingleRoomSummaryPerson=Pick<FisImportPreview['people'][number],'matchKey'|'existingAthleteId'|'nationCode'|'singleRoomAllocation'|'singleRoomQuotaExemptReason'|'accommodationRequirement'>;

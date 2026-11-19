@@ -1,4 +1,4 @@
-import {OperationalQuotaValues,type NNPlanningControls} from './ArrivalPlanning';
+import {type NNPlanningControls} from './ArrivalPlanning';
 import { sportAreaLabel } from '../services/competitionPresentation';
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
@@ -58,9 +58,20 @@ function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople
  </div>;
 }
 function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,control}: {nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
+ const originalNation=nation;
+ const originalEZ=preview?singleRoomSummary(preview,nation.nationCode):null;
+ const operative=nn?.planning.operationalQuota;
+ if(nn?.busy)return <p role="status">Operative Vorschau wird berechnet …</p>;
+ if(nn&&(nn.error||!operative?.overview||!operative.people))return <p role="alert" className="text-[var(--ops-error)]">{nn.error??`Operative Bewertung nicht verfügbar. ${operative?.reasons.join(' ')??'Keine veralteten Quotenwerte.'}`}</p>;
+ if(nn){
+  const projected=operative!.overview!.nations.find(row=>row.nationCode===nation.nationCode);
+  if(!projected)return <p>Keine gültigen operativen Quotenkontexte. Zuordnung klären.</p>;
+  nation=projected;
+ }
+ const summaryPreview=nn?{people:operative!.people!,rooms:[]}:preview;
  const incomplete=nation.incomplete||!fixed;
 
- const ez=preview?singleRoomSummary(preview,nation.nationCode):null;
+ const ez=summaryPreview?singleRoomSummary(summaryPreview,nation.nationCode):null;
  const breakdown=(summary:ReturnType<typeof singleRoomSummary>|null,scope?:string)=>{
   if(!summary?.available)return <StatusChip tone="neutral">EZ-Bewertung unvollständig</StatusChip>;
   if(summary.requested===0)return <span className="text-xs text-[var(--ops-text-muted)]">Keine EZ angefordert</span>;
@@ -82,24 +93,8 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
  };
  const withoutContext=preview?.people.filter(p=>p.nationCode===nation.nationCode&&p.function?.trim().toLowerCase()!=='athlete'&&control?.people.some(row=>row.personKey===p.matchKey&&row.quotaContexts?.length===0)).map(p=>p.matchKey!)??[];
  return <div className="space-y-3">
-  {nn&&<section aria-label="Operative Officials- und EZ-Quote" className="space-y-3">
-   <h4 className="font-bold">Operative Prognose · Unterkunft</h4>
-   <p className="text-xs text-[var(--ops-text-muted)]">Dieselbe Live-Berechnung wie in der Athleten-/Disziplinquote. Eine Prognose ändert keine FIS-Meldung, Genehmigung oder Buchung. Officials je Kontext nicht als Nationengesamtzahl addieren.</p>
-   {nn.busy?<p role="status">Operative Vorschau wird berechnet …</p>:nn.error?<p role="alert" className="text-[var(--ops-error)]">{nn.error}</p>:<>
-    {nn.planning.operationalQuota?.conflict&&<p className="text-[var(--ops-warning)]">Klärungsbedarf: {nn.planning.operationalQuota.reasons.join(' ')}</p>}
-    {nn.planning.operationalQuota?.rows.filter(row=>row.nationCode===nation.nationCode).map(row=>{
-
-     return <div key={`${row.discipline}/${row.gender}`} aria-label={`Operative Quote ${row.discipline} ${row.gender}`} className="rounded border border-[var(--ops-border)] p-3">
-      <strong className="mb-2 block text-sm">{row.discipline} · {genderName(row.gender)}</strong>
-      <OperationalQuotaValues quota={row}/>
-
-     </div>;
-    })}
-    {!nn.planning.operationalQuota?.rows.some(row=>row.nationCode===nation.nationCode)&&<p className="text-xs">Keine gültigen operativen Quotenkontexte. Zuordnung prüfen.</p>}
-   </>}
-  </section>}
-  {nn&&<h4 className="border-t border-[var(--ops-divider)] pt-3 font-bold">Offizieller FIS-Prüfstand · unveränderte Meldung</h4>}
-
+  {nn&&<p className="text-xs text-[var(--ops-text-muted)]">Operative Unterkunftsbewertung · Originalmeldungen bleiben erhalten. Manuelle Erwartung ausschließlich in der Athleten-/Disziplinquote bearbeiten.</p>}
+  {nn&&operative?.conflict&&<p className="text-xs text-[var(--ops-warning)]">NN-Prognose blockiert · normale Athletenbasis. {operative.reasons.join(' ')}</p>}
   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis">
    <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials</span>
 
@@ -111,7 +106,7 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
    <thead><tr>{['Event Group','Officials¹','EZ-Anfragen','EZ-Status'].map((label,i)=><th key={label} scope="col" title={i===1?'Eindeutige Personen je Event Group; nicht über Gruppen addieren.':undefined} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i>0&&i<3?'w-[18%] text-right':i===0?'w-[32%] text-left':'text-left'}`}>{label}</th>)}</tr></thead>
    <tbody>{(grouped?groupImportItems(nation.groups,group=>({area:quotaImportPlacement(group.name,control).area})):[{area:'',items:nation.groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={4} className="bg-[var(--ops-surface-elevated)] px-1 py-2 text-left sm:px-3">{section.area}</th></tr>}{section.items.map(group=>{
     const totals=group.totals;
-    const assigned=preview?singleRoomSummary({...preview,people:preview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null;
+    const assigned=summaryPreview?singleRoomSummary({...summaryPreview,people:summaryPreview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null;
     const consistent=assigned&&assigned.requested===totals.singleRoomsRequested&&assigned.counts.PENDING===totals.singleRoomsPending&&assigned.counts.APPROVED_EXTRA===totals.singleRoomsApproved&&assigned.counts.EXEMPT===totals.quotaExemptSingleRooms;
     return <Fragment key={group.name}>
      <tr className={`border-t border-[var(--ops-divider)] ${totals.singleRoomsPending?'border-l-2 border-l-[var(--ops-warning)]':''}`}>
@@ -121,15 +116,16 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
       <td className="ops-table-wrap px-1 py-2 sm:px-3 [&_svg]:hidden sm:[&_svg]:block">{breakdown(consistent?assigned:null,group.name)}{!consistent&&totals.singleRoomsPending>0&&<span className="block text-xs">{totals.singleRoomsPending} EZ offen</span>}</td>
      </tr>
      <tr><td colSpan={4} className="ops-table-wrap px-1 pb-2 sm:px-3"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Geschlechteraufteilung</summary>
-      <div className="w-0 min-w-full overflow-x-auto"><table className="mt-2 w-full text-xs"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
-       {group.contexts.map(row=><tr key={row.gender}><th scope="row" className="px-2 py-1 text-left font-normal">{genderName(row.gender)}</th>{[row.athletes,row.officialQuota,row.singleRoomsAllowed,row.singleRoomsRequested,row.singleRoomsApproved,row.singleRoomsPending,row.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>)}
-       <tr className="font-bold"><th scope="row" className="px-2 py-1 text-left">Σ M/W</th>{[group.athletes,totals.officialQuota,totals.singleRoomsAllowed,totals.singleRoomsRequested,totals.singleRoomsApproved,totals.singleRoomsPending,totals.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>
+      <div className="w-0 min-w-full overflow-x-auto"><table className="mt-2 w-full text-xs"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Officials-Obergrenze','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
+       {group.contexts.map(row=><tr key={row.gender}><th scope="row" className="px-2 py-1 text-left font-normal">{genderName(row.gender)}</th><td className="px-2 py-1 text-right tabular-nums">{nn?`${row.expectedAthletes} geplant`:row.athletes}{nn&&<small className="block text-[var(--ops-text-muted)]">{row.athletesEntered} FIS-gemeldet</small>}{row.nnForecastBlocked&&<small className="block text-[var(--ops-warning)]">Normale Basis · NN blockiert</small>}</td>{[row.officialQuota,row.singleRoomOfficialBasis??row.officialQuota,row.singleRoomsAllowed,row.singleRoomsRequested,row.singleRoomsApproved,row.singleRoomsPending,row.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>)}
+       <tr className="font-bold"><th scope="row" className="px-2 py-1 text-left">Σ M/W</th>{[nn?totals.expectedAthletes:group.athletes,totals.officialQuota,nn?totals.singleRoomOfficialBasis:totals.officialQuota,totals.singleRoomsAllowed,totals.singleRoomsRequested,totals.singleRoomsApproved,totals.singleRoomsPending,totals.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>
       </tbody></table></div>
      </details></td></tr>
     </Fragment>;
    })}</Fragment>)}</tbody>
   </table></div>
 
+  {nn&&<details className="text-xs text-[var(--ops-text-muted)]"><summary>Ursprünglicher FIS-Prüfstand · Nachweis</summary>{originalEZ?.available&&<p>Ursprünglich: {originalEZ.counts.COVERED} regulär · {originalEZ.counts.APPROVED_EXTRA} zusätzlich genehmigt · {originalEZ.counts.EXEMPT} Ausnahmen · {originalEZ.counts.PENDING} offen.</p>}<ul>{originalNation.groups.flatMap(group=>group.contexts.map(row=><li key={`${group.name}/${row.gender}`}>{group.name} · {genderName(row.gender)}: {row.athletes} FIS-gemeldet · Officials-Limit {row.officialQuota} · EZ-Anspruch {row.singleRoomsAllowed} · {row.singleRoomsRequested} angefragt · {row.singleRoomsPending} offen (ursprünglicher Prüfstand).</li>))}</ul></details>}
   <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer">Zuordnungen und Bewertungsgrundlage</summary><div className="mt-2 space-y-1">
    <p>¹ Eindeutige Officials je Event Group; Gruppenwerte nicht addieren. EZ-Anspruch in den Details: Summe der M/W-Kontexte, kein übertragbares Kontingent.</p>
    {nation.officialsInMultipleGroups>0&&(onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten · Personen anzeigen</button>:<p>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</p>)}
@@ -141,8 +137,9 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
  </div>;
 }
 export function QuotaOverviewContent({nn,grouped=false,overview,kind,control,preview,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
- return <div className="space-y-4"><div className="flex flex-wrap gap-2 text-xs"><span>{overview.event.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'} · Revision {overview.event.rulesRevision} · {overview.event.rulesFixed?'fixiert':'Entwurf'}</span></div>
-  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nn={nn} grouped={grouped} nation={nation} fixed={overview.event.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview nn={nn} grouped={grouped} nation={nation} fixed={overview.event.rulesFixed} onPeople={onPeople} preview={preview} control={control}/>}</section>)}
+ const ruleEvent=kind==='officials'?nn?.planning.operationalQuota?.overview?.event??overview.event:overview.event;
+ return <div className="space-y-4"><div className="flex flex-wrap gap-2 text-xs"><span>{ruleEvent.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'} · Revision {ruleEvent.rulesRevision} · {ruleEvent.rulesFixed?'fixiert':'Entwurf'}</span></div>
+  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nn={nn} grouped={grouped} nation={nation} fixed={ruleEvent.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview nn={nn} grouped={grouped} nation={nation} fixed={ruleEvent.rulesFixed} onPeople={onPeople} preview={preview} control={control}/>}</section>)}
  </div>;
 }
 export function QuotaOverviewDialog({nn,grouped=false,preview,kind,onClose,control,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate;focusSport?:boolean}) {

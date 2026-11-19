@@ -176,3 +176,64 @@ def test_documented_registration_role_gap_does_not_imply_ez_or_tariff_exemption(
     view=build_quota_overview(people,rows,[],event)['nations'][0]
     assert view['officials']==2
     assert people==before
+
+
+@pytest.mark.parametrize('expected,cap,rooms,pending',[(4,6,2,1),(5,7,3,0),(None,11,3,0)])
+def test_operational_table_and_person_statuses_share_allocator(expected,cap,rooms,pending):
+    from arrival_planning import operational_quota_projection
+    event=SimpleNamespace(id=7,name='Operative test',is_world_championship=True,quota_rules_revision=1,quota_rules_fixed_at=datetime(2026,10,26))
+    roster=[dict(matchKey=f'a{i}',nationCode='FIN',function='Athlete',gender='M',quotaDisciplines=['Freeski Park & Pipe']) for i in range(9)]
+    officials=[dict(matchKey=f'o{i}',nationCode='FIN',function='NSA Coach',gender='M',quotaDisciplines=['Freeski Park & Pipe']) for i in range(10)]
+    roster+=officials+[officials[0]]  # Duplicate membership must not inflate totals.
+    demands=[dict(p,countsAsSingle=True) for p in officials[:3]]
+    before=deepcopy(roster)
+    original=evaluate_quota_usage(roster,demands,standard_rules())
+    forecast=dict(nationCode='FIN',discipline='Freeski Park & Pipe',personalGender='M',editable=True,conflict=False,expectedTotal=expected,reasons=[])
+    result=operational_quota_projection({'rows':[forecast]},roster,demands,standard_rules(),event=event)
+    nation=result['overview']['nations'][0];group=nation['groups'][0];context=group['contexts'][0]
+    assert nation['officials']==group['officials']==10
+    assert context['expectedAthletes']==(9 if expected is None else expected)
+    assert context['athletesEntered']==9
+    assert context['officialQuota']==cap
+    assert context['singleRoomOfficialBasis']==min(10,cap)
+    assert context['singleRoomsAllowed']==rooms
+    assert group['totals']['singleRoomsRequested']==3 and group['totals']['singleRoomsPending']==pending
+    # The duplicate official above may occur in the read roster, just once by identity.
+    by_identity={p['singleRoomAllocation']['identity']:p['singleRoomAllocation']['status'] for p in result['people'] if p['singleRoomAllocation']}
+    assert list(by_identity.values()).count('COVERED')==3-pending
+    assert list(by_identity.values()).count('PENDING')==pending
+    assert original[0]['singleRoomsAllowed']==3 and original[0]['singleRoomsPending']==0
+    assert roster==before
+
+
+def test_operational_aggregation_preserves_approved_extra_and_champion_exemption():
+    from arrival_planning import operational_quota_projection
+    event=SimpleNamespace(id=7,name='Operative exceptions',is_world_championship=True,quota_rules_revision=1,quota_rules_fixed_at=datetime(2026,10,26))
+    athletes=[dict(matchKey=f'a{i}',nationCode='FIN',function='Athlete',gender='M',quotaDisciplines=['Ski Cross']) for i in range(9)]
+    staff=[dict(matchKey=f'o{i}',nationCode='FIN',function='NSA Coach',gender='M',quotaDisciplines=['Ski Cross']) for i in range(10)]
+    staff[3].update(singleRoomStatus='APPROVED_EXTRA',approvedQuotaContexts=[dict(nationCode='FIN',discipline='Ski Cross',gender='M')])
+    staff[4]['singleRoomQuotaExemptReason']='WORLD_CHAMPION'
+    area=dict(nationCode='FIN',discipline='Ski Cross',personalGender='M',editable=True,conflict=False,expectedTotal=4,reasons=[])
+    result=operational_quota_projection({'rows':[area]},athletes+staff,[dict(p,countsAsSingle=True) for p in staff[:5]],standard_rules(),event=event)
+    totals=result['overview']['nations'][0]['groups'][0]['totals']
+    assert (totals['singleRoomsRequested'],totals['singleRoomsApproved'],totals['quotaExemptSingleRooms'],totals['singleRoomsPending'])==(5,1,1,1)
+    allocations={p['matchKey']:p['singleRoomAllocation'] for p in result['people']}
+    assert allocations['o3']['status']=='APPROVED_EXTRA' and allocations['o4']['status']=='EXEMPT'
+
+
+def test_operational_overview_keeps_gender_contexts_and_distinct_nation_officials():
+    from arrival_planning import operational_quota_projection
+    event=SimpleNamespace(id=7,name='Shared contexts',is_world_championship=True,quota_rules_revision=1,quota_rules_fixed_at=datetime(2026,10,26))
+    groups=['Ski Cross','Freeski Park & Pipe']
+    athletes=[dict(matchKey=f'{g}{i}',nationCode='FIN',function='Athlete',gender=g,quotaDisciplines=groups) for g,count in [('M',9),('W',2)] for i in range(count)]
+    staff=[dict(matchKey=f'o{i}',nationCode='FIN',function='NSA Coach',gender='M',quotaDisciplines=groups) for i in range(10)]
+    area=dict(nationCode='FIN',discipline='Ski Cross',personalGender='M',editable=True,conflict=False,expectedTotal=4,reasons=[])
+    result=operational_quota_projection({'rows':[area]},athletes+staff,[dict(p,countsAsSingle=True) for p in staff[:3]],standard_rules(),event=event)
+    nation=result['overview']['nations'][0]
+    assert nation['officials']==nation['officialsInMultipleGroups']==10
+    contexts={(r['discipline'],r['gender']):r for group in nation['groups'] for r in group['contexts']}
+    assert contexts['Ski Cross','M']['officialQuota']==6
+    assert contexts['Ski Cross','W']['expectedAthletes']==2 and contexts['Ski Cross','W']['officialQuota']==4
+    assert contexts['Freeski Park & Pipe','M']['expectedAthletes']==9
+    assert sum(group['totals']['singleRoomsRequested'] for group in nation['groups'])==3
+    assert len({p['singleRoomAllocation']['identity'] for p in result['people'] if p['singleRoomAllocation']})==3
