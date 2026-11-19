@@ -192,7 +192,7 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
             demands.append(dict(record,countsAsSingle=bool(allocation),singleRoomStatus='APPROVED_EXTRA' if approved else None,
                 approvedQuotaContexts=[dict(nationCode=ctx[0],discipline=ctx[1],gender=ctx[2])] if approved and ctx else []))
     from quota_rules import rules_for_event
-    result['operationalQuota']=operational_quota_projection(result,roster,demands,rules_for_event(session.event_id))
+    result['operationalQuota']=operational_quota_projection(result,roster,demands,rules_for_event(session.event_id),event=db.session.get(Event,session.event_id))
     result.update(versionId=str(session.current_version_id),mode='LIVE' if live else 'IMPORT',decisions=[] if live else (preview.get('_workflow') or {}).get('nnPlanning',[]))
     return result
 
@@ -203,14 +203,14 @@ def operational_athlete_basis(overview):
         for row in overview['rows'] if row['editable'] and not row['conflict'] and row['expectedTotal'] is not None}
 
 
-def operational_quota_projection(overview, roster, demands, rules):
+def operational_quota_projection(overview, roster, demands, rules, *, event=None):
     """Read-only alternative basis; allocation and formulas stay in quota_service."""
     from quota_service import evaluate_quota_usage,quota_gender_errors
     errors=quota_gender_errors(roster)
     if errors:return dict(rows=[],conflict=True,reasons=[e['message'] for e in errors])
     bases=operational_athlete_basis(overview)
     official=evaluate_quota_usage(roster,demands,rules)
-    operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True)
+    operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True,include_allocations=True)
     by_key={(row['nationCode'],row['discipline'],row['gender']):row for row in official}
     blocked={(r['nationCode'],r['discipline'],r['personalGender']) for r in overview['rows'] if r['conflict']}
     for row in operative['rows']:
@@ -222,8 +222,20 @@ def operational_quota_projection(overview, roster, demands, rules):
             officialsExceeded=row['registeredOfficials']>row['officialQuota'],
             coverageChanged=any(a['status']!=next((p['status'] for p in previous['singleRoomAllocations'] if p['identity']==a['identity']),None) for a in row['singleRoomAllocations']))
     reasons=[reason for row in overview['rows'] if row['conflict'] for reason in row['reasons']]
-    return dict(rows=operative['rows'],conflict=bool(reasons or operative['unallocatedSingleRooms']),reasons=reasons,
+    result=dict(rows=operative['rows'],conflict=bool(reasons or operative['unallocatedSingleRooms']),reasons=reasons,
         unallocatedSingleRooms=operative['unallocatedSingleRooms'])
+    # Reuse the existing presentation aggregates and physical allocations. No
+    # frontend quota arithmetic or replacement of the original FIS snapshot.
+    from quota_service import person_identity
+    by_identity={item['identity']:item for item in operative['singleRoomAllocations']}
+    fields=('matchKey','personId','existingAthleteId','nationCode','singleRoomQuotaExemptReason','accommodationRequirement')
+    result['people']=[dict({key:p.get(key) for key in fields},singleRoomAllocation=by_identity.get(person_identity(p,index))) for index,p in enumerate(roster)]
+    if event is not None:
+        from quota_overview import build_quota_overview
+        checks=[dict(row,athletes=row['expectedAthletes'],singleRoomsApproved=row['approvedExtraSingleRooms']) for row in operative['rows']]
+        result['overview']=build_quota_overview(roster,checks,[],event)
+    return result
+
 
 
 def prepare_import_decisions(session, overview, choices):

@@ -122,7 +122,7 @@ export function officialsSummary(nation:QuotaOverview['nations'][number],fixed:b
 }
 
 /** Counts the existing personal allocation; never assigns entitlement or quota. */
-export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
+export function singleRoomSummary(preview:Pick<FisImportPreview,'rooms'>&{people:import('../types').SingleRoomSummaryPerson[]},nation?:string) {
  const people=preview.people.filter(p=>!nation||p.nationCode===nation);
  const categories={COVERED:[] as string[],APPROVED_EXTRA:[] as string[],EXEMPT:[] as string[],PENDING:[] as string[]};
  const byKey=new Map(people.map(p=>[p.matchKey,p]));

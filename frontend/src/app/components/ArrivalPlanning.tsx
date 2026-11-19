@@ -1,7 +1,7 @@
 import {useState} from 'react';
 import {Check,Pencil,RotateCcw,X} from 'lucide-react';
 import {Tooltip} from '@mui/material';
-import type {ImportNNPlanning,NNPlanningChoice,OperationalQuotaRow} from '../types';
+import type {ImportNNPlanning,NNPlanningChoice} from '../types';
 
 
 export function checkedNNChoices(choices:NNPlanningChoice[]) {
@@ -9,14 +9,6 @@ export function checkedNNChoices(choices:NNPlanningChoice[]) {
  return choices;
 }
 export interface NNPlanningControls {planning:ImportNNPlanning;choices:NNPlanningChoice[];onChange:(choices:NNPlanningChoice[])=>void;disabled:boolean;onApply?:()=>void;busy?:boolean;error?:string|null}
-
-/** Shared read-only values for both existing quota views; never calculates quotas. */
-export function OperationalQuotaValues({quota}:{quota:OperationalQuotaRow}) {return <>
-     {quota.nnForecastBlocked&&<p className="mb-2 text-xs font-bold text-[var(--ops-warning)]">NN-Prognose blockiert: Quotenbasis ist der aktuelle gemeldete Athletenbestand. Die blockierte Prognose wird nicht übernommen.</p>}
-     <dl className="grid grid-cols-2 gap-x-4 gap-y-1 text-xs sm:grid-cols-4">{[['Für Unterkunft erwartet',quota.expectedAthletes],['Operative Officials-Obergrenze',quota.officialQuota],['Tatsächlich erfasste Officials',quota.registeredOfficials],['EZ-Berechnungsbasis',quota.singleRoomOfficialBasis],['Regulärer EZ-Anspruch',quota.singleRoomsAllowed],['EZ-Anfragen / bestehende Nutzung',quota.singleRoomsRequested],['Zusätzliche EZ genehmigt',quota.approvedExtraSingleRooms],['EZ offen',quota.singleRoomsPending]].map(([label,value])=><div key={label}><dt>{label}</dt><dd className="font-bold">{value}</dd></div>)}</dl>
-     <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Offizielle FIS-Basis: {quota.athletesEntered} Athleten · Officials-Limit {quota.fisOfficialQuota} · bisheriger EZ-Anspruch {quota.fisSingleRoomsAllowed}. Operative Werte sind keine neue Genehmigung.</p>
-     {(quota.officialsExceeded||quota.singleRoomsPending>0||quota.coverageChanged)&&<p className="mt-1 text-xs font-bold text-[var(--ops-warning)]">Operativer Klärungsbedarf{quota.officialsExceeded?' · Officials über Obergrenze':''}{quota.singleRoomsPending>0?` · ${quota.singleRoomsPending} ungedeckte EZ`:''}{quota.coverageChanged?' · EZ-Deckung gegenüber FIS-Basis geändert':''}. Vorhandene Genehmigungen und Buchungen bleiben erhalten.</p>}
- </>;}
 
 /** Each competition is only an entry point to the same backend-owned area. */
 export function InlineNNInput({nn,area,eligible,label,reported}:{nn:NNPlanningControls;area:ImportNNPlanning['rows'][number];eligible:boolean;label:string;reported:number}) {
