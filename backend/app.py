@@ -323,7 +323,7 @@ def _required_permission():
     if request.method in {'GET', 'HEAD', 'OPTIONS'}:
         return 'data.read'
     if path.startswith('/api/import/'):
-        return 'imports.write'
+        return 'data.read' if path.endswith('/nn-preview') else 'imports.write'
     if path.startswith('/api/assignments/') or path.startswith('/api/room-assignments'):
         return 'assignments.write'
     return 'data.write'
@@ -781,7 +781,7 @@ def audit_successful_mutation(response):
         response.headers['X-Request-ID']=getattr(g,'request_id','')
         return response
     user = current_user()
-    if getattr(g, 'api_path', None) == '/api/assignments/availability':
+    if getattr(g, 'api_path', None) == '/api/assignments/availability' or request.endpoint=='preview_import_nn_planning':
         return response
     if (user is None or request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}
             or not getattr(g, 'api_path', None) or response.status_code >= 400):
@@ -1783,7 +1783,10 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
             'singleRoomStatus': athlete.single_room_status,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence)] if athlete.single_room_status == 'APPROVED_EXTRA' else []})
-    evaluation = evaluate_quota_usage(roster, assigned, rules_for_event(accommodation_event_id()), include_unallocated=True, include_allocations=include_people)
+    from arrival_planning import project,operational_athlete_basis
+    forecast=project(nation_code)
+    forecast_basis=operational_athlete_basis(forecast)
+    evaluation = evaluate_quota_usage(roster, assigned, rules_for_event(accommodation_event_id()), include_unallocated=True, include_allocations=include_people, operational_athletes=forecast_basis)
     rows = evaluation['rows']
     disposition = disposition_by_quota_group(roster, booking_by_athlete)
     allocation_by_person = {item['personId']: item for row in rows for item in row['singleRoomAllocations']}
@@ -1926,7 +1929,6 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                 projected['matchesContextFilters'] = matches
                 people.append(projected)
             from arrival_planning import project,operative_projection
-            forecast=project(nation_code)
             forecast['rows']=[row for row in forecast['rows'] if (not person_type or person_type=='ATHLETE')
                 and (not discipline or row['discipline']==discipline or not row['editable'])
                 and (not sport_family or sport_family in row['sportFamilies'])
@@ -2812,6 +2814,24 @@ def reconcile_single_room_tasks(session):
     session.status = 'WAITING_FOR_NATION' if any(a.decision != 'APPROVED' for a in session.current_approvals) else 'EXCEPTION_APPROVED'
 
 
+@app.route('/api/import/sessions/<int:session_id>/nn-preview',methods=['POST'])
+def preview_import_nn_planning(session_id):
+    # Read-only POST: no decision, forecast, session or audit mutation.
+    configured_event_id()
+    session=ImportSession.query.get_or_404(session_id)
+    data=request.get_json(silent=True) or {}
+    if not session.current_version or str(data.get('versionId'))!=str(session.current_version_id) or session.status in {'CANCELLED','REPLACED'}:
+        return jsonify(error='STALE_PREVIEW',message='Aktuelle Importversion neu laden.'),409
+    from arrival_planning import import_projection
+    try:
+        live=session.status in {'IMPORTED','ARCHIVED'}
+        preview={} if live else _current_session_preview(session)
+        if not live:verify_plan(preview,(preview.get('_workflow') or {}).get('plan'))
+        return jsonify(import_projection(session,preview,{},live=live,choices=data.get('nnPlanning',[])))
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()),409
+
+
 @app.route('/api/import/sessions/<int:session_id>/nn-planning',methods=['POST'])
 def decide_import_nn_planning(session_id):
     lock_accommodation_writes()
@@ -3480,6 +3500,13 @@ def get_official_quotas():
             )
     except QuotaGenderValidationError as error:
         return quota_gender_review_response(error)
+    if request.args.get('includeOperational')=='true':
+        from types import SimpleNamespace
+        from arrival_planning import import_projection
+        projection=import_projection(SimpleNamespace(event_id=accommodation_event_id(),nation=nation_code,current_version_id=None),{}, {},live=True)
+        operative=projection['operationalQuota']
+        operative['rows']=[row for row in operative['rows'] if (not discipline or row['discipline']==discipline) and (not gender or row['gender']==normalize_gender(gender))]
+        rows={**(rows if isinstance(rows,dict) else {'rows':rows}),'operationalQuota':operative}
     return _assignment_jsonify(rows)
 
 

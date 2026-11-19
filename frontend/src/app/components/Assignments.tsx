@@ -2186,7 +2186,7 @@ function getQuotaState(card: QuotaCard) {
 }
 
 function officialBasisTooltip(card: QuotaCard) {
-  return `${card.registeredOfficials} Officials gemeldet; ${card.assignedOfficials} zugewiesen; maximal ${card.officialQuota} regulär zulässig. Aktuelle EZ-Berechnungsbasis: ${card.singleRoomOfficialBasis} (Officials-Limit, nicht Meldestand).`;
+  return `${card.registeredOfficials} Officials gemeldet; ${card.assignedOfficials} zugewiesen; maximal ${card.officialQuota} regulär zulässig. Aktuelle EZ-Berechnungsbasis: ${card.singleRoomOfficialBasis} (je Kontext: gemeldete anrechenbare Officials, begrenzt auf die operative Obergrenze).`;
 }
 
 export function QuotasPanel({

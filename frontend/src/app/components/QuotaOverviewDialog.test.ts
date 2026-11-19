@@ -223,3 +223,48 @@ test('person details distinguish reported request, actual accommodation and sing
   assert.equal(person.roomPreference.reportedValue,raw);
  }
 });
+
+function operationalControls() {
+ const nation=fixture.nations[0].nationCode,discipline=fixture.nations[0].groups[0].name;
+ const area={areaId:'scope',nationCode:nation,discipline,personalGender:'M',reportedCount:9,expectedTotal:4,virtualPlaces:4,worldChampionCount:0,conflict:false,reasons:[],editable:true,baseToken:'current'};
+ const quota={nationCode:nation,discipline,gender:'M',athletesEntered:9,expectedAthletes:4,officialQuota:6,registeredOfficials:10,singleRoomOfficialBasis:6,singleRoomsAllowed:2,singleRoomsRequested:4,singleRoomsPending:2,approvedExtraSingleRooms:0,officialsExceeded:true,coverageChanged:true,fisOfficialQuota:11,fisSingleRoomsAllowed:3};
+ return {planning:{mode:'IMPORT',rows:[area],operationalQuota:{rows:[quota],conflict:false,reasons:[]}},choices:[{areaId:'scope',baseToken:'current',expectedTotal:4}],onChange:()=>{},disabled:false};
+}
+
+test('both existing quota views render identical backend operative values with only one NN editor',()=>{
+ const nn=operationalControls();
+ for(const [expected,cap,rooms] of [[4,6,2],[5,7,3]]) {
+  Object.assign(nn.planning.operationalQuota.rows[0],{expectedAthletes:expected,officialQuota:cap,singleRoomOfficialBasis:cap,singleRoomsAllowed:rooms});
+  for(const kind of ['athlete','officials']) {
+   const output=html(copy(),kind,{nn,onEditPlanning:()=>{}}),visible=text(output);
+   for(const [label,value] of [['Für Unterkunft erwartet',expected],['Operative Officials-Obergrenze',cap],['EZ-Berechnungsbasis',cap],['Regulärer EZ-Anspruch',rooms]]) assert.ok(visible.includes(`${label} ${value}`),`${kind}: ${label}`);
+   assert.ok(visible.includes('Offizielle FIS-Basis: 9 Athleten'));
+   assert.equal(output.includes('aria-label="NN-Anzahl'),kind==='athlete');
+  }
+ }
+});
+
+test('Officials view hides stale operative figures during reloads or errors but preserves the named FIS snapshot',()=>{
+ for(const extra of [{busy:true},{error:'Vorschau fehlgeschlagen'}]) {
+  const output=html(copy(),'officials',{nn:{...operationalControls(),...extra}});
+  const operative=output.slice(output.indexOf('aria-label="Operative Officials- und EZ-Quote"'),output.indexOf('Offizieller FIS-Prüfstand'));
+  assert.ok(!operative.includes('<dl'));
+  assert.ok(output.includes('Offizieller FIS-Prüfstand'));
+ }
+});
+
+test('blocked NN forecasts explicitly show the normal fallback in both quota views',()=>{
+ const nn=operationalControls();
+ Object.assign(nn.planning.rows[0],{conflict:true,reasons:['Bestand geändert'],virtualPlaces:0});
+ Object.assign(nn.planning.operationalQuota,{conflict:true,reasons:['Bestand geändert']});
+ Object.assign(nn.planning.operationalQuota.rows[0],{nnForecastBlocked:true,expectedAthletes:9,officialQuota:11,singleRoomOfficialBasis:10,singleRoomsAllowed:3});
+ for(const kind of ['athlete','officials']) {
+  const output=html(copy(),kind,{nn}),visible=text(output);
+  assert.ok(visible.includes('NN-Prognose blockiert: Quotenbasis ist der aktuelle gemeldete Athletenbestand'));
+  assert.ok(visible.includes('Für Unterkunft erwartet 9'));
+  assert.ok(visible.includes('Operative Officials-Obergrenze 11'));
+  assert.ok(visible.includes('Regulärer EZ-Anspruch 3'));
+  assert.ok(!visible.includes('Operative Officials-Obergrenze 6'));
+  assert.ok(!output.includes('aria-label="NN-Plätze"'));
+ }
+});
