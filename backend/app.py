@@ -2383,6 +2383,10 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
     if include_preview and session.status=='ARCHIVED':
         from arrival_planning import import_projection
         payload['nnPlanning']=import_projection(session,{}, {},live=True)
+        if payload.get('preview'):
+            from imports.read_context import ImportReadContext
+            from import_control import build_import_control
+            payload['importControl']=build_import_control(payload['preview'],ImportReadContext(session.event_id))
     return payload
 
 

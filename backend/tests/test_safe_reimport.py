@@ -543,6 +543,7 @@ def test_nn_imported_decision_preserves_people_bookings_and_reports_conflict(eve
     assert archived.status_code==200,archived.json
     changed=decide(None);assert changed.status_code==200,changed.json
     assert changed.json['status']=='ARCHIVED' and changed.json['nnPlanning']['mode']=='LIVE'
+    assert changed.json['importControl']['competitions']  # existing inline competition view stays available
     assert AthleteArrivalForecast.query.one().expected_total is None and ImportRun.query.count()==1
 
 

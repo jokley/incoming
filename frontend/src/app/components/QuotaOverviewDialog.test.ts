@@ -231,17 +231,14 @@ function operationalControls() {
  return {planning:{mode:'IMPORT',rows:[area],operationalQuota:{rows:[quota],conflict:false,reasons:[]}},choices:[{areaId:'scope',baseToken:'current',expectedTotal:4}],onChange:()=>{},disabled:false};
 }
 
-test('both existing quota views render identical backend operative values with only one NN editor',()=>{
+test('athlete dialog removes the NN cards while Officials keeps authoritative operative results',()=>{
  const nn=operationalControls();
- for(const [expected,cap,rooms] of [[4,6,2],[5,7,3]]) {
-  Object.assign(nn.planning.operationalQuota.rows[0],{expectedAthletes:expected,officialQuota:cap,singleRoomOfficialBasis:cap,singleRoomsAllowed:rooms});
-  for(const kind of ['athlete','officials']) {
-   const output=html(copy(),kind,{nn,onEditPlanning:()=>{}}),visible=text(output);
-   for(const [label,value] of [['Für Unterkunft erwartet',expected],['Operative Officials-Obergrenze',cap],['EZ-Berechnungsbasis',cap],['Regulärer EZ-Anspruch',rooms]]) assert.ok(visible.includes(`${label} ${value}`),`${kind}: ${label}`);
-   assert.ok(visible.includes('Offizielle FIS-Basis: 9 Athleten'));
-   assert.equal(output.includes('aria-label="NN-Anzahl'),kind==='athlete');
-  }
- }
+ const athlete=html(copy(),'athlete',{nn});
+ assert.ok(!athlete.includes('Unterkunftsbedarf und operative Officials-/EZ-Quote'));
+ assert.ok(!athlete.includes('<select'));
+ const visible=text(html(copy(),'officials',{nn}));
+ assert.ok(visible.includes('Operative Officials-Obergrenze 6'));
+ assert.ok(visible.includes('Regulärer EZ-Anspruch 2'));
 });
 
 test('Officials view hides stale operative figures during reloads or errors but preserves the named FIS snapshot',()=>{
@@ -260,10 +257,10 @@ test('blocked NN forecasts explicitly show the normal fallback in both quota vie
  Object.assign(nn.planning.operationalQuota.rows[0],{nnForecastBlocked:true,expectedAthletes:9,officialQuota:11,singleRoomOfficialBasis:10,singleRoomsAllowed:3});
  for(const kind of ['athlete','officials']) {
   const output=html(copy(),kind,{nn}),visible=text(output);
-  assert.ok(visible.includes('NN-Prognose blockiert: Quotenbasis ist der aktuelle gemeldete Athletenbestand'));
-  assert.ok(visible.includes('Für Unterkunft erwartet 9'));
-  assert.ok(visible.includes('Operative Officials-Obergrenze 11'));
-  assert.ok(visible.includes('Regulärer EZ-Anspruch 3'));
+  assert.ok(visible.includes(kind==='athlete'?'NN-Prognose blockiert · normale Athletenbasis':'NN-Prognose blockiert: Quotenbasis ist der aktuelle gemeldete Athletenbestand'));
+  if(kind==='officials')assert.ok(visible.includes('Für Unterkunft erwartet 9'));
+  if(kind==='officials')assert.ok(visible.includes('Operative Officials-Obergrenze 11'));
+  if(kind==='officials')assert.ok(visible.includes('Regulärer EZ-Anspruch 3'));
   assert.ok(!visible.includes('Operative Officials-Obergrenze 6'));
   assert.ok(!output.includes('aria-label="NN-Plätze"'));
  }

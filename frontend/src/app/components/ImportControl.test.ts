@@ -121,3 +121,19 @@ test('area grouping adds headings without splitting competition pools or changin
  assert.equal(grouped.replace(/<tr><th scope="rowgroup" colSpan="4"[^>]*>Snowboard<\/th><\/tr>/,''),flat);
  assert.equal((grouped.match(/Halfpipe<\/th>/g)||[]).length,1);
 });
+
+test('inline NN entries use server excess including title rights and share one area across competitions',()=>{
+ const entry=(reported:number,extra:number)=>({nation:'FIN',reported,regularMax:4,status:extra?'REVIEW_REQUIRED':'TITLE_COVERED',aboveRegular:reported-4,championStarters:extra?0:1,unverifiedAdditional:extra,sharedPoolUnverifiedAdditional:0,sharedPoolReported:null,personKeys:['a'],champions:extra?[]:[{personKey:'a',source:'Verified'}]});
+ const competitions=[{id:'ba',name:'Big Air Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry(8,4)]},{id:'ss',name:'Slopestyle Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry(8,4)]},{id:'hp',name:'Halfpipe Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry(5,0)]}];
+ const control={people:[{personKey:'a',competitions}],competitions,issues:[]};
+ const preview={people:[{matchKey:'a',function:'Athlete',nationCode:'FIN',gender:'M'}]};
+ const area={areaId:'one-shared-area',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',reportedCount:9,expectedTotal:null,editable:true};
+ const nn:any={planning:{rows:[area]},choices:[],onChange:()=>{},disabled:false};
+ const render=()=>renderToStaticMarkup(createElement(CompetitionDistribution,{preview,control,nation:'FIN',nn}));
+ let output=render();assert.equal((output.match(/Unterkunftserwartung bearbeiten/g)??[]).length,2);
+ assert.ok(!output.includes('Unterkunftserwartung bearbeiten Halfpipe'));
+ nn.choices=[{areaId:area.areaId,baseToken:'current',expectedTotal:4}];output=render();assert.equal((output.match(/4 manuell/g)??[]).length,3);
+ nn.choices=[];Object.assign(area,{expectedTotal:5,conflict:true});competitions.forEach(c=>c.sportEntries=[entry(3,0)]);
+ output=render();assert.equal((output.match(/5 manuell/g)??[]).length,3);
+ preview.people=[];control.people=[];output=render();assert.ok(output.includes('gespeicherter Bereich'));assert.equal((output.match(/5 manuell/g)??[]).length,1);
+});
