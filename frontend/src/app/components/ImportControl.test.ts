@@ -122,18 +122,16 @@ test('area grouping adds headings without splitting competition pools or changin
  assert.equal((grouped.match(/Halfpipe<\/th>/g)||[]).length,1);
 });
 
-test('inline NN entries use server excess including title rights and share one area across competitions',()=>{
- const entry=(reported:number,extra:number)=>({nation:'FIN',reported,regularMax:4,status:extra?'REVIEW_REQUIRED':'TITLE_COVERED',aboveRegular:reported-4,championStarters:extra?0:1,unverifiedAdditional:extra,sharedPoolUnverifiedAdditional:0,sharedPoolReported:null,personKeys:['a'],champions:extra?[]:[{personKey:'a',source:'Verified'}]});
- const competitions=[{id:'ba',name:'Big Air Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry(8,4)]},{id:'ss',name:'Slopestyle Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry(8,4)]},{id:'hp',name:'Halfpipe Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry(5,0)]}];
+test('competitions show one shared backend person selection without NN editors',()=>{
+ const competitions=['ba','ss'].map(id=>({id,name:id==='ba'?'Big Air Herren':'Slopestyle Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[{nation:'FIN',reported:8,regularMax:4,status:'REVIEW_REQUIRED',unverifiedAdditional:4,champions:[],personKeys:['a'],aboveRegular:4,championStarters:0,sharedPoolReported:null}]}));
  const control={people:[{personKey:'a',competitions}],competitions,issues:[]};
  const preview={people:[{matchKey:'a',function:'Athlete',nationCode:'FIN',gender:'M'}]};
- const area={areaId:'one-shared-area',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',reportedCount:9,expectedTotal:null,editable:true};
- const nn:any={planning:{rows:[area]},choices:[],onChange:()=>{},disabled:false};
+ const area={areaId:'shared',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',reportedCount:9,selectedCount:4};
+ const nn:any={planning:{rows:[area]}};
  const render=()=>renderToStaticMarkup(createElement(CompetitionDistribution,{preview,control,nation:'FIN',nn}));
- let output=render();assert.equal((output.match(/Unterkunftserwartung bearbeiten/g)??[]).length,2);
- assert.ok(!output.includes('Unterkunftserwartung bearbeiten Halfpipe'));
- nn.choices=[{areaId:area.areaId,baseToken:'current',expectedTotal:4}];output=render();assert.equal((output.match(/4 manuell/g)??[]).length,3);
- nn.choices=[];Object.assign(area,{expectedTotal:5,conflict:true});competitions.forEach(c=>c.sportEntries=[entry(3,0)]);
- output=render();assert.equal((output.match(/5 manuell/g)??[]).length,3);
- preview.people=[];control.people=[];output=render();assert.ok(output.includes('gespeicherter Bereich'));assert.equal((output.match(/5 manuell/g)??[]).length,1);
+ assert.equal((render().match(/9 FIS gemeldet · 4 vorläufig disponiert/g)??[]).length,2);
+ Object.assign(area,{selectedCount:5,selectedWorldChampionCount:1});
+ assert.equal((render().match(/5 vorläufig disponiert.*?inkl. WM/g)??[]).length,2);
+ assert.ok(!render().includes('Unterkunftserwartung bearbeiten'));
+ assert.ok(!render().includes('<input'));
 });

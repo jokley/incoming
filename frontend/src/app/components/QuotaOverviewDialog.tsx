@@ -1,4 +1,4 @@
-import {type NNPlanningControls} from './ArrivalPlanning';
+import type {NNPlanningControls} from '../types';
 import { sportAreaLabel } from '../services/competitionPresentation';
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
@@ -50,10 +50,8 @@ function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople
     })}
    </tr>)}</tbody>
   </table></div>
-  {nn&&(nn.busy||nn.error||nn.planning.operationalQuota?.conflict||nn.choices.length>0||nn.planning.rows.some(area=>area.expectedTotal!==null))&&<div className="text-xs" aria-label="Status Unterkunftsprognose">
-   {nn.busy?'Operative Vorschau wird berechnet …':nn.error?<span role="alert">{nn.error}</span>:nn.planning.operationalQuota?.conflict?<span className="text-[var(--ops-warning)]">NN-Prognose blockiert · normale Athletenbasis. {nn.planning.operationalQuota.reasons.join(' ')}</span>:nn.choices.length?'Unterkunftsprognose lokal · noch nicht gespeichert. Operative Ergebnisse unter Officials & EZ-Quote':'Operative Ergebnisse unter Officials & EZ-Quote'}
-   {nn.planning.mode==='LIVE'&&nn.onApply&&nn.choices.length>0&&<OpsButton disabled={nn.disabled||nn.busy||Boolean(nn.error)||!nn.choices.length} onClick={nn.onApply}>Unterkunftsprognose speichern</OpsButton>}
-  </div>}
+  {nn?.planning.operationalQuota?.conflict&&<p className="text-xs text-[var(--ops-warning)]">Personenauswahl klären · {nn.planning.operationalQuota.reasons.join(' ')}</p>}
+  {nn?.planning.rows.some(area=>area.legacyForecastInactive)&&<p className="text-xs text-[var(--ops-text-muted)]">Frühere NN-Prognosen bleiben als Nachweis erhalten und sind nicht mehr operativ wirksam.</p>}
   {!nation.athleteFamilies.length&&<p className="text-sm">Keine aktive Athletenquote · Fachlich prüfen</p>}
  </div>;
 }
@@ -93,8 +91,8 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
  };
  const withoutContext=preview?.people.filter(p=>p.nationCode===nation.nationCode&&p.function?.trim().toLowerCase()!=='athlete'&&control?.people.some(row=>row.personKey===p.matchKey&&row.quotaContexts?.length===0)).map(p=>p.matchKey!)??[];
  return <div className="space-y-3">
-  {nn&&<p className="text-xs text-[var(--ops-text-muted)]">Operative Unterkunftsbewertung · Originalmeldungen bleiben erhalten. Manuelle Erwartung ausschließlich in der Athleten-/Disziplinquote bearbeiten.</p>}
-  {nn&&operative?.conflict&&<p className="text-xs text-[var(--ops-warning)]">NN-Prognose blockiert · normale Athletenbasis. {operative.reasons.join(' ')}</p>}
+  {nn&&<p className="text-xs text-[var(--ops-text-muted)]">Operative Unterkunftsbewertung · Originalmeldungen bleiben erhalten. Automatische vorläufige Personenauswahl aus der bestätigten Entry List.</p>}
+  {nn&&operative?.conflict&&<p className="text-xs text-[var(--ops-warning)]">Personenauswahl klären · normale Athletenbasis. {operative.reasons.join(' ')}</p>}
   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis">
    <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials</span>
 
@@ -117,7 +115,7 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
      </tr>
      <tr><td colSpan={4} className="ops-table-wrap px-1 pb-2 sm:px-3"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Geschlechteraufteilung</summary>
       <div className="w-0 min-w-full overflow-x-auto"><table className="mt-2 w-full text-xs"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Officials-Obergrenze','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
-       {group.contexts.map(row=><tr key={row.gender}><th scope="row" className="px-2 py-1 text-left font-normal">{genderName(row.gender)}</th><td className="px-2 py-1 text-right tabular-nums">{nn?`${row.expectedAthletes} geplant`:row.athletes}{nn&&<small className="block text-[var(--ops-text-muted)]">{row.athletesEntered} FIS-gemeldet</small>}{row.nnForecastBlocked&&<small className="block text-[var(--ops-warning)]">Normale Basis · NN blockiert</small>}</td>{[row.officialQuota,row.singleRoomOfficialBasis??row.officialQuota,row.singleRoomsAllowed,row.singleRoomsRequested,row.singleRoomsApproved,row.singleRoomsPending,row.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>)}
+       {group.contexts.map(row=><tr key={row.gender}><th scope="row" className="px-2 py-1 text-left font-normal">{genderName(row.gender)}</th><td className="px-2 py-1 text-right tabular-nums">{nn?`${row.expectedAthletes} geplant`:row.athletes}{nn&&<small className="block text-[var(--ops-text-muted)]">{row.athletesEntered} FIS-gemeldet</small>}{row.nnForecastBlocked&&<small className="block text-[var(--ops-warning)]">Normale Basis · Auswahl ungeklärt</small>}</td>{[row.officialQuota,row.singleRoomOfficialBasis??row.officialQuota,row.singleRoomsAllowed,row.singleRoomsRequested,row.singleRoomsApproved,row.singleRoomsPending,row.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>)}
        <tr className="font-bold"><th scope="row" className="px-2 py-1 text-left">Σ M/W</th>{[nn?totals.expectedAthletes:group.athletes,totals.officialQuota,nn?totals.singleRoomOfficialBasis:totals.officialQuota,totals.singleRoomsAllowed,totals.singleRoomsRequested,totals.singleRoomsApproved,totals.singleRoomsPending,totals.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>
       </tbody></table></div>
      </details></td></tr>

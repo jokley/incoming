@@ -188,7 +188,7 @@ def test_operational_table_and_person_statuses_share_allocator(expected,cap,room
     demands=[dict(p,countsAsSingle=True) for p in officials[:3]]
     before=deepcopy(roster)
     original=evaluate_quota_usage(roster,demands,standard_rules())
-    forecast=dict(nationCode='FIN',discipline='Freeski Park & Pipe',personalGender='M',editable=True,conflict=False,expectedTotal=expected,reasons=[])
+    forecast=dict(nationCode='FIN',discipline='Freeski Park & Pipe',personalGender='M',editable=True,conflict=False,selectedCount=expected,replacedPersonIds=[],reasons=[])
     result=operational_quota_projection({'rows':[forecast]},roster,demands,standard_rules(),event=event)
     nation=result['overview']['nations'][0];group=nation['groups'][0];context=group['contexts'][0]
     assert nation['officials']==group['officials']==10
@@ -213,7 +213,7 @@ def test_operational_aggregation_preserves_approved_extra_and_champion_exemption
     staff=[dict(matchKey=f'o{i}',nationCode='FIN',function='NSA Coach',gender='M',quotaDisciplines=['Ski Cross']) for i in range(10)]
     staff[3].update(singleRoomStatus='APPROVED_EXTRA',approvedQuotaContexts=[dict(nationCode='FIN',discipline='Ski Cross',gender='M')])
     staff[4]['singleRoomQuotaExemptReason']='WORLD_CHAMPION'
-    area=dict(nationCode='FIN',discipline='Ski Cross',personalGender='M',editable=True,conflict=False,expectedTotal=4,reasons=[])
+    area=dict(nationCode='FIN',discipline='Ski Cross',personalGender='M',editable=True,conflict=False,selectedCount=4,replacedPersonIds=[],reasons=[])
     result=operational_quota_projection({'rows':[area]},athletes+staff,[dict(p,countsAsSingle=True) for p in staff[:5]],standard_rules(),event=event)
     totals=result['overview']['nations'][0]['groups'][0]['totals']
     assert (totals['singleRoomsRequested'],totals['singleRoomsApproved'],totals['quotaExemptSingleRooms'],totals['singleRoomsPending'])==(5,1,1,1)
@@ -227,7 +227,7 @@ def test_operational_overview_keeps_gender_contexts_and_distinct_nation_official
     groups=['Ski Cross','Freeski Park & Pipe']
     athletes=[dict(matchKey=f'{g}{i}',nationCode='FIN',function='Athlete',gender=g,quotaDisciplines=groups) for g,count in [('M',9),('W',2)] for i in range(count)]
     staff=[dict(matchKey=f'o{i}',nationCode='FIN',function='NSA Coach',gender='M',quotaDisciplines=groups) for i in range(10)]
-    area=dict(nationCode='FIN',discipline='Ski Cross',personalGender='M',editable=True,conflict=False,expectedTotal=4,reasons=[])
+    area=dict(nationCode='FIN',discipline='Ski Cross',personalGender='M',editable=True,conflict=False,selectedCount=4,replacedPersonIds=[],reasons=[])
     result=operational_quota_projection({'rows':[area]},athletes+staff,[dict(p,countsAsSingle=True) for p in staff[:3]],standard_rules(),event=event)
     nation=result['overview']['nations'][0]
     assert nation['officials']==nation['officialsInMultipleGroups']==10

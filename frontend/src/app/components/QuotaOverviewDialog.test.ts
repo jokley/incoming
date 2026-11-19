@@ -254,7 +254,7 @@ test('Officials view hides stale operative figures during reloads or errors but 
  }
 });
 
-test('blocked NN forecasts explicitly show the normal fallback in both quota views',()=>{
+test('unresolved person selections explicitly show the normal fallback in both quota views',()=>{
  const nn=operationalControls();
  Object.assign(nn.planning.rows[0],{conflict:true,reasons:['Bestand geändert'],virtualPlaces:0});
  Object.assign(nn.planning.operationalQuota,{conflict:true,reasons:['Bestand geändert']});
@@ -262,7 +262,7 @@ test('blocked NN forecasts explicitly show the normal fallback in both quota vie
  Object.assign(nn.planning.operationalQuota.overview.nations[0].groups[0].contexts[0],nn.planning.operationalQuota.rows[0]);
  for(const kind of ['athlete','officials']) {
   const output=html(copy(),kind,{nn}),visible=text(output);
-  assert.ok(visible.includes(kind==='athlete'?'NN-Prognose blockiert · normale Athletenbasis':'NN-Prognose blockiert · normale Athletenbasis'));
+  assert.ok(visible.includes(kind==='athlete'?'Personenauswahl klären':'Personenauswahl klären · normale Athletenbasis'));
   if(kind==='officials')assert.ok(visible.includes('9 geplant 9 FIS-gemeldet'));
 
 

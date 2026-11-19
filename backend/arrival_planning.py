@@ -1,15 +1,12 @@
-"""Exclusive operative athlete forecasts. No admission, quota or booking writes.
+"""Provisional real-person housing selection. No admission or booking writes.
 
 Operational policy: Officials' EZ tiers must use actual arriving Officials,
 capped by their admissible contingent. Officials continue to be planned as named people.
 """
 from collections import defaultdict
-from datetime import date, datetime
 import hashlib
 import json
 
-from flask import abort, g
-from sqlalchemy.exc import IntegrityError
 from accommodation_scope import accommodation_event_id, event_query
 from competitions import quota_disciplines, competition_athlete_family
 from imports.normalization import canonical_fis_code
@@ -30,7 +27,127 @@ def forecast_values(row):
                     expectedTotal=None,checkInDate=None,checkOutDate=None,note=None,revision=0,updatedBy=None,updatedAt=None)
 
 
-def project(nation=None, *, people_override=None, expected_overrides=None):
+
+def imported_entry_rows(nation=None):
+    """Replay only committed source replacements, not the current review draft.
+
+    Each family keeps its own file order. Cross-family people are subsequently
+    clarification cases, so unrelated source files need no invented global order.
+    Archived sessions retain their successfully imported evidence.
+    """
+    from models import ImportSession, ImportSessionEvent, ImportSessionVersion
+    owner = accommodation_event_id()
+    query = (db.session.query(ImportSessionEvent, ImportSessionVersion)
+        .join(ImportSessionVersion, ImportSessionEvent.version_id == ImportSessionVersion.id)
+        .join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
+        .filter(ImportSession.event_id == owner, ImportSessionEvent.session_id == ImportSessionVersion.session_id, ImportSessionEvent.event_type == 'IMPORTED'))
+    if nation:
+        query = query.filter(ImportSession.nation == nation)
+    sources = {}
+    for history, version in query.order_by(ImportSessionEvent.created_at, ImportSessionEvent.id):
+        preview = json.loads(version.preview_json or '{}')
+        scope = preview.get('replacementScope') or {}
+        code = version.session.nation
+        if scope.get('kind') == 'FULL_NATION':
+            sources[code] = {'FULL': preview.get('people', [])}
+        elif scope.get('kind') == 'SPORT_FAMILY':
+            families = scope.get('families') or [scope.get('family')]
+            previous = sources.setdefault(code, {})
+            # A prior full list contributes only the families not replaced now.
+            if 'FULL' in previous:
+                from models import Competition
+                comps = {str(c.id): c for c in Competition.query.all()}
+                for record in previous.pop('FULL'):
+                    groups = {competition_athlete_family(comps[str(cid)]) for cid in record.get('competitionIds', []) if str(cid) in comps}
+                    for family in groups - set(families):
+                        previous.setdefault(family, []).append(record)
+            for family in families:
+                source_id = (preview.get('submissionSources') or {}).get(family)
+                source = db.session.get(ImportSessionVersion, source_id) if source_id else None
+                previous[family] = json.loads(source.preview_json).get('people', []) if source else preview.get('people', [])
+    return [p for code in sorted(sources) for family in sorted(sources[code]) for p in sources[code][family]]
+
+
+
+def entry_position(record):
+    """Original source row only; conflicting provenance is never a tie-breaker."""
+    row=record.get('sourceRowNumber') or record.get('rowNumber')
+    if type(row) is int and row>0:return row
+    rows={source.get('row') for source in record.get('sourceRows',[]) if type(source.get('row')) is int and source['row']>0}
+    return next(iter(rows)) if len(rows)==1 else None
+
+def provisional_selection(people, event, entry_rows, booked):
+    """Select real people in source order; booking facts are never modified."""
+    from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
+    from imports.event_context import ImportValidationError
+    from quota_rules import PROVISIONAL_HOUSING_REGULAR_LIMIT
+    from sport_entry_plausibility import project_entries
+    by_id = {str(p.id): p for p in people}
+    maps = _build_existing_athlete_maps(people, event_id=event.id)
+    provenance = {}
+    entered_competitions = defaultdict(set)
+    for record in entry_rows:
+        if not is_athlete(record):
+            continue
+        try:
+            person = _find_existing_athlete(record, maps)
+        except ImportValidationError:
+            continue  # Missing evidence is surfaced below, never guessed.
+        if not person or record.get('nationCode') != person.nation_code:
+            continue
+        entered_competitions[str(person.id)].update(str(cid) for cid in record.get('competitionIds', []))
+        row = entry_position(record)
+        if type(row) is int and row > 0:
+            provenance.setdefault(str(person.id), []).append(row)
+    records = [dict(personId=p.id, matchKey=str(p.id), fisCode=p.fis_code,
+        nationCode=p.nation_code, gender=p.gender, function=p.function,
+        competitionMemberships=[dict(competitionId=c.id) for c in p.competitions if str(c.id) in entered_competitions[str(p.id)]]) for p in people]
+    from models import Competition
+    comps = {c.id:c for c in Competition.query.all()}
+    champions = {c['personKey'] for entries in project_entries(records, comps, event).values()
+                 for entry in entries for c in entry['champions']}
+    groups = defaultdict(list)
+    for identity, person in by_id.items():
+        disciplines = quota_disciplines(person.competitions)
+        gender = normalize_gender(person.gender)
+        families={competition_athlete_family(c) for c in person.competitions}-{None}
+        key = (person.nation_code, disciplines[0], gender) if len(disciplines)==1 and len(families)==1 and gender in {'M','W'} and all(c.quota_discipline and competition_athlete_family(c) for c in person.competitions) else (person.nation_code,None,None)
+        groups[key].append(identity)
+    result = {}
+    for key, ids in groups.items():
+        reasons = []
+        if not all(key):
+            reasons.append('Keine eindeutige Event-Group-/Gender-Zuordnung; Unterkunftsbedarf klären.')
+        if any(i not in provenance for i in ids):
+            reasons.append('Keine aktuelle bestätigte Importreihenfolge für alle Personen nachweisbar.')
+        positions = {i:min(provenance[i]) for i in ids if i in provenance}
+        if len(set(positions.values())) != len(positions):
+            reasons.append('Importreihenfolge im Planungsbereich nicht eindeutig.')
+        ordered = sorted(ids, key=lambda i:positions.get(i, 0))
+        eligible = {i for i in ids if i in champions and i in provenance}
+        regular = [i for i in ordered if i not in eligible]
+        automatic = set(regular[:PROVISIONAL_HOUSING_REGULAR_LIMIT]) | eligible
+        retained = set(ids) & {str(i) for i in booked}
+        # Existing regular bookings consume planned regular places. Do not add
+        # four new tasks to an already partially accommodated team.
+        selected = retained | eligible
+        slots = max(0, PROVISIONAL_HOUSING_REGULAR_LIMIT - len(retained - eligible))
+        selected.update([i for i in regular if i not in retained][:slots])
+        warnings = []
+        if retained - automatic:
+            warnings.append('Bestehende Buchungen weichen von der automatischen Listenauswahl ab; Bestand bleibt erhalten.')
+        if len(retained - eligible) > PROVISIONAL_HOUSING_REGULAR_LIMIT:
+            warnings.append('Mehr reguläre Personen gebucht als vorläufig vorgesehen; Unterkunftsbestand klären.')
+        result[key] = dict(selectedPersonIds=sorted(selected) if not reasons else [],
+            provisionalPersonIds=sorted(selected-retained) if not reasons else [],
+            excludedPersonIds=sorted(set(ids)-selected) if not reasons else [],
+            selectedCount=len(selected) if not reasons else None,
+            selectedWorldChampionCount=len(eligible) if not reasons else 0,
+            selectedWorldChampionIds=sorted(eligible) if not reasons else [],
+            selectionReasons=reasons, selectionWarnings=warnings)
+    return result
+
+def project(nation=None, *, people_override=None, entry_rows=None):
     owner=accommodation_event_id()
     query=event_query(Athlete).options(db.selectinload(Athlete.competitions))
     forecasts=event_query(AthleteArrivalForecast)
@@ -41,6 +158,23 @@ def project(nation=None, *, people_override=None, expected_overrides=None):
     for title in applicable_title_references(db.session.get(Event,owner),[p.fis_code for p in people if p.fis_code]):
         titles[canonical_fis_code(title.fis_code)].append(title.to_dict())
     booked={row[0] for row in event_query(RoomBookingOccupant).with_entities(RoomBookingOccupant.athlete_id).distinct()}
+    event=db.session.get(Event,owner)
+    if entry_rows is not None:
+        from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
+        maps=_build_existing_athlete_maps(people,event_id=owner)
+        from imports.event_context import ImportValidationError
+        incoming_ids=set()
+        for record in entry_rows:
+            try:person=_find_existing_athlete(record,maps)
+            except ImportValidationError:continue
+            if person and entry_position(record) is not None:incoming_ids.add(person.id)
+        retained=[]
+        for record in imported_entry_rows(nation):
+            try:person=_find_existing_athlete(record,maps)
+            except ImportValidationError:continue  # Removed historical identities are not current preview people.
+            if person and person.id not in incoming_ids:retained.append(record)
+        entry_rows=list(entry_rows)+retained
+    selection=provisional_selection(people,event,imported_entry_rows(nation) if entry_rows is None else entry_rows,booked)
     groups={}
     for person in people:
         disciplines=quota_disciplines(person.competitions)
@@ -51,6 +185,7 @@ def project(nation=None, *, people_override=None, expected_overrides=None):
         if len(disciplines)!=1:reasons.append('Mehrere Event Groups: gemeinsame Unterkunftszuordnung klären.' if disciplines else 'Keine Event Group zuordenbar.')
         if any(not c.quota_discipline or not competition_athlete_family(c) for c in person.competitions):reasons.append('Wettbewerbszuordnung nicht eindeutig auflösbar.')
         if gender not in {'M','W'}:reasons.append('Persönliches Gender fehlt oder ist nicht eindeutig.')
+        if len(families)>1:reasons.append('Sportfamilienübergreifende Zuordnung; gemeinsamen Unterkunftsbedarf klären.')
         # All ambiguous people enter a single exclusive clarification bucket per nation.
         key=(person.nation_code,None,None) if reasons else (person.nation_code,disciplines[0],gender)
         entry=groups.setdefault(key,[])
@@ -64,27 +199,22 @@ def project(nation=None, *, people_override=None, expected_overrides=None):
     for key in sorted(set(groups)|set(saved),key=lambda k:tuple(v or '' for v in k)):
         members=sorted(groups.get(key,[]),key=lambda p:p['personId'])
         forecast=saved.get(key);values=forecast_values(forecast)
-        override=(expected_overrides or {}).get(area_id(owner,*key))
-        if override is not None:values['expectedTotal']=override['expectedTotal']
         expected=values['expectedTotal']
         reasons=[]
         if key[1] is None:
             reasons.append('Klärungsbereich: keine sichere überschneidungsfreie Zuordnung. Keine Prognose bearbeitbar.')
             reasons.extend(sorted({reason for person in members for reason in person['reasons']}))
         roster_digest=fingerprint([{'personId':p['personId'],'gender':normalize_gender(p['personalGender']),'disciplines':p['disciplines']} for p in members])
-        maintained=expected is not None or values['checkInDate'] or values['note']
-        if forecast and maintained and override is None and forecast.roster_digest!=roster_digest:reasons.append('Gemeldeter Bestand oder Zuordnung seit der letzten Prognose geändert. Prognose prüfen und erneut speichern.')
-        if forecast and maintained and not members:reasons.append('Gespeicherter Planungsbereich hat keine gemeldeten Athleten mehr. Prognose prüfen oder zurücksetzen.')
-        virtual_planning=key[1] is not None and expected is not None and expected!=len(members)
-        if virtual_planning and any(p['hasBooking'] for p in members):
-            reasons.append('Abweichende NN-Planung mit bestehenden namentlichen Buchungen. Bestand zuerst klären; keine zusätzlichen virtuellen Plätze.')
+        chosen=selection.get(key,dict(selectedPersonIds=[],provisionalPersonIds=[],excludedPersonIds=[],selectedCount=None,selectedWorldChampionCount=0,selectedWorldChampionIds=[],selectionReasons=['Gespeicherter Bereich ohne aktuelle Meldungen.'],selectionWarnings=[]))
+        reasons.extend(chosen['selectionReasons'])
+        legacy=expected is not None or bool(values['checkInDate'] or values['note'])
         families=sorted({f for p in members for f in p['sportFamilies']})
         rows.append(dict(areaId=area_id(owner,*key),eventId=str(owner),nationCode=key[0],discipline=key[1],personalGender=key[2],
                          sportFamilies=families,reportedCount=len(members),bookedPeopleCount=sum(p['hasBooking'] for p in members),
-                         usesVirtualPlanning=virtual_planning,virtualPlaces=expected if virtual_planning and not reasons else 0,
-                         replacedPersonIds=[p['personId'] for p in members if virtual_planning and not reasons and not p['hasBooking']],
-                         status='CONFLICT' if reasons else 'NOT_SET' if expected is None else 'PLANNED',conflict=bool(reasons),reasons=reasons,
-                         source='MANUAL' if forecast else None,editable=key[1] is not None,people=members,
+                         usesVirtualPlanning=False,virtualPlaces=0,
+                         replacedPersonIds=chosen['excludedPersonIds'],**chosen,legacyForecastInactive=legacy,
+                         status='CONFLICT' if reasons or chosen['selectionWarnings'] else 'PLANNED',conflict=bool(reasons),reasons=reasons+chosen['selectionWarnings'],
+                         source='IMPORTED_ENTRY_LIST',editable=key[1] is not None,people=members,
                          worldChampionCount=sum(p['worldChampionMarked'] or bool(p['titleReferences']) for p in members),
                          rosterDigest=roster_digest,baseToken=fingerprint({'forecast':values,'people':members}),**values))
     return dict(eventId=str(owner),nationCode=nation,rows=rows,
@@ -96,56 +226,22 @@ class ForecastConflict(ValueError):
 
 
 def save(area, data, username, *, commit=True):
-    if not isinstance(data,dict):raise ValueError('Prognose muss ein JSON-Objekt sein.')
-    row=next((r for r in project()['rows'] if r['areaId']==area),None)
-    if not row:abort(404)
-    if not row['editable']:raise ValueError('Mehrfachzuordnung oder Gender zuerst fachlich klären.')
-    if data.get('baseToken')!=row['baseToken']:raise ForecastConflict('Planung oder Personenbestand wurde geändert. Bitte neu laden.')
-    expected=data.get('expectedTotal')
-    if 'expectedTotal' not in data or (expected is not None and (type(expected) is not int or expected<0 or expected>2147483647)):
-        raise ValueError('Erwartete Gesamtzahl muss eine nichtnegative ganze Zahl oder null sein.')
-    dates=[]
-    for key in ('checkInDate','checkOutDate'):
-        raw=data.get(key)
-        if raw is not None and not isinstance(raw,str):raise ValueError('Aufenthaltsdaten müssen ISO-Daten sein.')
-        dates.append(date.fromisoformat(raw) if raw else None)
-    if bool(dates[0])!=bool(dates[1]) or (dates[0] and dates[0]>=dates[1]):raise ValueError('Zeitraum vollständig und mit Check-in vor Check-out angeben.')
-    note=data.get('note')
-    if note is not None and (not isinstance(note,str) or len(note)>2000):raise ValueError('Interner Hinweis darf höchstens 2000 Zeichen enthalten.')
-    key=dict(event_id=int(row['eventId']),nation_code=row['nationCode'],discipline=row['discipline'],gender=row['personalGender'])
-    values=dict(expected_total=expected,check_in_date=dates[0],check_out_date=dates[1],note=note.strip() or None if note else None,
-                revision=row['revision']+1,roster_digest=row['rosterDigest'],updated_by=username,updated_at=datetime.utcnow())
-    g.audit_snapshot={k:row[k] for k in ('expectedTotal','checkInDate','checkOutDate','note','revision','updatedBy','updatedAt')}
-    try:
-        if row['revision']:
-            count=event_query(AthleteArrivalForecast).filter_by(**key,revision=row['revision']).update(values,synchronize_session=False)
-            if count!=1:raise ForecastConflict('Prognose wurde gleichzeitig bearbeitet. Bitte neu laden.')
-        else:
-            db.session.add(AthleteArrivalForecast(**key,**values));db.session.flush()
-        db.session.flush()
-        if commit:db.session.commit()
-    except (IntegrityError,ForecastConflict) as exc:
-        db.session.rollback()
-        raise ForecastConflict('Prognose wurde gleichzeitig bearbeitet. Bitte neu laden.') from exc
-    db.session.expire_all()
-    return next(r for r in project()['rows'] if r['areaId']==area)
+    raise ValueError('Manuelle NN-Prognosen sind abgelöst; die bestätigte Entry List bestimmt die vorläufige Personenauswahl.')
 
 
 def operative_projection(overview):
-    """Only valid forecasts replace named tasks; conflicts remain visible."""
+    """One shared real-person selection for queue and accommodation predicates."""
     rows=overview['rows']
-    return dict(replacedPersonIds=sorted({identity for row in rows for identity in row['replacedPersonIds']}),
-                groups=[row for row in rows if (row['usesVirtualPlanning'] and row['expectedTotal']>0) or row['conflict']],
-                controlledAreas=sum(row['usesVirtualPlanning'] for row in rows),
-                zeroAreas=sum(row['usesVirtualPlanning'] and not row['conflict'] and row['expectedTotal']==0 for row in rows),
-                zeroGroups=[row for row in rows if row['usesVirtualPlanning'] and not row['conflict'] and row['expectedTotal']==0],
-                virtualPlaces=sum(row['virtualPlaces'] for row in rows),
-                conflicts=sum(row['conflict'] for row in rows))
+    return dict(replacedPersonIds=sorted({i for row in rows for i in row['replacedPersonIds']}),
+        provisionalPersonIds=sorted({i for row in rows for i in row['provisionalPersonIds']}),
+        worldChampionPersonIds=sorted({i for row in rows for i in row['selectedWorldChampionIds']}),
+        groups=[row for row in rows if row['reasons']], controlledAreas=len(rows),
+        zeroAreas=0,zeroGroups=[],virtualPlaces=0,conflicts=sum(bool(row['reasons']) for row in rows))
 
 
 
 def import_projection(session, preview, control, *, live=False, read_context=None, choices=None):
-    """Same forecast model over effective parsed people, never a preview write."""
+    """Same selection over effective parsed people, never a preview write."""
     from types import SimpleNamespace
     from imports.read_context import ImportReadContext
     context=read_context or ImportReadContext(session.event_id)
@@ -156,15 +252,14 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
         for index,person in enumerate(preview.get('evaluationPeople',preview.get('people',[]))):
             if person.get('nationCode')!=session.nation:continue
             ids=person.get('competitionIds',[])
-            records.append(SimpleNamespace(id=person.get('existingAthleteId') or 'preview:'+str(person.get('matchKey',index)),
+            records.append(SimpleNamespace(id=person.get('existingAthleteId') or 'preview:'+str(person.get('matchKey',index)),event_id=session.event_id,competitor_id=person.get('competitorId'),
                 nation_code=person['nationCode'],function=person.get('function'),firstname=person.get('firstname',''),lastname=person.get('lastname',''),
                 gender=person.get('gender'),fis_code=person.get('fisCode'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
                 competitions=[context.competitions_by_id[int(cid)] for cid in ids if str(cid).isdecimal() and int(cid) in context.competitions_by_id]))
-        result=project(session.nation,people_override=records)
-    # A local draft is validated like an approval, without writing any forecast.
-    if choices is not None:
+        result=project(session.nation,people_override=records,entry_rows=preview.get('evaluationPeople',preview.get('people',[])))
+    # Retire old editing clients explicitly; historical forecast rows stay intact.
+    if choices:
         prepare_import_decisions(session,result,choices)
-        result=project(session.nation,people_override=None if live else records,expected_overrides={choice['areaId']:choice for choice in choices})
     for row in result['rows']:
         row['quotaHints']=[dict(name=c['name'],regularMax=entry['regularMax']) for c in control.get('competitions',[]) if c.get('group')==row['discipline'] and normalize_gender(c.get('gender'))==row['personalGender']
             for entry in c.get('sportEntries',[]) if entry.get('nation')==session.nation]
@@ -198,9 +293,9 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
 
 
 def operational_athlete_basis(overview):
-    """Only valid NN overrides; blocked scopes use the distinct normal roster."""
-    return {(row['nationCode'],row['discipline'],row['personalGender']):row['expectedTotal']
-        for row in overview['rows'] if row['editable'] and not row['conflict'] and row['expectedTotal'] is not None}
+    """Only verified, exclusive selections override the normal distinct roster."""
+    return {(row['nationCode'],row['discipline'],row['personalGender']):row['selectedCount']
+        for row in overview['rows'] if row['editable'] and not row['conflict'] and row['selectedCount'] is not None}
 
 
 def operational_quota_projection(overview, roster, demands, rules, *, event=None):
@@ -208,6 +303,8 @@ def operational_quota_projection(overview, roster, demands, rules, *, event=None
     from quota_service import evaluate_quota_usage,quota_gender_errors
     errors=quota_gender_errors(roster)
     if errors:return dict(rows=[],conflict=True,reasons=[e['message'] for e in errors])
+    excluded={i for row in overview['rows'] for i in row['replacedPersonIds']}
+    demands=[p for p in demands if str(p.get('existingAthleteId') or p.get('personId') or 'preview:'+str(p.get('matchKey'))) not in excluded]
     bases=operational_athlete_basis(overview)
     official=evaluate_quota_usage(roster,demands,rules)
     operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True,include_allocations=True)
@@ -239,37 +336,12 @@ def operational_quota_projection(overview, roster, demands, rules, *, event=None
 
 
 def prepare_import_decisions(session, overview, choices):
-    """Freeze only explicit decisions with current forecast evidence at approval."""
     from imports.event_context import ImportValidationError
-    if not isinstance(choices,list):raise ImportValidationError('NN_PLANNING_INVALID','NN-Entscheidungen müssen eine Liste sein.')
-    by_id={row['areaId']:row for row in overview['rows']};seen=set();result=[]
-    for choice in choices:
-        if not isinstance(choice,dict):raise ImportValidationError('NN_PLANNING_INVALID','Ungültige NN-Entscheidung.')
-        row=by_id.get(choice.get('areaId')) if isinstance(choice.get('areaId'),str) else None
-        total=choice.get('expectedTotal')
-        if 'expectedTotal' not in choice or not row or not row['editable'] or row['areaId'] in seen or (total is not None and (type(total) is not int or total<0 or total>2147483647)):
-            raise ImportValidationError('NN_PLANNING_INVALID','Eindeutigen Bereich und nichtnegative Gesamtzahl angeben.')
-        if choice.get('baseToken')!=row['baseToken']:
-            raise ImportValidationError('STALE_PREVIEW','NN-Planung oder Bestand wurde geändert. Erneut prüfen.')
-        seen.add(row['areaId'])
-        saved=event_query(AthleteArrivalForecast).filter_by(nation_code=row['nationCode'],discipline=row['discipline'],gender=row['personalGender']).first()
-        result.append(dict(areaId=row['areaId'],baseToken=row['baseToken'],expectedTotal=total,forecastBase=fingerprint(forecast_values(saved))))
-    return result
+    if not isinstance(choices,list) or choices:
+        raise ImportValidationError('NN_PLANNING_RETIRED','Manuelle NN-Prognosen wurden durch automatische Personenauswahl abgelöst. Import erneut prüfen.')
+    return []
 
 
 def apply_import_decisions(session, decisions, username):
-    """Caller owns the import transaction, rollback and audit; never commits here."""
-    from imports.event_context import ImportValidationError
-    from models import ImportSessionEvent
-    for decision in decisions:
-        current=next((row for row in project(session.nation)['rows'] if row['areaId']==decision['areaId']),None)
-        if not current or not current['editable']:raise ImportValidationError('NN_PLANNING_INVALID','NN-Bereich nach Übernahme nicht eindeutig.')
-        saved=event_query(AthleteArrivalForecast).filter_by(nation_code=current['nationCode'],discipline=current['discipline'],gender=current['personalGender']).first()
-        if fingerprint(forecast_values(saved))!=decision['forecastBase']:
-            raise ImportValidationError('STALE_PREVIEW','Prognose wurde zwischenzeitlich geändert. Keine Übernahme.')
-        try:
-            save(current['areaId'],dict(baseToken=current['baseToken'],expectedTotal=decision['expectedTotal'],checkInDate=current['checkInDate'],checkOutDate=current['checkOutDate'],note=current['note']),username,commit=False)
-        except ForecastConflict as exc:raise ImportValidationError('STALE_PREVIEW',str(exc)) from exc
-        db.session.add(ImportSessionEvent(session_id=session.id,version_id=session.current_version_id,event_type='NN_PLANNING_APPLIED',title='NN-Unterkunftsplanung übernommen',
-            description=json.dumps(dict(areaId=current['areaId'],old=current['expectedTotal'],new=decision['expectedTotal']),ensure_ascii=False),username=username))
-        db.session.flush()
+    # Old approved drafts must be reviewed again; never silently apply NN writes.
+    prepare_import_decisions(session, None, decisions)

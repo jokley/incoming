@@ -1535,8 +1535,14 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
             unassigned_units.append(unit)
 
     from arrival_planning import project,operative_projection
+    athlete_planning=operative_projection(project())
+    provisional=set(athlete_planning['provisionalPersonIds'])
+    for unit in unassigned_units+assigned_units:
+        for person in unit['occupants']:
+            person['provisionalAccommodation']=person['athleteId'] in provisional
+            person['provisionalWorldChampion']=person['athleteId'] in athlete_planning['worldChampionPersonIds']
     return {
-        'athletePlanning':operative_projection(project()),
+        'athletePlanning':athlete_planning,
         'timeline': {
             'startDate': timeline_start,
             'endDate': timeline_end,
@@ -1936,7 +1942,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                 and (not personal_gender or row['personalGender']==normalize_gender(personal_gender))]
             planning=operative_projection(forecast)
             summary=summarize_person_disposition(people,planning['replacedPersonIds'])
-            summary.update(virtualPlaces=planning['virtualPlaces'],virtualGroups=len(planning['groups']),planningConflicts=planning['conflicts'],
+            summary.update(virtualPlaces=0,virtualGroups=0,planningConflicts=planning['conflicts'],
                 operationalAccommodationDemand=summary['accommodationPeopleRequired']+planning['virtualPlaces'])
             result.update(personPlanning=planning,personStatuses=people, personSummary=summary,
                           personFilters=dict(nationCode=nation_code, discipline=discipline, gender=gender,
