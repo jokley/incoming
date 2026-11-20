@@ -129,16 +129,23 @@ test('competitions show one shared backend person selection without NN editors',
  const area={areaId:'shared',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',reportedCount:9,selectedCount:4};
  const nn:any={planning:{rows:[area]}};
  const render=()=>renderToStaticMarkup(createElement(CompetitionDistribution,{preview,control,nation:'FIN',nn}));
- assert.equal((render().match(/9 FIS gemeldet · 4 vorläufig disponiert/g)??[]).length,2);
+ assert.equal((render().match(/Herren: 9 eindeutige Athleten gemeldet · 4 für Unterkunft eingeplant/g)??[]).length,1);
  Object.assign(area,{selectedCount:5,selectedWorldChampionCount:1});
- assert.equal((render().match(/5 vorläufig disponiert.*?inkl. WM/g)??[]).length,2);
+ assert.equal((render().match(/5 für Unterkunft eingeplant.*?inkl. WM/g)??[]).length,1);
  assert.ok(!render().includes('Unterkunftserwartung bearbeiten'));
  assert.ok(!render().includes('<input'));
- // Neither a below-limit competition nor a title-covered extra needs the hint.
+ // One group-level statement remains independent of sporting competition warnings.
  competitions.forEach(c=>Object.assign(c.sportEntries[0],{reported:1,aboveRegular:0,unverifiedAdditional:0,status:'NUMERIC_OK'}));
- assert.ok(!render().includes('vorläufig disponiert'));
+ assert.equal((render().match(/für Unterkunft eingeplant/g)??[]).length,1);
  competitions.forEach(c=>Object.assign(c.sportEntries[0],{reported:5,aboveRegular:1,championStarters:1,champions:[{personKey:'a',source:'verified'}],status:'TITLE_COVERED'}));
- assert.ok(!render().includes('vorläufig disponiert'));
+ assert.equal((render().match(/für Unterkunft eingeplant/g)??[]).length,1);
  competitions[0].sportEntries[0].sharedPoolUnverifiedAdditional=1;
- assert.equal((render().match(/vorläufig disponiert/g)??[]).length,1);
+ assert.equal((render().match(/für Unterkunft eingeplant/g)??[]).length,1);
+ Object.assign(area,{selectedCount:5,quotaAthleteCount:3,selectedWorldChampionCount:0});
+ nn.planning.rows.push({...area,areaId:'women',personalGender:'W',reportedCount:2,selectedCount:2,quotaAthleteCount:2});
+ const grouped=render();
+ assert.equal((grouped.match(/Herren: 9 eindeutige Athleten gemeldet · 3 für Unterkunft eingeplant/g)??[]).length,1);
+ assert.equal((grouped.match(/Damen: 2 eindeutige Athleten gemeldet · 2 für Unterkunft eingeplant/g)??[]).length,1);
+ assert.ok(!grouped.includes('5 für Unterkunft eingeplant'));
+ assert.ok(!grouped.includes('vorläufig disponiert'));
 });

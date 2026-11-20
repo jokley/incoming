@@ -22,7 +22,7 @@ def upload(event,codes=('9300953','9300954'),changed=None,session_id=None,room_d
         Fiscode=c,**{'Competitorid/Staff ID':'s'+c},WSC_PGS_M_6170='YES',Room_type='Double shared',Arrival_date='03.03.2027',Departure_date='09.03.2027') for i,c in enumerate(codes)]
     if changed:changed(people)
     a,b=io.BytesIO(),io.BytesIO()
-    pd.DataFrame(people,columns=list(people[0]) if people else ['Firstname','Lastname','Nationcode','Function','Gender','Fiscode','Competitorid/Staff ID','WSC_PGS_M_6170','Room_type','Arrival_date','Departure_date']).to_excel(a,index=False,sheet_name='Data');(pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
+    pd.DataFrame(people,columns=list(dict.fromkeys(key for row in people for key in row)) if people else ['Firstname','Lastname','Nationcode','Function','Gender','Fiscode','Competitorid/Staff ID','WSC_PGS_M_6170','Room_type','Arrival_date','Departure_date']).to_excel(a,index=False,sheet_name='Data');(pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
     response=app.test_client().post('/api/import/fis/preview',data=dict(eventId=str(event.id),createSession='true',**({'sessionId':str(session_id)} if session_id else {}),entriesList=(a,'entries.xlsx'),roomListDetailed=(b,'rooms.xlsx')))
     assert response.status_code==200,response.json
     assert response.json['isValid'],response.json
@@ -531,12 +531,15 @@ def test_provisional_selection_only_available_unique_real_people(events,count):
         assert project('JPN')['rows']==[]
 
 
+@pytest.mark.parametrize('limit',[0,3,4])
 @pytest.mark.parametrize('position',[0,6,(0,6)])
-def test_verified_current_entry_champion_is_additional_without_arrival_confirmation(events,monkeypatch,position):
+def test_verified_current_entry_champion_is_additional_without_arrival_confirmation(events,monkeypatch,position,limit):
     from arrival_planning import project
     event=events[0]
     from models import Event
     db.session.execute(db.update(Event).where(Event.id==event.id).values(is_world_championship=True,year=2027));db.session.commit();db.session.refresh(event)
+    from test_event_quota_rules import housing_revision
+    housing_revision(event,{'Snowboard Alpine':limit})
     codes=tuple(str(9500000+i) for i in range(8))
     positions=position if isinstance(position,tuple) else (position,)
     titles=[dict(fisCode=codes[i],nation='JPN',gender='M',discipline='PGS',eventGroup='Snowboard Alpine',championship='Engadin',championshipYear=2025,titleType='INDIVIDUAL',entitlementEnabled=True,sourceVerified=True,source='https://example.test/verified-result') for i in positions]
@@ -545,22 +548,22 @@ def test_verified_current_entry_champion_is_additional_without_arrival_confirmat
     row=project('JPN')['rows'][0]
     people={p.fis_code:p for p in Athlete.query.all()}
     champion_codes=[codes[i] for i in positions]
-    regular=[c for c in codes if c not in champion_codes][:4]
+    regular=[c for c in codes if c not in champion_codes][:limit]
     assert set(row['selectedPersonIds'])=={str(people[c].id) for c in regular+champion_codes}
-    assert row['selectedCount']==4+len(positions) and row['selectedWorldChampionCount']==len(positions)
+    assert row['selectedCount']==limit+len(positions) and row['selectedWorldChampionCount']==len(positions)
     context=app.test_client().get(f"/api/import/sessions/{pending['session']['id']}").json['nnPlanning']['operationalQuota']['rows'][0]
-    assert context['expectedAthletes']==4+len(positions) and context['officialQuota']==6+len(positions)
+    assert context['expectedAthletes']==limit+len(positions) and context['officialQuota']==limit+2+len(positions)
     assert all(p.single_room_quota_exempt_reason is None for p in people.values())
     for title in titles:title['sourceVerified']=False
     row=project('JPN')['rows'][0]
-    assert row['selectedCount']==4 and row['selectedWorldChampionCount']==0
-    assert set(row['selectedPersonIds'])=={str(people[c].id) for c in codes[:4]}
+    assert row['selectedCount']==limit and row['selectedWorldChampionCount']==0
+    assert set(row['selectedPersonIds'])=={str(people[c].id) for c in codes[:limit]}
     # Historical title evidence cannot add a person absent from the new list.
     for title in titles:title['sourceVerified']=True
     corrected=upload(event,tuple(c for c in codes if c not in champion_codes),session_id=pending['session']['id'])
     run(corrected,event,destructive=True)
     row=project('JPN')['rows'][0]
-    assert row['selectedCount']==4 and row['selectedWorldChampionCount']==0
+    assert row['selectedCount']==limit and row['selectedWorldChampionCount']==0
     assert not (set(champion_codes) & {p.fis_code for p in Athlete.query.all()})
 
 
@@ -651,9 +654,12 @@ def test_source_rows_preserve_original_selection_when_flat_row_fields_are_absent
     assert row['selectedPersonIds']==expected and not row['conflict']
 
 
+@pytest.mark.parametrize('limit',[3,4])
 @pytest.mark.parametrize('resolution',['paid','exemption'])
-def test_operative_ez_requirement_blocks_http_release_until_existing_decision(events,resolution):
+def test_operative_ez_requirement_blocks_http_release_until_existing_decision(events,resolution,limit):
     event=events[0];client=app.test_client()
+    from test_event_quota_rules import housing_revision
+    housing_revision(event,{'Freeski Park & Pipe':limit})
     def staff(rows):
         template=dict(rows[0])
         for i in range(10):rows.append(dict(template,Firstname='Official'+str(i),Fiscode=str(9910100+i),**{'Competitorid/Staff ID':'official'+str(i)},Function='Coach',Room_type='Single' if i<3 else 'Double shared'))
@@ -667,9 +673,9 @@ def test_operative_ez_requirement_blocks_http_release_until_existing_decision(ev
     sid=current['session']['id']
     state=client.get(f'/api/import/sessions/{sid}').json
     row=state['nnPlanning']['operationalQuota']['rows'][0]
-    assert (row['expectedAthletes'],row['officialQuota'],row['singleRoomOfficialBasis'],row['singleRoomsAllowed'],row['singleRoomsRequested'],row['singleRoomsPending'])==(4,6,6,2,3,1)
+    assert (row['expectedAthletes'],row['officialQuota'],row['singleRoomOfficialBasis'],row['singleRoomsAllowed'],row['singleRoomsRequested'],row['singleRoomsPending'])==(limit,limit+2,limit+2,2,3,1)
     check=state['preview']['quotaChecks'][0]
-    assert (check['athletesEntered'],check['expectedAthletes'],check['registeredOfficials'],check['officialsDeviation'])==(9,4,10,4)
+    assert (check['athletesEntered'],check['expectedAthletes'],check['registeredOfficials'],check['officialsDeviation'])==(9,limit,10,10-limit-2)
     assert (check['singleRoomsAllowed'],check['singleRoomsRequested'],check['singleRoomsPending'])==(2,3,1)
     denied=review(current,event)
     assert denied.status_code==409,denied.json
@@ -693,15 +699,26 @@ def test_operative_ez_requirement_blocks_http_release_until_existing_decision(ev
     assert Athlete.query.count()==19 and RoomBooking.query.count()==0
     # Requested rooms are not physical single-room usage until disposition.
     live=client.get('/api/fis/official-quotas?nationCode=FIN').json[0]
-    assert (live['expectedAthletes'],live['officialQuota'],live['singleRoomsAllowed'],live['singleRoomsRequested'],live['singleRoomsPending'])==(4,6,2,0,0)
+    assert (live['expectedAthletes'],live['officialQuota'],live['singleRoomsAllowed'],live['singleRoomsRequested'],live['singleRoomsPending'])==(limit,limit+2,2,0,0)
     official=Athlete.query.filter_by(function='Coach').first()
     retained=booking([official],counts=True)
     live=client.get('/api/fis/official-quotas?nationCode=FIN').json[0]
     assert live['singleRoomsRequested']==1 and live['singleRoomsPending']==0
     assert db.session.get(RoomBooking,retained.id).counts_as_single
+    if resolution=='paid':
+        from approval_projection import projected_approval_groups
+        paid=Athlete.query.filter_by(single_room_decision_id=int(task['id'])).one()
+        approval=db.session.get(ImportApproval,int(task['id']))
+        evidence=(approval.quota_details_json,approval.approved_person_keys_json,approval.decision)
+        assert projected_approval_groups(approval,paid,roster=Athlete.query.all())
+        housing_revision(event,{'Freeski Park & Pipe':limit+1})
+        assert not projected_approval_groups(approval,paid,roster=Athlete.query.all())
+        assert evidence==(approval.quota_details_json,approval.approved_person_keys_json,approval.decision)
+        assert db.session.get(RoomBooking,retained.id).counts_as_single
 
 
-def test_booked_athlete_overhang_does_not_raise_regular_official_entitlement(events):
+@pytest.mark.parametrize('limit',[0,3,4])
+def test_booked_athlete_overhang_does_not_raise_regular_official_entitlement(events,limit):
     from arrival_planning import project,operational_athlete_basis
     event=events[0]
     run(upload(event,tuple(str(9920000+i) for i in range(8))),event)
@@ -710,9 +727,11 @@ def test_booked_athlete_overhang_does_not_raise_regular_official_entitlement(eve
         room=RoomBooking(event_id=event.id,hotel_id=first.hotel_id,room_type_id=first.room_type_id,room_number=str(i),counts_as_single=False,check_in_date=first.check_in_date,check_out_date=first.check_out_date)
         db.session.add(RoomBookingOccupant(athlete_id=person.id,room_booking=room))
     db.session.commit()
+    from test_event_quota_rules import housing_revision
+    housing_revision(event,{'Snowboard Alpine':limit})
     overview=project('JPN');row=overview['rows'][0]
     assert row['bookedPeopleCount']==5 and row['selectedCount']==5 and row['selectionWarnings']
-    assert list(operational_athlete_basis(overview).values())==[4]
+    assert list(operational_athlete_basis(overview).values())==[limit]
     quotas=app.test_client().get('/api/fis/official-quotas?nationCode=JPN').json
-    assert quotas[0]['officialQuota']==6 and quotas[0]['expectedAthletes']==4
+    assert quotas[0]['officialQuota']==(limit+2 if limit else 0) and quotas[0]['expectedAthletes']==limit
     assert RoomBooking.query.count()==RoomBookingOccupant.query.count()==5

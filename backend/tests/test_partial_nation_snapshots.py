@@ -4,7 +4,7 @@ import json
 import pandas as pd
 import pytest
 from test_import_event_identity import events
-from test_event_quota_rules import bind
+from test_event_quota_rules import bind,housing_revision
 from test_safe_reimport import run, review, booking
 from app import app
 from models import db, Athlete, ImportSession, ImportApproval
@@ -494,8 +494,10 @@ def test_partial_reimport_preserves_forecasts_and_bookings_and_exposes_roster_ch
     assert columns()==before
 
 
-def test_nn_preview_uses_effective_partial_roster_and_preserves_foreign_forecast(owner):
+@pytest.mark.parametrize('limit',[1,3,4])
+def test_nn_preview_uses_effective_partial_roster_and_preserves_foreign_forecast(owner,limit):
     from models import AthleteArrivalForecast
+    housing_revision(owner,{'Snowboard Park & Pipe':limit,'Freeski Park & Pipe':limit})
     client=app.test_client()
     initial=upload(owner,'SB');run(initial,owner)
     sid=initial['session']['id']
@@ -508,7 +510,7 @@ def test_nn_preview_uses_effective_partial_roster_and_preserves_foreign_forecast
     assert sum(r['reportedCount'] for r in areas)==7  # 2 retained SB + 5 incoming FS.
     assert {r['discipline'] for r in areas}=={'Snowboard Park & Pipe','Freeski Park & Pipe'}
     assert next(r for r in areas if r['areaId']==row['areaId'])['expectedTotal']==1
-    assert all(r['selectedCount'] is not None for r in areas)
+    assert {r['discipline']:r['selectedCount'] for r in areas}=={'Snowboard Park & Pipe':min(2,limit),'Freeski Park & Pipe':min(5,limit)}
     run(incoming,owner)
     assert AthleteArrivalForecast.query.one().id==identity
     assert AthleteArrivalForecast.query.one().expected_total==1 and AthleteArrivalForecast.query.one().revision==1
