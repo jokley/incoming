@@ -80,7 +80,7 @@ def provisional_selection(people, event, entry_rows, booked):
     """Select real people in source order; booking facts are never modified."""
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
     from imports.event_context import ImportValidationError
-    from quota_rules import PROVISIONAL_HOUSING_REGULAR_LIMIT
+    from quota_rules import athlete_housing_limit
     from sport_entry_plausibility import project_entries
     by_id = {str(p.id): p for p in people}
     maps = _build_existing_athlete_maps(people, event_id=event.id)
@@ -115,6 +115,7 @@ def provisional_selection(people, event, entry_rows, booked):
         groups[key].append(identity)
     result = {}
     for key, ids in groups.items():
+        limit=athlete_housing_limit(json.loads(event.quota_rules_json or '{}'),key[1])
         reasons = []
         if not all(key):
             reasons.append('Keine eindeutige Event-Group-/Gender-Zuordnung; Unterkunftsbedarf klären.')
@@ -126,24 +127,24 @@ def provisional_selection(people, event, entry_rows, booked):
         ordered = sorted(ids, key=lambda i:positions.get(i, 0))
         eligible = {i for i in ids if i in champions and i in provenance}
         regular = [i for i in ordered if i not in eligible]
-        automatic = set(regular[:PROVISIONAL_HOUSING_REGULAR_LIMIT]) | eligible
+        automatic = set(regular[:limit]) | eligible
         retained = set(ids) & {str(i) for i in booked}
         # Existing regular bookings consume planned regular places. Do not add
-        # four new tasks to an already partially accommodated team.
+        # new tasks beyond the configured total for an accommodated team.
         selected = retained | eligible
-        slots = max(0, PROVISIONAL_HOUSING_REGULAR_LIMIT - len(retained - eligible))
+        slots = max(0, limit - len(retained - eligible))
         selected.update([i for i in regular if i not in retained][:slots])
         warnings = []
         if retained - automatic:
             warnings.append('Bestehende Buchungen weichen von der automatischen Listenauswahl ab; Bestand bleibt erhalten.')
-        if len(retained - eligible) > PROVISIONAL_HOUSING_REGULAR_LIMIT:
+        if len(retained - eligible) > limit:
             warnings.append('Mehr reguläre Personen gebucht als vorläufig vorgesehen; Unterkunftsbestand klären.')
         result[key] = dict(selectedPersonIds=sorted(selected) if not reasons else [],
             provisionalPersonIds=sorted(selected-retained) if not reasons else [],
             excludedPersonIds=sorted(set(ids)-selected) if not reasons else [],
             selectedCount=len(selected) if not reasons else None,
             # Retained bookings are physical stock, not extra regular quota slots.
-            quotaAthleteCount=min(len(selected-eligible),PROVISIONAL_HOUSING_REGULAR_LIMIT)+len(eligible) if not reasons else None,
+            quotaAthleteCount=min(len(selected-eligible),limit)+len(eligible) if not reasons else None,
             selectedWorldChampionCount=len(eligible) if not reasons else 0,
             selectedWorldChampionIds=sorted(eligible) if not reasons else [],
             selectionReasons=reasons, selectionWarnings=warnings)

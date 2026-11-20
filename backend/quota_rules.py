@@ -3,7 +3,7 @@ import copy
 import hashlib
 import json
 
-# Operative LOC policy for WM 2027, distinct from per-competition FIS limits.
+# Compatibility default for legacy event policies, distinct from FIS starter limits.
 PROVISIONAL_HOUSING_REGULAR_LIMIT = 4
 
 FAMILIES = ('Snowboard', 'Freestyle')  # Persisted/API names retained.
@@ -27,7 +27,7 @@ def validate_rules(value, event_id=None):
         if type(value) is not int or not 0 <= value <= 10000:
             raise ValueError('Quotenwerte müssen ganze Zahlen von 0 bis 10000 sein.')
     keys(value, ('schemaVersion', 'athletes', 'officials', 'singleRooms',
-                 *(['sportEntryRules'] if isinstance(value, dict) and 'sportEntryRules' in value else [])))
+                 *([key for key in ('sportEntryRules','athleteHousing') if isinstance(value, dict) and key in value])))
     if type(value['schemaVersion']) is not int or value['schemaVersion'] != 1:
         raise ValueError('Unbekannte Regelversion.')
     keys(value['athletes'], FAMILIES)
@@ -59,10 +59,25 @@ def validate_rules(value, event_id=None):
             if tier['upTo'] <= previous or index == len(tiers)-1:
                 raise ValueError('EZ-Schwellen müssen steigen und mit einer offenen Stufe enden.')
             previous = tier['upTo']
+    if 'athleteHousing' in value:
+        keys(value['athleteHousing'], ('regularPerGenderByEventGroup',))
+        limits=value['athleteHousing']['regularPerGenderByEventGroup']
+        if not isinstance(limits,dict) or any(not isinstance(group,str) or not group.strip() for group in limits):
+            raise ValueError('Ungültige Unterkunfts-Event-Groups.')
+        for limit in limits.values():number(limit)
+        if event_id is not None:
+            groups={c['quotaDiscipline'] for c in sport_rule_options(event_id)['competitions'] if c.get('quotaDiscipline')}
+            if set(limits)-groups:raise ValueError('Unbekannte oder nicht mehr aktive Unterkunfts-Event-Group.')
+        # Missing groups retain the legacy default; validation never inserts keys.
     result = copy.deepcopy(value)
     if 'sportEntryRules' in result:
         result['sportEntryRules'] = validate_sport_entry_rules(result['sportEntryRules'], event_id)
     return result
+
+
+def athlete_housing_limit(config, group):
+    """Event-owned LOC selection; absent values keep the historical default."""
+    return config.get('athleteHousing',{}).get('regularPerGenderByEventGroup',{}).get(group,PROVISIONAL_HOUSING_REGULAR_LIMIT)
 
 
 def rule_projection(event):

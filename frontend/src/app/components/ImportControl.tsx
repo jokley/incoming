@@ -86,7 +86,6 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
   return <>
    {genders.map(({competition,reported,entry},i)=><td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2" title={hint}>
     {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" style={{fontSize:'inherit'}} aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}
-    {nn&&entry&&entry.status!=='INCOMPLETE'&&entry.status!=='TEAM_RULE'&&((entry.unverifiedAdditional??0)>0||(entry.sharedPoolUnverifiedAdditional??0)>0)&&(()=>{const area=nn.planning.rows.find(area=>area.nationCode===nation&&area.discipline===competition?.group&&area.personalGender===(i===0?'M':'W'));return area?<small className="ml-auto mt-1 block max-w-[240px] whitespace-normal rounded border border-[var(--ops-warning)] bg-[var(--ops-tone-warning-surface)] px-1 py-0.5 text-xs font-semibold text-[var(--ops-tone-warning-text)]" title="Gemeinsame Personenauswahl für die gesamte Event Group und persönliches Gender; Wettbewerbe nicht addieren.">Gruppe: {area.reportedCount} FIS gemeldet · {area.selectedCount??'Zuordnung klären'} vorläufig disponiert{area.selectedWorldChampionCount?' (inkl. WM)':''}</small>:null;})()}
 
    </td>)}
    <td className="ops-table-wrap px-1 py-1 sm:px-2 [&_svg]:hidden sm:[&_svg]:block" title={hint}>{chip}</td>
@@ -101,8 +100,11 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
     const list=competitions.filter(c=>c.group===group);
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
     const groupCounts=counts(new Set(list.map(c=>c.id)));
+    const housing=nn?.planning.rows.filter(area=>area.nationCode===nation&&area.discipline===group);
     return <Fragment key={group??'unknown'}>
-     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span></th></tr>
+     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}{!housing?.length&&<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span>}
+      {housing?.map(area=><span key={area.areaId} className="mt-1 block text-xs font-normal text-[var(--ops-text-muted)]">{area.personalGender==='M'?'Herren':area.personalGender==='W'||area.personalGender==='F'?'Damen':'Gender ungeklärt'}: {area.reportedCount} eindeutige Athleten gemeldet · {area.quotaAthleteCount??area.selectedCount??'Zuordnung klären'} für Unterkunft eingeplant{area.selectedWorldChampionCount?' (inkl. WM)':''}</span>)}
+     </th></tr>
      {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'border-l-2 border-l-[var(--ops-warning)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-1 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
    })}</Fragment>)}</tbody>

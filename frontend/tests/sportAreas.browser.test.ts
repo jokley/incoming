@@ -204,7 +204,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const openAthletes=async()=>{await page.getByRole('button',{name:/^Athleten-\/Disziplinquote/}).click();await page.getByRole('dialog',{name:'Athleten-/Disziplinquote'}).waitFor();};
  await openAthletes();
  let dialog=page.getByRole('dialog');
- assert.equal(await dialog.getByText(/9 FIS gemeldet · 4 vorläufig disponiert/).count(),2);
+ assert.equal(await dialog.getByText(/9 eindeutige Athleten gemeldet · 4 für Unterkunft eingeplant/).count(),1);
  assert.equal(await dialog.getByRole('row',{name:/^Halfpipe/}).getByText(/vorläufig disponiert/).count(),0);
  assert.equal(await dialog.getByRole('spinbutton').count(),0);
  assert.equal(await dialog.getByRole('button',{name:/Unterkunftserwartung/}).count(),0);
@@ -228,8 +228,56 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await officials('6','2');
  // A new confirmed server projection supplies the additional verified champion.
  project(5);await page.reload();await openAthletes();dialog=page.getByRole('dialog');
- assert.equal(await dialog.getByText(/5 vorläufig disponiert \(inkl. WM\)/).count(),2);
+ assert.equal(await dialog.getByText(/5 für Unterkunft eingeplant \(inkl. WM\)/).count(),1);
  await page.screenshot({path:'/workspace/artifacts/provisional-athletes-champion.png',animations:'disabled'});
  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();await officials('7','3');
  assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
+});
+
+test('event housing editor uses one dynamic field per group and the existing revision workflow',async t=>{
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-housing-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
+ t.after(()=>vite.close());await vite.listen();
+ const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
+ const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
+ const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
+ const competitions=['M','W','M'].map((gender,i)=>({id:String(i+1),name:'Synthetic '+i,displayName:'Synthetic '+i,gender,sport:'Freeski',quotaDiscipline:i<2?'Freeski Park & Pipe':'Ski Cross',active:true,teamCompetition:false}));
+ const event={id:'1',name:'Housing test',year:2027,active:true,competitionMappings:[]};
+ const config={schemaVersion:1,athletes:{Snowboard:{enabled:true,totalLimit:36,genderLimit:20},Freestyle:{enabled:true,totalLimit:36,genderLimit:20}},officials:{model:'ATHLETES_PLUS',allowance:2},singleRooms:[{upTo:3,rooms:1},{upTo:6,rooms:2},{upTo:null,rooms:3}]};
+ const record:any={status:'FIXED',revision:1,digest:'original',isWorldChampionship:true,config,sportRuleOptions:{competitions,titles:[]}};
+ const writes:any[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.route('**/api/**',async route=>{
+  const req=route.request(),path=new URL(req.url()).pathname.slice(4);
+  if(req.method()==='POST'&&path.endsWith('/revision-preview')){
+   const data=req.postDataJSON();writes.push({path,data});return route.fulfill({json:{before:{config,isWorldChampionship:true},after:{config:data.config,isWorldChampionship:true},reason:data.reason,confirmationDigest:'checked'}});
+  }
+  if(req.method()==='POST'&&path.endsWith('/revisions')){
+   const data=req.postDataJSON();writes.push({path,data});assert.equal(data.confirm,true);assert.equal(data.confirmationDigest,'checked');
+   Object.assign(record,{config:data.config,revision:2,digest:'new'});return route.fulfill({json:record});
+  }
+  if(req.method()!=='GET'&&path!=='/auth/me')throw Error('Unexpected mutation '+path);
+  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/admin/events':[event],'/admin/events/1':event,'/competitions':competitions,'/admin/events/1/quota-rules':record,'/admin/events/1/quota-rules/revisions':[]};
+  return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected synthetic request'}});
+ });
+ await page.goto(`${origin}/administration`);await page.getByRole('tab',{name:'Quotenregeln',exact:true}).click();
+ const fields=page.getByRole('spinbutton',{name:/^Unterkunftskontingent/});await fields.first().waitFor();
+ assert.equal(await fields.count(),2);assert.equal(await fields.first().inputValue(),'4');assert.equal(await fields.first().isDisabled(),true);
+ assert.deepEqual(writes,[]);assert.equal('athleteHousing' in config,false);
+ await page.getByRole('button',{name:'Neue Revision erstellen',exact:true}).click();
+ await page.getByRole('spinbutton',{name:'Unterkunftskontingent Freeski Park & Pipe',exact:true}).fill('3');
+ await page.getByRole('spinbutton',{name:'Unterkunftskontingent Ski Cross',exact:true}).fill('0');
+ assert.deepEqual(writes,[]);
+ await page.getByRole('textbox',{name:'Änderungsbegründung'}).fill('Unterkunft bewusst reduzieren');
+ await page.getByRole('button',{name:'Vorher / Nachher prüfen',exact:true}).click();
+ await page.getByText('Freeski Park & Pipe: 3 je Gender',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Freeski Park & Pipe: 4 je Gender',{exact:true}).count(),1);
+ assert.deepEqual(writes[0].data.config.athleteHousing.regularPerGenderByEventGroup,{'Freeski Park & Pipe':3,'Ski Cross':0});
+ assert.deepEqual(writes[0].data.config.athletes,config.athletes);assert.equal(writes[0].data.expectedRevision,1);
+ assert.match(await page.locator('body').innerText(),/aufgrund der neuen Regelrevision können sie eine erneute Entscheidung erfordern/);
+ await page.getByRole('button',{name:'Neue Revision ausdrücklich aktivieren',exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Verbindlich festlegen',exact:true}).click();
+ await page.getByText('Fixiert · Revision 2',{exact:true}).waitFor();assert.equal(writes.length,2);
+ assert.equal(await fields.first().inputValue(),'3');assert.equal(await fields.first().isDisabled(),true);
+ await page.screenshot({path:'/workspace/artifacts/housing-event-rules.png',animations:'disabled'});
+ assert.deepEqual(errors,[]);
 });

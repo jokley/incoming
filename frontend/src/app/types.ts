@@ -122,6 +122,7 @@ export interface SportEntryRules {
   pools:Array<{id:string;regularLimit:number}>;
 }
 export interface QuotaRuleConfig {
+  athleteHousing?:{regularPerGenderByEventGroup:Record<string,number>};
   schemaVersion:1;
   sportEntryRules?:SportEntryRules;
   athletes: Record<'Snowboard'|'Freestyle',{enabled:boolean;totalLimit:number;genderLimit:number}>;
@@ -740,7 +741,7 @@ export interface ArrivalPlanningPerson {
  worldChampionMarked:boolean;titleReferences:Array<{id:string;championship:string;championshipYear:number;discipline:string;eventGroup:string}>;
 }
 export interface ArrivalPlanningRow {
- selectedCount?:number|null;selectedWorldChampionCount?:number;legacyForecastInactive?:boolean;
+ quotaAthleteCount?:number|null;selectedCount?:number|null;selectedWorldChampionCount?:number;legacyForecastInactive?:boolean;
  areaId:string;eventId:string;nationCode:string;discipline:string|null;personalGender:string|null;sportFamilies:string[];
  reportedCount:number;expectedTotal:number|null;bookedPeopleCount:number;usesVirtualPlanning:boolean;virtualPlaces:number;replacedPersonIds:string[];
  status:'NOT_SET'|'PLANNED'|'CONFLICT';conflict:boolean;reasons:string[];editable:boolean;people:ArrivalPlanningPerson[];worldChampionCount:number;
