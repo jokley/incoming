@@ -350,3 +350,34 @@ test('planned athlete column uses the operative basis without falling back to FI
   assert.deepEqual(cells,[expected==null?'—':String(expected),'6','10','+4','2','3','+1']);
  }
 });
+
+test('group header keeps distinct Officials and deduplicates pending allocations across gender contexts',()=>{
+ const nn=operationalControls(),op=nn.planning.operationalQuota,group=op.overview.nations[0].groups[0];
+ group.officials=10;group.coverageReviewRequired=true;
+ const male=group.contexts[0];Object.assign(male,{officialsDeviation:4});
+ group.contexts.push({...male,gender:'W',officialQuota:5,officialsDeviation:5});
+ op.people.push({...op.people[2],matchKey:'duplicate-source'});
+ const render=()=>html(copy(),'officials',{nn});
+ const header=(output:string)=>output.match(/<tr[^>]*><th scope="rowgroup"[\s\S]*?<\/tr>/)?.[0]??'';
+ const output=render(),visible=text(header(output));
+ assert.ok(visible.includes('10 eindeutige Officials'));
+ assert.ok(visible.includes('Officials: Klärungsbedarf'));
+ assert.ok(visible.includes('1 EZ offen'));
+ assert.ok(!visible.includes('+9')&&!visible.includes('Athleten'));
+ assert.ok(header(output).includes('text-[var(--ops-warning)]'));
+ // Header-only presentation cannot change the context rows or their values.
+ const rows=[...output.matchAll(/<tr><th scope="row"[\s\S]*?<\/tr>/g)].map(m=>m[0]);
+ group.coverageReviewRequired=false;for(const c of group.contexts)c.officialsDeviation=0;
+ for(const p of op.people)p.singleRoomAllocation.status='COVERED';
+ const resolved=text(header(render()));
+ assert.ok(resolved.includes('Officials: keine Abweichung')&&resolved.includes('EZ: keine Abweichung'));
+ assert.ok(!resolved.includes('EZ offen'));
+ op.people[0].singleRoomAllocation.status='APPROVED_EXTRA';
+ op.people[1].singleRoomAllocation.status='EXEMPT';op.people[1].singleRoomQuotaExemptReason='OTHER';
+ assert.ok(text(header(render())).includes('EZ: keine Abweichung'));
+ op.people[1].singleRoomQuotaExemptReason=null;
+ assert.ok(text(header(render())).includes('EZ: Prüfung offen'));
+ assert.equal(rows.length,2);
+ const before=render();group.officials=11;
+ assert.deepEqual([...render().matchAll(/<tr><th scope="row"[\s\S]*?<\/tr>/g)].map(m=>m[0]),[...before.matchAll(/<tr><th scope="row"[\s\S]*?<\/tr>/g)].map(m=>m[0]));
+});
