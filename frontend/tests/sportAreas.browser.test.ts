@@ -204,7 +204,12 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const openAthletes=async()=>{await page.getByRole('button',{name:/^Athleten-\/Disziplinquote/}).click();await page.getByRole('dialog',{name:'Athleten-/Disziplinquote'}).waitFor();};
  await openAthletes();
  let dialog=page.getByRole('dialog');
- assert.equal(await dialog.getByText(/9 eindeutige Athleten gemeldet · 4 für Unterkunft eingeplant/).count(),1);
+ assert.equal(await dialog.getByText(/für Unterkunft eingeplant/).count(),0);
+ const sportingLimit=dialog.getByRole('row',{name:/^Big Air/}).locator('td').first().locator('span[tabindex="0"]');
+ await sportingLimit.hover();await page.getByRole('tooltip').waitFor();
+ assert.match(await page.getByRole('tooltip').innerText(),/8 gemeldet, 4 regulär erlaubt. Sportliche Übermeldung prüfen/);
+ await page.mouse.move(0,0);await page.getByRole('tooltip').waitFor({state:'hidden'});
+ assert.equal(await dialog.getByRole('row',{name:/^Halfpipe/}).locator('td').first().locator('span[tabindex="0"]').count(),0);
  assert.equal(await dialog.getByRole('row',{name:/^Halfpipe/}).getByText(/vorläufig disponiert/).count(),0);
  assert.equal(await dialog.getByRole('spinbutton').count(),0);
  assert.equal(await dialog.getByRole('button',{name:/Unterkunftserwartung/}).count(),0);
@@ -232,7 +237,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await officials('6','2');
  // A new confirmed server projection supplies the additional verified champion.
  project(5);await page.reload();await openAthletes();dialog=page.getByRole('dialog');
- assert.equal(await dialog.getByText(/5 für Unterkunft eingeplant \(inkl. WM\)/).count(),1);
+ assert.equal(await dialog.getByText(/für Unterkunft eingeplant/).count(),0);
  await page.screenshot({path:'/workspace/artifacts/provisional-athletes-champion.png',animations:'disabled'});
  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();await officials('7','3');
  assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);

@@ -1,3 +1,4 @@
+import {Tooltip} from '@mui/material';
 import type {NNPlanningControls} from '../types';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import {Fragment,useEffect,useRef,type ReactNode} from 'react';
@@ -5,7 +6,7 @@ import {groupImportItems,quotaImportPlacement,sportClarifications} from '../serv
 import type {QuotaPeopleFilter} from '../services/importHints';
 import type {FisImportPreview,FisImportPreviewPerson,ImportControl} from '../types';
 import type {ImportSession} from '../data/importSessions';
-import {ContentCard,EnterpriseDialog,OpsButton,SectionHeader,StatusChip} from '../design-system';
+import {ContentCard,EnterpriseDialog,OpsButton,SectionHeader} from '../design-system';
 import {disciplineDisplayName,sportAreaLabel} from '../services/competitionPresentation';
 import {stayWindowNights} from '../services/stayWindow';
 
@@ -34,7 +35,7 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
 export function ImportPersonDialog({person,preview,session,onClose}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void}) {
  return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
-export function CompetitionDistribution({nn,grouped=false,control,preview,nation,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
+export function CompetitionDistribution({grouped=false,control,preview,nation,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
  const tableRef=useRef<HTMLDivElement>(null);
  useEffect(()=>{if(focusSport)tableRef.current?.querySelector('[data-sport-review="true"]')?.scrollIntoView({block:'center'});},[focusSport,control,nation]);
  if(!control||!preview)return null;
@@ -44,7 +45,7 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
  const participating=control.competitions.filter(c=>people.some(p=>p.competitions.some(m=>m.id===c.id)));
  // Pair display rows only; rule values and assessments remain server-owned.
  const competitions=control.competitions.filter(c=>participating.some(p=>p.group===c.group&&disciplineDisplayName(p.name)===disciplineDisplayName(c.name)));
- if(!competitions.length&&!nn?.planning.rows.some(area=>area.expectedTotal!==null))return null;
+ if(!competitions.length)return null;
  const reviewIds=new Set(sportClarifications(control,nation).map(row=>row.id));
  const groups=[...new Set(competitions.map(c=>c.group))];
  const counts=(ids:Set<string>)=>{
@@ -68,7 +69,7 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
   const hint=[...(team?[team]:[]),...genders.flatMap(row=>row.entry?[row.entry]:[])].map(entry=>`${entry.reason??'Gespeicherte Sportbewertung.'} Endgültige FIS-Zuteilung nicht bestätigt.${entry.sharedPoolReported!==null?` Gemeinsamer Slopestyle-/Big-Air-Pool: ${entry.sharedPoolReported} eindeutige Personen dieses Geschlechts / ${entry.sharedPoolRegularMax??'—'} regulär.`:''}${entry.champions.length?` Titelquelle: ${entry.champions.map(c=>c.source).join(', ')}`:''}`).join(' ')||'Keine eindeutige gespeicherte Wettbewerbsbewertung.';
   const action=(label:string,personKeys:string[],description:string)=>onPeople&&nation&&personKeys.length?<button type="button" className="text-left underline decoration-dotted underline-offset-2" style={{fontSize:'inherit',fontWeight:'inherit'}} aria-label={description} onClick={()=>onPeople({nation,role:'athletes',personKeys})}>{label}</button>:label;
   const explanations=genders.filter(({entry,reported})=>reported>0&&entry&&entry.status!=='INCOMPLETE'&&(entry.unverifiedAdditional>0||(entry.sharedPoolUnverifiedAdditional??0)>0||(entry.aboveRegular>0&&entry.champions.length>0)||entry.status==='REVIEW_REQUIRED'));
-  const chip=<StatusChip tone={team||missing?'neutral':review?'warning':'success'}><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">
+  const chip=<span data-tone={team||missing?'neutral':review?'warning':'success'} className={`min-w-0 whitespace-normal text-xs [overflow-wrap:anywhere] ${review?'text-[var(--ops-warning)]':'text-[var(--ops-text-muted)]'}`}>
    {team?'Teamwettbewerb – gesonderte Regel':<>
     {missing&&<span className="block">Bewertung unvollständig</span>}
     {!missing&&!review&&!champion&&'Innerhalb der Grenze'}
@@ -82,12 +83,14 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
      </span>;
     })}
    </>}
-  </span></StatusChip>;
+  </span>;
   return <>
-   {genders.map(({competition,reported,entry},i)=><td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2" title={hint}>
-    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" style={{fontSize:'inherit'}} aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}
+   {genders.map(({competition,reported,entry},i)=>{
+    const aboveRegular=entry&&entry.regularMax!=null&&entry.status!=='INCOMPLETE'&&entry.status!=='TEAM_RULE'&&(entry.aboveRegular??0)>0;
+    return <td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2">
+    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" style={{fontSize:'inherit'}} aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {aboveRegular?<Tooltip title={`${reported} gemeldet, ${entry.regularMax} regulär erlaubt. ${entry.status==='TITLE_COVERED'?'Verifiziertes Weltmeisterrecht berücksichtigt.':'Sportliche Übermeldung prüfen.'}`}><span tabIndex={0} className="font-semibold text-[var(--ops-warning)]">{entry.regularMax}</span></Tooltip>:entry?.regularMax??'—'}
 
-   </td>)}
+   </td>;})}
    <td className="ops-table-wrap px-1 py-1 sm:px-2 [&_svg]:hidden sm:[&_svg]:block" title={hint}>{chip}</td>
   </>;
  };
@@ -99,12 +102,8 @@ export function CompetitionDistribution({nn,grouped=false,control,preview,nation
    <tbody>{(grouped?groupImportItems(groups,group=>({area:quotaImportPlacement(group??'',control).area})):[{area:'',items:groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={4} className="bg-[var(--ops-surface-elevated)] px-1 py-2 text-left sm:px-2">{section.area}</th></tr>}{section.items.map(group=>{
     const list=competitions.filter(c=>c.group===group);
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
-    const groupCounts=counts(new Set(list.map(c=>c.id)));
-    const housing=nn?.planning.rows.filter(area=>area.nationCode===nation&&area.discipline===group);
     return <Fragment key={group??'unknown'}>
-     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}{!housing?.length&&<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span>}
-      {housing?.map(area=><span key={area.areaId} className="mt-1 block text-xs font-normal text-[var(--ops-text-muted)]">{area.personalGender==='M'?'Herren':area.personalGender==='W'||area.personalGender==='F'?'Damen':'Gender ungeklärt'}: {area.reportedCount} eindeutige Athleten gemeldet · {area.quotaAthleteCount??area.selectedCount??'Zuordnung klären'} für Unterkunft eingeplant{area.selectedWorldChampionCount?' (inkl. WM)':''}</span>)}
-     </th></tr>
+     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}</th></tr>
      {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'border-l-2 border-l-[var(--ops-warning)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-1 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
    })}</Fragment>)}</tbody>
