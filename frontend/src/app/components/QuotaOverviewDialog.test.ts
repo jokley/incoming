@@ -361,8 +361,8 @@ test('group header keeps distinct Officials and deduplicates pending allocations
  const header=(output:string)=>output.match(/<tr[^>]*><th scope="rowgroup"[\s\S]*?<\/tr>/)?.[0]??'';
  const output=render(),visible=text(header(output));
  assert.ok(visible.includes('10 eindeutige Officials'));
- assert.ok(visible.includes('Officials: Klärungsbedarf'));
- assert.ok(visible.includes('1 EZ offen'));
+ assert.ok(visible.includes('Officials: M +4 · W +5'));
+ assert.ok(visible.includes('EZ: +1 offen'));
  assert.ok(!visible.includes('+9')&&!visible.includes('Athleten'));
  assert.ok(header(output).includes('text-[var(--ops-warning)]'));
  // Header-only presentation cannot change the context rows or their values.
@@ -370,11 +370,11 @@ test('group header keeps distinct Officials and deduplicates pending allocations
  group.coverageReviewRequired=false;for(const c of group.contexts)c.officialsDeviation=0;
  for(const p of op.people)p.singleRoomAllocation.status='COVERED';
  const resolved=text(header(render()));
- assert.ok(resolved.includes('Officials: keine Abweichung')&&resolved.includes('EZ: keine Abweichung'));
+ assert.ok(resolved.includes('Officials: 0')&&resolved.includes('EZ: 0'));
  assert.ok(!resolved.includes('EZ offen'));
  op.people[0].singleRoomAllocation.status='APPROVED_EXTRA';
  op.people[1].singleRoomAllocation.status='EXEMPT';op.people[1].singleRoomQuotaExemptReason='OTHER';
- assert.ok(text(header(render())).includes('EZ: keine Abweichung'));
+ assert.ok(text(header(render())).includes('EZ: 0'));
  op.people[1].singleRoomQuotaExemptReason=null;
  assert.ok(text(header(render())).includes('EZ: Prüfung offen'));
  assert.equal(rows.length,2);

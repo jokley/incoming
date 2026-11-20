@@ -101,13 +101,14 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
    <thead><tr><th rowSpan={2} scope="col" className="p-2 text-left">Event Group / Gender</th><th rowSpan={2} scope="col" className="p-2 text-right">Athleten eingeplant</th><th colSpan={3} scope="colgroup" className="p-2">Officials</th><th colSpan={3} scope="colgroup" className="p-2">Einzelzimmer</th></tr><tr>{['Erlaubt','Vorhanden','Abweichung','Erlaubt','Angefragt','Abweichung'].map((label,index)=><th scope="col" key={index} className="p-2 text-right">{label}</th>)}</tr></thead>
    <tbody>{(grouped?groupImportItems(nation.groups,group=>({area:quotaImportPlacement(group.name,control).area})):[{area:'',items:nation.groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={8} className="bg-[var(--ops-surface-elevated)] p-2 text-left">{section.area}</th></tr>}{section.items.map(group=>{
     const groupEZ=summaryPreview?singleRoomSummary({...summaryPreview,people:summaryPreview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null;
-    const officialsReview=group.coverageReviewRequired||group.contexts.some(row=>(row.officialsDeviation??0)>0);
+    const officialsDeviations=group.contexts.filter(row=>(row.officialsDeviation??0)>0);
+    const officialsKnown=group.contexts.length>0&&group.contexts.every(row=>row.officialsDeviation!=null)&&!incomplete;
     const ezReady=Boolean(groupEZ?.available&&groupEZ.complete&&groupEZ.exemptions.UNKNOWN.count===0&&ez?.complete&&!incomplete);
     return <Fragment key={group.name}>
     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={8} className="p-2 text-left">{group.name}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]"><PeopleCount count={group.officials} filter={{nation:nation.nationCode,role:'officials',group:group.name}} onPeople={onPeople} label={`Officials ${group.name} anzeigen`}/> eindeutige Officials</span>
      <span aria-label={`${group.name} · Quotenübersicht`} className="ml-2 inline-flex flex-wrap gap-x-3 text-xs font-normal">
-      <span className={officialsReview||incomplete?'font-semibold text-[var(--ops-warning)]':'text-[var(--ops-text-muted)]'}>Officials: {officialsReview?'Klärungsbedarf':incomplete?'Prüfung offen':'keine Abweichung'}</span>
-      <span className={groupEZ?.counts.PENDING?'font-semibold text-[var(--ops-warning)]':'text-[var(--ops-text-muted)]'}>{groupEZ?.counts.PENDING?`${groupEZ.counts.PENDING} EZ offen`:ezReady?'EZ: keine Abweichung':'EZ: Prüfung offen'}</span>
+      <span className={officialsDeviations.length||!officialsKnown?'font-semibold text-[var(--ops-warning)]':'text-[var(--ops-text-muted)]'}>Officials: {officialsDeviations.length?officialsDeviations.map(row=>`${row.gender==='F'?'W':row.gender} +${row.officialsDeviation}`).join(' · '):officialsKnown?'0':'Prüfung offen'}</span>
+      <span className={groupEZ?.counts.PENDING?'font-semibold text-[var(--ops-warning)]':'text-[var(--ops-text-muted)]'}>{groupEZ?.counts.PENDING?`EZ: +${groupEZ.counts.PENDING} offen`:ezReady?'EZ: 0':'EZ: Prüfung offen'}</span>
      </span></th></tr>
     {group.contexts.map(row=><tr key={row.gender}>
      <th scope="row" className="p-2 text-left font-normal" title={`${row.expectedAthletes??row.athletes} für Unterkunft eingeplant; ${row.athletesEntered??row.athletes} FIS-gemeldet`}>{genderName(row.gender)}</th>
