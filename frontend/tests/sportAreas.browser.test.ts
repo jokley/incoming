@@ -215,8 +215,8 @@ test('automatic person selection is shared by athlete and Officials quota views 
   const dlg=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
   const context=dlg.getByRole('rowheader',{name:'Männer',exact:true}).locator('..');
   const summary=dlg.locator('span[aria-label$="· Quotenübersicht"]');
-  assert.match(await summary.innerText(),/Officials: Klärungsbedarf/);
-  assert.match(await summary.innerText(),rooms==='2'?/1 EZ offen/:/EZ: keine Abweichung/);
+  assert.match(await summary.innerText(),new RegExp(`Officials: M \\+${cap==='6'?4:3}`));
+  assert.match(await summary.innerText(),rooms==='2'?/EZ: \+1 offen/:/EZ: 0/);
   assert.ok(!(await summary.innerText()).includes('Athleten'));
   const cells=await context.locator('td').allTextContents();
   assert.deepEqual(cells,[cap==='6'?'4':'5',cap,'10',cap==='6'?'+4':'+3',rooms,'3',rooms==='2'?'+1':'0']);
@@ -247,7 +247,7 @@ test('event housing editor uses one dynamic field per group and the existing rev
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const competitions=['M','W','M'].map((gender,i)=>({id:String(i+1),name:'Synthetic '+i,displayName:'Synthetic '+i,gender,sport:'Freeski',quotaDiscipline:i<2?'Freeski Park & Pipe':'Ski Cross',active:true,teamCompetition:false}));
  const event={id:'1',name:'Housing test',year:2027,active:true,competitionMappings:[]};
- const config={schemaVersion:1,athletes:{Snowboard:{enabled:true,totalLimit:36,genderLimit:20},Freestyle:{enabled:true,totalLimit:36,genderLimit:20}},officials:{model:'ATHLETES_PLUS',allowance:2},singleRooms:[{upTo:3,rooms:1},{upTo:6,rooms:2},{upTo:null,rooms:3}]};
+ const config={schemaVersion:1,athletes:{Snowboard:{enabled:true,totalLimit:38,genderLimit:19},Freestyle:{enabled:true,totalLimit:42,genderLimit:21}},officials:{model:'ATHLETES_PLUS',allowance:2},singleRooms:[{upTo:3,rooms:1},{upTo:6,rooms:2},{upTo:null,rooms:3}],sportEntryRules:{schemaVersion:1,enabled:true,titleEdition:{championship:'Historical edition',year:2025},competitions:[{competitionId:'1',enabled:true,regularLimit:4,titleReferences:[],poolId:'shared'},{competitionId:'2',enabled:true,regularLimit:4,titleReferences:[],poolId:'shared'}],pools:[{id:'shared',regularLimit:4}]}};
  const record:any={status:'FIXED',revision:1,digest:'original',isWorldChampionship:true,config,sportRuleOptions:{competitions,titles:[]}};
  const writes:any[]=[];const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/**',async route=>{
@@ -259,6 +259,9 @@ test('event housing editor uses one dynamic field per group and the existing rev
    const data=req.postDataJSON();writes.push({path,data});assert.equal(data.confirm,true);assert.equal(data.confirmationDigest,'checked');
    Object.assign(record,{config:data.config,revision:2,digest:'new'});return route.fulfill({json:record});
   }
+  if(req.method()==='PUT'&&path==='/admin/events/1/quota-rules'){
+   const data=req.postDataJSON();writes.push({path,data});Object.assign(record,{config:data.config,digest:'draft-saved'});return route.fulfill({json:record});
+  }
   if(req.method()!=='GET'&&path!=='/auth/me')throw Error('Unexpected mutation '+path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/admin/events':[event],'/admin/events/1':event,'/competitions':competitions,'/admin/events/1/quota-rules':record,'/admin/events/1/quota-rules/revisions':[]};
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected synthetic request'}});
@@ -267,6 +270,9 @@ test('event housing editor uses one dynamic field per group and the existing rev
  const fields=page.getByRole('spinbutton',{name:/^Unterkunftskontingent/});await fields.first().waitFor();
  assert.equal(await fields.count(),2);assert.equal(await fields.first().inputValue(),'4');assert.equal(await fields.first().isDisabled(),true);
  assert.deepEqual(writes,[]);assert.equal('athleteHousing' in config,false);
+ for(const label of ['Athleten-/Disziplinquoten','Gesamtlimit','Limit je Geschlecht','Sportliche Startplätze','Sportregeln für dieses Event aktivieren','Titelgrundlage'])assert.equal(await page.getByText(label,{exact:true}).count(),0);
+ assert.equal(await page.getByRole('spinbutton',{name:/Officials-Basis/}).count(),1);
+ assert.equal(await page.getByRole('spinbutton',{name:'EZ-Anspruch',exact:true}).count(),3);
  await page.getByRole('button',{name:'Neue Revision erstellen',exact:true}).click();
  await page.getByRole('spinbutton',{name:'Unterkunftskontingent Freeski Park & Pipe',exact:true}).fill('3');
  await page.getByRole('spinbutton',{name:'Unterkunftskontingent Ski Cross',exact:true}).fill('0');
@@ -276,6 +282,7 @@ test('event housing editor uses one dynamic field per group and the existing rev
  await page.getByText('Freeski Park & Pipe: 3 je Gender',{exact:true}).waitFor();
  assert.equal(await page.getByText('Freeski Park & Pipe: 4 je Gender',{exact:true}).count(),1);
  assert.deepEqual(writes[0].data.config.athleteHousing.regularPerGenderByEventGroup,{'Freeski Park & Pipe':3,'Ski Cross':0});
+ assert.deepEqual(writes[0].data.config.sportEntryRules,config.sportEntryRules);
  assert.deepEqual(writes[0].data.config.athletes,config.athletes);assert.equal(writes[0].data.expectedRevision,1);
  assert.match(await page.locator('body').innerText(),/aufgrund der neuen Regelrevision können sie eine erneute Entscheidung erfordern/);
  await page.getByRole('button',{name:'Neue Revision ausdrücklich aktivieren',exact:true}).click();
@@ -283,5 +290,16 @@ test('event housing editor uses one dynamic field per group and the existing rev
  await page.getByText('Fixiert · Revision 2',{exact:true}).waitFor();assert.equal(writes.length,2);
  assert.equal(await fields.first().inputValue(),'3');assert.equal(await fields.first().isDisabled(),true);
  await page.screenshot({path:'/workspace/artifacts/housing-event-rules.png',animations:'disabled'});
+ // An empty draft uses the server proposal explicitly; existing configs have no reset button.
+ assert.equal(await page.getByRole('button',{name:'Regelentwurf anlegen',exact:true}).count(),0);
+ const {sportEntryRules,...standardProposal}=config;void sportEntryRules;
+ Object.assign(record,{status:'DRAFT',config:null,standardProposal});
+ await page.reload();await page.getByRole('tab',{name:'Quotenregeln',exact:true}).click();
+ await page.getByRole('button',{name:'Regelentwurf anlegen',exact:true}).click();
+ assert.equal(writes.length,2);
+ const saved=page.waitForResponse(r=>r.request().method()==='PUT'&&r.url().endsWith('/quota-rules'));
+ await page.getByRole('button',{name:'Entwurf validieren und speichern',exact:true}).click();await saved;
+ assert.deepEqual(writes[2].data.config,standardProposal);
+ assert.equal('sportEntryRules' in writes[2].data.config,false);
  assert.deepEqual(errors,[]);
 });
