@@ -336,3 +336,17 @@ test('import tile does not label the binding operative quota result as a FIS cal
  assert.ok(text(output).includes('EZ-Kontexte offen · Importprüfung'));
  assert.ok(!text(output).includes('EZ-Kontexte offen · FIS-Prüfstand'));
 });
+
+test('planned athlete column uses the operative basis without falling back to FIS entries',()=>{
+ for(const expected of [0,4,5,undefined]) {
+  const nn=operationalControls();
+  const row=nn.planning.operationalQuota.overview.nations[0].groups[0].contexts[0];
+  Object.assign(row,{expectedAthletes:expected,athletesEntered:9,athletes:9,officialsDeviation:4});
+  const output=html(copy(),'officials',{nn});
+  const headers=[...output.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(match=>text(match[1]).trim());
+  assert.deepEqual(headers.slice(0,4),['Event Group / Gender','Athleten eingeplant','Officials','Einzelzimmer']);
+  const context=output.match(/<tr><th scope="row"[^>]*>Männer<\/th>(.*?)<\/tr>/)?.[1]??'';
+  const cells=[...context.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(match=>text(match[1]).trim());
+  assert.deepEqual(cells,[expected==null?'—':String(expected),'6','10','+4','2','3','+1']);
+ }
+});

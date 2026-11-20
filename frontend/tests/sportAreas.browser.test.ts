@@ -215,7 +215,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
   const dlg=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
   const context=dlg.getByRole('rowheader',{name:'Männer',exact:true}).locator('..');
   const cells=await context.locator('td').allTextContents();
-  assert.deepEqual(cells,[cap,'10',cap==='6'?'+4':'+3',rooms,'3',rooms==='2'?'+1':'0']);
+  assert.deepEqual(cells,[cap==='6'?'4':'5',cap,'10',cap==='6'?'+4':'+3',rooms,'3',rooms==='2'?'+1':'0']);
   assert.equal(await dlg.getByRole('columnheader',{name:'Erlaubt',exact:true}).count(),2);
   assert.equal(await dlg.getByRole('columnheader',{name:'Abweichung',exact:true}).count(),2);
   assert.equal(await dlg.getByText('Σ M/W',{exact:true}).count(),0);
