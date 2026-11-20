@@ -309,6 +309,7 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
             'athletesEntered': athletes.get(key, 0),
             'officialQuota': official_quota,
             'registeredOfficials': officials.get(key, 0),
+            'officialsDeviation': max(0, officials.get(key, 0)-official_quota),
             # Official FIS projection stays unchanged. Operational reads explicitly
             # opt into forecast athletes and the capped, distinct Officials basis.
             'singleRoomOfficialBasis': single_basis,
@@ -327,6 +328,7 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
         row['singleRoomsUsed'] = sum(p['status'] != 'EXEMPT' for p in routed)
         row['quotaExemptSingleRooms'] = sum(p['status'] == 'EXEMPT' for p in routed)
         row['singleRoomAllocations'] = routed
+        row['singleRoomsRequested'] = len(routed)
         row['singleRoomsCovered'] = sum(p['status'] == 'COVERED' for p in routed)
         row['singleRoomsPending'] = sum(p['status'] == 'PENDING' for p in routed)
     if include_unallocated or include_allocations:

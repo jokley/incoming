@@ -142,6 +142,8 @@ def provisional_selection(people, event, entry_rows, booked):
             provisionalPersonIds=sorted(selected-retained) if not reasons else [],
             excludedPersonIds=sorted(set(ids)-selected) if not reasons else [],
             selectedCount=len(selected) if not reasons else None,
+            # Retained bookings are physical stock, not extra regular quota slots.
+            quotaAthleteCount=min(len(selected-eligible),PROVISIONAL_HOUSING_REGULAR_LIMIT)+len(eligible) if not reasons else None,
             selectedWorldChampionCount=len(eligible) if not reasons else 0,
             selectedWorldChampionIds=sorted(eligible) if not reasons else [],
             selectionReasons=reasons, selectionWarnings=warnings)
@@ -205,7 +207,7 @@ def project(nation=None, *, people_override=None, entry_rows=None):
             reasons.append('Klärungsbereich: keine sichere überschneidungsfreie Zuordnung. Keine Prognose bearbeitbar.')
             reasons.extend(sorted({reason for person in members for reason in person['reasons']}))
         roster_digest=fingerprint([{'personId':p['personId'],'gender':normalize_gender(p['personalGender']),'disciplines':p['disciplines']} for p in members])
-        chosen=selection.get(key,dict(selectedPersonIds=[],provisionalPersonIds=[],excludedPersonIds=[],selectedCount=None,selectedWorldChampionCount=0,selectedWorldChampionIds=[],selectionReasons=['Gespeicherter Bereich ohne aktuelle Meldungen.'],selectionWarnings=[]))
+        chosen=selection.get(key,dict(selectedPersonIds=[],provisionalPersonIds=[],excludedPersonIds=[],selectedCount=None,quotaAthleteCount=None,selectedWorldChampionCount=0,selectedWorldChampionIds=[],selectionReasons=['Gespeicherter Bereich ohne aktuelle Meldungen.'],selectionWarnings=[]))
         reasons.extend(chosen['selectionReasons'])
         legacy=expected is not None or bool(values['checkInDate'] or values['note'])
         families=sorted({f for p in members for f in p['sportFamilies']})
@@ -240,23 +242,28 @@ def operative_projection(overview):
 
 
 
+def project_import_people(people, context, nation=None):
+    """Same effective roster adapter for visible checks and binding requirements."""
+    from types import SimpleNamespace
+    records=[]
+    for index,person in enumerate(people):
+        if nation and person.get('nationCode')!=nation:continue
+        ids=person.get('competitionIds',[])
+        records.append(SimpleNamespace(id=person.get('existingAthleteId') or 'preview:'+str(person.get('matchKey',index)),event_id=context.event_id,competitor_id=person.get('competitorId'),
+            nation_code=person.get('nationCode'),function=person.get('function'),firstname=person.get('firstname',''),lastname=person.get('lastname',''),
+            gender=person.get('gender'),fis_code=person.get('fisCode'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
+            competitions=[context.competitions_by_id[int(cid)] for cid in ids if str(cid).isdecimal() and int(cid) in context.competitions_by_id]))
+    return project(nation,people_override=records,entry_rows=people)
+
+
 def import_projection(session, preview, control, *, live=False, read_context=None, choices=None):
     """Same selection over effective parsed people, never a preview write."""
-    from types import SimpleNamespace
     from imports.read_context import ImportReadContext
     context=read_context or ImportReadContext(session.event_id)
     if live:
         result=project(session.nation)
     else:
-        records=[]
-        for index,person in enumerate(preview.get('evaluationPeople',preview.get('people',[]))):
-            if person.get('nationCode')!=session.nation:continue
-            ids=person.get('competitionIds',[])
-            records.append(SimpleNamespace(id=person.get('existingAthleteId') or 'preview:'+str(person.get('matchKey',index)),event_id=session.event_id,competitor_id=person.get('competitorId'),
-                nation_code=person['nationCode'],function=person.get('function'),firstname=person.get('firstname',''),lastname=person.get('lastname',''),
-                gender=person.get('gender'),fis_code=person.get('fisCode'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
-                competitions=[context.competitions_by_id[int(cid)] for cid in ids if str(cid).isdecimal() and int(cid) in context.competitions_by_id]))
-        result=project(session.nation,people_override=records,entry_rows=preview.get('evaluationPeople',preview.get('people',[])))
+        result=project_import_people(preview.get('evaluationPeople',preview.get('people',[])),context,session.nation)
     # Retire old editing clients explicitly; historical forecast rows stay intact.
     if choices:
         prepare_import_decisions(session,result,choices)
@@ -294,7 +301,7 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
 
 def operational_athlete_basis(overview):
     """Only verified, exclusive selections override the normal distinct roster."""
-    return {(row['nationCode'],row['discipline'],row['personalGender']):row['selectedCount']
+    return {(row['nationCode'],row['discipline'],row['personalGender']):row.get('quotaAthleteCount',row['selectedCount'])
         for row in overview['rows'] if row['editable'] and not row['conflict'] and row['selectedCount'] is not None}
 
 

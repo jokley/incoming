@@ -161,8 +161,8 @@ test('automatic person selection is shared by athlete and Officials quota views 
   Object.assign(row,{selectedCount:count,selectedWorldChampionCount:count===5?1:0});
   competitions[2].sportEntries=[entry(count===5?5:1,0)];
   row.replacedPersonIds=people.slice(count).map(p=>'preview:'+p.matchKey);
-  const context={gender:'M',athletes:count,athletesEntered:9,expectedAthletes:count,officialQuota:count===4?6:7,registeredOfficials:10,singleRoomOfficialBasis:count===4?6:7,singleRoomsAllowed:count===4?2:3,singleRoomsRequested:3,singleRoomsPending:count===4?1:0,singleRoomsApproved:0,quotaExemptSingleRooms:0};
-  planning.operationalQuota={conflict:false,reasons:[],people:[],rows:[context],overview:{...preview.quotaOverview,nations:[{...preview.quotaOverview.nations[0],groups:[{name:row.discipline,officials:10,athletes:9,contexts:[context],totals:context}]}]}};
+  const context={gender:'M',athletes:count,athletesEntered:9,expectedAthletes:count,officialQuota:count===4?6:7,registeredOfficials:10,officialsDeviation:count===4?4:3,singleRoomOfficialBasis:count===4?6:7,singleRoomsAllowed:count===4?2:3,singleRoomsRequested:3,singleRoomsPending:count===4?1:0,singleRoomsApproved:0,quotaExemptSingleRooms:0};
+  planning.operationalQuota={conflict:false,reasons:[],people:Array.from({length:3},(_,i)=>({matchKey:'staff'+i,nationCode:'FIN',singleRoomAllocation:{identity:'staff'+i,status:i<context.singleRoomsAllowed?'COVERED':'PENDING',context:['FIN',row.discipline,'M']}})),rows:[context],overview:{...preview.quotaOverview,nations:[{...preview.quotaOverview.nations[0],groups:[{name:row.discipline,officials:10,athletes:9,contexts:[context],totals:context}]}]}};
  };project(4);
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
@@ -213,10 +213,15 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const officials=async(cap:string,rooms:string)=>{
   await page.getByRole('button',{name:/^Officials & EZ-Quote/}).click();
   const dlg=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
-  await dlg.locator('summary').filter({hasText:'Geschlechteraufteilung'}).click();
   const context=dlg.getByRole('rowheader',{name:'Männer',exact:true}).locator('..');
   const cells=await context.locator('td').allTextContents();
-  assert.match(cells[0],/9 FIS-gemeldet/);assert.equal(cells[1],cap);assert.equal(cells[2],cap);assert.equal(cells[3],rooms);
+  assert.deepEqual(cells,[cap,'10',cap==='6'?'+4':'+3',rooms,'3',rooms==='2'?'+1':'0']);
+  assert.equal(await dlg.getByRole('columnheader',{name:'Erlaubt',exact:true}).count(),2);
+  assert.equal(await dlg.getByRole('columnheader',{name:'Abweichung',exact:true}).count(),2);
+  assert.equal(await dlg.getByText('Σ M/W',{exact:true}).count(),0);
+  await page.screenshot({path:`/workspace/artifacts/operative-official-ez-${cap}-light.png`,animations:'disabled'});
+  await dlg.locator('summary').filter({hasText:'Deckung und Genehmigungen'}).click();
+  assert.match(await dlg.innerText(),new RegExp(`${cap==='6'?4:5} für Unterkunft eingeplant`));
   assert.equal(await dlg.getByRole('spinbutton').count(),0);
   await dlg.getByRole('button',{name:'Schließen',exact:true}).click();
  };

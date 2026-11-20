@@ -626,7 +626,7 @@ export interface FisImportPreview {
     requiredExtent?:QuotaExtent;approvedExtent?:QuotaExtent;uncoveredExtent?:QuotaExtent;
     decisionStatus?:'PENDING'|'APPROVED'|'WITHIN_QUOTA';approvalIds?:number[];
   }>;
-  quotaChecks?: Array<{ expectedAthletes?:number;athletesEntered?:number;singleRoomOfficialBasis?:number;nnForecastBlocked?:boolean;nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
+  quotaChecks?: Array<{ registeredOfficials?:number;officialsDeviation?:number;expectedAthletes?:number;athletesEntered?:number;singleRoomOfficialBasis?:number;nnForecastBlocked?:boolean;nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
     changes: ImportChange[];

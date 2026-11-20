@@ -2596,6 +2596,10 @@ def stage_single_room_quota_exemption(session_id, person_key):
             description=f"{'Single Rooms' if is_single else 'Officials'} überschritten ({current} / {allowed})",
             quota_details_json=json.dumps(details, ensure_ascii=False),
             decision='PENDING', username=current_user().username))
+    # Derived pending tasks were replaced; do not pass their deleted IDs to
+    # the existing event-bound approval validation during refresh.
+    db.session.flush()
+    db.session.expire(session, ['approvals'])
     session.status = ('WAITING_FOR_NATION'
                       if quota_issues or other_open_approval
                       else 'PROFESSIONALLY_REVIEWED')
