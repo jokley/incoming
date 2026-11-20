@@ -2093,6 +2093,8 @@ type QuotaCard = {
   assignedOfficials: number;
   registeredOfficials: number;
   singleRoomOfficialBasis: number;
+  singleRoomsRequested:number;
+  officialsDeviation:number;
   singleRoomsPending: number;
   singleRoomAllocations: NonNullable<OfficialQuotaUsage['singleRoomAllocations']>;
   singleRoomsAllowed: number;
@@ -2125,6 +2127,8 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
       assignedOfficials: 0,
       registeredOfficials: 0,
       singleRoomOfficialBasis: 0,
+      singleRoomsRequested:0,
+      officialsDeviation:0,
       singleRoomsPending: 0,
       singleRoomAllocations: [],
       singleRoomsAllowed: 0,
@@ -2142,7 +2146,9 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
       accommodationPeopleRequired:0,
       accommodationPeopleFullyAssigned:0,
     };
-    current.athletes += row.athletesEntered;
+    current.athletes += row.expectedAthletes??row.athletesEntered;
+    current.singleRoomsRequested += row.singleRoomsRequested??row.singleRoomsUsed;
+    current.officialsDeviation += row.officialsDeviation??0;
     current.officialQuota += row.officialQuota;
     current.assignedOfficials += row.assignedOfficials;
     current.registeredOfficials += row.registeredOfficials ?? row.assignedOfficials;
@@ -2255,24 +2261,11 @@ export function QuotasPanel({
                   <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <KpiBlock label="Athleten" value={`${card.athletes}`} />
-                  <KpiBlock label="Officials gemeldet / Limit" value={`${card.registeredOfficials} / ${card.officialQuota}`} warning={officialsOver} title={officialBasisTooltip(card)} />
-                  <KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
-                  <KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} />
+                <div className="space-y-3">
+                 <div><h4 className="mb-1 text-xs font-semibold">Officials</h4><div className="grid grid-cols-3 gap-2"><KpiBlock label="Erlaubt" value={String(card.officialQuota)}/><KpiBlock label="Vorhanden" value={String(card.registeredOfficials)}/><KpiBlock label="Abweichung" value={card.officialsDeviation?`+${card.officialsDeviation}`:'0'} warning={officialsOver}/></div></div>
+                 <div><h4 className="mb-1 text-xs font-semibold">Einzelzimmer · tatsächliche EZ-Wertung</h4><div className="grid grid-cols-3 gap-2"><KpiBlock label="Erlaubt" value={String(card.singleRoomsAllowed)}/><KpiBlock label="Genutzt" value={String(card.singleRoomsRequested)}/><KpiBlock label="Abweichung" value={card.singleRoomsPending?`+${card.singleRoomsPending}`:'0'} warning={singlesOver}/></div></div>
                 </div>
-
-                <div className="mt-4 space-y-3 rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface)] p-3.5">
-                  <QuotaProgress label="Officials gemeldet / Limit" current={card.registeredOfficials} max={card.officialQuota} warning={officialsOver} />
-                  <QuotaProgress label="Einzelzimmer" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
-                  {card.accommodationPeopleRequired>0 && <QuotaProgress label="Disposition" current={card.accommodationPeopleFullyAssigned} max={card.accommodationPeopleRequired} />}
-                </div>
-
-                <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
-                  <ApprovalInfo label="EZ-Entscheidungen offen" value={String(card.singleRoomsPending)} warning={singlesOver} />
-                  <ApprovalInfo label="Genehmigungen hinterlegt" value={String(card.approvedExceptions)} />
-                  <ApprovalInfo label="EZ-Mehrpreis genehmigt" value={String(card.singleRoomAllocations.filter(person => person.status === 'APPROVED_EXTRA').length)} />
-                </div>
+                <p className="mt-2 text-xs text-[var(--ops-text-muted)]">{card.athletes} für Unterkunft eingeplant · Genehmigungen und Ausnahmen in den Details</p>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{card.accommodationPeopleRequired ? `${dispatchPct}% disponiert` : 'Kein Unterkunftsbedarf'}</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
               </div>
             </button>

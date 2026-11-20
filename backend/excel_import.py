@@ -13,7 +13,7 @@ from sqlalchemy import func
 
 from accommodation_rates import apply_preview_rates, resolve_rate
 from quota_history import approval_event_matches, applicable_approval_groups, historical_approval_groups, preview_approval_person, quota_person
-from quota_service import evaluate_athlete_quota_usage, evaluate_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
+from quota_service import evaluate_athlete_quota_usage, normalize_gender, quota_keys, has_quota_membership, quota_gender_errors, allocate_single_rooms, person_identity
 from models import Athlete, Competition, Event, AccommodationEvent, FisRoomAssignment, ImportRun, ImportSession, ImportSessionEvent, ImportSessionVersion, ImportApproval, RoomAssignment, RoomBooking, RoomBookingOccupant, db
 from competitions import COMPETITION_BY_IMPORT_CODE, quota_disciplines, resolve_quota_memberships, normalize_competition_ids, athlete_top_level_discipline, competition_athlete_family
 
@@ -821,9 +821,12 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
             or (previous and previous.get('countsAsSingle')))}
     from quota_rules import rules_for_event
     rules=rules_for_event(read_context.event_id if read_context else None)
-    physical_rows = evaluate_quota_usage(roster, list(combined.values()),rules)
-    requested_rows = evaluate_quota_usage(roster, requested,rules)
-    projected_rows = evaluate_quota_usage(roster, projected,rules)
+    from arrival_planning import project_import_people, operational_quota_projection
+    from imports.read_context import ImportReadContext
+    selection=project_import_people(people,read_context or ImportReadContext())
+    physical_rows = operational_quota_projection(selection,roster,list(combined.values()),rules)['rows']
+    requested_rows = operational_quota_projection(selection,roster,requested,rules)['rows']
+    projected_rows = operational_quota_projection(selection,roster,projected,rules)['rows']
     rows_by_key = {}
     for source, rows in (('existing', projected_rows), ('requested', requested_rows)):
         for row in rows:
@@ -857,6 +860,9 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
             quota_checks.append({
                 'nationCode': nation_code, 'discipline': discipline, 'gender': gender,
                 'athletes': athletes_entered,
+                'athletesEntered': athletes_entered, 'expectedAthletes': row.get('expectedAthletes',athletes_entered),
+                'registeredOfficials': row['registeredOfficials'], 'officialsDeviation': row['officialsDeviation'],
+                'singleRoomOfficialBasis': row['singleRoomOfficialBasis'],
                 'officials': imported_officials, 'officialQuota': official_quota,
                 'singleRoomsRequested': len(row['singleRoomAllocations']),
                 'singleRoomsPending': row['singleRoomsPending'],

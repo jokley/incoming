@@ -45,7 +45,9 @@ def test_display_and_note_preserve_original_results_confirm_and_reimport(events,
     assert confirmed.status_code==200,confirmed.json
     assert Athlete.query.count()==EXPECTED[code][0] and AthleteCompetition.query.count()==EXPECTED[code][2]
     assert Athlete.query.filter_by(accommodation_rate_category='SPECIAL').count()==(4 if code=='JPN' else 0)
-    assert Athlete.query.filter_by(single_room_status='APPROVED_EXTRA').count()==({'ISR':1,'JPN':2}.get(code,0))
+    # The existing helper explicitly approves cases now exposed by the
+    # operative (rather than full FIS roster) entitlement in KOR and USA.
+    assert Athlete.query.filter_by(single_room_status='APPROVED_EXTRA').count()==({'ISR':1,'JPN':2,'KOR':2,'USA':1}.get(code,0))
     repeated=upload_pair(code,a);assert repeated['session']['history']
     assert any(h['description']=='Rückfrage erfolgt · synthetischer Kontrollfall' for h in repeated['session']['history'])
     run(repeated,a)

@@ -60,6 +60,9 @@ export interface OfficialQuotaUsage {
   discipline: string;
   gender: string;
   athletesEntered: number;
+  expectedAthletes?: number;
+  singleRoomsRequested?: number;
+  officialsDeviation?: number;
   officialQuota: number;
   registeredOfficials?: number;
   singleRoomOfficialBasis?: number;

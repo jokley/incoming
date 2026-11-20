@@ -17,12 +17,12 @@ def operational_test_context(events, monkeypatch):
     monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(events[0].id))
 
 
-def upload(event,codes=('9300953','9300954'),changed=None,session_id=None):
+def upload(event,codes=('9300953','9300954'),changed=None,session_id=None,room_data=None):
     people=[dict(Firstname='Person'+str(i),Lastname='Snapshot',Nationcode='JPN',Function='Athlete',Gender='M',
         Fiscode=c,**{'Competitorid/Staff ID':'s'+c},WSC_PGS_M_6170='YES',Room_type='Double shared',Arrival_date='03.03.2027',Departure_date='09.03.2027') for i,c in enumerate(codes)]
     if changed:changed(people)
     a,b=io.BytesIO(),io.BytesIO()
-    pd.DataFrame(people,columns=list(people[0]) if people else ['Firstname','Lastname','Nationcode','Function','Gender','Fiscode','Competitorid/Staff ID','WSC_PGS_M_6170','Room_type','Arrival_date','Departure_date']).to_excel(a,index=False,sheet_name='Data');pd.DataFrame(columns=['no data available']).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
+    pd.DataFrame(people,columns=list(people[0]) if people else ['Firstname','Lastname','Nationcode','Function','Gender','Fiscode','Competitorid/Staff ID','WSC_PGS_M_6170','Room_type','Arrival_date','Departure_date']).to_excel(a,index=False,sheet_name='Data');(pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
     response=app.test_client().post('/api/import/fis/preview',data=dict(eventId=str(event.id),createSession='true',**({'sessionId':str(session_id)} if session_id else {}),entriesList=(a,'entries.xlsx'),roomListDetailed=(b,'rooms.xlsx')))
     assert response.status_code==200,response.json
     assert response.json['isValid'],response.json
@@ -649,3 +649,70 @@ def test_source_rows_preserve_original_selection_when_flat_row_fields_are_absent
     db.session.commit()
     row=project('JPN')['rows'][0]
     assert row['selectedPersonIds']==expected and not row['conflict']
+
+
+@pytest.mark.parametrize('resolution',['paid','exemption'])
+def test_operative_ez_requirement_blocks_http_release_until_existing_decision(events,resolution):
+    event=events[0];client=app.test_client()
+    def staff(rows):
+        template=dict(rows[0])
+        for i in range(10):rows.append(dict(template,Firstname='Official'+str(i),Fiscode=str(9910100+i),**{'Competitorid/Staff ID':'official'+str(i)},Function='Coach',Room_type='Single' if i<3 else 'Double shared'))
+        for p in rows:p['Nationcode']='FIN';p['WSC_HP_M_8171']=p.pop('WSC_PGS_M_6170')
+        if resolution=='exemption':
+            rows[0]['Room_type']='Single'
+            rows[9]['Room_type']='Double shared'
+    rooms=[dict(Firstname='Official'+str(i),Lastname='Snapshot',Nationcode='FIN',Room_type='Single',Arrival_date='03.03.2027',Departure_date='09.03.2027') for i in range(3)]
+    if resolution=='exemption':rooms[0]['Firstname']='Person0'
+    current=upload(event,tuple(str(9910000+i) for i in range(9)),changed=staff,room_data=rooms)
+    sid=current['session']['id']
+    state=client.get(f'/api/import/sessions/{sid}').json
+    row=state['nnPlanning']['operationalQuota']['rows'][0]
+    assert (row['expectedAthletes'],row['officialQuota'],row['singleRoomOfficialBasis'],row['singleRoomsAllowed'],row['singleRoomsRequested'],row['singleRoomsPending'])==(4,6,6,2,3,1)
+    check=state['preview']['quotaChecks'][0]
+    assert (check['athletesEntered'],check['expectedAthletes'],check['registeredOfficials'],check['officialsDeviation'])==(9,4,10,4)
+    assert (check['singleRoomsAllowed'],check['singleRoomsRequested'],check['singleRoomsPending'])==(2,3,1)
+    denied=review(current,event)
+    assert denied.status_code==409,denied.json
+    task=next(a for a in state['approvals'] if a['decision']=='PENDING' and a['quotaDetails'].get('singleRoomCandidates'))
+    if resolution=='paid':
+        details=task['quotaDetails'];key=details['singleRoomCandidates'][0]['personKey']
+        decision=client.patch(f"/api/import/sessions/{sid}/approvals/{task['id']}",json=dict(decision='APPROVED',approvalType='NATION_APPROVED',approvalMethod='EMAIL',approvalBy='Synthetic nation',approvalDate='2026-11-20T12:00:00Z',approvedPersonKeys=[key]))
+    else:
+        key=next(p['matchKey'] for p in state['preview']['people'] if p.get('fisCode')=='9910000')
+        decision=client.patch(f'/api/import/sessions/{sid}/single-room-exemptions/{key}',json={'reason':'WORLD_CHAMPION'})
+    assert decision.status_code==200,decision.json
+    state=client.get(f'/api/import/sessions/{sid}').json
+    row=state['nnPlanning']['operationalQuota']['rows'][0]
+    assert row['singleRoomsPending']==0
+    assert row['approvedExtraSingleRooms']==(1 if resolution=='paid' else 0)
+    assert row['quotaExemptSingleRooms']==(1 if resolution=='exemption' else 0)
+    run(current,event)
+    state=client.get(f'/api/import/sessions/{sid}').json
+    row=state['nnPlanning']['operationalQuota']['rows'][0]
+    assert row['singleRoomsAllowed']==2 and row['singleRoomsPending']==0
+    assert Athlete.query.count()==19 and RoomBooking.query.count()==0
+    # Requested rooms are not physical single-room usage until disposition.
+    live=client.get('/api/fis/official-quotas?nationCode=FIN').json[0]
+    assert (live['expectedAthletes'],live['officialQuota'],live['singleRoomsAllowed'],live['singleRoomsRequested'],live['singleRoomsPending'])==(4,6,2,0,0)
+    official=Athlete.query.filter_by(function='Coach').first()
+    retained=booking([official],counts=True)
+    live=client.get('/api/fis/official-quotas?nationCode=FIN').json[0]
+    assert live['singleRoomsRequested']==1 and live['singleRoomsPending']==0
+    assert db.session.get(RoomBooking,retained.id).counts_as_single
+
+
+def test_booked_athlete_overhang_does_not_raise_regular_official_entitlement(events):
+    from arrival_planning import project,operational_athlete_basis
+    event=events[0]
+    run(upload(event,tuple(str(9920000+i) for i in range(8))),event)
+    people=Athlete.query.all()[:5];first=booking([people[0]])
+    for i,person in enumerate(people[1:],2):
+        room=RoomBooking(event_id=event.id,hotel_id=first.hotel_id,room_type_id=first.room_type_id,room_number=str(i),counts_as_single=False,check_in_date=first.check_in_date,check_out_date=first.check_out_date)
+        db.session.add(RoomBookingOccupant(athlete_id=person.id,room_booking=room))
+    db.session.commit()
+    overview=project('JPN');row=overview['rows'][0]
+    assert row['bookedPeopleCount']==5 and row['selectedCount']==5 and row['selectionWarnings']
+    assert list(operational_athlete_basis(overview).values())==[4]
+    quotas=app.test_client().get('/api/fis/official-quotas?nationCode=JPN').json
+    assert quotas[0]['officialQuota']==6 and quotas[0]['expectedAthletes']==4
+    assert RoomBooking.query.count()==RoomBookingOccupant.query.count()==5

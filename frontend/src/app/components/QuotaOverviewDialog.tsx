@@ -56,8 +56,6 @@ function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople
  </div>;
 }
 function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,control}: {nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
- const originalNation=nation;
- const originalEZ=preview?singleRoomSummary(preview,nation.nationCode):null;
  const operative=nn?.planning.operationalQuota;
  if(nn?.busy)return <p role="status">Operative Vorschau wird berechnet …</p>;
  if(nn&&(nn.error||!operative?.overview||!operative.people))return <p role="alert" className="text-[var(--ops-error)]">{nn.error??`Operative Bewertung nicht verfügbar. ${operative?.reasons.join(' ')??'Keine veralteten Quotenwerte.'}`}</p>;
@@ -97,35 +95,28 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
    <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials</span>
 
   </div>
-  <div className="text-sm" aria-label="EZ-Gesamtbewertung">{breakdown(ez)}</div>
-  {nation.otherPeople>0&&<p className="text-xs">{nation.otherPeople} weitere / unzugeordnete Personen</p>}
-  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full table-fixed text-[11px] sm:table-auto sm:text-sm">
-   <caption className="sr-only">Eindeutige Officials und bestehende EZ-Bewertung</caption>
-   <thead><tr>{['Event Group','Officials¹','EZ-Anfragen','EZ-Status'].map((label,i)=><th key={label} scope="col" title={i===1?'Eindeutige Personen je Event Group; nicht über Gruppen addieren.':undefined} className={`ops-table-wrap px-1 py-2 sm:px-3 ${i>0&&i<3?'w-[18%] text-right':i===0?'w-[32%] text-left':'text-left'}`}>{label}</th>)}</tr></thead>
-   <tbody>{(grouped?groupImportItems(nation.groups,group=>({area:quotaImportPlacement(group.name,control).area})):[{area:'',items:nation.groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={4} className="bg-[var(--ops-surface-elevated)] px-1 py-2 text-left sm:px-3">{section.area}</th></tr>}{section.items.map(group=>{
-    const totals=group.totals;
-    const assigned=summaryPreview?singleRoomSummary({...summaryPreview,people:summaryPreview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null;
-    const consistent=assigned&&assigned.requested===totals.singleRoomsRequested&&assigned.counts.PENDING===totals.singleRoomsPending&&assigned.counts.APPROVED_EXTRA===totals.singleRoomsApproved&&assigned.counts.EXEMPT===totals.quotaExemptSingleRooms;
-    return <Fragment key={group.name}>
-     <tr className={`border-t border-[var(--ops-divider)] ${totals.singleRoomsPending?'border-l-2 border-l-[var(--ops-warning)]':''}`}>
-      <th scope="row" className="ops-table-wrap px-1 py-2 sm:px-3 text-left">{group.name}</th>
-      <td className={numberCell}><PeopleCount count={group.officials} filter={{nation:nation.nationCode,role:'officials',group:group.name}} onPeople={onPeople} label={`Officials ${group.name} anzeigen`}/></td>
-      <td className={numberCell}>{totals.singleRoomsRequested}</td>
-      <td className="ops-table-wrap px-1 py-2 sm:px-3 [&_svg]:hidden sm:[&_svg]:block">{breakdown(consistent?assigned:null,group.name)}{!consistent&&totals.singleRoomsPending>0&&<span className="block text-xs">{totals.singleRoomsPending} EZ offen</span>}</td>
-     </tr>
-     <tr><td colSpan={4} className="ops-table-wrap px-1 pb-2 sm:px-3"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Geschlechteraufteilung</summary>
-      <div className="w-0 min-w-full overflow-x-auto"><table className="mt-2 w-full text-xs"><caption className="sr-only">Quotenkontexte für {group.name}</caption><thead><tr>{['Geschlecht','Athleten','Officials-Obergrenze','Berechnungsbasis EZ','EZ-Anspruch','Angefordert','Genehmigt','Offen','Ausnahmen'].map((label,i)=><th scope="col" key={label} className={`px-2 py-1 ${i?'text-right':'text-left'}`}>{label}</th>)}</tr></thead><tbody>
-       {group.contexts.map(row=><tr key={row.gender}><th scope="row" className="px-2 py-1 text-left font-normal">{genderName(row.gender)}</th><td className="px-2 py-1 text-right tabular-nums">{nn&&row.expectedAthletes!==row.athletesEntered?<span className="font-semibold text-[var(--ops-warning)]">{row.expectedAthletes} geplant</span>:nn?row.athletesEntered:row.athletes}{nn&&row.expectedAthletes!==row.athletesEntered&&<small className="block text-[var(--ops-text-muted)]">{row.athletesEntered} FIS-gemeldet</small>}{row.nnForecastBlocked&&<small className="block text-[var(--ops-warning)]">Normale Basis · Auswahl ungeklärt</small>}</td>{[row.officialQuota,row.singleRoomOfficialBasis??row.officialQuota,row.singleRoomsAllowed,row.singleRoomsRequested,row.singleRoomsApproved,row.singleRoomsPending,row.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>)}
-       <tr className="font-bold"><th scope="row" className="px-2 py-1 text-left">Σ M/W</th>{[nn?totals.expectedAthletes:group.athletes,totals.officialQuota,nn?totals.singleRoomOfficialBasis:totals.officialQuota,totals.singleRoomsAllowed,totals.singleRoomsRequested,totals.singleRoomsApproved,totals.singleRoomsPending,totals.quotaExemptSingleRooms].map((value,i)=><td key={i} className="px-2 py-1 text-right tabular-nums">{value}</td>)}</tr>
-      </tbody></table></div>
-     </details></td></tr>
-    </Fragment>;
-   })}</Fragment>)}</tbody>
+  <p className="text-sm" aria-label="EZ-Gesamtbewertung">EZ · Erlaubt: <span title="Reguläre Ansprüche gelten ausschließlich im jeweiligen Event-Group-/Gender-Kontext.">kontextgebunden</span> · Angefragt: {ez?.available?<PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/>:'—'} · Abweichung: <strong className={ez?.counts.PENDING?'text-[var(--ops-warning)]':'text-[var(--ops-text)]'}>{ez?.available?(ez.counts.PENDING?`+${ez.counts.PENDING}`:'0'):'—'}</strong>{(!ez?.complete||incomplete)&&<span className="ml-2 text-[var(--ops-warning)]">Zuordnung oder Evidenz unvollständig</span>}</p>
+  <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full text-xs sm:text-sm">
+   <caption className="sr-only">Kontextgebundene Officials- und EZ-Bewertung</caption>
+   <thead><tr><th rowSpan={2} scope="col" className="p-2 text-left">Event Group / Gender</th><th colSpan={3} scope="colgroup" className="p-2">Officials</th><th colSpan={3} scope="colgroup" className="p-2">Einzelzimmer</th></tr><tr>{['Erlaubt','Vorhanden','Abweichung','Erlaubt','Angefragt','Abweichung'].map((label,index)=><th scope="col" key={index} className="p-2 text-right">{label}</th>)}</tr></thead>
+   <tbody>{(grouped?groupImportItems(nation.groups,group=>({area:quotaImportPlacement(group.name,control).area})):[{area:'',items:nation.groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={7} className="bg-[var(--ops-surface-elevated)] p-2 text-left">{section.area}</th></tr>}{section.items.map(group=><Fragment key={group.name}>
+    <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={7} className="p-2 text-left">{group.name}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]"><PeopleCount count={group.officials} filter={{nation:nation.nationCode,role:'officials',group:group.name}} onPeople={onPeople} label={`Officials ${group.name} anzeigen`}/> eindeutige Officials</span></th></tr>
+    {group.contexts.map(row=><tr key={row.gender}>
+     <th scope="row" className="p-2 text-left font-normal" title={`${row.expectedAthletes??row.athletes} für Unterkunft eingeplant; ${row.athletesEntered??row.athletes} FIS-gemeldet`}>{genderName(row.gender)}</th>
+     <td className={numberCell}>{row.officialQuota}</td><td className={numberCell}>{row.registeredOfficials??row.officials}</td><td className={`${numberCell} ${row.officialsDeviation?'text-[var(--ops-warning)]':''}`}>{row.officialsDeviation==null?'—':row.officialsDeviation?`+${row.officialsDeviation}`:0}</td>
+     <td className={numberCell}>{row.singleRoomsAllowed}</td><td className={numberCell}>{row.singleRoomsRequested}</td><td className={`${numberCell} ${row.singleRoomsPending?'font-bold text-[var(--ops-warning)]':''}`}>{row.singleRoomsPending?`+${row.singleRoomsPending}`:0}</td>
+    </tr>)}
+    <tr><td colSpan={7} className="px-2 pb-2"><details className="text-xs"><summary className="cursor-pointer text-[var(--ops-text-muted)]">{group.name} · Deckung und Genehmigungen</summary>
+     {group.contexts.map(row=><p key={row.gender}>{genderName(row.gender)}: {row.expectedAthletes??row.athletes} für Unterkunft eingeplant · Berechnungsbasis EZ {row.singleRoomOfficialBasis??'—'} · {row.singleRoomsApproved} zusätzlich genehmigt · {row.quotaExemptSingleRooms??0} Ausnahmen{row.nnForecastBlocked?' · Auswahl ungeklärt; normale Basis':''}</p>)}
+     {breakdown(summaryPreview?singleRoomSummary({...summaryPreview,people:summaryPreview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null,group.name)}
+    </details></td></tr>
+   </Fragment>)}</Fragment>)}</tbody>
   </table></div>
 
-  {nn&&<details className="text-xs text-[var(--ops-text-muted)]"><summary>Ursprünglicher FIS-Prüfstand · Nachweis</summary>{originalEZ?.available&&<p>Ursprünglich: {originalEZ.counts.COVERED} regulär · {originalEZ.counts.APPROVED_EXTRA} zusätzlich genehmigt · {originalEZ.counts.EXEMPT} Ausnahmen · {originalEZ.counts.PENDING} offen.</p>}<ul>{originalNation.groups.flatMap(group=>group.contexts.map(row=><li key={`${group.name}/${row.gender}`}>{group.name} · {genderName(row.gender)}: {row.athletes} FIS-gemeldet · Officials-Limit {row.officialQuota} · EZ-Anspruch {row.singleRoomsAllowed} · {row.singleRoomsRequested} angefragt · {row.singleRoomsPending} offen (ursprünglicher Prüfstand).</li>))}</ul></details>}
   <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer">Zuordnungen und Bewertungsgrundlage</summary><div className="mt-2 space-y-1">
-   <p>¹ Eindeutige Officials je Event Group; Gruppenwerte nicht addieren. EZ-Anspruch in den Details: Summe der M/W-Kontexte, kein übertragbares Kontingent.</p>
+   <p>Officials national und je Event Group sind eindeutige Personen. Kontextzahlen nicht als Personen addieren. EZ-Ansprüche sind nicht pauschal zwischen Gruppen oder Gendern übertragbar.</p>
+   {breakdown(ez)}
+   {(nation.otherPeople??0)>0&&<p>{nation.otherPeople} weitere / unzugeordnete Personen</p>}
    {nation.officialsInMultipleGroups>0&&(onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten · Personen anzeigen</button>:<p>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</p>)}
    <p>{nation.ezDecisionsOpen} {nation.ezDecisionsOpen===1?'offener EZ-Kontext':'offene EZ-Kontexte'} · Kontexte sind keine Personenzahl.</p>
    {nation.coverageReviewRequired&&<p>Officials-Abdeckung nicht abschließend bewertet; keine bestätigte Quotenverletzung.</p>}
