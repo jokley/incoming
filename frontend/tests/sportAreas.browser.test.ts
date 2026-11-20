@@ -214,6 +214,10 @@ test('automatic person selection is shared by athlete and Officials quota views 
   await page.getByRole('button',{name:/^Officials & EZ-Quote/}).click();
   const dlg=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
   const context=dlg.getByRole('rowheader',{name:'Männer',exact:true}).locator('..');
+  const summary=dlg.locator('span[aria-label$="· Quotenübersicht"]');
+  assert.match(await summary.innerText(),/Officials: Klärungsbedarf/);
+  assert.match(await summary.innerText(),rooms==='2'?/1 EZ offen/:/EZ: keine Abweichung/);
+  assert.ok(!(await summary.innerText()).includes('Athleten'));
   const cells=await context.locator('td').allTextContents();
   assert.deepEqual(cells,[cap==='6'?'4':'5',cap,'10',cap==='6'?'+4':'+3',rooms,'3',rooms==='2'?'+1':'0']);
   assert.equal(await dlg.getByRole('columnheader',{name:'Erlaubt',exact:true}).count(),2);
