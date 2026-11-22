@@ -1,3 +1,4 @@
+import { requiresAccommodation } from '../services/accommodationRequirement.ts';
 import { type ReactNode, useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router';
 import ApartmentRoundedIcon from '@mui/icons-material/ApartmentRounded';
@@ -212,10 +213,10 @@ export function Dashboard() {
     const assignedPersonIds = new Set(assignments.flatMap(assignment =>
       assignment.occupants.map(occupant => occupant.athlete.id)
     ));
-    const requiredPeople = athletes.filter(athlete=>athlete.accommodationRequirement!=='NO_ROOM');
+    const requiredPeople = athletes.filter(athlete=>requiresAccommodation(athlete));
     const assignedPeople = requiredPeople.filter(athlete=>athlete.accommodationCoverage ? athlete.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' : athlete.assignment?.hasAssignment || assignedPersonIds.has(athlete.id)).length;
     const peopleWithoutRoom = Math.max(requiredPeople.length - assignedPeople, 0);
-    const pendingSingleRooms = athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && athlete.single_room_status === 'PENDING_APPROVAL').length;
+    const pendingSingleRooms = athletes.filter(athlete => requiresAccommodation(athlete) && athlete.single_room_status === 'PENDING_APPROVAL').length;
     const pendingImportReviews = athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length;
     const invalidMasterData = athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length;
     const surchargeRisks = athletes.filter(athlete => athlete.lateCheckout || Boolean(athlete.specialMeal) || Boolean(athlete.additionalItems)).length;

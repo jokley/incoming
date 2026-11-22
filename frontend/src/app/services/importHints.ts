@@ -1,3 +1,4 @@
+import { requiresAccommodation } from './accommodationRequirement.ts';
 import type { ImportNNPlanning, FisImportIssue } from '../types.ts';
 import { sportAreaLabel } from './competitionPresentation.ts';
 
@@ -6,6 +7,7 @@ export function deferredImportPersonKeys(preview:FisImportPreview,planning?:Impo
  const excluded=new Set(planning?.rows.filter(row=>!row.conflict).flatMap(row=>row.replacedPersonIds)??[]);
  const result=new Set<string>();
  for(const person of preview.people){
+  if(person.matchKey&&person.accommodationRequirement==='NO_DISPO')result.add(person.matchKey);
   if(person.function?.trim().toLowerCase()!=='athlete'||!person.matchKey)continue;
   const liveIds=new Set(planning?.operationalQuota?.people?.filter(p=>p.matchKey===person.matchKey&&p.nationCode===person.nationCode&&p.personId!=null).map(p=>String(p.personId))??[]);
   const identity=person.existingAthleteId!=null?String(person.existingAthleteId):planning?.mode==='IMPORT'?`preview:${person.matchKey}`:liveIds.size===1?[...liveIds][0]:undefined;
@@ -172,7 +174,7 @@ export function singleRoomSummary(preview:Pick<FisImportPreview,'rooms'>&{people
   if(room.roomType.trim().toLowerCase()!=='single')continue;
   for(const key of [room.person1Key,room.person2Key].filter(Boolean)){
    const person=byKey.get(key);
-   if(person&&person.accommodationRequirement!=='NO_ROOM'&&!person.singleRoomAllocation)available=false;
+   if(person&&requiresAccommodation(person)&&!person.singleRoomAllocation)available=false;
   }
  }
  return {requested:members.size,counts,exemptions,personKeys:categories,allPersonKeys:[...new Set([...members.values()].flatMap(m=>[...m.keys]))],complete:complete&&available,available};

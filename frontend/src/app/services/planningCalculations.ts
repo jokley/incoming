@@ -1,3 +1,4 @@
+import { requiresAccommodation } from './accommodationRequirement.ts';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types.ts';
 import { bookingFreeCapacity } from './assignmentRoomUsage.ts';
 import { physicalSingleRoomUsageFromBookings } from './quotaEvaluation.ts';
@@ -95,7 +96,7 @@ export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; 
     const plans = data.events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date).map(eventRoomPlan);
     const bedSupply = inventory.reduce((sum, item) => sum + item.roomCount * item.roomType.maxPersons, 0);
     const supply = calculateRoomPlan(bedSupply), plannedBeds = plans.reduce((sum, plan) => sum + plan.beds, 0), plannedRooms = plans.reduce((sum, plan) => sum + plan.rooms, 0);
-    const livePlan = calculateRoomPlan(data.athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }]).some(stay => onDay(stay.arrivalDate, stay.departureDate, date))).length);
+    const livePlan = calculateRoomPlan(data.athletes.filter(athlete => requiresAccommodation(athlete) && (athlete.stays?.length ? athlete.stays : [{ arrivalDate: athlete.arrivalDate, departureDate: athlete.departureDate }]).some(stay => onDay(stay.arrivalDate, stay.departureDate, date))).length);
     const activeBookings = data.bookings.filter(booking => onDay(booking.checkInDate, booking.checkOutDate, date));
     const hotels = new Map(data.hotels.map(hotel=>[hotel.id,hotel]));
     activeBookings.forEach(booking=>{ if (!hotels.has(booking.hotel.id)) hotels.set(booking.hotel.id,booking.hotel); });

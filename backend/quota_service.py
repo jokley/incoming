@@ -282,6 +282,7 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
     if errors:
         raise QuotaGenderValidationError(errors)
     athletes = {}
+    operative_athletes = {}
     officials = {}
     assigned = {}
     keys = set()
@@ -289,7 +290,9 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
         keys.add(key)
         if (person.get('function') or '').strip().lower() == 'athlete':
             athletes[key] = athletes.get(key, 0) + 1
-        else:
+            if person.get('accommodationRequirement') != 'NO_DISPO':
+                operative_athletes[key] = operative_athletes.get(key, 0) + 1
+        elif operational_athletes is None or person.get('accommodationRequirement') != 'NO_DISPO':
             officials[key] = officials.get(key, 0) + 1
     for person, key in _distinct_memberships(assigned_people, people):
         keys.add(key)
@@ -299,7 +302,7 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
     rows = []
     for nation, discipline, gender in sorted(keys):
         key = (nation, discipline, gender)
-        athlete_basis = athletes.get(key, 0) if operational_athletes is None else operational_athletes.get(key, athletes.get(key, 0))
+        athlete_basis = athletes.get(key, 0) if operational_athletes is None else operational_athletes.get(key, operative_athletes.get(key, 0))
         official_quota = compute_official_quota(athlete_basis, rules['officials']['allowance'])
         single_basis = official_quota if operational_athletes is None else min(officials.get(key, 0), official_quota)
         rows.append({
@@ -319,7 +322,7 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
             'quotaExemptSingleRooms': 0,
         })
     if operational_athletes is not None:
-        for row in rows:row['expectedAthletes']=operational_athletes.get((row['nationCode'],row['discipline'],row['gender']),row['athletesEntered'])
+        for row in rows:row['expectedAthletes']=operational_athletes.get((row['nationCode'],row['discipline'],row['gender']),operative_athletes.get((row['nationCode'],row['discipline'],row['gender']),0))
     capacities = {(r['nationCode'], r['discipline'], r['gender']): r['singleRoomsAllowed'] for r in rows}
     allocation = allocate_single_rooms(assigned_people, capacities, people)
     for row in rows:

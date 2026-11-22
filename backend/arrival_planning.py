@@ -7,6 +7,7 @@ from collections import defaultdict
 import hashlib
 import json
 
+from accommodation_requirements import NO_ACCOMMODATION
 from accommodation_scope import accommodation_event_id, event_query
 from competitions import quota_disciplines, competition_athlete_family
 from imports.normalization import canonical_fis_code
@@ -114,34 +115,39 @@ def provisional_selection(people, event, entry_rows, booked):
         key = (person.nation_code, disciplines[0], gender) if len(disciplines)==1 and len(families)==1 and gender in {'M','W'} and all(c.quota_discipline and competition_athlete_family(c) for c in person.competitions) else (person.nation_code,None,None)
         groups[key].append(identity)
     result = {}
+    booked_ids = {str(identity) for identity in booked}
     for key, ids in groups.items():
+        retained = set(ids) & booked_ids
+        skipped = {identity for identity in ids if by_id[identity].accommodation_requirement == 'NO_DISPO'}
+        eligible_ids = set(ids) - (skipped - retained)
         limit=athlete_housing_limit(json.loads(event.quota_rules_json or '{}'),key[1])
         reasons = []
         if not all(key):
             reasons.append('Keine eindeutige Event-Group-/Gender-Zuordnung; Unterkunftsbedarf klären.')
-        if any(i not in provenance for i in ids):
+        if any(i not in provenance for i in eligible_ids):
             reasons.append('Keine aktuelle bestätigte Importreihenfolge für alle Personen nachweisbar.')
-        positions = {i:min(provenance[i]) for i in ids if i in provenance}
+        positions = {i:min(provenance[i]) for i in eligible_ids if i in provenance}
         if len(set(positions.values())) != len(positions):
             reasons.append('Importreihenfolge im Planungsbereich nicht eindeutig.')
-        ordered = sorted(ids, key=lambda i:positions.get(i, 0))
-        eligible = {i for i in ids if i in champions and i in provenance}
+        ordered = sorted(eligible_ids, key=lambda i: positions.get(i, 0))
+        eligible = eligible_ids & champions & provenance.keys()
         regular = [i for i in ordered if i not in eligible]
         automatic = set(regular[:limit]) | eligible
-        retained = set(ids) & {str(i) for i in booked}
         # Existing regular bookings consume planned regular places. Do not add
         # new tasks beyond the configured total for an accommodated team.
         selected = retained | eligible
         slots = max(0, limit - len(retained - eligible))
         selected.update([i for i in regular if i not in retained][:slots])
         warnings = []
+        if retained & skipped:
+            warnings.append('Nicht einplanen steht im Konflikt mit einer bestehenden Buchung. Die Buchung bleibt erhalten.')
         if retained - automatic:
             warnings.append('Bestehende Buchungen weichen von der automatischen Listenauswahl ab; Bestand bleibt erhalten.')
         if len(retained - eligible) > limit:
             warnings.append('Mehr reguläre Personen gebucht als vorläufig vorgesehen; Unterkunftsbestand klären.')
         result[key] = dict(selectedPersonIds=sorted(selected) if not reasons else [],
             provisionalPersonIds=sorted(selected-retained) if not reasons else [],
-            excludedPersonIds=sorted(set(ids)-selected) if not reasons else [],
+            excludedPersonIds=sorted(set(ids)-selected if not reasons else skipped-retained),
             selectedCount=len(selected) if not reasons else None,
             # Retained bookings are physical stock, not extra regular quota slots.
             quotaAthleteCount=min(len(selected-eligible),limit)+len(eligible) if not reasons else None,
@@ -252,7 +258,7 @@ def project_import_people(people, context, nation=None):
         ids=person.get('competitionIds',[])
         records.append(SimpleNamespace(id=person.get('existingAthleteId') or 'preview:'+str(person.get('matchKey',index)),event_id=context.event_id,competitor_id=person.get('competitorId'),
             nation_code=person.get('nationCode'),function=person.get('function'),firstname=person.get('firstname',''),lastname=person.get('lastname',''),
-            gender=person.get('gender'),fis_code=person.get('fisCode'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
+            gender=person.get('gender'),fis_code=person.get('fisCode'),accommodation_requirement=person.get('accommodationRequirement'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
             competitions=[context.competitions_by_id[int(cid)] for cid in ids if str(cid).isdecimal() and int(cid) in context.competitions_by_id]))
     return project(nation,people_override=records,entry_rows=people)
 
@@ -278,10 +284,10 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
         for person in context.athletes:
             if session.nation and person.nation_code!=session.nation:continue
             record=dict(personId=person.id,matchKey=person.fis_code or person.competitor_id or next(iter(sorted(person_keys(person))),str(person.id)),nationCode=person.nation_code,function=person.function,
-                gender=person.gender,quotaDisciplines=quota_disciplines(person.competitions),singleRoomQuotaExemptReason=person.single_room_quota_exempt_reason)
+                gender=person.gender,quotaDisciplines=quota_disciplines(person.competitions),accommodationRequirement=person.accommodation_requirement,singleRoomQuotaExemptReason=person.single_room_quota_exempt_reason)
             roster.append(record)
             groups=projected_approval_groups(person.single_room_decision,person,roster=context.athletes)
-            demands.append(dict(record,countsAsSingle=any(m.room_booking.counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement!='NO_ROOM' and str(person.room_type or '').strip().lower()=='single'),
+            demands.append(dict(record,countsAsSingle=any(m.room_booking.counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_ACCOMMODATION and str(person.room_type or '').strip().lower()=='single'),
                 singleRoomStatus=person.single_room_status,approvedQuotaContexts=[dict(nationCode=n,discipline=d,gender=g) for n,d,g in groups]))
     else:
         allocations={item['personKey']:item for check in preview.get('quotaChecks',[]) for item in check.get('singleRoomAllocations',[])}
@@ -312,7 +318,7 @@ def operational_quota_projection(overview, roster, demands, rules, *, event=None
     errors=quota_gender_errors(roster)
     if errors:return dict(rows=[],conflict=True,reasons=[e['message'] for e in errors])
     excluded={i for row in overview['rows'] for i in row['replacedPersonIds']}
-    demands=[p for p in demands if str(p.get('existingAthleteId') or p.get('personId') or 'preview:'+str(p.get('matchKey'))) not in excluded]
+    demands=[p for p in demands if p.get('accommodationRequirement') != 'NO_DISPO' and str(p.get('existingAthleteId') or p.get('personId') or 'preview:'+str(p.get('matchKey'))) not in excluded]
     bases=operational_athlete_basis(overview)
     official=evaluate_quota_usage(roster,demands,rules)
     operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True,include_allocations=True)

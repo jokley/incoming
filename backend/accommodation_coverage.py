@@ -5,6 +5,7 @@ otherwise valid segments contribute to diagnostic coverage, but conflicts always
 override coverage status. Invalid/out-of-stay segments are never clipped.
 """
 from datetime import date, datetime
+from accommodation_requirements import NO_ACCOMMODATION
 
 
 def booking_intervals_overlap(start_a, end_a, start_b, end_b):
@@ -27,15 +28,15 @@ def _interval(start, end):
 def person_accommodation_coverage(arrival, departure, bookings, requirement='REQUIRED'):
     """Calculate one person's coverage from all their bookings, without writes."""
     start, end = _date(arrival), _date(departure)
-    if requirement == 'NO_ROOM':
+    if requirement in NO_ACCOMMODATION:
         records = list(bookings)
         if not records:
             return {'overallInterval': _interval(start, end), 'segments': [], 'coveredIntervals': [],
                     'openIntervals': [], 'conflicts': [], 'coverageStatus': 'NO_ROOM',
-                    'accommodationRequirement': 'NO_ROOM'}
+                    'accommodationRequirement': requirement}
         diagnostic = person_accommodation_coverage(arrival, departure, records)
-        diagnostic.update(coverageStatus='CONFLICT', openIntervals=[], accommodationRequirement='NO_ROOM')
-        diagnostic['conflicts'].append({'code': 'NO_ROOM_HAS_BOOKINGS', 'bookingIds': [str(b.id) for b in records]})
+        diagnostic.update(coverageStatus='CONFLICT', openIntervals=[], accommodationRequirement=requirement)
+        diagnostic['conflicts'].append({'code': f'{requirement}_HAS_BOOKINGS', 'bookingIds': [str(b.id) for b in records]})
         return diagnostic
     overall_valid = bool(start and end and start < end)
     conflicts, segments, candidates, dated = [], [], [], []
@@ -144,7 +145,7 @@ def person_disposition_status(person, coverage, bookings, allocation, *, room_re
         segments.append({**source, 'capacity': capacity, 'occupantCount': count,
                          'physicalUsage': physical, 'comparison': comparison})
     mismatch = any(s['comparison'] == 'MISMATCH' for s in segments)
-    preference = ('NOT_APPLICABLE' if person.get('accommodationRequirement') == 'NO_ROOM' else
+    preference = ('NOT_APPLICABLE' if person.get('accommodationRequirement') in NO_ACCOMMODATION else
                   'UNASSIGNED' if not segments else 'MISMATCH' if mismatch else
                   'MATCH' if coverage['coverageStatus'] == 'FULLY_ASSIGNED' and
                   all(s['comparison'] == 'MATCH' for s in segments) else 'UNKNOWN')
@@ -188,7 +189,7 @@ def summarize_person_disposition(people,excluded_accommodation_ids=()):
     statuses = [p['accommodation']['coverageStatus'] for p in accommodation_people]
     pending = [p for p in people if p['singleRoom']['status'] == 'PENDING']
     return {'peopleTotal': len(people),
-            'accommodationPeopleRequired': sum(p['accommodationRequirement'] != 'NO_ROOM' for p in accommodation_people),
+            'accommodationPeopleRequired': sum(p['accommodationRequirement'] not in NO_ACCOMMODATION for p in accommodation_people),
             'fullyAssigned': statuses.count('FULLY_ASSIGNED'), 'unassigned': statuses.count('UNASSIGNED'),
             'partiallyAssigned': statuses.count('PARTIALLY_ASSIGNED'), 'accommodationConflicts': statuses.count('CONFLICT'),
             'roomPreferenceMismatches': sum(p['roomPreference']['hasMismatch'] for p in people),

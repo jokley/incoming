@@ -1,3 +1,4 @@
+import { requirementLabel } from '../services/accommodationRequirement';
 import {Tooltip} from '@mui/material';
 import type {NNPlanningControls} from '../types';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
@@ -24,7 +25,7 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
   {issues.map((issue,index)=><p key={index} className="text-sm text-[var(--ops-warning)]">{issue.message}<span className="block text-xs text-[var(--ops-text-muted)]">{issue.source}{issue.row?` · Zeile ${issue.row}`:''}</span></p>)}
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Person"/><dl className="grid gap-2 sm:grid-cols-2"><Fact label="Funktion">{value(person.function)}</Fact><Fact label="Geschlecht">{value(person.gender)}</Fact></dl><h4 className="text-sm font-bold">Wettbewerbe</h4><ul className="text-sm">{row?.competitions.map(c=><li key={c.id}>{c.name}</li>)}</ul></ContentCard>
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><dl className="grid gap-2 sm:grid-cols-2">
-   <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':'Unterkunft benötigt'}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
+   <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':requirementLabel(person.accommodationRequirement)}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
    <Fact label="Zimmerpartner">{partners.length?[...new Set(partners)].join('; '):person.sharedWithName||(/^double/i.test(person.roomType??'')?'Zimmerpartner fehlt':'Nicht angegeben')}</Fact>
    <Fact label="Aufenthalt">{value(person.arrivalDate)} – {value(person.departureDate)}</Fact><Fact label="Unterkunftstarif">{person.accommodationRateCategory==='SPECIAL'?'Sondertarif':'Standard'}</Fact><Fact label="EZ-Status">{entitlement(person.singleRoomEntitlement)}{person.singleRoomQuotaExemptReason?` · ${person.singleRoomQuotaExemptReason==='WORLD_CHAMPION'?'Weltmeister-EZ-Ausnahme':'EZ-Ausnahme'}`:''}</Fact>
    {row?.stayWindow?.eventStart&&<Fact label="Eventzeitraum / zulässige An- und Abreise">{row.stayWindow.eventStart} – {row.stayWindow.eventEnd}<br/>{row.stayWindow.allowedStart} – {row.stayWindow.allowedEnd}</Fact>}

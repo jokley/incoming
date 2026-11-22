@@ -1,3 +1,4 @@
+import { requiresAccommodation } from '../services/accommodationRequirement.ts';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import { AccommodationRequirementField } from './AccommodationRequirementField';
 import type { AccommodationRequirement } from '../types';
@@ -317,7 +318,7 @@ export function Athletes() {
     function: personFunctionOptions(athletes),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
-      { value: 'open', label: 'Offen', count: athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
+      { value: 'open', label: 'Offen', count: athletes.filter(athlete => requiresAccommodation(athlete) && personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
       { value: 'no-room', label: 'Kein Zimmer benötigt', count: athletes.filter(athlete=>athlete.accommodationRequirement==='NO_ROOM').length },
       { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
@@ -330,8 +331,8 @@ export function Athletes() {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
-    const statusMatches = !filters.status || (filters.status === 'open' ? athlete.accommodationRequirement!=='NO_ROOM' && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
-    const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || athlete.accommodationRequirement!=='NO_ROOM'));
+    const statusMatches = !filters.status || (filters.status === 'open' ? requiresAccommodation(athlete) && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
+    const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || requiresAccommodation(athlete)));
     const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);

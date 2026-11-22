@@ -17,7 +17,7 @@ def operational_test_context(events, monkeypatch):
     monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(events[0].id))
 
 
-def upload(event,codes=('9300953','9300954'),changed=None,session_id=None,room_data=None):
+def upload(event,codes=('9300953','9300954'),changed=None,session_id=None,room_data=None,*,valid=True):
     people=[dict(Firstname='Person'+str(i),Lastname='Snapshot',Nationcode='JPN',Function='Athlete',Gender='M',
         Fiscode=c,**{'Competitorid/Staff ID':'s'+c},WSC_PGS_M_6170='YES',Room_type='Double shared',Arrival_date='03.03.2027',Departure_date='09.03.2027') for i,c in enumerate(codes)]
     if changed:changed(people)
@@ -25,7 +25,7 @@ def upload(event,codes=('9300953','9300954'),changed=None,session_id=None,room_d
     pd.DataFrame(people,columns=list(dict.fromkeys(key for row in people for key in row)) if people else ['Firstname','Lastname','Nationcode','Function','Gender','Fiscode','Competitorid/Staff ID','WSC_PGS_M_6170','Room_type','Arrival_date','Departure_date']).to_excel(a,index=False,sheet_name='Data');(pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
     response=app.test_client().post('/api/import/fis/preview',data=dict(eventId=str(event.id),createSession='true',**({'sessionId':str(session_id)} if session_id else {}),entriesList=(a,'entries.xlsx'),roomListDetailed=(b,'rooms.xlsx')))
     assert response.status_code==200,response.json
-    assert response.json['isValid'],response.json
+    assert response.json['isValid'] is valid,response.json
     return response.json
 
 
@@ -735,3 +735,115 @@ def test_booked_athlete_overhang_does_not_raise_regular_official_entitlement(eve
     quotas=app.test_client().get('/api/fis/official-quotas?nationCode=JPN').json
     assert quotas[0]['officialQuota']==(limit+2 if limit else 0) and quotas[0]['expectedAthletes']==limit
     assert RoomBooking.query.count()==RoomBookingOccupant.query.count()==5
+
+
+def test_no_dispo_is_staged_persisted_and_releases_the_next_regular_place(events):
+    from arrival_planning import project
+    event = events[0]
+    codes = tuple(str(9400000 + index) for index in range(5))
+    def add_officials(rows):
+        rows.extend({**rows[0], 'Function': 'Coach', 'Firstname': f'Official{index}',
+                     'Fiscode': str(9400100 + index), 'Competitorid/Staff ID': f'official-{index}'}
+                    for index in range(2))
+
+    pending = upload(event, codes, changed=add_officials)
+    sid = pending['session']['id']
+    client = app.test_client()
+    staged = client.patch(f'/api/import/sessions/{sid}/accommodation-requirements/{codes[0]}',
+                          json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged.status_code == 200, staged.json
+    row = staged.json['nnPlanning']['rows'][0]
+    assert set(row['selectedPersonIds']) == {'preview:' + code for code in codes[1:]}
+    assert 'preview:' + codes[0] in row['replacedPersonIds']
+    staged_official = client.patch(f'/api/import/sessions/{sid}/accommodation-requirements/9400100',
+                                   json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged_official.status_code == 200, staged_official.json
+    quota = staged_official.json['nnPlanning']['operationalQuota']['rows'][0]
+    assert (quota['athletesEntered'], quota['expectedAthletes'], quota['registeredOfficials']) == (5, 4, 1)
+
+    run(pending, event)
+    person = Athlete.query.filter_by(fis_code=codes[0]).one()
+    assert (person.accommodation_requirement, person.accommodation_requirement_source) == ('NO_DISPO', 'MANUAL')
+    assert person.competitions
+    assert Athlete.query.count() == 7
+    assert str(person.id) in project('JPN')['rows'][0]['replacedPersonIds']
+    official = Athlete.query.filter_by(fis_code='9400100').one()
+    from app import _build_room_booking_units
+    units, _ = _build_room_booking_units()
+    pending_ids = {p['athleteId'] for unit in units for p in unit['occupants']}
+    assert str(person.id) not in pending_ids
+    assert str(official.id) not in pending_ids
+    repeated = upload(event, tuple(reversed(codes)), session_id=sid, changed=add_officials)
+    assert next(p for p in repeated['people'] if p['fisCode'] == codes[0])['accommodationRequirement'] == 'NO_DISPO'
+    run(repeated, event)
+    assert person.accommodation_requirement == 'NO_DISPO'
+
+
+def test_no_dispo_cannot_replace_an_existing_booking(events):
+    event = events[0]
+    pending = upload(event)
+    run(pending, event)
+    person = Athlete.query.filter_by(fis_code='9300953').one()
+    booking([person])
+    corrected = upload(event, ('9300954', '9300953'), session_id=pending['session']['id'])
+    response = app.test_client().patch(
+        f"/api/import/sessions/{corrected['session']['id']}/accommodation-requirements/9300953",
+        json={'accommodationRequirement': 'NO_DISPO'})
+    assert response.status_code == 409, response.json
+    assert RoomBookingOccupant.query.filter_by(athlete_id=person.id).count() == 1
+    assert person.accommodation_requirement != 'NO_DISPO'
+
+
+@pytest.mark.parametrize('legacy_approved', [False, True])
+@pytest.mark.parametrize('shape', ['room_gap', 'source_gap', 'partner'])
+def test_unrepresentable_stays_block_approval_and_confirm(events, monkeypatch, shape, legacy_approved):
+    import accommodation_requirements
+
+    event = events[0]
+    def entry_dates(rows):
+        rows[0]['Departure_date'] = '13.03.2027' if shape == 'room_gap' else '06.03.2027'
+        rows[1]['Arrival_date'] = '06.03.2027'
+        rows[1]['Departure_date'] = '13.03.2027'
+
+    def room(start, end, partner=None):
+        return {'Firstname': 'Person0', 'Lastname': 'Snapshot', 'Nationcode': 'JPN',
+                'Room_type': 'Double shared' if partner else 'Double',
+                'Arrival_date': start, 'Departure_date': end, 'Shared with Name': partner}
+
+    if shape == 'room_gap':
+        rooms = [room('03.03.2027', '06.03.2027'), room('09.03.2027', '13.03.2027')]
+    elif shape == 'source_gap':
+        rooms = [room('09.03.2027', '13.03.2027')]
+    else:
+        rooms = [room('06.03.2027', '13.03.2027', 'Snapshot, Person1')]
+
+    if legacy_approved:
+        # Simulate a version reviewed before enforcement, then use real Confirm.
+        with monkeypatch.context() as previous:
+            previous.setattr(accommodation_requirements, '_stay_review', lambda *_: None)
+            payload = upload(event, changed=entry_dates, room_data=rooms)
+            approved = review(payload, event)
+            assert approved.status_code == 200, approved.json
+    else:
+        payload = upload(event, changed=entry_dates, room_data=rooms, valid=False)
+        expected = ('ACCOMMODATION_REQUIREMENT_PARTNER_STAY' if shape == 'partner'
+                    else 'ACCOMMODATION_REQUIREMENT_SEPARATE_STAYS')
+        assert any(error['code'] == expected for error in payload['errors'])
+        assert review(payload, event).status_code == 409
+
+    if shape == 'partner':
+        assert payload['rooms'][0]['person2Key'] == '9300954'
+        stays = {p['fisCode']: (p['arrivalDate'], p['departureDate']) for p in payload['people']}
+        assert stays == {'9300953': ('2027-03-03', '2027-03-06'), '9300954': ('2027-03-06', '2027-03-13')}
+        assert payload['rooms'][0]['checkInDate'] == '2027-03-06'
+        assert payload['rooms'][0]['checkOutDate'] == '2027-03-13'
+
+    response = app.test_client().post(
+        f"/api/import/sessions/{payload['session']['id']}/import?eventId={event.id}",
+        json={'versionId': payload['session']['currentVersionId']})
+    assert response.status_code == 409, response.json
+    if legacy_approved:
+        assert response.json['error'] == 'IMPORT_VALIDATION_FAILED'
+    assert Athlete.query.count() == 0
+    assert RoomBooking.query.count() == 0
+    assert ImportRun.query.filter_by(import_type='fis_confirm').count() == 0

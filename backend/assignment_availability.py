@@ -1,4 +1,5 @@
 """Read-only, request-local accommodation eligibility; never writes allocations."""
+from accommodation_requirements import NO_ACCOMMODATION
 from accommodation_scope import event_query
 from datetime import date
 from types import SimpleNamespace
@@ -85,7 +86,7 @@ def project(planning, needs, population_ids, loaded=None):
         for identity in ids:
             person = people.get(identity)
             coverage = (person or {}).get('accommodationCoverage', {})
-            valid = valid and bool(person and person.get('accommodationRequirement') != 'NO_ROOM' and coverage.get('coverageStatus') != 'CONFLICT' and interval in coverage.get('openIntervals', []))
+            valid = valid and bool(person and person.get('accommodationRequirement') not in NO_ACCOMMODATION and coverage.get('coverageStatus') != 'CONFLICT' and interval in coverage.get('openIntervals', []))
             marker = (identity, start, end)
             if marker in seen:
                 raise ValueError('Doppelter offener Zeitraum')
@@ -228,7 +229,7 @@ def project(planning, needs, population_ids, loaded=None):
                     accommodated.update((identity, key) for identity in ids)
                     break
         required = {(identity, key) for key, ids, *_ in validated for identity in ids
-                    if identity in people and people[identity].get('accommodationRequirement') != 'NO_ROOM'}
+                    if identity in people and people[identity].get('accommodationRequirement') not in NO_ACCOMMODATION}
         total_people = {identity for identity, _ in required}
         complete_people = {identity for identity in total_people if all(pair in accommodated for pair in required if pair[0] == identity)}
         count = len(complete_people)

@@ -3,6 +3,7 @@
 AccommodationEvent end_date is an inclusive event day. allowedEnd=end+1 is
 an exclusive checkout boundary. No tariff, approval or import evidence changes.
 """
+from accommodation_requirements import NO_ACCOMMODATION
 from collections import defaultdict
 from datetime import date, timedelta
 import re
@@ -49,7 +50,7 @@ def assess_stay(arrival, departure, competitions, schedule, requirement='REQUIRE
                   arrivalDate=start.isoformat() if start else None,
                   departureDate=end.isoformat() if end else None,
                   nightsBefore=None, nightsAfter=None, outsideNights=None, reason=None)
-    if requirement == 'NO_ROOM':
+    if requirement in NO_ACCOMMODATION:
         return {**result, 'reason': 'NO_ROOM'}
     if not start or not end or start >= end:
         return {**result, 'reason': 'STAY_DATES_UNCLEAR'}
