@@ -86,7 +86,7 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
  const page=await browser.newPage();const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const people=[['snow','Snow',['Snowboard'],['Configured Snow Group']],['ski','Ski',['Freestyle'],['Configured Ski Group','Second Ski Group']],['both','Both',['Snowboard','Freestyle'],['Configured Snow Group','Configured Ski Group']]].map(([matchKey,firstname,athleteQuotaFamilies,quotaDisciplines],i)=>({matchKey,firstname,athleteQuotaFamilies,quotaDisciplines,lastname:'Synthetic',nationCode:'AUT',rowNumber:i+2,function:'Athlete',gender:'M',roomType:'Double shared',accommodationRequirement:'REQUIRED',accommodationRateCategory:'STANDARD',competitionMemberships:[]}));
- const rooms=[{sourceRowKey:'joint',rowNumber:2,person1Key:'snow',person1Name:'Snow Synthetic',person2Key:'ski',person2Name:'Ski Synthetic',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2},{versionId:20,version:2,row:2}]},{sourceRowKey:'unknown',rowNumber:3,person1Key:'both',person1Name:'Both Synthetic',person2Key:null,roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:3}]}];
+ const rooms=[{sourceRowKey:'joint',rowNumber:2,checkInDate:'2027-03-02',checkOutDate:'2027-03-04',person1Key:'snow',person1Name:'Snow Synthetic',person2Key:'ski',person2Name:'Ski Synthetic',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2},{versionId:20,version:2,row:2}]},{sourceRowKey:'unknown',rowNumber:3,person1Key:'both',person1Name:'Both Synthetic',person2Key:null,roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:3}]}];
  const preview={eventId:'1',people,rooms,errors:[{code:'ROOM_PERSON_NOT_FOUND',message:'Unresolved original Room List row',details:{row:9}}],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:false,submissionSources:{Snowboard:10,Freestyle:20},replacementScope:{kind:'SPORT_FAMILY'},changePlan:{digest:'frozen-plan',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
  const session={id:'1',nation:'AUT',status:'PROFESSIONALLY_REVIEWED',errors:1,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,submissions:[{family:'Snowboard',versionId:'10',people:2,status:'DRAFT'},{family:'Freestyle',versionId:'20',people:2,status:'DRAFT'}],importControl:{people:people.map(p=>({personKey:p.matchKey,competitions:[],quotaContexts:[]})),issues:[],competitions:[]}};
  const event={id:'1',name:'Synthetic grouping event',active:true,year:2027,planningPeriods:[]};
@@ -94,6 +94,7 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname.slice(4);requests.push(`${route.request().method()} ${path}`);const bodies:Record<string,unknown>={'/auth/me':{username:'local-admin',displayName:'local-admin',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session};await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});});
  await page.goto(`${origin}/import?sessionId=1`);
  const grouping=page.getByRole('group',{name:'Gruppieren:'});await grouping.waitFor();
+ await page.getByText(/Zimmerbedarf \(vorläufig\) · 02\.03\.: 1 gesamt · 1 DZ · 0 EZ/).waitFor();
  assert.equal(await grouping.getByRole('button',{name:'Aus',exact:true}).getAttribute('aria-pressed'),'true');
  const initialRequests=[...requests];await grouping.getByRole('button',{name:'Ein',exact:true}).click();
  const card=page;
@@ -322,4 +323,48 @@ test('event housing editor uses one dynamic field per group and the existing rev
  assert.deepEqual(writes[2].data.config,standardProposal);
  assert.equal('sportEntryRules' in writes[2].data.config,false);
  assert.deepEqual(errors,[]);
+});
+
+test('analytics switches between event, saved Excel drafts, imported people and legacy live data', async t => {
+ const root=fileURLToPath(new URL('../',import.meta.url));
+ const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',
+   cacheDir:await mkdtemp(`${tmpdir()}/incoming-excel-analytics-`),
+   define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},
+   server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
+ t.after(()=>vite.close());await vite.listen();
+ const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
+ const page=await browser.newPage({viewport:{width:1440,height:1050}});
+ const event={id:'1',name:'Synthetic analytics',active:true};
+ const stay={arrivalDate:'2027-03-02',departureDate:'2027-03-04',accommodationRequirement:'REQUIRED'};
+ const people=[{...stay,id:'p',firstname:'One',lastname:'Person',nationCode:'POL',roomType:'Double'}];
+ await page.route('**/api/**',async route=>{
+  const path=new URL(route.request().url()).pathname.slice(4);
+  const bodies:Record<string,unknown>={
+   '/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},
+   '/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},
+   '/hotels':[{id:'h',name:'Test',roomInventories:[{id:'i',roomType:{id:'dz',name:'DZ',maxPersons:2},roomCount:4,availableFrom:'2027-03-02',availableUntil:'2027-03-03'}]}],
+   '/events':[{id:'plan',discipline:'Cross',startDate:'2027-03-02',endDate:'2027-03-03',personDemand:6}],
+   '/athletes':people,'/room-bookings/grouped':[],
+   '/athletes/arrival-planning':{rows:[]},
+   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'}],rooms:[],excludedIds:[],provisional:false}],
+  };
+  await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{}});
+ });
+ await page.goto(`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}/analytics?source=event`);
+ const daily=page.getByRole('table',{name:'Tageswerte'});
+ await daily.getByRole('row',{name:/EZ-Bedarf \(Event\)/}).waitFor();
+ await page.getByRole('button',{name:'Excel',exact:true}).click();
+ await daily.getByRole('row',{name:/Reserve EZ/}).waitFor();
+ assert.match(await daily.getByRole('row',{name:/Reserve EZ/}).innerText(),/-1/);
+ assert.match(await daily.getByRole('row',{name:/Reserve gesamt/}).innerText(),/\+3/);
+ await page.getByText(/Vorläufige Excel-Prognose/).waitFor();
+ await page.getByRole('button',{name:'Import',exact:true}).click();
+ await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).waitFor();
+ assert.match(await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).innerText(),/1/);
+ await page.getByRole('button',{name:'Live',exact:true}).click();
+ await daily.getByRole('row',{name:/DZ-Bedarf \(Live\)/}).waitFor();
+ await page.getByRole('tab',{name:/Hotelrisiken/}).click();
+ await page.getByText('Risiko über den Zeitraum',{exact:true}).waitFor();
+ await page.getByRole('tab',{name:/Nationen & Bedarf/}).click();
+ await page.getByRole('heading',{name:'Nationen & Bedarfsstruktur',exact:true}).waitFor();
 });

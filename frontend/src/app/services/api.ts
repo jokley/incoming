@@ -1,3 +1,4 @@
+import type { ExcelDemand } from './planningCalculations';
 import { DatabaseGeneration } from './databaseGeneration';
 import { EventRequestScope } from '../events/eventRequestScope';
 import type { EventCapabilities } from '../events/activeEventStore';
@@ -629,6 +630,10 @@ class ApiService {
   // ============================================================================
   // ROOM ASSIGNMENTS
   // ============================================================================
+
+  async getImportDemand(): Promise<ExcelDemand[]> {
+    return this.request<ExcelDemand[]>('/analytics/import-demand');
+  }
 
   async getRoomAssignments(): Promise<RoomBooking[]> {
     if (USE_MOCK_DATA) {

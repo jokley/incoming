@@ -34,3 +34,48 @@ test('external bookings contribute no local rooms or beds',async t=>{
   assert.ok(days.every(day=>day.assignedRooms===0 && day.assignedBeds===0));
   assert.deepEqual(buildHotelRiskRows([external],[booking]),[]);
 });
+
+test('concrete demand deduplicates confirmed pairs and booking occupants and keeps real gaps', async t => {
+  const server = await createServer({ configFile: false, envFile: false, logLevel: 'silent',
+    server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom' });
+  t.after(() => server.close());
+  const { concreteRoomDemand, excelDemandRecords, buildCapacityTimeline } =
+    await server.ssrLoadModule('/src/app/services/planningCalculations.ts');
+  const people = [
+    { matchKey: 'a', existingAthleteId: 1, roomType: 'Double shared' },
+    { matchKey: 'b', roomType: 'Double shared' },
+    { matchKey: 'ez', roomType: 'Single', arrivalDate: '2027-03-02', departureDate: '2027-03-04' },
+    { matchKey: 'skip', accommodationRequirement: 'NO_DISPO', roomType: 'Single' },
+    { matchKey: 'nr', accommodationRequirement: 'NO_ROOM', roomType: 'Single' },
+    { matchKey: 'bench', roomType: 'Single' },
+    { matchKey: 'unknown', arrivalDate: '2027-03-02', departureDate: '2027-03-03' },
+  ];
+  const pair = { person1Key: 'a', person2Key: 'b', roomType: 'Double shared',
+    checkInDate: '2027-03-02', checkOutDate: '2027-03-03' };
+  const rooms = [pair, pair, { ...pair, checkInDate: '2027-03-04', checkOutDate: '2027-03-05' }];
+  const dz = { id: 'dz', name: 'DZ', maxPersons: 2 };
+  const ez = { id: 'ez', name: 'EZ', maxPersons: 1 };
+  const hotel = { id: 'h', name: 'Hotel', roomInventories: [
+    { id: 'i', roomType: dz, roomCount: 3, availableFrom: '2027-03-02', availableUntil: '2027-03-05' },
+    { id: 'j', roomType: ez, roomCount: 1, availableFrom: '2027-03-03', availableUntil: '2027-03-04' },
+  ] };
+  const booking = { id: 'one', hotel, roomType: dz, countsAsSingle: true,
+    checkInDate: '2027-03-04', checkOutDate: '2027-03-05', occupants: [{ athlete: { id: '1' } }] };
+  const records = excelDemandRecords(people, rooms, ['preview:bench']);
+  const demand = concreteRoomDemand(records, [booking, booking]);
+  assert.deepEqual(demand.days.map(({ ez, dz, beds, blocked, unknown }: Record<string, number>) =>
+    [ez, dz, beds, blocked, unknown]), [[1, 1, 4, 0, 1], [1, 0, 1, 0, 0], [0, 2, 2, 1, 0], [0, 0, 0, 0, 0]]);
+  assert.equal(demand.provisional, true);
+  const [first, second] = buildCapacityTimeline({ hotels: [hotel], events: [], athletes: [], bookings: [booking] }, demand);
+  assert.equal(first.liveRoomReserve, 1);
+  assert.equal(first.liveEzReserve, -1);
+  assert.equal(second.liveEzReserve, 0);
+  assert.equal(second.demandDz, 0);
+  const joining = concreteRoomDemand(records, [{ ...booking, countsAsSingle: false }]);
+  assert.equal(joining.days[2].dz, 1);
+  const mismatched = concreteRoomDemand(excelDemandRecords([
+    people[0], { ...people[1], arrivalDate: '2027-03-03', departureDate: '2027-03-04' },
+  ], [pair], []), []);
+  assert.deepEqual(mismatched.days.map(({ beds }: { beds: number }) => beds), [1, 1, 0]);
+  assert.equal(mismatched.provisional, true);
+});

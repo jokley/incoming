@@ -847,3 +847,30 @@ def test_unrepresentable_stays_block_approval_and_confirm(events, monkeypatch, s
     assert Athlete.query.count() == 0
     assert RoomBooking.query.count() == 0
     assert ImportRun.query.filter_by(import_type='fis_confirm').count() == 0
+
+
+def test_excel_analytics_reads_current_draft_before_confirm_without_writes(events):
+    first, other = events
+    upload(first, ('9300953', '9300954'))
+    draft = upload(first, ('9300954', '9300955'))
+    session_id = draft['session']['id']
+    client = app.test_client()
+    staged = client.patch(f'/api/import/sessions/{session_id}/accommodation-requirements/9300955',
+                          json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged.status_code == 200, staged.json
+    version = db.session.get(ImportSessionVersion, int(draft['session']['currentVersionId']))
+    before = version.preview_json
+    with patch.dict(app.config, OPERATIONAL_EVENT_ID=str(other.id)):
+        assert client.get('/api/analytics/import-demand').json == []
+    response = client.get('/api/analytics/import-demand')
+    assert response.status_code == 200, response.json
+    nation, = response.json
+    assert nation['nation'] == 'JPN'
+    people = {p['matchKey']: p for p in nation['people']}
+    assert set(people) == {'9300954', '9300955'}
+    assert people['9300954']['arrivalDate'] == '2027-03-03'
+    assert people['9300955']['accommodationRequirement'] == 'NO_DISPO'
+    assert 'preview:9300955' in nation['excludedIds']
+    assert Athlete.query.count() == 0
+    db.session.expire_all()
+    assert version.preview_json == before

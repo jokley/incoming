@@ -1,5 +1,6 @@
 import { requiresAccommodation } from './accommodationRequirement.ts';
 import type { Athlete, Event, Hotel, HotelRoomInventory, RoomBooking } from '../types.ts';
+import { explicitRoomRequest } from './assignmentPresentation.ts';
 import { bookingFreeCapacity } from './assignmentRoomUsage.ts';
 import { physicalSingleRoomUsageFromBookings } from './quotaEvaluation.ts';
 
@@ -20,7 +21,7 @@ export const inventoryCapacity = (items: HotelRoomInventory[] = []) => calculate
   0,
 ));
 
-export type DemandSource = 'event' | 'live';
+export type DemandSource = 'event' | 'excel' | 'import' | 'live';
 export type CapacityDay = {
   date: string; label: string; roomSupply: number; assignedRooms: number; freeRooms: number; plannedRooms: number; demandRooms: number;
   bedSupply: number; assignedBeds: number; freeBeds: number; plannedBeds: number; demandBeds: number;
@@ -88,9 +89,10 @@ export function hotelCapacityOnDay(hotel: Hotel, bookings: RoomBooking[], date: 
 }
 
 /** Shared capacity projection consumed by both Analytics and the Dashboard. */
-export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] }): CapacityDay[] {
+export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; athletes: Athlete[]; bookings: RoomBooking[] }, concrete?: ReturnType<typeof concreteRoomDemand>): CapacityDay[] {
   data={...data,hotels:data.hotels.filter(h=>h.accommodationType!=='EXTERNAL'),bookings:data.bookings.filter(b=>b.hotel?.accommodationType!=='EXTERNAL')};
-  const dates = [...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]), ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])), ...data.athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])), ...data.bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)])].filter(Boolean).sort();
+  const projected = new Map(concrete?.days.map(day => [day.date, day]));
+  const dates = [...projected.keys(), ...data.events.flatMap(event => [dayKey(event.startDate), dayKey(event.endDate)]), ...data.hotels.flatMap(hotel => (hotel.roomInventories || []).flatMap(item => [dayKey(item.availableFrom), dayKey(item.availableUntil)])), ...data.athletes.flatMap(athlete => (athlete.stays?.length ? athlete.stays : [athlete]).flatMap(stay => [dayKey(stay.arrivalDate), dayKey(stay.departureDate)])), ...data.bookings.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)])].filter(Boolean).sort();
   return (dates.length ? daysBetween(dates[0], dates.at(-1)!) : []).map(date => {
     const inventory = data.hotels.flatMap(hotel => hotel.roomInventories || []).filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
     const plans = data.events.filter(event => dayKey(event.startDate) <= date && dayKey(event.endDate) >= date).map(eventRoomPlan);
@@ -104,7 +106,20 @@ export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; 
     const assignedRooms = actual.reduce((sum,row)=>sum+row.occupiedRooms,0), assignedBeds = actual.reduce((sum,row)=>sum+row.occupiedBeds,0), assignedEz = physicalSingleRoomUsageFromBookings(activeBookings), assignedDz = Math.max(0, assignedBeds - assignedEz);
     const roomSupply = inventory.reduce((sum,item)=>sum+item.roomCount,0);
     const plannedEz = plans.reduce((sum, plan) => sum + plan.singleRooms, 0), plannedDz = plans.reduce((sum, plan) => sum + plan.doubleRooms, 0), freeRooms = actual.reduce((sum,row)=>sum+row.freeRooms,0), freeEz = freeRooms / 2, freeDz = freeRooms - freeEz;
-    return { date, label: new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }), roomSupply, bedSupply, ezSupply: assignedEz + freeEz, dzSupply: assignedDz + freeDz, plannedRooms, plannedBeds, plannedEz, plannedDz, demandRooms: livePlan.rooms, demandBeds: livePlan.beds, demandEz: livePlan.singleRooms, demandDz: livePlan.doubleRooms, assignedRooms, assignedBeds, assignedEz, assignedDz, freeRooms, freeBeds: actual.reduce((sum,row)=>sum+row.freeBeds,0), freeEz, freeDz, eventRoomReserve: roomSupply - plannedRooms, eventBedReserve: bedSupply - plannedBeds, eventEzReserve: supply.singleRooms - plannedEz, eventDzReserve: supply.doubleRooms - plannedDz, liveRoomReserve: roomSupply - livePlan.rooms, liveBedReserve: bedSupply - livePlan.beds, liveEzReserve: supply.singleRooms - livePlan.singleRooms, liveDzReserve: supply.doubleRooms - livePlan.doubleRooms };
+    const exact = projected.get(date);
+    const actualEz = inventory.filter(item => item.roomType.maxPersons === 1).reduce((sum, item) => sum + item.roomCount, 0);
+    const actualDz = inventory.filter(item => item.roomType.maxPersons === 2).reduce((sum, item) => sum + item.roomCount, 0);
+    const ezReserve = actualEz - (exact?.ez ?? 0), dzReserve = actualDz - (exact?.dz ?? 0);
+    const day = { date, label: new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }), roomSupply, bedSupply, ezSupply: assignedEz + freeEz, dzSupply: assignedDz + freeDz, plannedRooms, plannedBeds, plannedEz, plannedDz, demandRooms: livePlan.rooms, demandBeds: livePlan.beds, demandEz: livePlan.singleRooms, demandDz: livePlan.doubleRooms, assignedRooms, assignedBeds, assignedEz, assignedDz, freeRooms, freeBeds: actual.reduce((sum,row)=>sum+row.freeBeds,0), freeEz, freeDz, eventRoomReserve: roomSupply - plannedRooms, eventBedReserve: bedSupply - plannedBeds, eventEzReserve: supply.singleRooms - plannedEz, eventDzReserve: supply.doubleRooms - plannedDz, liveRoomReserve: roomSupply - livePlan.rooms, liveBedReserve: bedSupply - livePlan.beds, liveEzReserve: supply.singleRooms - livePlan.singleRooms, liveDzReserve: supply.doubleRooms - livePlan.doubleRooms };
+    if (!concrete) return day;
+    const bookedEz = activeBookings.filter(booking => booking.roomType?.maxPersons === 1).length;
+    const bookedDz = activeBookings.filter(booking => booking.roomType?.maxPersons === 2).length;
+    return { ...day, ezSupply: actualEz, dzSupply: actualDz, assignedEz: bookedEz, assignedDz: bookedDz,
+      freeEz: Math.max(0, actualEz - bookedEz), freeDz: Math.max(0, actualDz - bookedDz),
+      demandRooms: exact?.rooms ?? 0, demandBeds: exact?.beds ?? 0, demandEz: exact?.ez ?? 0, demandDz: exact?.dz ?? 0,
+      liveRoomReserve: roomSupply - (exact?.rooms ?? 0), liveBedReserve: bedSupply - (exact?.beds ?? 0) - (exact?.blocked ?? 0),
+      liveEzReserve: ezReserve, liveDzReserve: dzReserve };
+
   });
 }
 
@@ -136,4 +151,130 @@ export function buildHotelRiskRows(hotels: Hotel[], bookings: RoomBooking[]) {
     const firstCritical = daily.find(day => day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1);
     return { hotel, daily, worst, firstCritical, criticalDays: daily.filter(day => day.rooms === 0 ? day.occupied > 0 : day.reserve / day.rooms <= .1).length };
   });
+}
+
+type DemandPerson = Pick<import('../types.ts').FisImportPreviewPerson,
+  'existingAthleteId' | 'matchKey' | 'arrivalDate' | 'departureDate' | 'roomType' | 'sharedWithName' |
+  'accommodationRequirement' | 'accommodationRequirementReviewRequired'>;
+type DemandRoom = Pick<import('../types.ts').FisImportPreviewRoom,
+  'person1Key' | 'person2Key' | 'roomType' | 'checkInDate' | 'checkOutDate' | 'sharedWithRawName'>;
+export type ExcelDemand = { nation: string; people: DemandPerson[]; rooms: DemandRoom[]; excludedIds: string[]; provisional: boolean; conflict?: string };
+
+type DemandStay = { start: string; end: string; type: string; partner?: string; unclear?: boolean; secondary?: boolean };
+type DemandRecord = { key: string; id?: string; stays: DemandStay[]; provisional?: boolean };
+
+function stay(start?: string | null, end?: string | null, type?: string | null, partner?: string | null): DemandStay {
+  return { start: dayKey(start), end: dayKey(end), type: type?.trim().toLowerCase() ?? '', partner: partner || undefined };
+}
+const single = (type: string) => explicitRoomRequest(type) === 'EZ';
+const double = (type: string) => explicitRoomRequest(type) === 'DZ';
+const validStay = (s: DemandStay) => Boolean(s.start && s.end && s.start < s.end);
+
+export function excelDemandRecords(people: DemandPerson[], rooms: DemandRoom[], excludedIds: Iterable<string>, prefix = ''): DemandRecord[] {
+  const excluded = new Set(excludedIds);
+  const byPerson = new Map<string, DemandStay[]>();
+  for (const room of rooms) {
+    for (const [person, partner] of [[room.person1Key, room.person2Key], [room.person2Key, room.person1Key]]) {
+      if (!person) continue;
+      const period = stay(room.checkInDate, room.checkOutDate, room.roomType, partner && prefix + partner);
+      period.unclear = Boolean(!partner && room.sharedWithRawName);
+      period.secondary = person === room.person2Key;
+      const periods = byPerson.get(person) ?? [];
+      periods.push(period);
+      byPerson.set(person, periods);
+    }
+  }
+  const keys = new Map(people.flatMap(person => person.matchKey && person.existingAthleteId != null
+    ? [[prefix + person.matchKey, 'person:' + person.existingAthleteId]] : []));
+  return people.flatMap((person, index) => {
+    const id = person.existingAthleteId == null ? undefined : String(person.existingAthleteId);
+    const key = person.matchKey ?? String(index);
+    if (!requiresAccommodation(person) || excluded.has(id ?? 'preview:' + key)) return [];
+    const entry = stay(person.arrivalDate, person.departureDate, person.roomType);
+    const periods = byPerson.get(key)?.map(period => {
+      if (!period.secondary || !validStay(entry) || !validStay(period) ||
+          (entry.start <= period.start && entry.end >= period.end)) return period;
+      // A row reported by the other occupant cannot enlarge this person's stay.
+      return { ...period, start: entry.start > period.start ? entry.start : period.start,
+        end: entry.end < period.end ? entry.end : period.end, unclear: true };
+    });
+    const dated = periods?.filter(validStay);
+    // Room List intervals preserve source gaps. Undated rows remain uncertainty.
+    const stays = dated?.length ? dated.filter(period => period.type !== 'no room')
+      : [{ ...entry, type: periods?.[0]?.secondary ? entry.type : periods?.[0]?.type || entry.type,
+        unclear: Boolean(periods?.length || person.sharedWithName) }];
+    return [{ key: id ? 'person:' + id : prefix + key, id, stays,
+      provisional: Boolean(person.accommodationRequirementReviewRequired || periods?.some(period => period.unclear || !validStay(period))) }];
+  }).map(record => ({
+    ...record,
+    stays: record.stays.map(period => period.partner ? { ...period, partner: keys.get(period.partner) ?? period.partner } : period),
+  }));
+}
+
+export function importedDemandRecords(athletes: Athlete[], excludedIds: string[]): DemandRecord[] {
+  const excluded = new Set(excludedIds);
+  const name = (value: string) => value.toLocaleLowerCase().replace(/,/g, ' ').trim().replace(/\s+/g, ' ');
+  return athletes.filter(person => requiresAccommodation(person) && !excluded.has(String(person.id))).map(person => {
+    const matches = person.sharedWithName ? athletes.filter(other => other.id !== person.id && other.nationCode === person.nationCode &&
+      [name(other.firstname + ' ' + other.lastname), name(other.lastname + ' ' + other.firstname)].includes(name(person.sharedWithName!))) : [];
+    const partner = matches.length === 1 ? 'person:' + matches[0].id : undefined;
+    return { key: 'person:' + person.id, id: String(person.id), provisional: Boolean(person.sharedWithName && !partner),
+      stays: (person.stays?.length ? person.stays : [person]).map(period => stay(period.arrivalDate, period.departureDate, person.roomType, partner)) };
+  });
+}
+
+export function concreteRoomDemand(records: DemandRecord[], bookings: RoomBooking[], bookingPersonIds?: Iterable<string>) {
+  const people = new Map(records.map(person => [person.key, person]));
+  const ids = bookingPersonIds ? new Set(bookingPersonIds) : null;
+  const relevant = [...new Map(bookings.map(booking => [booking.id, booking])).values()]
+    .filter(booking => !ids || booking.occupants.some(o => ids.has(String(o.athlete.id))));
+  const dates = [...records.flatMap(person => person.stays.filter(validStay).flatMap(period => [period.start, period.end])),
+    ...relevant.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)])].filter(Boolean).sort();
+  const provisional = records.some(person => person.provisional || !person.stays.length || person.stays.some(period => !validStay(period)));
+  const unknownDates = records.filter(person => !person.stays.some(validStay)).length;
+  const days = (dates.length ? daysBetween(dates[0], dates.at(-1)!) : []).map(date => {
+    const active = relevant.filter(booking => onDay(booking.checkInDate, booking.checkOutDate, date));
+    const covered = new Set(active.flatMap(booking => booking.occupants.map(o => String(o.athlete.id))));
+    const standard = active.filter(booking => booking.hotel.accommodationType !== 'EXTERNAL');
+    const bookedPeople = new Set(standard.flatMap(booking => booking.occupants.map(o => String(o.athlete.id))));
+    const roomsWithSpace = new Map(standard.filter(booking => booking.roomType?.maxPersons === 2 &&
+      booking.occupants.length === 1 && bookingFreeCapacity({ ...booking, capacity: 2 }) === 1).map(booking => [String(booking.occupants[0].athlete.id), booking.id]));
+    const usedSpace = new Set<string>();
+    const open = new Map([...people].filter(([, person]) => !person.id || !covered.has(person.id)).flatMap(([key, person]) => {
+      const periods = person.stays.filter(period => onDay(period.start, period.end, date));
+      return periods.length ? [[key, periods] as const] : [];
+    }));
+    const consumed = new Set<string>();
+    let ez = standard.filter(booking => booking.roomType?.maxPersons === 1).length;
+    let dz = standard.filter(booking => booking.roomType?.maxPersons === 2).length;
+    const otherRooms = standard.length - ez - dz;
+    let unknown = 0;
+    let unclear = false;
+    for (const [key, periods] of open) {
+      if (consumed.has(key)) continue;
+      const period = periods[0];
+      if (periods.some(item => item.type !== period.type || item.partner !== period.partner)) { unknown++; continue; }
+      if (single(period.type)) { ez++; continue; }
+      if (!double(period.type)) { unknown++; continue; }
+      const partner = period.partner && period.partner !== key ? open.get(period.partner) : undefined;
+      const bookedPartner = period.partner && people.get(period.partner);
+      const join = bookedPartner && bookedPartner.id && roomsWithSpace.get(bookedPartner.id);
+      if (join && bookedPartner && !usedSpace.has(join) && bookedPartner.stays.some(item =>
+        double(item.type) && item.partner === key && onDay(item.start, item.end, date))) {
+        usedSpace.add(join);
+        continue;
+      }
+      if (partner?.length && partner.every(item => double(item.type) && item.partner === key)) {
+        consumed.add(period.partner!);
+      } else if (period.type === 'double shared' || period.partner || period.unclear) {
+        unclear = true;
+      }
+      dz++;
+    }
+    const blocked = standard.reduce((sum, booking) => sum + (booking.countsAsSingle ?
+      Math.max(0, (booking.roomType?.maxPersons ?? 0) - booking.occupants.length) : 0), 0);
+    return { date, ez, dz, rooms: ez + dz + otherRooms, otherRooms,
+      beds: bookedPeople.size + open.size, blocked, unknown, provisional: provisional || unclear || unknown > 0 || otherRooms > 0 };
+  });
+  return { days, unknownDates, unknownRooms: days.reduce((max, day) => Math.max(max, day.unknown), 0), provisional: provisional || days.some(day => day.provisional) };
 }
