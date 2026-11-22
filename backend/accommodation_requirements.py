@@ -84,6 +84,41 @@ def _room_list_requirement(person, room):
     return source_requirement([room.get('roomType')])[0]
 
 
+def _stay_review(person, rooms):
+    """Check whether the operative person's single date range can be used safely."""
+    from imports.normalization import parse_date
+
+    entry_start = parse_date(person.get('arrivalDate'))
+    entry_end = parse_date(person.get('departureDate'))
+    room_stays = []
+    for room in rooms:
+        start, end = parse_date(room.get('checkInDate')), parse_date(room.get('checkOutDate'))
+        if start and end and start < end and source_requirement([room.get('roomType')])[0] == 'REQUIRED':
+            room_stays.append((start, end, room))
+    if not room_stays:
+        return None
+    room_stays.sort(key=lambda stay: stay[0])
+
+    # A broader Entry List travel window must not bridge a gap in room evidence.
+    covered_until = room_stays[0][1]
+    for start, end, _ in room_stays[1:]:
+        if start > covered_until:
+            return ('ACCOMMODATION_REQUIREMENT_SEPARATE_STAYS',
+                    'Getrennte Room-List-Aufenthalte können nicht als ein Unterkunftszeitraum übernommen werden. Bitte Aufenthalte klären.')
+        covered_until = max(covered_until, end)
+
+    if entry_start and entry_end and entry_start < entry_end:
+        for start, end, room in room_stays:
+            if entry_end < start or end < entry_start:
+                return ('ACCOMMODATION_REQUIREMENT_SEPARATE_STAYS',
+                        'Getrennte Aufenthalte in Entry List und Room List. Bitte den Unterkunftszeitraum vor Freigabe klären.')
+            if (entry_end == start or end == entry_start) and (
+                    room.get('person2Key') or room.get('sharedWithRawName') or person.get('sharedWithName')):
+                return ('ACCOMMODATION_REQUIREMENT_PARTNER_STAY',
+                        'Angrenzende Aufenthalte mit Zimmerpartner. Bitte die Zeiträume beider Personen vor Freigabe klären.')
+    return None
+
+
 def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context=None):
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
     maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
@@ -117,6 +152,12 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
         elif source_requirement(values)[1] and effective['accommodationRequirementSource'] != 'MANUAL':
             issues.append({'code': 'ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT', 'message': 'Widersprüchliche Unterkunftswünsche in Entries und Room List.',
                            'details': {'personKey': person.get('matchKey')}})
+        if person['accommodationRequirement'] not in NO_ACCOMMODATION:
+            stay_issue = _stay_review(person, related_rooms)
+            if stay_issue:
+                code, message = stay_issue
+                issues.append({'code': code, 'message': message,
+                               'details': {'personKey': person.get('matchKey')}})
     return issues
 
 
