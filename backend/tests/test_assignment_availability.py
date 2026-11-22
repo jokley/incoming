@@ -29,10 +29,11 @@ def test_date_contingent_blocks_target_and_direct_write(state):
     assert rejected.status_code==400 and rejected.get_json()['reasonCode']=='NO_KONTINGENT'
 
 
+@pytest.mark.parametrize('room',['Zimmer 01','01'])
 @pytest.mark.parametrize('single,expected',[(True,'NO_FIT'),(False,'FIT_ALL')])
-def test_existing_double_join_and_single_use_guard(state,single,expected):
+def test_existing_double_join_and_single_use_guard(state,single,expected,room):
     HotelRoomInventory.query.one().room_count=1;db.session.commit()
-    booking=add(state,14,27)['booking']
+    booking=add(state,14,27,room=room)['booking']
     db.session.get(RoomBooking,int(booking['id'])).counts_as_single=single;db.session.commit()
     result=projection(state,(1,))
     fit=result['hotels'][str(state[2].id)]
@@ -172,3 +173,65 @@ def test_apartment_overlap_and_checkout_remain_authoritative(state):
     response=state[0].post('/api/assignments/segments',json={**data(state,14,27),'athleteIds':need['athleteIds']})
     assert response.status_code==400
     assert response.json['reasonCode']=='KONTINGENT_EXCEEDED'
+
+
+@pytest.mark.parametrize('roles', [('Athlete','Athlete'),('Athlete','Official'),('Official','Athlete'),('Official','Official')])
+def test_custom_room_number_can_join_without_role_restriction(state, roles):
+    for person, role in zip(state[1], roles):
+        person.function=role
+    HotelRoomInventory.query.one().room_count=1
+    db.session.commit()
+    booking=add(state,14,27,room='01',countsAsSingle=False)['booking']
+    result=projection(state,(1,))
+    joins=[v for v in result['targets']['1'] if v['slotId']==f"booking:{booking['id']}"]
+    assert len(joins)==1 and joins[0]['status']=='valid', result
+    from assignment_availability import load_context
+    planning,loaded=load_context()
+    request=[{'key':'1','athleteIds':[str(state[1][1].id)],'checkInDate':'2027-03-14','checkOutDate':'2027-03-27'}]
+    assert project(planning,request,set(),loaded=loaded)['targets']['1']==result['targets']['1']
+    response=state[0].post(path(state[1][1]),json=data(state,14,27,room='01',joinBookingId=booking['id']))
+    assert response.status_code==201,response.json
+    assert RoomBooking.query.count()==1
+    assert len(RoomBooking.query.one().occupants)==2
+    assert not RoomBooking.query.one().counts_as_single
+    before=[o.athlete_id for o in RoomBooking.query.one().occupants]
+    rejected=state[0].post(path(state[1][2]),json=data(state,14,27,room='01',joinBookingId=booking['id']))
+    assert rejected.status_code==400
+    assert [o.athlete_id for o in RoomBooking.query.one().occupants]==before
+
+
+def test_sequential_different_rooms_do_not_exhaust_inventory(state):
+    HotelRoomInventory.query.one().room_count=2
+    db.session.commit()
+    add(state,14,20,room='Zimmer 01',person=0,countsAsSingle=False)
+    add(state,20,27,room='Zimmer 02',person=1,countsAsSingle=False)
+    # Each day has one free inventory unit. The guard must not sum both periods.
+    from assignment_availability import inventory_guard
+    assert inventory_guard(HotelRoomInventory.query.all(),RoomBooking.query.all(),date(2027,3,14),date(2027,3,27)) is None
+    RoomBooking.query.filter_by(room_number='Zimmer 01').one().check_out_date=date(2027,3,21)
+    db.session.commit()
+    failure=inventory_guard(HotelRoomInventory.query.all(),RoomBooking.query.all(),date(2027,3,14),date(2027,3,27))
+    assert failure[0]=='KONTINGENT_EXCEEDED'
+    assert '20.03.2027' in failure[1]
+
+
+def test_join_different_dates_explains_rejection_without_editing_resident(state):
+    booking=add(state,14,27,room='01',countsAsSingle=False)['booking']
+    state[1][1].arrival_date=date(2027,3,15);db.session.commit()
+    result=projection(state,(1,),15,27)
+    target=next(v for v in result['targets']['1'] if v['slotId']==f"booking:{booking['id']}")
+    assert target['status']=='blocked'
+    assert target['messages']==['Aufenthaltsdaten stimmen nicht überein.']
+    response=state[0].post(path(state[1][1]),json=data(state,15,27,room='01',joinBookingId=booking['id']))
+    assert response.status_code==400 and response.json['reasonCode']=='SHARED_DATES_DIFFER'
+    row=RoomBooking.query.one()
+    assert row.check_in_date==date(2027,3,14) and row.check_out_date==date(2027,3,27)
+    assert len(row.occupants)==1 and not row.counts_as_single
+
+
+def test_zero_inventory_never_offers_assignment(state):
+    HotelRoomInventory.query.one().room_count=0;db.session.commit()
+    assert projection(state)['hotels'][str(state[2].id)]['state']=='NO_FIT'
+    response=state[0].post(path(state[1][0]),json=data(state,14,27))
+    assert response.status_code==400 and response.json['reasonCode']=='NO_KONTINGENT'
+    assert RoomBooking.query.count()==0

@@ -14,8 +14,12 @@ def inventory_guard(inventories, bookings, start, end):
         return 'NO_KONTINGENT', (f'Kein Kontingent deckt den gesamten Aufenthalt {start:%d.%m.%Y}–{end:%d.%m.%Y} (Check-out) ab. '
             + (f'Kontingentintervalle: {intervals}.' if intervals else 'Keine Kontingentintervalle vorhanden.'))
     overlapping = [b for b in bookings if booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end)]
-    if physical_room_usage(overlapping) >= rooms:
-        return 'KONTINGENT_EXCEEDED', 'Zimmer im benötigten Zeitraum nicht verfügbar.'
+    # Count simultaneous use, never the sum of sequential booking segments.
+    checkpoints = sorted({start, *(b.check_in_date for b in overlapping if start < b.check_in_date < end)})
+    for day in checkpoints:
+        active = [b for b in overlapping if b.check_in_date <= day < b.check_out_date]
+        if physical_room_usage(active) >= rooms:
+            return 'KONTINGENT_EXCEEDED', f'Zimmer am {day:%d.%m.%Y} im benötigten Zeitraum nicht verfügbar.'
     return None
 
 
@@ -83,6 +87,15 @@ def project(planning, needs, population_ids, loaded=None):
             seen.add(marker)
         validated.append((need['key'], ids, start, end, valid))
 
+    # The planning view already maps custom room numbers to their visible slot.
+    # Consume that mapping for both serialized and request-local ORM snapshots.
+    slot_booking_ids = {slot['slotId']: {str(b['bookingId'] if isinstance(b, dict) else b.id)
+        for b in slot['bookings']} for hotel in planning['hotels'] for slot in hotel['slots']}
+
+    def belongs_to_slot(booking, slot):
+        return (str(booking.id) in slot_booking_ids[slot['slotId']]
+            or (_planned_room_key(booking.room_number) or booking.room_number) == slot['roomNumber'])
+
     guard_cache={}
 
     def cached_guard(key, rows, start, end, excluded=None, extra=()):
@@ -110,7 +123,7 @@ def project(planning, needs, population_ids, loaded=None):
         failure = cached_guard(key, rows, start, end, extra=extra)
         if failure:
             return failure[1]
-        if any((_planned_room_key(b.room_number) or b.room_number) == slot['roomNumber'] and booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end) for b in rows):
+        if any(belongs_to_slot(b, slot) and booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end) for b in rows):
             return 'Zimmer im benötigten Zeitraum nicht verfügbar.'
         return None
 
@@ -127,7 +140,7 @@ def project(planning, needs, population_ids, loaded=None):
         failure = cached_guard((hotel['hotelId'],slot['roomTypeId']),rows,start,end,excluded=booking.id,extra=extra)
         if failure:
             return failure[1]
-        if any((_planned_room_key(b.room_number) or b.room_number)==slot['roomNumber'] and booking_intervals_overlap(b.check_in_date,b.check_out_date,start,end) for b in rows):
+        if any((_planned_room_key(b.room_number) or b.room_number)==(_planned_room_key(booking.room_number) or booking.room_number) and booking_intervals_overlap(b.check_in_date,b.check_out_date,start,end) for b in rows):
             return 'Zimmer im benötigten Zeitraum nicht verfügbar.'
         return None
 
@@ -147,7 +160,7 @@ def project(planning, needs, population_ids, loaded=None):
             join_options=[]
             for slot in hotel['slots']:
                 for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
-                    if (_planned_room_key(booking.room_number) or booking.room_number) != slot['roomNumber']:
+                    if not belongs_to_slot(booking, slot):
                         continue
                     reason=join_reason(hotel,slot,booking,ids,start,end,valid,[])
                     results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
@@ -162,7 +175,7 @@ def project(planning, needs, population_ids, loaded=None):
                     reason=eligibility(hotel,slot,[identity],start,end,valid,[])
                     results.append({'slotId':slot['slotId'],'status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
                     for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
-                        if (_planned_room_key(booking.room_number) or booking.room_number) == slot['roomNumber']:
+                        if belongs_to_slot(booking, slot):
                             reason=join_reason(hotel,slot,booking,[identity],start,end,valid,[])
                             results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
         # A constructive feasibility witness, not an allocation or optimizer.

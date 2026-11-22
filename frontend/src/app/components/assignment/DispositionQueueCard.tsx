@@ -18,7 +18,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
   onExternal?:()=>void;
   splitOptions?:{bookingId:string;label:string}[];onSplit?:(bookingId:string)=>void;
 }) {
-  const {queueTargets,hotelId}=useContext(DispositionDragContext);
+  const {queueTargets,hotelId,hotelBookingIds}=useContext(DispositionDragContext);
   const [splitAnchor,setSplitAnchor]=useState<HTMLElement|null>(null);
   const externalEligibility=externalStayEligibility(unit.occupants);
   const enabled=canEditAssignments && unit.canAssign && !pending;
@@ -32,7 +32,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
   };
   const targetState=(people:string[])=>{
     const key=people.length===1 ? `${unit.unitId}:athlete:${people[0]}` : unit.unitId;
-    const targets=queueTargets?.[key]?.filter(v=>v.slotId.startsWith(`${hotelId}:`));
+    const targets=queueTargets?.[key]?.filter(v=>v.slotId.startsWith(`${hotelId}:`) || (v.slotId.startsWith('booking:') && hotelBookingIds?.includes(v.slotId.slice(8))));
     return !hotelName ? {available:true,reason:''} : {available:!!targets?.some(v=>v.status!=='blocked'),reason:targets?.[0]?.messages[0] ?? 'Verfügbarkeit wird geprüft …'};
   };
   const action=(people:string[],label:string)=>{
@@ -51,7 +51,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
     <div className="flex items-center justify-between gap-2">
       <b className="text-sm tabular-nums">{periodLabel(unit.openPeriod)}</b>
       {sharedRequest && <span aria-label={`Zimmerwunsch für beide: ${sharedRequest}`} className="ml-auto text-[11px] font-semibold text-[var(--ops-text-muted)]">{sharedRequest}</span>}
-      <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.canAssign ? 'Offen' : 'Prüfen'}</span>
+      <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.isFullyAssigned ? 'Zugewiesen' : unit.canAssign ? 'Offen' : 'Prüfen'}</span>
     </div>
     <div className="mt-2 space-y-1">
       {unit.occupants.map(person=>{
