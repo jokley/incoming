@@ -1,3 +1,4 @@
+import { requiresAccommodation } from './accommodationRequirement.ts';
 import type { AccommodationInterval, AssignmentGridHotel, RoomBookingUnit, RoomBookingUnitOccupant } from '../types.ts';
 
 export type DispositionItem = RoomBookingUnit & {openPeriod:AccommodationInterval;canAssign:boolean;previous:string[]};
@@ -7,7 +8,7 @@ export const dispositionItemId=(ids:string[],period:AccommodationInterval)=>`nee
 /** Presentation adapter only. Every period is copied from backend coverage. */
 export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHotel[],includeAssigned=false):DispositionItem[] {
   const people=new Map<string,{person:RoomBookingUnitOccupant;unit:RoomBookingUnit}>();
-  units.forEach(unit=>unit.occupants.filter(person=>person.accommodationRequirement!=='NO_ROOM' && person.accommodationCoverage?.coverageStatus!=='NO_ROOM').forEach(person=>people.set(person.athleteId,{person,unit})));
+  units.forEach(unit=>unit.occupants.filter(person=>requiresAccommodation(person) && person.accommodationCoverage?.coverageStatus!=='NO_ROOM').forEach(person=>people.set(person.athleteId,{person,unit})));
   units=units.map(unit=>({...unit,occupants:unit.occupants.filter(person=>people.has(person.athleteId))})).filter(unit=>unit.occupants.length>0);
   const used=new Set<string>(),items:DispositionItem[]=[];
   const add=(ids:string[],period:AccommodationInterval,canAssign=true)=>{

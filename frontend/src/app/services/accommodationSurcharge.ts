@@ -1,3 +1,4 @@
+import { requiresAccommodation } from './accommodationRequirement.ts';
 export type AccommodationSurchargeReason = 'SPECIAL_RATE' | 'APPROVED_EXTRA_SINGLE';
 type SurchargePerson = {
   accommodationRequirement?: string | null;
@@ -9,5 +10,5 @@ export function accommodationSurcharge(person?: SurchargePerson | null, activeAp
   const surchargeReasons: AccommodationSurchargeReason[] = [];
   if (person?.accommodationRateCategory === 'SPECIAL') surchargeReasons.push('SPECIAL_RATE');
   if (activeApprovedExtraSingle) surchargeReasons.push('APPROVED_EXTRA_SINGLE');
-  return { applicable: person?.accommodationRequirement !== 'NO_ROOM', hasAccommodationSurcharge: person?.accommodationRequirement !== 'NO_ROOM' && surchargeReasons.length > 0, surchargeReasons };
+  return { applicable: requiresAccommodation(person), hasAccommodationSurcharge: requiresAccommodation(person) && surchargeReasons.length > 0, surchargeReasons };
 }

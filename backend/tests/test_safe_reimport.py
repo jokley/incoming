@@ -735,3 +735,60 @@ def test_booked_athlete_overhang_does_not_raise_regular_official_entitlement(eve
     quotas=app.test_client().get('/api/fis/official-quotas?nationCode=JPN').json
     assert quotas[0]['officialQuota']==(limit+2 if limit else 0) and quotas[0]['expectedAthletes']==limit
     assert RoomBooking.query.count()==RoomBookingOccupant.query.count()==5
+
+
+def test_no_dispo_is_staged_persisted_and_releases_the_next_regular_place(events):
+    from arrival_planning import project
+    event = events[0]
+    codes = tuple(str(9400000 + index) for index in range(5))
+    def add_officials(rows):
+        rows.extend({**rows[0], 'Function': 'Coach', 'Firstname': f'Official{index}',
+                     'Fiscode': str(9400100 + index), 'Competitorid/Staff ID': f'official-{index}'}
+                    for index in range(2))
+
+    pending = upload(event, codes, changed=add_officials)
+    sid = pending['session']['id']
+    client = app.test_client()
+    staged = client.patch(f'/api/import/sessions/{sid}/accommodation-requirements/{codes[0]}',
+                          json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged.status_code == 200, staged.json
+    row = staged.json['nnPlanning']['rows'][0]
+    assert set(row['selectedPersonIds']) == {'preview:' + code for code in codes[1:]}
+    assert 'preview:' + codes[0] in row['replacedPersonIds']
+    staged_official = client.patch(f'/api/import/sessions/{sid}/accommodation-requirements/9400100',
+                                   json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged_official.status_code == 200, staged_official.json
+    quota = staged_official.json['nnPlanning']['operationalQuota']['rows'][0]
+    assert (quota['athletesEntered'], quota['expectedAthletes'], quota['registeredOfficials']) == (5, 4, 1)
+
+    run(pending, event)
+    person = Athlete.query.filter_by(fis_code=codes[0]).one()
+    assert (person.accommodation_requirement, person.accommodation_requirement_source) == ('NO_DISPO', 'MANUAL')
+    assert person.competitions
+    assert Athlete.query.count() == 7
+    assert str(person.id) in project('JPN')['rows'][0]['replacedPersonIds']
+    official = Athlete.query.filter_by(fis_code='9400100').one()
+    from app import _build_room_booking_units
+    units, _ = _build_room_booking_units()
+    pending_ids = {p['athleteId'] for unit in units for p in unit['occupants']}
+    assert str(person.id) not in pending_ids
+    assert str(official.id) not in pending_ids
+    repeated = upload(event, tuple(reversed(codes)), session_id=sid, changed=add_officials)
+    assert next(p for p in repeated['people'] if p['fisCode'] == codes[0])['accommodationRequirement'] == 'NO_DISPO'
+    run(repeated, event)
+    assert person.accommodation_requirement == 'NO_DISPO'
+
+
+def test_no_dispo_cannot_replace_an_existing_booking(events):
+    event = events[0]
+    pending = upload(event)
+    run(pending, event)
+    person = Athlete.query.filter_by(fis_code='9300953').one()
+    booking([person])
+    corrected = upload(event, ('9300954', '9300953'), session_id=pending['session']['id'])
+    response = app.test_client().patch(
+        f"/api/import/sessions/{corrected['session']['id']}/accommodation-requirements/9300953",
+        json={'accommodationRequirement': 'NO_DISPO'})
+    assert response.status_code == 409, response.json
+    assert RoomBookingOccupant.query.filter_by(athlete_id=person.id).count() == 1
+    assert person.accommodation_requirement != 'NO_DISPO'

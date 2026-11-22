@@ -168,6 +168,11 @@ test('automatic person selection is shared by athlete and Officials quota views 
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
+  if(path==='/import/sessions/1/accommodation-requirements/p2' && req.method()==='PATCH'){
+   assert.deepEqual(req.postDataJSON(),{accommodationRequirement:'NO_DISPO'});
+   people[2].accommodationRequirement='NO_DISPO';
+   return route.fulfill({json:session});
+  }
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
  preview.rooms=[
@@ -240,7 +245,17 @@ test('automatic person selection is shared by athlete and Officials quota views 
  assert.equal(await dialog.getByText(/für Unterkunft eingeplant/).count(),0);
  await page.screenshot({path:'/workspace/artifacts/provisional-athletes-champion.png',animations:'disabled'});
  await dialog.getByRole('button',{name:'Schließen',exact:true}).click();await officials('7','3');
- assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
+ assert.deepEqual(writes,[]);
+ await openPeople();
+ list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
+ await list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'}).click();
+ assert.deepEqual(await page.getByRole('option').allTextContents(),['Unterkunft benötigt','Kein Zimmer benötigt','Nicht einplanen']);
+ await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ const skipped=list.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
+ await skipped.getByText('Vorerst nicht eingeplant',{exact:true}).waitFor();
+ assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
+ assert.deepEqual(writes,['/import/sessions/1/accommodation-requirements/p2']);
+ assert.deepEqual(errors,[]);
 });
 
 test('event housing editor uses one dynamic field per group and the existing revision workflow',async t=>{

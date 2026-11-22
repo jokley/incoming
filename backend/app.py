@@ -1,6 +1,6 @@
 from quota_rules import rules_for_event, accommodation_rule_event
 from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object, event_audit_refs
-from accommodation_requirements import requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
+from accommodation_requirements import BOOKING_MESSAGE, NO_ACCOMMODATION, REQUIREMENTS, INVALID_REQUIREMENT, requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
@@ -1269,9 +1269,9 @@ def _build_room_booking_units():
         candidates = [candidate for candidate in candidates if candidate.id != athlete.id]
         return candidates[0] if len(candidates) == 1 else None
 
-    athletes = [a for a in athletes if a.accommodation_requirement != 'NO_ROOM']
-    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement != 'NO_ROOM'] for k, values in athletes_by_name_and_nation.items()}
-    athletes_by_name = {k: [a for a in values if a.accommodation_requirement != 'NO_ROOM'] for k, values in athletes_by_name.items()}
+    athletes = [a for a in athletes if a.accommodation_requirement not in NO_ACCOMMODATION]
+    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name_and_nation.items()}
+    athletes_by_name = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name.items()}
     consumed_ids = set()
     projected_groups = []
     for athlete in athletes:
@@ -1491,7 +1491,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
-                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement == 'NO_ROOM',
+                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement in NO_ACCOMMODATION,
                                     'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
                                     'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
@@ -2411,8 +2411,8 @@ def stage_accommodation_requirement(session_id, person_key):
     if session.status in {'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'} or not session.current_version:
         return jsonify(error='The current import version is no longer editable'), 409
     data = request.get_json(silent=True) or {}
-    if 'accommodationRequirement' not in data or (data['accommodationRequirement'] is not None and (not isinstance(data['accommodationRequirement'], str) or data['accommodationRequirement'] not in {'REQUIRED', 'NO_ROOM'})):
-        return jsonify(error='accommodationRequirement must be REQUIRED, NO_ROOM or null'), 400
+    if 'accommodationRequirement' not in data or (data['accommodationRequirement'] is not None and (not isinstance(data['accommodationRequirement'], str) or data['accommodationRequirement'] not in REQUIREMENTS)):
+        return jsonify(error=INVALID_REQUIREMENT), 400
     preview = json.loads(session.current_version.preview_json or '{}')
     validate_session_event(session, preview)
     _import_session_raw_preview(session)
@@ -2429,7 +2429,7 @@ def stage_accommodation_requirement(session_id, person_key):
     try:
         recalculate_fis_import_preview(preview)
         if any(e.get('code') == 'ACCOMMODATION_REQUIREMENT_BOOKINGS' and e.get('details', {}).get('personKey') == person_key for e in preview.get('errors', [])):
-            raise RequirementConflict('NO_ROOM_HAS_BOOKINGS', 'Für diese Person bestehen Unterkunftszuweisungen. Bitte diese zuerst ausdrücklich entfernen.')
+            raise RequirementConflict(f"{target['accommodationRequirement']}_HAS_BOOKINGS", BOOKING_MESSAGE)
         if staged_raw:
             staged_raw['accommodationRequirementOverrides'] = preview['accommodationRequirementOverrides']
             staged_raw['_currentApprovalIds'] = preview['_currentApprovalIds']
@@ -3406,13 +3406,13 @@ def _update_athlete_operations(athlete, data):
         db.session.refresh(athlete)
         g.audit_snapshot = athlete.to_dict()
         value = data['accommodationRequirement']
-        if value is not None and (not isinstance(value, str) or value not in {'REQUIRED', 'NO_ROOM'}):
-            return jsonify(error='accommodationRequirement must be REQUIRED, NO_ROOM or null'), 400
+        if value is not None and (not isinstance(value, str) or value not in REQUIREMENTS):
+            return jsonify(error=INVALID_REQUIREMENT), 400
         requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
             {'requirement': value, 'base': requirement_projection(athlete)})
-        if requirement_change['accommodationRequirement'] == 'NO_ROOM':
+        if requirement_change['accommodationRequirement'] in NO_ACCOMMODATION:
             from accommodation_requirements import ensure_no_bookings
-            ensure_no_bookings(athlete)
+            ensure_no_bookings(athlete, requirement_change['accommodationRequirement'])
     previous_exempt_reason = athlete.single_room_quota_exempt_reason
     protected = {'additionalItems', 'additional_items'}
     if protected.intersection(data):

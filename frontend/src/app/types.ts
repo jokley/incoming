@@ -1,4 +1,4 @@
-export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM';
+export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM' | 'NO_DISPO';
 export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
 export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL' | 'APPROVAL'; accommodationRateApprovalId?: number; accommodationRateApprovalIds?: number[]; accommodationRateExplanation?: string; }
@@ -519,6 +519,7 @@ export interface ImportControl {
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  entryAccommodationSource?: { roomType?: string | null };
   sourceIdentities?:Array<{family:string;staffId:string;function?:string;row?:number}>;
   sourceCompetitorId?:string;confirmedOfficialLinkId?:number;
   sourceRows?:Array<{versionId:number;version:number;row?:number}>;

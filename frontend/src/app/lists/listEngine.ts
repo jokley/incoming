@@ -1,3 +1,4 @@
+import { requiresAccommodation } from '../services/accommodationRequirement.ts';
 import { buildHotelRiskRows } from '../services/planningCalculations.ts';
 import {stayWindowDeviationText,stayWindowHotelNote} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
@@ -227,7 +228,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       contingent: firstSegment?.contingent || '—',
       accommodationRequirement: athlete.accommodationRequirement || 'REQUIRED',
       accommodationStatus: personAccommodation(athlete).label,
-      room: firstSegment?.room || (athlete.accommodationRequirement==='NO_ROOM'?'No room':'—'),
+      room: firstSegment?.room || (athlete.accommodationRequirement==='NO_DISPO'?'Nicht einplanen':athlete.accommodationRequirement==='NO_ROOM'?'No room':'—'),
       roomType: firstSegment?.roomType || value(athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
@@ -259,7 +260,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       workCategory: athleteWorkCategory(athlete),
       importChanged: Boolean(athlete.importChangeTypes?.length || athlete.hasPendingRoomlistReview),
       roomChanged: Boolean(athlete.importChangeTypes?.some(type => type === 'ROOMMATE_CHANGED' || type === 'HOTEL_CHANGED' || type === 'ROOM_DEMAND_CHANGED')),
-      singleRoomPending: athlete.accommodationRequirement !== 'NO_ROOM' && athlete.single_room_status === 'PENDING_APPROVAL',
+      singleRoomPending: requiresAccommodation(athlete) && athlete.single_room_status === 'PENDING_APPROVAL',
     };
   });
 }
@@ -281,7 +282,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
     if (filters.hint === 'room-change' && !row.roomChanged) return false;
     if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.segments.some(segment=>segment.countsAsSingle) && !row.singleRoomPending) return false;
     if (filters.hint === 'surcharge' && row.surcharge !== 'Ja') return false;
-    if (filters.hint === 'without-room' && (row.assigned || row.accommodationRequirement==='NO_ROOM')) return false;
+    if (filters.hint === 'without-room' && (row.assigned || !requiresAccommodation(row))) return false;
     if (filters.hint === 'no-room' && row.accommodationRequirement!=='NO_ROOM') return false;
     if (filters.movement) {
       const base = new Date(); base.setUTCHours(0, 0, 0, 0);
