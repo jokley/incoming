@@ -15,7 +15,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
- let single=true,fail=false,delayFamily=false,readOnly=false;
+ let single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false;
  let releaseFamily:()=>void=()=>{};
  let familyGate=Promise.resolve();
  let mutationGate=Promise.resolve();let releaseMutation:()=>void=()=>{};
@@ -32,10 +32,10 @@ test('person overview drills into assigned people, refreshes after persistence, 
   return {rows:[],unallocatedSingleRooms:[],personStatuses:records,personSummary:{peopleTotal:records.length,accommodationPeopleRequired:records.length,fullyAssigned:count('FULLY_ASSIGNED'),unassigned:count('UNASSIGNED'),partiallyAssigned:count('PARTIALLY_ASSIGNED'),accommodationConflicts:count('CONFLICT'),roomPreferenceMismatches:records.filter(p=>p.roomPreference.hasMismatch).length,pendingSingleRoomPeople:records.filter(p=>p.singleRoom.status==='PENDING').length,contextlessPendingSingleRoomPeople:records.filter(p=>p.singleRoom.status==='PENDING').length},personFilters:{nationCode:query.get('nationCode'),discipline:query.get('discipline'),gender:query.get('gender'),sportFamily:query.get('sportFamily'),personType:query.get('personType'),personalGender:null,contextlessPendingIncluded:true}};
  };
  const planning=()=>{
-  const occupants=people().map(p=>({athleteId:p.personId,name:p.name,firstname:p.name,lastname:'Synthetic',nationCode:p.nationCode,function:p.function,gender:p.personalGender,quotaDisciplines:p.quotaDisciplines,roomType:'Double shared',accommodationRequirement:'REQUIRED',accommodationRateCategory:'STANDARD',accommodationRateSource:'DEFAULT',arrivalDate:interval.checkInDate,departureDate:interval.checkOutDate,accommodationCoverage:p.accommodation,hasPendingReview:false,importChangeTypes:[],importChangeDetails:[],single_room_status:'NONE',single_room_decision_id:p.singleRoom.storedApprovalId}));
+  const occupants=people().map(p=>({athleteId:p.personId,name:p.name,firstname:p.name,lastname:'Synthetic',nationCode:p.nationCode,function:p.function,gender:p.personalGender,quotaDisciplines:p.quotaDisciplines,roomType:p.personId==='open'&&singleWish?'Single':'Double shared',accommodationRequirement:'REQUIRED',accommodationRateCategory:'STANDARD',accommodationRateSource:'DEFAULT',arrivalDate:interval.checkInDate,departureDate:interval.checkOutDate,accommodationCoverage:p.accommodation,hasPendingReview:false,importChangeTypes:[],importChangeDetails:[],single_room_status:'NONE',single_room_decision_id:p.singleRoom.storedApprovalId}));
   const units=occupants.map(p=>({unitId:`unit-${p.athleteId}`,sourceRowKey:p.athleteId,nationCode:p.nationCode,occupants:[p],roomType:'Double shared',roomTypeLabel:'double',roomCategoryLabel:'dz',occupantCount:1,...interval,specialMealFlags:[],statusBadges:[],assignmentWarnings:[],isFullyAssigned:p.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED'}));
   const slots=people().flatMap(p=>p.accommodation.segments.map((s,index)=>({slotId:`h:r:${s.bookingId}`,slotIndex:index+1,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:s.roomNumber,inventoryRoomCount:6,dateCoverage:{availableFrom:interval.checkInDate,availableUntil:interval.checkOutDate,coversRequestedRange:true},bookings:[{bookingId:s.bookingId,hotelId:'h',roomTypeId:'r',roomNumber:s.roomNumber,capacity:2,checkInDate:s.checkInDate,checkOutDate:s.checkOutDate,countsAsSingle:s.countsAsSingle,occupants:[occupants.find(o=>o.athleteId===p.personId)]}]})));
-  return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},hotels:[{hotelId:'h',hotelName:'Synthetic Hotel',slots}],validationByUnit:{}};
+  return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},hotels:[{hotelId:'h',hotelName:'Synthetic Hotel',slots:[...slots,{slotId:'h:r:free',slotIndex:9,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:'Zimmer 09',inventoryRoomCount:9,dateCoverage:{availableFrom:interval.checkInDate,availableUntil:interval.checkOutDate,coversRequestedRange:true},bookings:[]}]}],validationByUnit:{}};
  };
  const event={id:'1',name:'Synthetic status event',active:true,planningPeriods:[]};
  const errors:string[]=[],writes:string[]=[],requests:string[]=[];page.on('pageerror',e=>errors.push(e.message));
@@ -52,7 +52,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
   if(path==='/import/sessions')return route.fulfill({json:[]});
   if(path==='/assignments/availability'){
    const needs=JSON.parse(req.postData()!).needs as Array<{key:string;athleteIds:string[]}>;
-   const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?[{slotId:'booking:booking-mismatch',status:'valid',messages:[]}]:[]])));
+   const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?[{slotId:'booking:booking-mismatch',status:'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
    return route.fulfill({json:{targets,hotels:{}}});
   }
   if(req.method()==='POST'&&path==='/assignments/segments')return route.fulfill({status:409,json:{message:'Synthetic stale target; no booking changed.'}});
@@ -94,6 +94,16 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(joinPayload.joinBookingId,'booking-mismatch');
  assert.deepEqual(joinPayload.athleteIds,['open']);
  assert.equal(joinPayload.checkInDate,interval.checkInDate);
+ // An explicit shared-room drop also permits a reported EZ wish.
+ singleWish=true;await page.reload();
+ await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor();
+ await page.getByText('Synthetic Hotel',{exact:true}).first().click();
+ await openCard.getByText('EZ',{exact:true}).waitFor();
+ // Dropping on the existing booking uses the same explicit join path.
+ const existingRoom=page.locator('button').filter({has:page.locator('.ops-occupant-card').filter({hasText:'Wunschabweichung'})});
+ const dropRequest=page.waitForRequest(r=>r.method()==='POST'&&new URL(r.url()).pathname==='/api/assignments/segments');
+ await openCard.dragTo(existingRoom);
+ assert.deepEqual((await dropRequest).postDataJSON(),joinPayload);
 
  for(const [label,count] of [['Vollständig 3 / 6',3],['Nicht zugewiesen 1',1],['Teilweise 1',1],['Konflikte 1',1],['Wunschabweichungen 1',1],['EZ ungeklärt 1',1]] as const){
   await summary.getByRole('button',{name:label,exact:true}).click();
@@ -225,7 +235,7 @@ test('provisional real people remain draggable and blocked selections preserve r
  assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
 });
 
-test('hotel contract inventory stays visible outside the selected availability date',async t=>{
+test('hotel overview keeps contracts and timeline without a date filter',async t=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-hotels-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
@@ -243,17 +253,14 @@ test('hotel contract inventory stays visible outside the selected availability d
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected synthetic request'}});
  });
  await page.goto(`${origin}/hotels`);
- const day=page.getByRole('textbox',{name:'Stichtag',exact:true}).or(page.locator('input[aria-label="Stichtag"]'));
- await day.fill('2026-11-22');
- await page.getByText('Kein Kontingent am Stichtag',{exact:true}).waitFor();
- const contracts=()=>page.locator('b').filter({hasText:/^\d+ gesamt$/});
- assert.deepEqual((await contracts().allTextContents()).map(s=>s.trim()),['10 gesamt','20 gesamt','8 gesamt','8 gesamt']);
- const metric=(label:string)=>page.getByText(label,{exact:true}).locator('..');
- assert.match(await metric('Inventarzimmer').innerText(),/0/);
- await day.fill('2027-03-09');
- assert.match(await metric('Inventarzimmer').innerText(),/18/);
- assert.match(await metric('Inventarbetten').innerText(),/28/);
- assert.deepEqual((await contracts().allTextContents()).map(s=>s.trim()),['10 gesamt','20 gesamt','8 gesamt','8 gesamt']);
+ await page.getByRole('heading',{name:'Hotels & Zimmerkontingente',exact:true}).waitFor();
+ await page.getByText('Inventarzimmer',{exact:true}).waitFor();
+ assert.equal(await page.locator('input[type="date"]').count(),0);
+ assert.equal(await page.getByText('Stichtag (Belegungsnacht)',{exact:true}).count(),0);
+ const contracts=page.locator('b').filter({hasText:/^\d+ gesamt$/});
+ assert.deepEqual((await contracts.allTextContents()).map(s=>s.trim()),['10 gesamt','20 gesamt','8 gesamt','8 gesamt']);
+ await page.getByText('Timeline',{exact:true}).waitFor();
+ await page.getByText('Tatsächliche Kontingent- und Buchungszeiträume',{exact:true}).waitFor();
  await mkdir('/workspace/artifacts',{recursive:true});
  await page.screenshot({path:'/workspace/artifacts/hotel-contract-inventory.png',animations:'disabled'});
  assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);

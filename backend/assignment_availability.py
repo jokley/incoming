@@ -8,18 +8,23 @@ from accommodation_defaults import default_counts_as_single
 
 
 def inventory_guard(inventories, bookings, start, end):
-    rooms = sum(i.room_count for i in inventories if i.available_from <= start and i.available_until >= end)
-    if not rooms:
-        intervals = ', '.join(sorted({f'{i.available_from:%d.%m.%Y}–{i.available_until:%d.%m.%Y}' for i in inventories}))
-        return 'NO_KONTINGENT', (f'Kein Kontingent deckt den gesamten Aufenthalt {start:%d.%m.%Y}–{end:%d.%m.%Y} (Check-out) ab. '
-            + (f'Kontingentintervalle: {intervals}.' if intervals else 'Keine Kontingentintervalle vorhanden.'))
     overlapping = [b for b in bookings if booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end)]
-    # Count simultaneous use, never the sum of sequential booking segments.
-    checkpoints = sorted({start, *(b.check_in_date for b in overlapping if start < b.check_in_date < end)})
-    for day in checkpoints:
+    # Compare supply and use over the same interval. A later contingent must
+    # count when its bookings count; also check dates when supply decreases.
+    checkpoints = sorted({start, end,
+        *(value for i in inventories for value in (i.available_from, i.available_until) if start < value < end),
+        *(value for b in overlapping for value in (b.check_in_date, b.check_out_date) if start < value < end)})
+    for day, next_day in zip(checkpoints, checkpoints[1:]):
+        rooms = sum(i.room_count for i in inventories if i.available_from <= day and i.available_until >= next_day)
+        if not rooms:
+            intervals = ', '.join(sorted({f'{i.available_from:%d.%m.%Y}–{i.available_until:%d.%m.%Y}' for i in inventories}))
+            return 'NO_KONTINGENT', (f'Kein Kontingent am {day:%d.%m.%Y} für den Aufenthalt {start:%d.%m.%Y}–{end:%d.%m.%Y} (Check-out). '
+                + (f'Kontingentintervalle: {intervals}.' if intervals else 'Keine Kontingentintervalle vorhanden.'))
         active = [b for b in overlapping if b.check_in_date <= day < b.check_out_date]
-        if physical_room_usage(active) >= rooms:
-            return 'KONTINGENT_EXCEEDED', f'Zimmer am {day:%d.%m.%Y} im benötigten Zeitraum nicht verfügbar.'
+        used = physical_room_usage(active)
+        if used >= rooms:
+            return 'KONTINGENT_EXCEEDED', (f'Zimmer am {day:%d.%m.%Y} im benötigten Zeitraum nicht verfügbar. '
+                f'{used} von {rooms} Kontingentzimmern belegt.')
     return None
 
 
