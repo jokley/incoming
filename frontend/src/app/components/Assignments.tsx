@@ -1,7 +1,7 @@
 import {PersonDispositionContext,PersonStatusIcons,PersonWorkSummary,PersonStatusDetails} from './assignment/PersonDispositionStatus';
 import {EzQuotaControl} from './assignment/EzQuotaControl';
 import {ezQuotaReason} from '../services/ezQuotaPresentation';
-import {personTaskCategories,personTaskPeople,type PersonTaskCategory,stableRoomSlots} from '../services/assignmentPresentation';
+import {personTaskCategories,personTaskPeople,queueRoomRequest,type PersonTaskCategory,stableRoomSlots} from '../services/assignmentPresentation';
 import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
@@ -541,9 +541,14 @@ export function Assignments() {
     }
     if(targetGeneration!==validationGenerationRef.current) return;
     const validSlot = findFirstValidSlot(validations, allHotels, hotelId);
+    const joins=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.flatMap(slot=>slot.bookings).filter(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked')) ?? [];
+    const unit=unitById.get(unitId);
+    const sharedRequest=unit?.occupants.filter(person=>!athleteIds?.length || athleteIds.includes(person.athleteId)).every(person=>queueRoomRequest(person,unit)==='DZ');
+    // Fill a unique shared-room target instead of creating another booking.
+    // Otherwise keep the existing free-room / join fallback; explicit drops remain unrestricted by wishes.
+    const join=(!validSlot || (sharedRequest && joins.length===1)) ? joins[0] : undefined;
+    if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
     if (!validSlot) {
-      const join=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.flatMap(slot=>slot.bookings).find(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked'));
-      if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
       setError(validations.find(v=>v.slotId.startsWith(`${hotelId}:`))?.messages[0] ?? 'Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
       return;
     }
@@ -565,9 +570,14 @@ export function Assignments() {
     }
     if(targetGeneration!==validationGenerationRef.current) return;
     const slot = findFirstValidSlotForRoomType(validations, allHotels, hotelId, roomTypeId);
+    const joins=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.filter(slot=>slot.roomTypeId===roomTypeId).flatMap(slot=>slot.bookings).filter(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked')) ?? [];
+    const unit=unitById.get(unitId);
+    const sharedRequest=unit?.occupants.filter(person=>!athleteIds?.length || athleteIds.includes(person.athleteId)).every(person=>queueRoomRequest(person,unit)==='DZ');
+    // Fill a unique shared-room target instead of creating another booking.
+    // Otherwise keep the existing free-room / join fallback; explicit drops remain unrestricted by wishes.
+    const join=(!slot || (sharedRequest && joins.length===1)) ? joins[0] : undefined;
+    if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
     if (!slot) {
-      const join=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.filter(slot=>slot.roomTypeId===roomTypeId).flatMap(slot=>slot.bookings).find(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked'));
-      if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
       setError('Für diesen Zimmertyp gibt es kein gültiges freies Zimmer.');
       return;
     }
