@@ -65,7 +65,7 @@ test('only athlete view shows competition hierarchy; officials keep direct exist
   assert.equal((output.match(/Sportliche Meldungen · FIS-Zuteilung nicht bestätigt/g)||[]).length,kind==='athlete'?1:0);
   const hierarchy=output.match(/<table[^>]*><caption[^>]*>Sportliche Meldungen[\s\S]*?<\/table>/)?.[0]??'';
   const rows=[...hierarchy.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(row=>text(row[1]).trim());
-  if(kind==='athlete')assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe 1 eindeutige Athleten · 1 Männer · 0 Frauen','Halfpipe 1 / — 0 / — Bewertung unvollständig','Big Air 1 / — 0 / — Bewertung unvollständig']);
+  if(kind==='athlete')assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe','Halfpipe 1 / — 0 / — Bewertung unvollständig','Big Air 1 / — 0 / — Bewertung unvollständig']);
   if(kind==='officials'){
    for(const group of overview.nations[0].groups)assert.ok(output.includes(`aria-label="Officials ${group.name.replaceAll('&','&amp;')} anzeigen"`));
    assert.ok(output.includes('5 Mehrfachzugehörigkeiten'));
