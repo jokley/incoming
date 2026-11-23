@@ -1,3 +1,4 @@
+import { requiresAccommodation } from '../../services/accommodationRequirement.ts';
 import { AccommodationRateField } from '../AccommodationRate';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { SegmentActionMenu } from './SegmentActionMenu';
@@ -54,7 +55,7 @@ export function PersonAccommodationPanel({people,canEdit,onChanged,onShowDisposi
         {view.openIntervals.map(interval=><div key={`${interval.checkInDate}:${interval.checkOutDate}`} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2"><span>○ {dateLabel(interval.checkInDate)}–{dateLabel(interval.checkOutDate)} · Offen</span>{onShowDisposition && <button type="button" disabled={busy || !view.canAdd} onClick={()=>onShowDisposition(person.athleteId,interval)} className="font-semibold text-[var(--ops-primary)] disabled:opacity-40">In Disposition anzeigen</button>}</div>)}
       </div>;
     })}
-    {canEdit && onExternal && people.length>0 && people.every(person=>person.accommodationRequirement!=='NO_ROOM' && person.accommodationCoverage?.coverageStatus!=='NO_ROOM') && <span className="inline-block" title={!externalEligibility.canCreate ? allExternalReason : undefined}><Button size="small" variant="outlined" disabled={busy || !externalEligibility.canCreate || people.some(p=>coverageFor(p)?.coverageStatus==='CONFLICT')} onClick={()=>onExternal(people)}>Externen Aufenthalt</Button></span>}
+    {canEdit && onExternal && people.length>0 && people.every(person=>requiresAccommodation(person) && person.accommodationCoverage?.coverageStatus!=='NO_ROOM') && <span className="inline-block" title={!externalEligibility.canCreate ? allExternalReason : undefined}><Button size="small" variant="outlined" disabled={busy || !externalEligibility.canCreate || people.some(p=>coverageFor(p)?.coverageStatus==='CONFLICT')} onClick={()=>onExternal(people)}>Externen Aufenthalt</Button></span>}
 
   </section>;
 }

@@ -165,3 +165,78 @@ def test_existing_full_stay_move_still_excludes_its_own_booking(reservation_stat
 
 # Reuse the isolated database/catalogue; the calculator itself has no DB dependency.
 from test_real_workbook_import import database  # noqa: E402,F401
+
+
+@pytest.mark.parametrize('ranges,coverage_status', [
+    ([], 'UNASSIGNED'), ([(14,27)], 'FULLY_ASSIGNED'),
+    ([(14,20)], 'PARTIALLY_ASSIGNED'), ([(14,20),(20,27)], 'FULLY_ASSIGNED'),
+    ([(14,22),(20,27)], 'CONFLICT'), ([(None,20)], 'CONFLICT'),
+])
+def test_person_status_reuses_coverage_and_keeps_independent_dimensions(ranges,coverage_status):
+    from accommodation_coverage import person_disposition_status, summarize_person_disposition
+    records=[booking(i,*span) for i,span in enumerate(ranges)]
+    for b in records:
+        b.room_type.max_persons=2
+        b.occupants=[SimpleNamespace(athlete_id=1),SimpleNamespace(athlete_id=2)]
+    coverage=person_accommodation_coverage(day(14),day(27),records)
+    p=dict(personId=1,eventId=7,name='Synthetic',nationCode='AUT',gender='M',function='Athlete',roomRequest='Double shared',accommodationRequirement='REQUIRED')
+    result=person_disposition_status(p,coverage,records,None,room_request_kind='double')
+    assert result['accommodation'] is coverage
+    assert result['accommodation']['coverageStatus']==coverage_status
+    assert result['singleRoom']['status']=='NO_SINGLE_USE'
+    assert len(result['roomPreference']['segments'])==len(ranges)
+    summary=summarize_person_disposition([result])
+    assert summary['peopleTotal']==summary['accommodationPeopleRequired']==1
+    assert summary['fullyAssigned']==int(coverage_status=='FULLY_ASSIGNED')
+    assert summary['pendingSingleRoomPeople']==0
+
+
+@pytest.mark.parametrize('wish,capacity,occupants,single,expected', [
+    ('single',1,1,True,'MATCH'), ('double',1,1,True,'MISMATCH'),
+    ('single',2,2,False,'MISMATCH'), ('double',2,2,False,'MATCH'),
+    ('single',2,1,True,'MATCH'), ('double',2,1,True,'MISMATCH'),
+    ('double',2,1,False,'UNKNOWN'), ('double',1,1,False,'MISMATCH'),
+    (None,1,1,True,'UNKNOWN'), ('single',None,1,True,'UNKNOWN'),
+])
+def test_room_preference_preserves_physical_category_and_single_valuation(wish,capacity,occupants,single,expected):
+    from accommodation_coverage import person_disposition_status
+    b=booking(1,14,27);b.room_type.max_persons=capacity;b.counts_as_single=single
+    b.occupants=[SimpleNamespace(athlete_id=i) for i in range(occupants)]
+    p=dict(personId=1,roomRequest=wish,accommodationRequirement='REQUIRED')
+    record=person_disposition_status(p,person_accommodation_coverage(day(14),day(27),[b]),[b],None,room_request_kind=wish)
+    segment=record['roomPreference']['segments'][0]
+    assert segment['comparison']==expected and segment['countsAsSingle']==single
+    assert segment['capacity']==capacity and segment['occupantCount']==occupants
+    assert record['roomPreference']['status']==expected
+
+
+def test_mixed_segments_and_no_room_keep_traceable_mismatch_counts():
+    from accommodation_coverage import person_disposition_status, summarize_person_disposition
+    a,b=booking(1,14,20),booking(2,20,27)
+    for item in (a,b): item.room_type.max_persons=2
+    a.occupants=[SimpleNamespace(athlete_id=1),SimpleNamespace(athlete_id=2)]
+    b.occupants=[SimpleNamespace(athlete_id=1)];b.counts_as_single=True
+    p=dict(personId=1,roomRequest='Double shared',accommodationRequirement='REQUIRED')
+    allocation=dict(status='PENDING',context=None,eligibleContexts=[])
+    r=person_disposition_status(p,person_accommodation_coverage(day(14),day(27),[a,b]),[a,b],allocation,room_request_kind='double')
+    assert r['accommodation']['coverageStatus']=='FULLY_ASSIGNED'
+    assert [s['comparison'] for s in r['roomPreference']['segments']]==['MATCH','MISMATCH']
+    assert r['roomPreference']['segments'][1]['checkInDate']=='2027-03-20'
+    assert r['singleRoom']['status']=='PENDING' and r['singleRoom']['context'] is None
+    no=dict(personId=2,accommodationRequirement='NO_ROOM')
+    n=person_disposition_status(no,person_accommodation_coverage(None,None,[],'NO_ROOM'),[],None)
+    assert n['roomPreference']['status']=='NOT_APPLICABLE'
+    totals=summarize_person_disposition([r,n])
+    assert totals['peopleTotal']==2 and totals['accommodationPeopleRequired']==1
+    assert totals['fullyAssigned']==totals['roomPreferenceMismatches']==totals['pendingSingleRoomPeople']==totals['contextlessPendingSingleRoomPeople']==1
+
+
+def test_ambiguous_reported_request_and_missing_quota_evaluation_do_not_turn_green():
+    from accommodation_coverage import person_disposition_status
+    b=booking(1,14,27);b.room_type.max_persons=1;b.counts_as_single=True
+    b.occupants=[SimpleNamespace(athlete_id=1)]
+    p=dict(personId=1,roomRequest='Double single',accommodationRequirement='REQUIRED')
+    r=person_disposition_status(p,person_accommodation_coverage(day(14),day(27),[b]),[b],None,room_request_kind='double')
+    assert r['roomPreference']['reportedValue']=='Double single'
+    assert r['roomPreference']['reportedKind']==r['roomPreference']['status']=='UNKNOWN'
+    assert r['singleRoom']['status']=='UNKNOWN' and r['singleRoom']['reason']=='EZ-Bewertung nicht verfügbar'

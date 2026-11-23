@@ -345,3 +345,153 @@ def test_foreign_current_version_is_rejected(events):
     response=app.test_client().get(f'/api/import/sessions/{own.id}?eventId={a.id}',headers={'X-Championship-Event-ID':str(a.id)})
     assert response.status_code==409
     assert response.json['error']=='IMPORT_SESSION_VERSION_MISMATCH'
+
+
+@pytest.mark.parametrize('remove_memberships',[False,True])
+def test_live_quota_api_exposes_contextless_people_once_without_changing_rows(events,remove_memberships):
+    from test_event_quota_rules import bind
+    a,b=events;bind(a)
+    c1,c2=Competition.query.limit(2).all()
+    p=person(a,function='Official',gender='M',competitions=[c1,c2])
+    if remove_memberships:
+        person(a,fis='basis',staff='basis',function='Athlete',gender='M',competitions=[c1])
+    hotel=Hotel(name='Contextless');room=RoomType(name='Double',max_persons=2)
+    foreign=person(b,fis='foreign',staff='foreign',function='Official',gender='M')
+    for owner in (p,foreign):
+        own_hotel=hotel if owner==p else Hotel(name='Foreign')
+        for flag in (False,True,True):
+            db.session.add(RoomBookingOccupant(athlete=owner,room_booking=RoomBooking(event_id=owner.event_id,hotel=own_hotel,room_type=room,counts_as_single=flag)))
+    db.session.commit()
+    client=app.test_client();url=f'/api/fis/official-quotas?eventId={a.id}'
+    if remove_memberships:
+        initial=client.get(url+'&includeUnallocated=true')
+        assert initial.status_code==200 and initial.json['unallocatedSingleRooms']==[]
+        assert any(item['status']=='COVERED' for row in initial.json['rows'] for item in row['singleRoomAllocations'])
+        p.competitions=[]
+        p.single_room_status='APPROVED_EXTRA'  # Historical marker alone cannot cover the lost context.
+        db.session.commit()
+    legacy=client.get(url);response=client.get(url+'&includeUnallocated=true')
+    assert legacy.status_code==response.status_code==200
+    view=response.json
+    assert view['rows']==legacy.json
+    if not remove_memberships: assert view['rows']==[]
+    assert view['unallocatedSingleRooms']==[dict(personId=str(p.id),name='Test Identity',nationCode='JPN',status='PENDING',context=None,reason='Kein gültiger Quotenkontext zuordenbar')]
+    # Context filters cannot assign or hide a contextless person; nation filtering still applies.
+    assert client.get(url+'&includeUnallocated=true&discipline=Other&gender=W').json['unallocatedSingleRooms']==view['unallocatedSingleRooms']
+    assert client.get(url+'&includeUnallocated=true&nationCode=AUT').json['unallocatedSingleRooms']==[]
+
+
+def test_person_status_api_is_read_only_unique_filtered_and_recomputed(events):
+    from test_event_quota_rules import bind
+    a,b=events;bind(a)
+    ski=Competition.query.filter_by(code='8180').one()
+    snow=Competition.query.filter_by(code='6191').one()
+    stay=dict(arrival_date=date(2027,3,14),departure_date=date(2027,3,27))
+    male=person(a,fis='male',staff='male',function='Athlete',gender='M',room_type='Single',competitions=[ski],**stay)
+    female=person(a,fis='female',staff='female',function='Athlete',gender='W',competitions=[ski],**stay)
+    official=person(a,fis='coach',staff='coach',function='Official',gender='W',room_type='Double shared',competitions=[ski,snow],**stay)
+    orphan=person(a,fis='orphan',staff='orphan',function='Official',gender='M',room_type='Single',single_room_status='APPROVED_EXTRA',**stay)
+    no_room=person(a,fis='no-room',staff='no-room',function='Official',gender='M',accommodation_requirement='NO_ROOM',**stay)
+    foreign=person(b,fis='foreign',staff='foreign',function='Official',gender='M',**stay)
+    hotel=Hotel(name='Status hotel');single=RoomType(name='EZ',max_persons=1);double=RoomType(name='DZ',max_persons=2)
+    first=RoomBooking(event_id=a.id,hotel=hotel,room_type=single,room_number='1',check_in_date=date(2027,3,14),check_out_date=date(2027,3,20),counts_as_single=True)
+    second=RoomBooking(event_id=a.id,hotel=hotel,room_type=double,room_number='2',check_in_date=date(2027,3,20),check_out_date=date(2027,3,27),counts_as_single=False)
+    unresolved=RoomBooking(event_id=a.id,hotel=hotel,room_type=single,room_number='3',check_in_date=date(2027,3,14),check_out_date=date(2027,3,27),counts_as_single=True)
+    for booking,owners in [(first,[official]),(second,[official,male]),(unresolved,[orphan])]:
+        for owner in owners: db.session.add(RoomBookingOccupant(athlete=owner,room_booking=booking))
+    db.session.commit()
+    client=app.test_client();url=f'/api/fis/official-quotas?eventId={a.id}'
+    legacy=client.get(url).json
+    response=client.get(url+'&includePeople=true')
+    assert response.status_code==200,response.json
+    full=response.json;records={p['personId']:p for p in full['personStatuses']}
+    assert full['rows']==legacy
+    assert len(records)==len(full['personStatuses'])==5 and str(foreign.id) not in records
+    coach=records[str(official.id)]
+    assert coach['accommodation']['coverageStatus']=='FULLY_ASSIGNED'
+    assert coach['personalGender']=='W' and {c[2] for c in coach['quotaContexts']}=={'M','W'}
+    assert [s['comparison'] for s in coach['roomPreference']['segments']]==['MISMATCH','MATCH']
+    assert coach['singleRoom']['status']=='COVERED'
+    assert len(coach['singleRoom']['bookingIds'])==1 and len(coach['singleRoom']['eligibleContexts'])==2
+    assert records[str(male.id)]['accommodation']['coverageStatus']=='PARTIALLY_ASSIGNED'
+    assert records[str(female.id)]['accommodation']['coverageStatus']=='UNASSIGNED'
+    assert records[str(no_room.id)]['accommodation']['coverageStatus']=='NO_ROOM'
+    lost=records[str(orphan.id)]['singleRoom']
+    assert lost['status']=='PENDING' and lost['context'] is None and lost['applicableApprovalId'] is None
+    totals=full['personSummary']
+    assert totals==dict(peopleTotal=5,accommodationPeopleRequired=4,fullyAssigned=2,unassigned=1,partiallyAssigned=1,accommodationConflicts=0,roomPreferenceMismatches=2,pendingSingleRoomPeople=1,contextlessPendingSingleRoomPeople=1,operationalAccommodationDemand=4,virtualPlaces=0,virtualGroups=0,planningConflicts=0)
+    # Filter only after evaluating the complete population; even a nonmatching
+    # context filter retains unresolved people, explicitly marked as such.
+    for query in ['&discipline=Ski%20Cross&gender=M','&sportFamily=Snowboard','&personType=OFFICIAL']:
+        view=client.get(url+'&includePeople=true'+query).json
+        people=view['personStatuses'];selected={p['personId']:p for p in people}
+        assert len(people)==len(selected)==view['personSummary']['peopleTotal']
+        assert selected[str(official.id)]['singleRoom']==coach['singleRoom']
+        assert str(orphan.id) in selected
+        assert view['personSummary']['pendingSingleRoomPeople']==sum(p['singleRoom']['status']=='PENDING' for p in people)==1
+    filtered=client.get(url+'&includePeople=true&discipline=NotConfigured').json
+    assert [p['personId'] for p in filtered['personStatuses']]==[str(orphan.id)]
+    assert filtered['personStatuses'][0]['matchesContextFilters'] is False
+    assert filtered['personFilters']['contextlessPendingIncluded']
+    personal=client.get(url+'&includePeople=true&personalGender=M&personType=ATHLETE').json
+    assert [p['personId'] for p in personal['personStatuses']]==[str(male.id)]
+    empty=client.get(url+'&includePeople=true&nationCode=AUT').json
+    assert empty['personStatuses']==[] and empty['personSummary']['peopleTotal']==0
+    orphan.single_room_quota_exempt_reason='OTHER';db.session.commit()
+    exempt_view=client.get(url+'&includePeople=true').json
+    exempt_person=next(p for p in exempt_view['personStatuses'] if p['personId']==str(orphan.id))
+    assert exempt_person['singleRoom']['status']=='EXEMPT' and exempt_person['singleRoom']['exemptionReason']=='OTHER'
+    assert exempt_person['singleRoom']['context'] is None and exempt_view['personSummary']['pendingSingleRoomPeople']==0
+    orphan.single_room_quota_exempt_reason=None;db.session.commit()
+    assert client.get(url+'&includePeople=true&personType=GUEST').status_code==400
+    assert client.get(url+'&includePeople=true&personalGender=Mixed').status_code==400
+    # Read again after persisted valuation/segment changes; no stale green cache.
+    first.counts_as_single=False;unresolved.counts_as_single=False
+    db.session.delete(second);db.session.commit()
+    fresh=client.get(url+'&includePeople=true').json
+    updated={p['personId']:p for p in fresh['personStatuses']}
+    assert updated[str(official.id)]['singleRoom']['status']=='NO_SINGLE_USE'
+    assert updated[str(official.id)]['accommodation']['coverageStatus']=='PARTIALLY_ASSIGNED'
+    assert updated[str(male.id)]['accommodation']['coverageStatus']=='UNASSIGNED'
+    assert fresh['personSummary']['pendingSingleRoomPeople']==0
+    male.gender='A';db.session.commit()
+    invalid=client.get(url+'&includePeople=true')
+    assert invalid.status_code==409 and 'personSummary' not in invalid.json
+
+
+@pytest.mark.parametrize('stored',[False,True])
+def test_concurrent_forecast_writes_and_event_isolation(events,monkeypatch,stored):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from models import AthleteArrivalForecast,AuditEvent
+    a,b=events
+    competition=Competition.query.filter_by(quota_discipline='Freeski Park & Pipe',gender='M').first()
+    db.session.add_all([Athlete(event_id=owner.id,firstname=str(i),lastname='Forecast',nation_code=nation,function='Athlete',gender='M',competitions=[competition]) for owner,nation in ((a,'FIN'),(a,'AUT'),(b,'FIN')) for i in range(8)])
+    db.session.commit()
+    headers={'X-Championship-Event-ID':str(a.id)}
+    client=app.test_client()
+    row=next(r for r in client.get('/api/athletes/arrival-planning',headers=headers).json['rows'] if r['nationCode']=='FIN')
+    if stored:
+        row=client.put('/api/athletes/arrival-planning/'+row['areaId'],headers=headers,json={'baseToken':row['baseToken'],'expectedTotal':4}).json
+    barrier=Barrier(2)
+    def write(total):
+        with app.test_client() as worker:
+            barrier.wait(timeout=10)
+            response=worker.put('/api/athletes/arrival-planning/'+row['areaId'],headers=headers,json={'baseToken':row['baseToken'],'expectedTotal':total})
+            return response.status_code
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        codes=list(pool.map(write,[3,4]))
+    assert sorted(codes)==[200,409]
+    db.session.expire_all()
+    assert AthleteArrivalForecast.query.count()==1
+    assert AthleteArrivalForecast.query.one().event_id==a.id
+    assert client.get('/api/athletes/arrival-planning?nationCode=AUT',headers=headers).json['rows'][0]['expectedTotal'] is None
+    other=client.get('/api/athletes/arrival-planning',headers={'X-Championship-Event-ID':str(b.id)}).json['rows'][0]
+    assert other['expectedTotal'] is None
+    assert client.put('/api/athletes/arrival-planning/'+row['areaId'],headers={'X-Championship-Event-ID':str(b.id)},json={'baseToken':row['baseToken'],'expectedTotal':1}).status_code==404
+    assert AuditEvent.query.filter_by(entity_type='athlete-arrival-forecast').count()==(2 if stored else 1)
+    from models import EventAccess
+    grant=EventAccess.query.filter_by(event_id=a.id,username='test-admin').one();grant.can_write=False;db.session.commit()
+    current=next(r for r in client.get('/api/athletes/arrival-planning',headers=headers).json['rows'] if r['nationCode']=='FIN')
+    assert client.put('/api/athletes/arrival-planning/'+current['areaId'],headers=headers,json={'baseToken':current['baseToken'],'expectedTotal':2}).status_code==403
+    assert AuditEvent.query.filter_by(entity_type='athlete-arrival-forecast').count()==(2 if stored else 1)

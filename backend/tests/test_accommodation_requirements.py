@@ -286,3 +286,71 @@ def test_zero_required_metrics_retain_roster_and_partial_stays_remain_open():
     people.append({'personId':3,'accommodationRequirement':'REQUIRED'})
     metrics=accommodation_metrics(people,{'3':{'coverageStatus':'PARTIALLY_ASSIGNED'}})
     assert metrics['accommodationPeopleOpen']==1 and metrics['accommodationPeopleFullyAssigned']==0 and metrics['accommodationPeoplePartiallyAssigned']==1
+
+
+@pytest.mark.parametrize(('entry_end', 'room_start', 'room_end', 'resolved'), [
+    ('11.03.2027', '02.03.2027', '11.03.2027', True),
+    ('06.03.2027', '06.03.2027', '11.03.2027', True),
+    ('06.03.2027', '05.03.2027', '11.03.2027', False),
+    ('06.03.2027', '09.03.2027', '11.03.2027', False),
+])
+def test_room_evidence_only_resolves_identical_or_adjacent_entry_stays(
+        database, monkeypatch, entry_end, room_start, room_end, resolved):
+    _, event = database
+    entry = {'Firstname':'Test', 'Lastname':'Person', 'Nationcode':'AUS', 'Function':'Athlete',
+        'Gender':'M', 'Fiscode':'9300953', 'Competitorid/Staff ID':'123',
+        'WSC_PGS_M_6170':'YES', 'Room_type':'No room', 'Arrival_date':'02.03.2027',
+        'Departure_date':entry_end}
+    room = {**entry, 'Room_type':'Double', 'Arrival_date':room_start, 'Departure_date':room_end}
+    monkeypatch.setattr(imports, 'load_first_sheet', lambda path: pd.DataFrame([entry if path=='entries' else room]))
+    result = imports.create_fis_import_preview('entries', 'rooms', event)
+    assert len(result['people']) == 1
+    person = result['people'][0]
+    assert person['departureDate'] == ('2027-03-11' if resolved else '2027-03-06')
+    if resolved:
+        assert person['accommodationRequirement'] == 'REQUIRED'
+        assert person['entryAccommodationSource']['roomType'] == 'No room'
+        assert result['rooms'][0]['checkInDate'] == '2027-03-02'
+        assert not any(e['code']=='ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT' for e in result['errors'])
+    else:
+        assert any(e['code']=='ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT' for e in result['errors'])
+
+
+@pytest.mark.parametrize('first_room_type', ['Double', 'No room'])
+@pytest.mark.parametrize(('second_start','intervals'), [
+    ('06.03.2027', [('2027-03-02', '2027-03-11')]),
+    ('09.03.2027', [('2027-03-02', '2027-03-06'), ('2027-03-09', '2027-03-11')]),
+])
+def test_room_list_combines_only_contiguous_compatible_rows(second_start, intervals, first_room_type):
+    person = {'matchKey':'123', 'fisCode':'123', 'firstname':'Test', 'lastname':'Person', 'nationCode':'AUS'}
+    room = {'Firstname':'Test', 'Lastname':'Person', 'Nationcode':'AUS', 'Room_type':'Double'}
+    rows = [{**room, 'Room_type':first_room_type, 'Arrival_date':'02.03.2027', 'Departure_date':'06.03.2027'},
+            {**room, 'Arrival_date':second_start, 'Departure_date':'11.03.2027'}]
+    result = imports.parse_room_list(pd.DataFrame(rows), [person])
+    assert not result['errors']
+    projected = [imports._serialize_room_preview(row) for row in result['rooms']]
+    assert [(room['checkInDate'], room['checkOutDate']) for room in projected] == intervals
+    if len(intervals) == 1:
+        assert projected[0]['roomType'] == 'Double'
+        assert [row['roomType'] for row in projected[0]['sourceRows']] == [first_room_type, 'Double']
+        assert [row['row'] for row in projected[0]['sourceRows']] == [2, 3]
+
+
+def test_matching_name_does_not_override_conflicting_room_list_identifier():
+    person = {'matchKey':'123', 'fisCode':'123', 'firstname':'Test', 'lastname':'Person', 'nationCode':'AUS'}
+    row = {'Firstname':'Test', 'Lastname':'Person', 'Nationcode':'AUS', 'Room_type':'Double',
+           'Arrival_date':'02.03.2027', 'Departure_date':'11.03.2027', 'Fiscode':'456'}
+    result = imports.parse_room_list(pd.DataFrame([row]), [person])
+    assert not result['rooms']
+    assert [error['code'] for error in result['errors']] == ['ROOM_IDENTITY_CONFLICT']
+
+
+def test_room_list_keeps_incompatible_overlapping_requests_visible():
+    person = {'matchKey':'123', 'fisCode':'123', 'firstname':'Test', 'lastname':'Person', 'nationCode':'AUS'}
+    dates = {'Firstname':'Test', 'Lastname':'Person', 'Nationcode':'AUS',
+             'Arrival_date':'02.03.2027', 'Departure_date':'11.03.2027'}
+    result = imports.parse_room_list(pd.DataFrame([
+        {**dates, 'Room_type':'Double'}, {**dates, 'Room_type':'Single'}
+    ]), [person])
+    assert len(result['rooms']) == 2
+    assert any(issue['code'] == 'ROOM_CONFLICTING_STAY' for issue in result['warnings'])

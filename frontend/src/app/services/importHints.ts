@@ -1,5 +1,66 @@
-import type { FisImportIssue } from '../types.ts';
 import {importFindings,personFamilies,type ImportFinding} from './importFindings.ts';
+import { requiresAccommodation } from './accommodationRequirement.ts';
+import type { ImportNNPlanning, FisImportIssue } from '../types.ts';
+import { sportAreaLabel } from './competitionPresentation.ts';
+
+/** Join existing backend exclusions to preview keys; never select people here. */
+export function deferredImportPersonKeys(preview:FisImportPreview,planning?:ImportNNPlanning):Set<string> {
+ const excluded=new Set(planning?.rows.filter(row=>!row.conflict).flatMap(row=>row.replacedPersonIds)??[]);
+ const result=new Set<string>();
+ for(const person of preview.people){
+  if(person.matchKey&&person.accommodationRequirement==='NO_DISPO')result.add(person.matchKey);
+  if(person.function?.trim().toLowerCase()!=='athlete'||!person.matchKey)continue;
+  const liveIds=new Set(planning?.operationalQuota?.people?.filter(p=>p.matchKey===person.matchKey&&p.nationCode===person.nationCode&&p.personId!=null).map(p=>String(p.personId))??[]);
+  const identity=person.existingAthleteId!=null?String(person.existingAthleteId):planning?.mode==='IMPORT'?`preview:${person.matchKey}`:liveIds.size===1?[...liveIds][0]:undefined;
+  if(identity&&excluded.has(identity))result.add(person.matchKey);
+ }
+ return result;
+}
+
+export type ImportPlacement = {area:string;group?:string};
+/** Presentation only: partitions existing references once, never evaluates or filters them. */
+export function groupImportItems<T>(items: T[], placement: (item:T)=>ImportPlacement) {
+ const groups=new Map<string,ImportPlacement & {items:T[]}>();
+ for(const item of items){
+  const place=placement(item),key=JSON.stringify([place.area,place.group??'']);
+  const group=groups.get(key)??{...place,items:[]};group.items.push(item);groups.set(key,group);
+ }
+ return [...groups.values()].sort((a,b)=>a.area.localeCompare(b.area,'de'));
+}
+export function familyImportPlacement(values?:string[]):ImportPlacement {
+ const families=[...new Set(values??[])];
+ if(!families.length||families.some(f=>!f||f==='*'))return {area:'Gemeinsam / nicht eindeutig zugeordnet'};
+ return {area:families.length===1?sportAreaLabel(families[0]):'Gemeinsam / mehrere Zuordnungen'};
+}
+export function personImportPlacement(person?:FisImportPreviewPerson):ImportPlacement {
+ const families=[...new Set(person?.athleteQuotaFamilies??[])];
+ return {area:families.length===1&&families[0]&&families[0]!=='*'
+  ?sportAreaLabel(families[0]):'Gemeinsam / nicht eindeutig zugeordnet'};
+}
+export function quotaImportPlacement(name:string,control?:ImportControl):ImportPlacement {
+ const family=control?.quotaGroups?.find(g=>g.name===name)?.family;
+ return {area:family?sportAreaLabel(family):'Nicht zugeordnet',group:name};
+}
+export function roomImportPlacement(room:Room|undefined,preview:FisImportPreview,control?:ImportControl):ImportPlacement {
+ const shared={area:'Gemeinsam / nicht eindeutig zugeordnet'};
+ if(!room||!room.person1Key||roomNeedsPartner(room,control))return shared;
+ const keys=[room.person1Key,...(room.person2Key?[room.person2Key]:[])];
+ const people=keys.map(key=>preview.people.find(p=>p.matchKey===key));
+ if(people.some(p=>!p||!p.athleteQuotaFamilies?.length||p.athleteQuotaFamilies.some(f=>!f)))return shared;
+ const families=new Set(people.flatMap(p=>p!.athleteQuotaFamilies!));
+ if(room.sourceRows?.length){
+  for(const row of room.sourceRows){
+   const sources=Object.entries(preview.submissionSources??{}).filter(([,id])=>String(id)===String(row.versionId));
+   if(sources.length!==1)return shared;
+   families.add(sources[0][0]);
+  }
+ }else if(preview.submissionSources){
+  return shared;
+ }else if(!preview.submissionSources&&preview.replacementScope?.kind==='SPORT_FAMILY'&&preview.replacementScope.family){
+  families.add(preview.replacementScope.family);
+ }
+ return families.size===1?{area:sportAreaLabel([...families][0])}:shared;
+}
 
 const labels: Record<string,string> = {
   INFO_OFFICIALS_OVER_BASIS: 'Officials über Basis (informativ)',
@@ -80,7 +141,7 @@ export function officialsSummary(nation:QuotaOverview['nations'][number],fixed:b
 }
 
 /** Counts the existing personal allocation; never assigns entitlement or quota. */
-export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
+export function singleRoomSummary(preview:Pick<FisImportPreview,'rooms'>&{people:import('../types').SingleRoomSummaryPerson[]},nation?:string) {
  const people=preview.people.filter(p=>!nation||p.nationCode===nation);
  const categories={COVERED:[] as string[],APPROVED_EXTRA:[] as string[],EXEMPT:[] as string[],PENDING:[] as string[]};
  const byKey=new Map(people.map(p=>[p.matchKey,p]));
@@ -117,7 +178,7 @@ export function singleRoomSummary(preview:FisImportPreview,nation?:string) {
   if(room.roomType.trim().toLowerCase()!=='single')continue;
   for(const key of [room.person1Key,room.person2Key].filter(Boolean)){
    const person=byKey.get(key);
-   if(person&&person.accommodationRequirement!=='NO_ROOM'&&!person.singleRoomAllocation)available=false;
+   if(person&&requiresAccommodation(person)&&!person.singleRoomAllocation)available=false;
   }
  }
  return {requested:members.size,counts,exemptions,personKeys:categories,allPersonKeys:[...new Set([...members.values()].flatMap(m=>[...m.keys]))],complete:complete&&available,available};

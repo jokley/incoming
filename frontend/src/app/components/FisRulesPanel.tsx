@@ -1,3 +1,4 @@
+import { sportAreaLabel } from '../services/competitionPresentation';
 import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../services/api';
 import type { EventQuotaRules } from '../types';
@@ -11,8 +12,8 @@ const sports = [
     { name: 'Snowboard Park & Pipe', events: ['Halfpipe M/W', 'Big Air M/W', 'Slopestyle M/W'] },
     { name: 'Snowboard Cross', events: ['Snowboard Cross M/W', 'Mixed Snowboard Cross Team'] },
   ] },
-  { name: 'Freeski', groups: [{ name: 'Freeski Park & Pipe', events: ['Halfpipe M/W', 'Big Air M/W', 'Slopestyle M/W'] }] },
-  { name: 'Freestyle Ski', groups: [
+  { name: 'Freestyle', groups: [
+    { name: 'Freeski Park & Pipe', events: ['Halfpipe M/W', 'Big Air M/W', 'Slopestyle M/W'] },
     { name: 'Freestyle', events: ['Moguls M/W', 'Dual Moguls M/W', 'Dual Moguls Team', 'Aerials M/W', 'Aerials Team'] },
     { name: 'Ski Cross', events: ['Ski Cross M/W', 'Ski Cross Team'] },
   ] },
@@ -61,11 +62,11 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
         <p className="fis-context"><Flag aria-hidden="true" /> Nation <b>+</b> Event Group <b>+</b> Gender <b>=</b> Quotenkontext</p>
         <div className="fis-flow fis-quota-flow">
           <div><strong>{example.athletes} Athleten</strong><Figure kind="athlete" count={4} /></div><Arrow />
-          <div><strong>+ {config.officials.allowance} → {example.officials} Officials</strong><Figure kind="official" count={3} /><small>Officials-Basis</small></div><Arrow />
+          <div><strong>+ {config.officials.allowance} → {example.officials} Officials</strong><Figure kind="official" count={3} /><small>Officials-Limit · Beispiel bei voller Besetzung</small></div><Arrow />
           <div><strong>{example.singleRooms} EZ erlaubt</strong><Figure kind="bed" count={Math.min(example.singleRooms,5)} /></div>
         </div>
         <div className="fis-rule-strip"><b>Athleten + {config.officials.allowance} = Officials-Quote</b><span>{example.scale.join(" · ")}</span><small>Fixierte Eventparameter · FIS-Referenzen 9.1.3 / 13.3 zum Vergleich</small></div>
-        <Note>Die Quote gilt je Nation + Event Group + Gender. Ohne gemeldete Athleten entsteht in der Anwendung keine reguläre Quote.</Note>
+        <Note>Die Quote gilt je Nation + Event Group + Gender. Ohne gemeldete Athleten entsteht in der Anwendung keine reguläre Quote. Die operative EZ-Basis ist die Zahl gemeldeter anrechenbarer Officials, begrenzt auf die operative Officials-Obergrenze. Diese wird bei ausdrücklicher NN-Planung aus dem erwarteten Unterkunftsbedarf berechnet. Die offizielle FIS-Meldung und ihre sportliche Quotenprüfung bleiben unverändert.</Note>
       </Section>
       <Section number={2} title="Wichtigster Merksatz" className="fis-half">
         <p className="fis-key"><Lightbulb aria-hidden="true" />Ein EZ bedeutet <em>nicht automatisch</em> Mehrpreis.</p>
@@ -75,7 +76,7 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
           <div className="fis-outcome fis-pending"><ClipboardCheck aria-hidden="true" /><div><b>Nein → Genehmigung erforderlich</b><span>+EZ offen · noch kein EZ-Mehrpreis</span><small>PENDING_APPROVAL</small></div></div>
         </div>
         <div className="fis-approval"><Arrow /><ShieldCheck aria-hidden="true" /><span>Nach Genehmigung · <code>APPROVED_EXTRA</code></span><b>Mehrpreis JA</b><Coins aria-hidden="true" /></div>
-        <Note>EZ-Mehrpreis braucht beides: genehmigte zusätzliche EZ-Nutzung und countsAsSingle = true. Sondertarif ist ein eigener Grund.</Note>
+        <Note>EZ-Mehrpreis braucht eine aktuell anwendbare kostenpflichtige Genehmigung und countsAsSingle = true. Eine gültige kostenfreie Ausnahme verbraucht keine reguläre EZ-Quote und löst keinen EZ-Mehrpreis aus. Ohne aktive EZ-Nutzung bleibt die Genehmigung inaktiv erhalten; ein nicht mehr passender Genehmigungskontext muss geprüft werden. Eine offene Entscheidung ist noch kein genehmigter Mehrpreis. Sondertarif ist ein eigener Grund.</Note>
       </Section>
       <Section number={3} title="Konkretes Beispiel" className="fis-full">
         <div className="fis-example">
@@ -106,8 +107,8 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
         <dl className="fis-faq">{faq.map(([q, a]) => <div key={q}><dt><CircleHelp aria-hidden="true" />{q}</dt><dd>{a}</dd></div>)}</dl>
       </Section>
       <Section number={7} title="Was ist eine Event Group?" className="fis-half fis-extended">
-        <p>Event Groups bündeln einzelne Wettbewerbe für die Quotenbetrachtung.</p>
-        <div className="fis-sports">{sports.map(sport => <div key={sport.name}><h3><MountainSnow aria-hidden="true" />{sport.name}</h3>{sport.groups.map(group => <details key={group.name} className="fis-group"><summary><Snowflake aria-hidden="true" />{group.name}</summary><ul>{group.events.map(event => <li key={event}>{event}</li>)}</ul></details>)}</div>)}</div>
+        <p>Die zwei Bereiche entsprechen den Athleten-Quotenfamilien. Darunter bleiben sechs Event Groups für die Officials-/EZ-Quote; sie bündeln die einzelnen Wettbewerbe.</p>
+        <div className="fis-sports">{sports.map(sport => <div key={sport.name}><h3><MountainSnow aria-hidden="true" />{sportAreaLabel(sport.name)}</h3>{sport.groups.map(group => <details key={group.name} className="fis-group"><summary><Snowflake aria-hidden="true" />{group.name}</summary><ul>{group.events.map(event => <li key={event}>{event}</li>)}</ul></details>)}</div>)}</div>
         <Note>M/W = Männer / Frauen. Mixed- und Teamwettbewerbe sind Wettbewerbsnamen; sie bilden keinen zusätzlichen Gender-Quotenpool.</Note>
       </Section>
       <Section number={8} title="Welche Officials-Arten gibt es?" className="fis-half fis-extended">
@@ -125,7 +126,7 @@ export function FisRulesPanel({rules:providedRules}:{rules?:EventQuotaRules}={})
           <div><Hotel aria-hidden="true" /><h3>External</h3><p>Unterkunft vorhanden, aber außerhalb der normalen LOC-Disposition.</p></div></div>
         <p className="fis-distinction"><b>No room ≠ External</b><b>Sondertarif ≠ EZ-Mehrpreis</b></p>
       </Section>
-      <Section number={10} title="Athleten-/Disziplinquoten" className="fis-full"><p>Je Nation und Quotenfamilie; eine Person zählt innerhalb einer Familie einmal.</p><div className="fis-layers">{Object.entries(config.athletes).map(([family,rule])=><div key={family}><Users aria-hidden="true"/><h3>{family==='Freestyle'?'Freestyle / Freeski':family}</h3><p>{rule.enabled?`${rule.totalLimit} Athleten gesamt · ${rule.genderLimit} je Geschlecht`:'Spezielle Athletenquote deaktiviert'}</p></div>)}</div><Note>Überschreitungen benötigen eine dokumentierte Ausnahmeentscheidung. Keine automatische Auswahl kostenpflichtiger Personen; keine Änderung von Sondertarif oder EZ-Status. World-Champion-EZ-Ausnahmen sind keine Athletenzulassungsausnahme.</Note></Section>
+      <Section number={10} title="Athleten-/Disziplinquoten" className="fis-full"><p>Je Nation und Quotenfamilie; eine Person zählt innerhalb einer Familie einmal.</p><div className="fis-layers">{Object.entries(config.athletes).map(([family,rule])=><div key={family}><Users aria-hidden="true"/><h3>{sportAreaLabel(family)}</h3><p>{rule.enabled?`${rule.totalLimit} Athleten gesamt · ${rule.genderLimit} je Geschlecht`:'Spezielle Athletenquote deaktiviert'}</p></div>)}</div><Note>Überschreitungen benötigen eine dokumentierte Ausnahmeentscheidung. Keine automatische Auswahl kostenpflichtiger Personen; keine Änderung von Sondertarif oder EZ-Status. World-Champion-EZ-Ausnahmen sind keine Athletenzulassungsausnahme.</Note></Section>
       <Section number={11} title="Quellen / FIS Rules" className="fis-full fis-sources">
         <p><BookOpen aria-hidden="true" /><b>FIS Rules for the Organisation of FIS World Championships</b><span>Fassung 19.03.2023</span></p>
         <ul>{references.map(([article, label]) => <li key={article} data-fis-reference={article}><b>{article}</b> — {label}</li>)}</ul>

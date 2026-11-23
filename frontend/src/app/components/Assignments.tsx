@@ -1,6 +1,7 @@
+import {PersonDispositionContext,PersonStatusIcons,PersonWorkSummary,PersonStatusDetails} from './assignment/PersonDispositionStatus';
 import {EzQuotaControl} from './assignment/EzQuotaControl';
 import {ezQuotaReason} from '../services/ezQuotaPresentation';
-import {stableRoomSlots} from '../services/assignmentPresentation';
+import {personTaskCategories,personTaskPeople,queueRoomRequest,type PersonTaskCategory,stableRoomSlots} from '../services/assignmentPresentation';
 import { filterQueuePersonType, type QueuePersonType } from '../services/queuePersonType';
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
@@ -8,14 +9,14 @@ import { periodLabel } from '../services/dispositionItems';
 import { slotPersonCount, slotOperationalUsed, bookingFreeCapacity } from '../services/assignmentRoomUsage';
 import {hotelFitLabel,queueDemandSummary,matchesHotelFit,compareHotelFit,type HotelFit} from '../services/assignmentSuitability';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
-import { DispositionQueueCard } from './assignment/DispositionQueueCard';
+import { DispositionQueueCard,PlanningClarification } from './assignment/DispositionQueueCard';
 import { SplitAssignmentDialog } from './assignment/SplitAssignmentDialog';
 import { dispositionItems, itemContainsPeople, periodLabel as intervalLabel, type DispositionItem } from '../services/dispositionItems';
 import { PersonAccommodationPanel } from './assignment/PersonAccommodationPanel';
 import { unitCoverageComplete } from '../services/segmentWorkflow';
 import { AssignmentComment } from './assignment/AssignmentComment';
-import { contingentComments, visibleAssignmentComment } from '../services/assignmentComments';
-import type { SingleRoomQuotaExemptReason } from '../types';
+import { contingentComments, contingentPeriodLabel, visibleAssignmentComment } from '../services/assignmentComments';
+import type { SingleRoomQuotaExemptReason, SingleRoomStatus } from '../types';
 import { Profiler, type ReactNode, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router';
 import { Dialog, DialogContent } from '@mui/material';
@@ -52,9 +53,9 @@ import type { OperationsLocationState } from '../operationsContext';
 import { usePermissions } from '../auth/AuthProvider';
 import { api } from '../services/api';
 import { assignmentPerformanceEnabled, markAssignmentDrop, recordAssignmentRender } from '../services/assignmentPerformance';
-import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender } from '../services/competitionPresentation';
-import type { OfficialQuotaUsage } from '../services/fisRules';
-import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, matchesQuotaAllowanceContext, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, uniqueQuotaContext } from '../services/quotaEvaluation';
+import { competitionDisplayName, disciplineDisplayName, matchesDisciplineAndGender, sportAreaLabel } from '../services/competitionPresentation';
+import type { OfficialQuotaUsage, OfficialQuotaOverview, UnallocatedSingleRoom } from '../services/fisRules';
+import { actionableQuotaCaseCount, evaluateAllQuotaGroups, evaluateCurrentQuotaUsage, evaluateQuotaUsageRow, matchesQuotaAllowanceContext, quotaAssignmentsFromPlanning, quotaRequiresAction, quotaUsageKey, quotaStatusLabel, uniqueQuotaContext, type PersonQuotaEvaluation } from '../services/quotaEvaluation';
 import type {
   AssignmentGridBooking,
   AssignmentGridHotel,
@@ -66,7 +67,7 @@ import type {
 } from '../types';
 
 type AppView = 'dispatch' | 'quotas' | 'fis-rules';
-type QueueStatus = 'pending' | 'all';
+type QueueStatus = 'pending' | 'assigned' | 'all';
 type FilterMode = 'synchronized' | 'queue';
 type RoomCategoryFilter = '' | 'ez' | 'dz';
 type AssignmentFilterCriteria = {
@@ -123,7 +124,13 @@ export function Assignments() {
   const validationRequestsRef = useRef(new Map<string, Promise<AssignmentValidationResult[]>>());
   const validationGenerationRef = useRef(0);
   const [athletes, setAthletes] = useState<Athlete[]>([]);
-  const [quotaUsage, setQuotaUsage] = useState<OfficialQuotaUsage[]>([]);
+  const [quotaOverview, setQuotaOverview] = useState<OfficialQuotaOverview>({rows:[],unallocatedSingleRooms:[]});
+  const {rows:quotaUsage,unallocatedSingleRooms}=quotaOverview;
+  const [personStatusError,setPersonStatusError]=useState<string|null>(null);
+  const quotaRequest=useRef(0);
+  const [personCategory,setPersonCategory]=useState<PersonTaskCategory|null>(null);
+  const [statusPersonId,setStatusPersonId]=useState<string|null>(null);
+  const [statusFamily,setStatusFamily]=useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [manualQuotaValues,setManualQuotaValues]=useState<Record<string,boolean>>({});
@@ -212,7 +219,8 @@ export function Assignments() {
 
   useEffect(() => {
     void loadQuotaUsage();
-  }, [filterNation, filterDiscipline, filterGender]);
+  }, [filterNation, filterDiscipline, filterGender,filterPersonType,statusFamily]);
+  useEffect(()=>()=>{quotaRequest.current+=1;},[]);
 
   useEffect(() => {
     if (!requestedRoomTypeId || !planning || !activeHotelId) return;
@@ -286,18 +294,28 @@ export function Assignments() {
   };
 
   const loadQuotaUsage = async () => {
+    const requestId=++quotaRequest.current;
     try {
       setQuotaRefreshing(true);
-      const rows = await api.getOfficialQuotaUsage({
+      const overview = await api.getOfficialQuotaOverview({
+        includePeople:true,
+        sportFamily:statusFamily||undefined,
+        personType:filterPersonType==='athletes'?'ATHLETE':filterPersonType==='officials'?'OFFICIAL':undefined,
         nationCode: filterNation || undefined,
         discipline: filterDiscipline || undefined,
         gender: filterGender || undefined,
       });
-      setQuotaUsage(rows);
+      if(requestId!==quotaRequest.current)return;
+      if(!overview.personSummary || !overview.personStatuses || !overview.personFilters
+        || overview.personSummary.peopleTotal!==new Set(overview.personStatuses.map(p=>p.personId)).size
+        || personTaskCategories.some(category=>personTaskPeople(overview.personStatuses!,category.key,overview.personPlanning?.replacedPersonIds).length!==overview.personSummary![category.key]))
+        throw new Error('Die Personenbewertung ist unvollständig oder widersprüchlich.');
+      setQuotaOverview(overview);setPersonStatusError(null);
     } catch (err) {
+      if(requestId===quotaRequest.current)setPersonStatusError('Personenstatus konnte nicht neu bewertet werden.');
       console.error(err);
     } finally {
-      setQuotaRefreshing(false);
+      if(requestId===quotaRequest.current)setQuotaRefreshing(false);
     }
   };
 
@@ -311,8 +329,9 @@ export function Assignments() {
   const assignedUnits = useMemo(()=>allUnitsCombined.filter(unit=>unit.isFullyAssigned),[allUnitsCombined]);
   const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
   const currentQuotaUsage = useMemo(() => evaluateCurrentQuotaUsage(quotaUsage, quotaAssignmentsFromPlanning(allHotels)), [allHotels, quotaUsage]);
-  const additionalCostPersonIds = useMemo(() => new Set(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.filter(person => person.additionalCost).map(person => person.personId))), [allHotels, quotaUsage]);
-  const openItems=useMemo(()=>dispositionItems(allUnitsCombined,allHotels),[allUnitsCombined,allHotels]);
+  const singleRoomEvaluations = useMemo(() => new Map(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.map(person => [person.personId, person] as const))), [allHotels, quotaUsage]);
+  const replacedQueuePeople=useMemo(()=>new Set(planning?.athletePlanning?.replacedPersonIds??[]),[planning]);
+  const openItems=useMemo(()=>dispositionItems(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>!replacedQueuePeople.has(person.athleteId))})),allHotels,true),[allUnitsCombined,allHotels,replacedQueuePeople]);
   const unitById = useMemo(() => {
     const map = new Map<string, RoomBookingUnit>();
     for (const unit of [...allUnitsCombined,...openItems]) map.set(unit.unitId, unit);
@@ -340,8 +359,8 @@ export function Assignments() {
   }, [allHotels]);
 
   const nationOptions = useMemo(
-    () => Array.from(new Set(allUnitsCombined.map((unit) => unit.nationCode).filter(Boolean))).sort(),
-    [allUnitsCombined]
+    () => Array.from(new Set([...allUnitsCombined.map((unit) => unit.nationCode),...(planning?.athletePlanning?.groups??[]).map(group=>group.nationCode)].filter(Boolean))).sort(),
+    [allUnitsCombined,planning?.athletePlanning]
   );
 
   const disciplineOptions = useMemo(() => {
@@ -352,8 +371,9 @@ export function Assignments() {
         disciplines.forEach((discipline) => values.add(discipline));
       }
     }
+    planning?.athletePlanning?.groups.forEach(group=>{if(group.discipline)values.add(group.discipline);});
     return Array.from(values).sort((a, b) => disciplineDisplayName(a).localeCompare(disciplineDisplayName(b)));
-  }, [allUnitsCombined]);
+  }, [allUnitsCombined,planning?.athletePlanning]);
 
   const genderOptions = useMemo(() => {
     const values = new Set<string>();
@@ -363,8 +383,9 @@ export function Assignments() {
         if (gender) values.add(gender);
       }
     }
+    planning?.athletePlanning?.groups.forEach(group=>{if(group.personalGender)values.add(group.personalGender);});
     return Array.from(values).sort();
-  }, [allUnitsCombined]);
+  }, [allUnitsCombined,planning?.athletePlanning]);
 
   const importReviewCount = useMemo(
     () => allUnitsCombined.filter((unit) => unit.occupants.some((occupant) => occupant.hasPendingReview)).length,
@@ -393,7 +414,7 @@ export function Assignments() {
   );
 
   // Matching assigned people remain part of the context for "Bereits genutzt".
-  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType]);
+  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>!replacedQueuePeople.has(person.athleteId)&&matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType,replacedQueuePeople]);
   useEffect(()=>{
     if(filterMode!=='synchronized' && !activeHotelId) {setHotelFits({});setQueueTargets({});return;}
     let current=true;
@@ -427,20 +448,31 @@ export function Assignments() {
 
   const activeHotel = filteredHotels.find((hotel) => hotel.hotelId === activeHotelId) ?? null;
 
-  const queueProgress = useMemo(() => {
-    const people = new Map(allUnitsCombined.flatMap(unit=>unit.occupants).filter(p=>p.accommodationRequirement!=='NO_ROOM').map(p=>[p.athleteId,p]));
-    const total = people.size;
-    const done = [...people.values()].filter(p=>p.accommodationCoverage?.coverageStatus==='FULLY_ASSIGNED').length;
-    return {
-      done,
-      total,
-      percent: total > 0 ? Math.round((done / total) * 100) : 0,
-    };
-  }, [allUnitsCombined]);
+  const statusScope=filterNation||filterDiscipline||filterGender||filterPersonType||statusFamily
+    ?`Gefilterte Personen: ${[filterNation&&`Nation ${filterNation}`,statusFamily&&`Bereich ${sportAreaLabel(statusFamily)}`,filterDiscipline&&`Event Group ${filterDiscipline}`,filterGender&&`Quoten-Gender ${filterGender}`,filterPersonType&&`Personenart ${filterPersonType==='athletes'?'Athleten':'Officials'}`].filter(Boolean).join(' · ')}`:'Eventgesamt · Personen';
+  const filters=quotaOverview.personFilters;
+  const personStatusReady=Boolean(quotaOverview.personSummary&&quotaOverview.personStatuses&&!quotaRefreshing&&!saving&&!personStatusError
+    &&filters?.nationCode===(filterNation||null)&&filters.discipline===(filterDiscipline||null)&&filters.gender===(filterGender||null)
+    &&filters.sportFamily===(statusFamily||null)&&filters.personType===(filterPersonType==='athletes'?'ATHLETE':filterPersonType==='officials'?'OFFICIAL':null));
+  const personStatusMap=useMemo(()=>new Map((quotaOverview.personStatuses??[]).map(person=>[person.personId,person])),[quotaOverview.personStatuses]);
+  const queueProgress={done:personStatusReady?quotaOverview.personSummary!.fullyAssigned:0,total:personStatusReady?quotaOverview.personSummary!.accommodationPeopleRequired:0,
+    percent:personStatusReady&&quotaOverview.personSummary!.accommodationPeopleRequired?Math.round(100*quotaOverview.personSummary!.fullyAssigned/quotaOverview.personSummary!.accommodationPeopleRequired):0};
+  const personStatusContext=useMemo(()=>({people:personStatusMap,ready:personStatusReady,onOpen:setStatusPersonId}),[personStatusMap,personStatusReady]);
+  const selectedStatusPerson=statusPersonId?personStatusMap.get(statusPersonId):undefined;
+  const taskPeople=personCategory&&personStatusReady?personTaskPeople(quotaOverview.personStatuses!,personCategory,quotaOverview.personPlanning?.replacedPersonIds):[];
+  const openPersonDetails=(id:string,bookingId?:string)=>{
+    setStatusPersonId(null);setPersonCategory(null);
+    const segment=personStatusMap.get(id)?.accommodation.segments.find(segment=>!bookingId||segment.bookingId===bookingId);
+    const hotel=allHotels.find(h=>h.slots.some(slot=>slot.bookings.some(b=>b.bookingId===segment?.bookingId)));
+    const unit=allUnitsCombined.find(u=>u.occupants.some(p=>p.athleteId===id));
+    if(hotel&&segment){setActiveHotelId(hotel.hotelId);setSelected({type:'booking',id:segment.bookingId});}
+    else if(unit)setSelected({type:'unit',id:unit.unitId});
+    else navigate(`/athletes?athleteId=${encodeURIComponent(id)}`);
+  };
 
   const actionableQuotaCases = useMemo(
-    () => actionableQuotaCaseCount(currentQuotaUsage),
-    [currentQuotaUsage]
+    () => actionableQuotaCaseCount(currentQuotaUsage,unallocatedSingleRooms),
+    [currentQuotaUsage,unallocatedSingleRooms]
   );
   const pendingQuotaDecisions = useMemo(
     () => currentQuotaUsage.filter((row) => row.quotaStatus === 'DECISION_REQUIRED' || row.openApprovals > 0),
@@ -509,8 +541,15 @@ export function Assignments() {
     }
     if(targetGeneration!==validationGenerationRef.current) return;
     const validSlot = findFirstValidSlot(validations, allHotels, hotelId);
+    const joins=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.flatMap(slot=>slot.bookings).filter(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked')) ?? [];
+    const unit=unitById.get(unitId);
+    const sharedRequest=unit?.occupants.filter(person=>!athleteIds?.length || athleteIds.includes(person.athleteId)).every(person=>queueRoomRequest(person,unit)==='DZ');
+    // Fill a unique shared-room target instead of creating another booking.
+    // Otherwise keep the existing free-room / join fallback; explicit drops remain unrestricted by wishes.
+    const join=(!validSlot || (sharedRequest && joins.length===1)) ? joins[0] : undefined;
+    if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
     if (!validSlot) {
-      setError('Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
+      setError(validations.find(v=>v.slotId.startsWith(`${hotelId}:`))?.messages[0] ?? 'Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
       return;
     }
     await assignUnitToSlot(unitId, validSlot, athleteIds);
@@ -531,6 +570,13 @@ export function Assignments() {
     }
     if(targetGeneration!==validationGenerationRef.current) return;
     const slot = findFirstValidSlotForRoomType(validations, allHotels, hotelId, roomTypeId);
+    const joins=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.filter(slot=>slot.roomTypeId===roomTypeId).flatMap(slot=>slot.bookings).filter(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked')) ?? [];
+    const unit=unitById.get(unitId);
+    const sharedRequest=unit?.occupants.filter(person=>!athleteIds?.length || athleteIds.includes(person.athleteId)).every(person=>queueRoomRequest(person,unit)==='DZ');
+    // Fill a unique shared-room target instead of creating another booking.
+    // Otherwise keep the existing free-room / join fallback; explicit drops remain unrestricted by wishes.
+    const join=(!slot || (sharedRequest && joins.length===1)) ? joins[0] : undefined;
+    if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
     if (!slot) {
       setError('Für diesen Zimmertyp gibt es kein gültiges freies Zimmer.');
       return;
@@ -685,7 +731,7 @@ export function Assignments() {
     }
   };
 
-  const focusedNeed=dragging ?? (selected?.type==='unit' && unitById.has(selected.id) ? {unitId:selected.id,athleteIds:unitById.get(selected.id)!.occupants.map(p=>p.athleteId),label:''} : null);
+  const focusedNeed=dragging ?? (selected?.type==='unit' && (unitById.get(selected.id) as DispositionItem|undefined)?.canAssign ? {unitId:selected.id,athleteIds:unitById.get(selected.id)!.occupants.map(p=>p.athleteId),label:''} : null);
   useEffect(()=>{if(focusedNeed)void ensureAssignmentValidations(focusedNeed.unitId,focusedNeed.athleteIds).catch(()=>{});},[selected,dragging,planning]);
 
   if (loading) {
@@ -698,14 +744,14 @@ export function Assignments() {
 
   return (
     <>
-    <DispositionDragContext.Provider value={{
+    <PersonDispositionContext.Provider value={personStatusContext}><DispositionDragContext.Provider value={{
       onAssignSlot:slot=>{
         if(!permissions.canManageAssignments || !focusedNeed)return;
         const validations=validationByUnit[getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds)];
         if(validations?.some(v=>v.slotId===slot.slotId && v.status!=='blocked'))
           void assignUnitToSlot(focusedNeed.unitId,slot,focusedNeed.athleteIds);
       },
-      queueTargets,hotelId:activeHotelId ?? undefined,fits:filterMode==='synchronized' ? hotelFits : undefined,
+      queueTargets,hotelId:activeHotelId ?? undefined,hotelBookingIds:allHotels.find(hotel=>hotel.hotelId===activeHotelId)?.slots.flatMap(slot=>slot.bookings.map(booking=>booking.bookingId)),fits:filterMode==='synchronized' ? hotelFits : undefined,
       validations:validationByUnit[focusedNeed ? getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds) : ''],
       interval:focusedNeed ? (unitById.get(focusedNeed.unitId) as DispositionItem|undefined)?.openPeriod : undefined,
       occupantCount:focusedNeed?.athleteIds.length}}><div className="relative" aria-busy={saving}>
@@ -724,12 +770,15 @@ export function Assignments() {
           view={view}
           onViewChange={setView}
           progress={queueProgress}
+          progressReady={personStatusReady&&!quotaOverview.personSummary?.virtualGroups&&!quotaOverview.personSummary?.planningConflicts} progressScope={statusScope}
           actionableQuotaCases={actionableQuotaCases}
           saving={saving}
           onRefresh={handleRefresh}
           quotaRows={currentQuotaUsage}
           quotaRefreshing={quotaRefreshing}
         />
+
+        {view==='dispatch'&&<PersonWorkSummary summary={quotaOverview.personSummary} ready={personStatusReady} loading={quotaRefreshing||saving} error={personStatusError} scope={statusScope} family={statusFamily} onFamily={setStatusFamily} onCategory={category=>{setStatusPersonId(null);setPersonCategory(category);}} onRetry={()=>void loadQuotaUsage()}/>}
 
         {notice && <div role="status" className="mx-3 my-2 flex justify-between gap-2 rounded-lg border border-[var(--ops-primary)] px-3 py-2 text-xs"><span>{notice}</span><button onClick={()=>setNotice('')}>Schließen</button></div>}
 
@@ -741,6 +790,7 @@ export function Assignments() {
           {view === 'dispatch' && <aside className="relative z-[1] min-h-0 border-r border-[var(--ops-assignment-sidebar-border)] bg-[var(--ops-assignment-sidebar)] shadow-[var(--ops-assignment-sidebar-shadow)]">
             <AssignmentPerformanceBoundary id="Queue">
             <QueueSidebar
+              planningClarifications={(planning?.athletePlanning?.groups??[]).filter(group=>filterPersonType!=='officials'&&(!filterNation||group.nationCode===filterNation)&&(!filterDiscipline||group.discipline===filterDiscipline||!group.editable)&&(!filterGender||group.personalGender===filterGender||!group.editable)&&!filterRoomCategory&&!filterImportReview&&(!queueSearch||`${group.nationCode} ${group.discipline??''}`.toLowerCase().includes(queueSearch.toLowerCase())))}
               units={queueUnits}
               onExternal={setExternalItem}
               onSplit={setSplitBookingId}
@@ -792,7 +842,7 @@ export function Assignments() {
                 setDragOverRoomTypeKey(null);
                 setDragOverBookingId(null);
               }}
-              onSelectUnit={(unitId) => setSelected({ type: 'unit', id: unitId })}
+              onSelectUnit={(unitId) => {const unit=unitById.get(unitId);setSelected(unit?.isFullyAssigned && unit.assignedBookingId && bookingContextById.has(unit.assignedBookingId) ? {type:'booking',id:unit.assignedBookingId} : {type:'unit',id:unitId});}}
               onQuickAssignPair={(unitId,ids)=>{
                 if(activeHotel) void handleAssignToHotel(unitId,activeHotel.hotelId,ids);
               }}
@@ -808,7 +858,7 @@ export function Assignments() {
             {view === 'dispatch' && (
                 <><div className="flex flex-wrap items-center gap-2 px-3 text-xs">{filterMode==='synchronized' && <label>Hotels: <select aria-label="Hotels" value={hotelFitFilter} onChange={e=>setHotelFitFilter(e.target.value)} className="rounded border px-2 py-1"><option value="all">Alle</option><option value="fit">Passend</option><option value="used">Bereits genutzt</option></select></label>}</div><DispatchWorkspace
                   hotels={filteredHotels}
-                  additionalCostPersonIds={additionalCostPersonIds}
+                  singleRoomEvaluations={singleRoomEvaluations}
                   activeHotel={activeHotel}
                   allHotels={allHotels}
                   validationByUnit={validationByUnit}
@@ -843,6 +893,7 @@ export function Assignments() {
             {view === 'quotas' && (
               <AssignmentPerformanceBoundary id="Quotas">
               <QuotasPanel
+                unallocated={unallocatedSingleRooms}
                 rows={currentQuotaUsage}
                 assignedUnits={assignedUnits}
                 allUnits={allUnitsCombined}
@@ -865,6 +916,13 @@ export function Assignments() {
 
         </div>
 
+        {(personCategory||statusPersonId)&&<AssignmentDialog title={statusPersonId?selectedStatusPerson?.name??'Personenstatus':personTaskCategories.find(c=>c.key===personCategory)?.label??'Personen'} subtitle={statusScope} onClose={()=>{setStatusPersonId(null);setPersonCategory(null);}}>
+          {!personStatusReady?<div role="status" className="p-4 text-sm">{personStatusError??'Personenstatus wird neu bewertet …'}</div>:statusPersonId?selectedStatusPerson?<>
+            {personCategory&&<button type="button" className="m-3 text-sm text-[var(--ops-primary)]" onClick={()=>setStatusPersonId(null)}>← Zur Personenliste</button>}
+            <PersonStatusDetails person={selectedStatusPerson} onDetails={()=>openPersonDetails(selectedStatusPerson.personId)} onBooking={id=>openPersonDetails(selectedStatusPerson.personId,id)} onDecision={id=>{setStatusPersonId(null);setPersonCategory(null);setDecisionId(id);}}/>
+          </>:<p className="p-4">Person ist im aktuellen Bezugsbereich nicht mehr enthalten.</p>:<div className="p-4"><p className="mb-3 text-xs text-[var(--ops-text-muted)]">{taskPeople.length} eindeutige Personen · Kategorien können sich überschneiden. Warteschlangensuche und Hotelfilter ändern diese Liste nicht.</p><ul className="space-y-2" aria-label="Betroffene Personen">{taskPeople.map(person=><li key={person.personId} className="flex flex-wrap items-center justify-between gap-2 rounded border border-[var(--ops-border)] p-2 text-sm"><button type="button" className="text-left font-semibold text-[var(--ops-primary)]" onClick={()=>setStatusPersonId(person.personId)}>{person.name} · {person.nationCode}</button><PersonStatusIcons personId={person.personId}/>{!person.matchesContextFilters&&<span className="w-full text-xs text-[var(--ops-warning)]">Kontextloser EZ-Fall außerhalb des Kontextfilters</span>}</li>)}</ul>{!taskPeople.length&&<p>Keine betroffenen Personen.</p>}</div>}
+        </AssignmentDialog>}
+
         {selected && (
           <AssignmentDialog title="Zimmer / Zuweisung" subtitle="Bewohner, Importinformationen und Disposition im Überblick" onClose={() => setSelected(null)}>
           <PersonAccommodationPanel
@@ -877,6 +935,7 @@ export function Assignments() {
               if(unit) setSelected({type:'unit',id:unit.unitId});
             }}/>
           <DetailPanel
+              singleRoomEvaluations={singleRoomEvaluations}
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
               quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.slot.capacity,
@@ -928,7 +987,7 @@ export function Assignments() {
         {error && <OperationsNotice message={error} onClose={() => setError(null)} />}
     </WorkspaceFrame>
     </div>
-    </div></DispositionDragContext.Provider>
+    </div></DispositionDragContext.Provider></PersonDispositionContext.Provider>
     <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
     </>
   );
@@ -937,7 +996,7 @@ export function Assignments() {
 function TopBar({
   view,
   onViewChange,
-  progress,
+  progress, progressReady=true, progressScope='Personen',
   actionableQuotaCases,
   saving,
   onRefresh,
@@ -947,6 +1006,7 @@ function TopBar({
   view: AppView;
   onViewChange: (view: AppView) => void;
   progress: { done: number; total: number; percent: number };
+  progressReady?:boolean; progressScope?:string;
   actionableQuotaCases: number;
   saving: boolean;
   onRefresh: () => void;
@@ -990,21 +1050,22 @@ function TopBar({
         <LiveQuotaStrip rows={quotaRows} onOpen={() => onViewChange('quotas')} refreshing={quotaRefreshing} />
         <div className="flex items-center gap-2">
           <div className="w-20">
-            <CapacityBar pct={progress.percent} />
+            {progressReady&&<CapacityBar pct={progress.percent} />}
           </div>
-          <span className="font-mono text-[var(--ops-assignment-text-muted)]" title={`${progress.done} von ${progress.total} disponiert`}>
-            <strong className="text-[var(--ops-assignment-text-body)]">{progress.total ? `${progress.percent}%` : 'Kein Unterkunftsbedarf'}</strong>
+          <span className="font-mono text-[var(--ops-assignment-text-muted)]" title={`${progressScope}: ${progressReady?`${progress.done} von ${progress.total} vollständig untergebracht`:'Bewertung ausstehend'}`}>
+            <strong className="text-[var(--ops-assignment-text-body)]">{!progressReady?'Status offen':progress.total ? `${progress.percent}%` : 'Kein Unterkunftsbedarf'}</strong>
           </span>
         </div>
 
         {actionableQuotaCases > 0 && (
           <div className="rounded-full border border-amber-700/60 bg-amber-500/10 px-2.5 py-1 font-semibold text-[var(--ops-assignment-text-warning)]">
-            {actionableQuotaCases} Handlungsbedarf
+            {actionableQuotaCases} offene Quotenkontexte
           </div>
         )}
 
         <button
           onClick={onRefresh}
+          aria-label="Aktualisieren"
           className="flex h-8 w-8 items-center justify-center rounded-lg text-[var(--ops-assignment-text-faint)] transition-colors hover:bg-[var(--ops-surface-raised)] hover:text-[var(--ops-assignment-text-body)]"
         >
           <RefreshCw className={`h-4 w-4 ${saving ? 'animate-spin' : ''}`} />
@@ -1023,13 +1084,13 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
   if (!row) return null;
 
   return (
-    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: Officials ${row.assignedOfficials} von ${row.officialQuota}, als EZ gewertete Personen ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
+    <button onClick={onOpen} aria-busy={refreshing} aria-label={`Quoten: gemeldete Officials ${row.registeredOfficials ?? row.assignedOfficials} von ${row.officialQuota}, als EZ gewertete Personen ${row.singleRoomsUsed} von ${row.singleRoomsAllowed}`} className="relative hidden items-stretch overflow-hidden rounded-xl border border-[var(--ops-border-strong)] bg-[var(--ops-assignment-card)] text-left shadow-[var(--ops-assignment-kpi-shadow)] transition-all hover:border-[var(--ops-primary)] hover:bg-[var(--ops-assignment-card-hover)] hover:shadow-[var(--ops-assignment-kpi-hover-shadow)] xl:flex">
       {refreshing && <span className="absolute inset-x-0 bottom-0 flex items-center justify-center gap-1 bg-[var(--ops-surface)]/95 py-0.5 text-[9px] text-[var(--ops-assignment-text-accent)]" role="status" aria-live="polite"><RefreshCw className="h-2.5 w-2.5 animate-spin" /> wird aktualisiert</span>}
       <span className="min-w-[100px] border-r border-[var(--ops-divider)] px-3 py-1.5">
-        <span className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials</span>
-        <span className={`flex items-center gap-1.5 font-mono font-bold ${row.assignedOfficials > row.officialQuota ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
-          {row.assignedOfficials} / {row.officialQuota}
-          {row.assignedOfficials <= row.officialQuota && <Check className="h-3.5 w-3.5 text-emerald-400" />}
+        <span title={`Gemeldet: ${row.registeredOfficials ?? row.assignedOfficials}; zugewiesen: ${row.assignedOfficials}; reguläres Limit: ${row.officialQuota}`} className="block text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">Officials gemeldet</span>
+        <span className={`flex items-center gap-1.5 font-mono font-bold ${(row.registeredOfficials ?? row.assignedOfficials) > row.officialQuota ? 'text-[var(--ops-assignment-text-warning)]' : 'text-[var(--ops-text)]'}`}>
+          {row.registeredOfficials ?? row.assignedOfficials} / {row.officialQuota}
+          {(row.registeredOfficials ?? row.assignedOfficials) <= row.officialQuota && <Check className="h-3.5 w-3.5 text-emerald-400" />}
         </span>
       </span>
       <span className="min-w-[112px] px-3 py-1.5">
@@ -1080,12 +1141,12 @@ function AlertBanner({
   onClose: () => void;
   onGoQuotas: () => void;
 }) {
-  const officialText = row.assignedOfficials > row.officialQuota
-    ? `Official-Quote überschritten: ${row.nationCode} (${row.assignedOfficials}/${row.officialQuota})`
+  const officialText = (row.registeredOfficials ?? row.assignedOfficials) > row.officialQuota
+    ? `Officials-Limit überschritten: ${row.nationCode} (${row.registeredOfficials ?? row.assignedOfficials}/${row.officialQuota} gemeldet)`
     : '';
   const quotaEvaluation = evaluateQuotaUsageRow(row);
   const singleText = quotaEvaluation.hasViolation
-    ? `EZ-Quotenbewertung überschritten (${quotaEvaluation.usedSingleRooms}/${quotaEvaluation.allowedSingleRooms})`
+    ? `EZ-Entscheidung offen (${row.singleRoomsPending ?? quotaEvaluation.overflow} Personen)`
     : '';
   const message = [officialText, singleText].filter(Boolean).join(' und ');
 
@@ -1106,6 +1167,7 @@ function AlertBanner({
 }
 
 function QueueSidebar({
+  planningClarifications=[],
   units,
   filterMode,
   onFilterMode,
@@ -1142,6 +1204,7 @@ function QueueSidebar({
   pendingAction,
   hotelName,highlightedItems,onSplit,splitOptionsFor,onExternal,
 }: {
+  planningClarifications?:import('../types').ArrivalPlanningRow[];
   hotelName?:string;highlightedItems:string[];
   onSplit:(bookingId:string)=>void;
   onExternal:(unit:DispositionItem)=>void;
@@ -1194,11 +1257,11 @@ function QueueSidebar({
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
-            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} offene Zuweisungen</div>
+            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} {filterStatus==='pending'?'namentliche Aufgaben':'Einträge'} · {planningClarifications.length} Planungsklärungen</div>
           </div>
         </div>
 
-        {filterMode==='synchronized' && <QueueDemandSummary units={units} context={[filterNation,filterDiscipline && disciplineDisplayName(filterDiscipline),filterGender,filterPersonType==='athletes' ? 'Athleten' : filterPersonType==='officials' ? 'Officials' : '',search].filter(Boolean).join(' · ')}/>}
+        {filterMode==='synchronized' && <QueueDemandSummary units={units.filter(unit=>!unit.isFullyAssigned)} context={[filterNation,filterDiscipline && disciplineDisplayName(filterDiscipline),filterGender,filterPersonType==='athletes' ? 'Athleten' : filterPersonType==='officials' ? 'Officials' : '',search].filter(Boolean).join(' · ')}/>}
         <SearchInput value={search} onChange={onSearch} placeholder="Athleten suchen..." />
 
         <div className="mt-3 grid grid-cols-3 gap-1.5">
@@ -1208,6 +1271,7 @@ function QueueSidebar({
         </div>
 
         <div className="mt-3">
+          <FilterButtonGroup label="Status" value={filterStatus} options={[{id:'all',label:'Alle'},{id:'pending',label:'Offen'},{id:'assigned',label:'Zugewiesen'}]} onChange={value=>onFilterStatus(value as QueueStatus)}/>
           <FilterButtonGroup label="Personentyp" value={filterPersonType || 'all'}
             options={[{id:'all',label:'Alle'},{id:'athletes',label:'Athleten'},{id:'officials',label:'Officials'}]}
             onChange={value=>onFilterPersonType(value==='all' ? '' : value as QueuePersonType)}/>
@@ -1236,6 +1300,7 @@ function QueueSidebar({
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="px-3 py-3">
           <div className="space-y-2">
+            {planningClarifications.map(group=><PlanningClarification key={group.areaId} group={group}/>)}
             {shareRequests.map(({ unit }) => (
                 <DispositionQueueCard
                   key={unit.unitId}
@@ -1272,7 +1337,7 @@ function QueueSidebar({
                 pending={pendingAction?.unitId === unit.unitId}
               />
             ))}
-            {!regularUnits.length && !shareRequests.length && (
+            {!regularUnits.length && !shareRequests.length && !planningClarifications.length && (
               <div className="rounded-2xl border border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] px-4 py-10 text-center text-sm text-[var(--ops-assignment-text-body)]">
                 Keine Einheiten mit den aktuellen Filtern.
               </div>
@@ -1287,7 +1352,7 @@ function QueueSidebar({
 
 function DispatchWorkspace({
   hotels,
-  additionalCostPersonIds,
+  singleRoomEvaluations,
   activeHotel,
   allHotels,
   validationByUnit,
@@ -1318,7 +1383,7 @@ function DispatchWorkspace({
   pendingAction,
 }: {
   hotels: AssignmentGridHotel[];
-  additionalCostPersonIds: Set<string>;
+  singleRoomEvaluations: Map<string, PersonQuotaEvaluation>;
   activeHotel: AssignmentGridHotel | null;
   allHotels: AssignmentGridHotel[];
   validationByUnit: Record<string, AssignmentValidationResult[]>;
@@ -1353,7 +1418,7 @@ function DispatchWorkspace({
       <div className="grid h-full min-h-0 grid-cols-[minmax(0,1fr)]">
         <HotelGridOrDetail
           hotels={hotels}
-          additionalCostPersonIds={additionalCostPersonIds}
+          singleRoomEvaluations={singleRoomEvaluations}
           activeHotel={activeHotel}
           allHotels={allHotels}
           validationByUnit={validationByUnit}
@@ -1390,7 +1455,7 @@ function DispatchWorkspace({
 
 function HotelGridOrDetail({
   hotels,
-  additionalCostPersonIds,
+  singleRoomEvaluations,
   activeHotel,
   allHotels,
   validationByUnit,
@@ -1421,7 +1486,7 @@ function HotelGridOrDetail({
   pendingAction,
 }: {
   hotels: AssignmentGridHotel[];
-  additionalCostPersonIds: Set<string>;
+  singleRoomEvaluations: Map<string, PersonQuotaEvaluation>;
   activeHotel: AssignmentGridHotel | null;
   allHotels: AssignmentGridHotel[];
   validationByUnit: Record<string, AssignmentValidationResult[]>;
@@ -1482,7 +1547,7 @@ function HotelGridOrDetail({
           <AssignmentPerformanceBoundary id="HotelDetail">
           <HotelDetailView
             hotel={activeHotel}
-            additionalCostPersonIds={additionalCostPersonIds}
+            singleRoomEvaluations={singleRoomEvaluations}
             draggingUnitId={draggingUnitId}
             dragOverRoomTypeKey={dragOverRoomTypeKey}
             dragOverBookingId={dragOverBookingId}
@@ -1587,7 +1652,7 @@ function HotelGridView({
               active={activeHotelId === hotel.hotelId}
               dragOver={dragOverHotelId === hotel.hotelId}
               dragging={!!draggingUnitId}
-              canDrop={draggingValidationKey ? hotelHasValidDrop(validationByUnit[draggingValidationKey] || [], hotel.hotelId) : false}
+              canDrop={draggingValidationKey ? hotelHasValidDrop(validationByUnit[draggingValidationKey] || [], hotel) : false}
               onSelect={() => onSelectHotel(hotel.hotelId)}
               onDragOver={() => onDragOverHotel(hotel.hotelId)}
               onDragLeave={onDragLeaveHotel}
@@ -1714,7 +1779,7 @@ function HotelCard({
 
 function HotelDetailView({
   hotel,
-  additionalCostPersonIds,
+  singleRoomEvaluations,
   draggingUnitId,
   dragOverRoomTypeKey,
   dragOverBookingId,
@@ -1730,7 +1795,7 @@ function HotelDetailView({
   pendingAction,
 }: {
   hotel: AssignmentGridHotel;
-  additionalCostPersonIds: Set<string>;
+  singleRoomEvaluations: Map<string, PersonQuotaEvaluation>;
   draggingUnitId: string | null;
   dragOverRoomTypeKey: string | null;
   dragOverBookingId: string | null;
@@ -1829,6 +1894,7 @@ function HotelDetailView({
                     <div className="mt-0.5 text-xs font-mono text-[var(--ops-assignment-text-muted)]">
                       {summary.usedRooms}/{summary.totalRooms} Zimmer · {summary.usedBeds}/{summary.totalBeds} Betten
                     </div>
+                    <div className="mt-0.5 text-[11px] text-[var(--ops-assignment-text-muted)]">{contingentPeriodLabel(group.slots)}</div>
                   </div>
                   <div className="w-32">
                     <CapacityBar pct={summary.percent} />
@@ -1903,13 +1969,14 @@ function HotelDetailView({
                             <div className="mt-1.5 grid gap-1">
                               {entry.booking.occupants.map(occupant => <OccupantCard
                                 key={occupant.athleteId}
+                                statusActions={false}
                                 person={{...occupant,arrivalDate:entry.booking.checkInDate,departureDate:entry.booking.checkOutDate}}
                                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                                 fallbackArrival={entry.booking.checkInDate}
                                 fallbackDeparture={entry.booking.checkOutDate}
                                 hideNation
                                 hideDiscipline
-                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
+                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={entry.booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
                           </div>
@@ -1948,7 +2015,7 @@ function HotelDetailView({
                         <div className="text-sm font-extrabold">
                           {draggingUnitId && !canDrop ? (slotValidation?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : dragOverRoomTypeKey === roomTargetKey
                             ? 'Loslassen, um neue Zuweisung anzulegen'
-                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : 'Frei'}
+                            : draggingUnitId ? 'Für ausgewählten Zeitraum zuweisen' : 'Physisch frei'}
                         </div>
                         {dragOverRoomTypeKey !== roomTargetKey && (
                           <div className="mt-1 text-xs font-medium text-[var(--ops-assignment-text-muted)]">{draggingUnitId ? 'Hier ablegen oder zum Zuweisen klicken' : 'Offenen Aufenthalt hierher ziehen oder links zuweisen.'}</div>
@@ -2039,6 +2106,12 @@ type QuotaCard = {
   athletes: number;
   officialQuota: number;
   assignedOfficials: number;
+  registeredOfficials: number;
+  singleRoomOfficialBasis: number;
+  singleRoomsRequested:number;
+  officialsDeviation:number;
+  singleRoomsPending: number;
+  singleRoomAllocations: NonNullable<OfficialQuotaUsage['singleRoomAllocations']>;
   singleRoomsAllowed: number;
   singleRoomsUsed: number;
   quotaExemptSingleRooms: number;
@@ -2067,6 +2140,12 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
       athletes: 0,
       officialQuota: 0,
       assignedOfficials: 0,
+      registeredOfficials: 0,
+      singleRoomOfficialBasis: 0,
+      singleRoomsRequested:0,
+      officialsDeviation:0,
+      singleRoomsPending: 0,
+      singleRoomAllocations: [],
       singleRoomsAllowed: 0,
       singleRoomsUsed: 0,
       quotaExemptSingleRooms: 0,
@@ -2082,9 +2161,15 @@ function buildQuotaCards(rows: OfficialQuotaUsage[]): QuotaCard[] {
       accommodationPeopleRequired:0,
       accommodationPeopleFullyAssigned:0,
     };
-    current.athletes += row.athletesEntered;
+    current.athletes += row.expectedAthletes??row.athletesEntered;
+    current.singleRoomsRequested += row.singleRoomsRequested??row.singleRoomsUsed;
+    current.officialsDeviation += row.officialsDeviation??0;
     current.officialQuota += row.officialQuota;
     current.assignedOfficials += row.assignedOfficials;
+    current.registeredOfficials += row.registeredOfficials ?? row.assignedOfficials;
+    current.singleRoomOfficialBasis += row.singleRoomOfficialBasis ?? row.officialQuota;
+    current.singleRoomsPending += row.singleRoomsPending ?? evaluateQuotaUsageRow(row).overflow;
+    current.singleRoomAllocations.push(...(row.singleRoomAllocations || []));
     current.singleRoomsAllowed += row.singleRoomsAllowed;
     current.singleRoomsUsed += row.singleRoomsUsed;
     current.quotaExemptSingleRooms += row.quotaExemptSingleRooms || 0;
@@ -2113,17 +2198,22 @@ function quotaGenderLabel(gender: string) {
 }
 
 function getQuotaState(card: QuotaCard) {
-  if (evaluateQuotaUsageRow(card).hasViolation) return { label: 'Quote überschritten · Mehrkosten', tone: 'warning' as const, icon: AlertTriangle };
-  if (card.assignedOfficials > card.officialQuota) return { label: 'Official-Quote überschritten', tone: 'warning' as const, icon: AlertTriangle };
-  return { label: 'Quote erfüllt', tone: 'success' as const, icon: CheckCircle2 };
+  const label = quotaStatusLabel(card);
+  const warning = quotaRequiresAction(card) || card.singleRoomsPending > 0 || card.registeredOfficials > card.officialQuota;
+  return { label, tone: warning ? 'warning' as const : 'success' as const, icon: warning ? AlertTriangle : CheckCircle2 };
 }
 
-function QuotasPanel({
-  rows, allUnits, assignedUnits, onSelect,
+function officialBasisTooltip(card: QuotaCard) {
+  return `${card.registeredOfficials} Officials gemeldet; ${card.assignedOfficials} zugewiesen; maximal ${card.officialQuota} regulär zulässig. Aktuelle EZ-Berechnungsbasis: ${card.singleRoomOfficialBasis} (je Kontext: gemeldete anrechenbare Officials, begrenzt auf die operative Obergrenze).`;
+}
+
+export function QuotasPanel({
+  unallocated=[], rows, allUnits, assignedUnits, onSelect,
   filterNation, onFilterNation, filterDiscipline, onFilterDiscipline,
   filterGender, onFilterGender, nationOptions, disciplineOptions, genderOptions, refreshing,
 }: {
   rows: OfficialQuotaUsage[];
+  unallocated?: UnallocatedSingleRoom[];
   allUnits: RoomBookingUnit[];
   assignedUnits: RoomBookingUnit[];
   onSelect: (key: string) => void;
@@ -2139,7 +2229,7 @@ function QuotasPanel({
   refreshing: boolean;
 }) {
   const cards = buildQuotaCards(rows);
-  const issues = cards.filter(quotaRequiresAction).length;
+  const issues = actionableQuotaCaseCount(cards,unallocated);
   return (
     <div className="h-full overflow-auto bg-[var(--ops-background)] p-5 lg:p-6" aria-busy={refreshing}>
       <div className="mb-6 flex flex-col gap-4 border-b border-[var(--ops-divider)] pb-5 sm:flex-row sm:items-end sm:justify-between">
@@ -2161,11 +2251,16 @@ function QuotasPanel({
           <DarkSelect value={filterGender} onChange={onFilterGender} options={genderOptions} placeholder="Alle Gender" labelMap={{ M: 'Herren', F: 'Damen' }} />
         </div>
       </div>
+      {unallocated.length>0&&<section aria-label="EZ ohne Quotenkontext" className="mb-5 rounded-xl border border-[var(--ops-warning)] bg-[var(--ops-surface-raised)] p-4 text-sm">
+        <h3 className="font-bold text-[var(--ops-warning)]">{unallocated.length} offene EZ-Klärungsfälle ohne Quotenkontext</h3>
+        <p className="mt-1 text-xs text-[var(--ops-text-muted)]">Personenbezogen; unabhängig von Event-Group- und Genderfiltern. Der Nationenfilter gilt weiterhin.</p>
+        <ul className="mt-2 space-y-2">{unallocated.map(person=><li key={person.personId}><strong>{person.name}</strong> · {person.nationCode} · Person {person.personId}<span className="block text-[var(--ops-text-muted)]">{person.reason}</span></li>)}</ul>
+      </section>}
       <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-3">
         {cards.map((card) => {
           const state = getQuotaState(card);
           const StateIcon = state.icon;
-          const officialsOver = card.assignedOfficials > card.officialQuota;
+          const officialsOver = card.registeredOfficials > card.officialQuota;
           const singlesOver = evaluateQuotaUsageRow(card).hasViolation;
           const dispatchPct = card.accommodationPeopleRequired > 0 ? Math.round(card.accommodationPeopleFullyAssigned / card.accommodationPeopleRequired * 100) : 0;
 
@@ -2181,31 +2276,18 @@ function QuotasPanel({
                   <StatusPill tone={state.tone} icon={<StateIcon className="h-3.5 w-3.5" />} label={state.label} />
                 </div>
 
-                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-                  <KpiBlock label="Athleten" value={`${card.athletes}`} />
-                  <KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} />
-                  <KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} />
-                  <KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} />
+                <div className="space-y-3">
+                 <div><h4 className="mb-1 text-xs font-semibold">Officials</h4><div className="grid grid-cols-3 gap-2"><KpiBlock label="Erlaubt" value={String(card.officialQuota)}/><KpiBlock label="Vorhanden" value={String(card.registeredOfficials)}/><KpiBlock label="Abweichung" value={card.officialsDeviation?`+${card.officialsDeviation}`:'0'} warning={officialsOver}/></div></div>
+                 <div><h4 className="mb-1 text-xs font-semibold">Einzelzimmer · tatsächliche EZ-Wertung</h4><div className="grid grid-cols-3 gap-2"><KpiBlock label="Erlaubt" value={String(card.singleRoomsAllowed)}/><KpiBlock label="Genutzt" value={String(card.singleRoomsRequested)}/><KpiBlock label="Abweichung" value={card.singleRoomsPending?`+${card.singleRoomsPending}`:'0'} warning={singlesOver}/></div></div>
                 </div>
-
-                <div className="mt-4 space-y-3 rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface)] p-3.5">
-                  <QuotaProgress label="Officials" current={card.assignedOfficials} max={card.officialQuota} warning={officialsOver} />
-                  <QuotaProgress label="Einzelzimmer" current={card.singleRoomsUsed} max={card.singleRoomsAllowed} warning={singlesOver} />
-                  {card.accommodationPeopleRequired>0 && <QuotaProgress label="Disposition" current={card.accommodationPeopleFullyAssigned} max={card.accommodationPeopleRequired} />}
-                </div>
-
-                <div className="mt-4 grid grid-cols-3 gap-x-4 gap-y-3 text-xs">
-                  <ApprovalInfo label="Offene Genehmigungen" value={String(card.openApprovals)} warning={card.openApprovals > 0} />
-                  <ApprovalInfo label="Genehmigte Ausnahmen" value={String(card.approvedExceptions)} />
-                  <ApprovalInfo label="EZ mit Mehrkosten" value={String(evaluateQuotaUsageRow(card).overflow)} warning={singlesOver} />
-                </div>
+                <p className="mt-2 text-xs text-[var(--ops-text-muted)]">{card.athletes} für Unterkunft eingeplant · Genehmigungen und Ausnahmen in den Details</p>
                 <div className="mt-4 flex items-center justify-between border-t border-[var(--ops-divider)] pt-4 text-xs"><span className="text-[var(--ops-text-muted)]">{card.accommodationPeopleRequired ? `${dispatchPct}% disponiert` : 'Kein Unterkunftsbedarf'}</span><span className="flex items-center gap-1 font-semibold text-[var(--ops-primary)]">Details öffnen <ArrowRight className="h-3.5 w-3.5 transition-transform group-hover:translate-x-1" /></span></div>
               </div>
             </button>
           );
         })}
 
-        {!cards.length && (
+        {!cards.length && !unallocated.length && (
           <div className="col-span-full py-20 text-center text-sm text-[var(--ops-text-muted)]">Keine Quoten verfügbar</div>
         )}
       </div>
@@ -2222,8 +2304,8 @@ function StatusPill({ tone, label, icon }: { tone: 'success' | 'warning' | 'erro
   return <span className={`flex shrink-0 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[10px] font-bold ${classes}`}>{icon}{label}</span>;
 }
 
-function KpiBlock({ label, value, warning = false }: { label: string; value: string; warning?: boolean }) {
-  return <div className="rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3"><div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`mt-1.5 font-mono text-lg font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-assignment-text-bright)]'}`}>{value}</div></div>;
+function KpiBlock({ label, value, warning = false, title }: { label: string; value: string; warning?: boolean; title?: string }) {
+  return <div title={title} className="rounded-xl border border-[var(--ops-divider)] bg-[var(--ops-surface-elevated)] p-3"><div className="text-[9px] font-bold uppercase tracking-wider text-[var(--ops-text-muted)]">{label}</div><div className={`mt-1.5 font-mono text-lg font-bold ${warning ? 'text-[var(--ops-warning)]' : 'text-[var(--ops-assignment-text-bright)]'}`}>{value}</div></div>;
 }
 
 function QuotaProgress({ label, current, max, warning = false }: { label: string; current: number; max: number; warning?: boolean }) {
@@ -2240,28 +2322,30 @@ type SingleRoomControlPerson = {
   name: string;
   decisionId?: string | null;
   additionalCost: boolean;
-  allocationStatus?: string;
+  allocationStatus?: PersonQuotaEvaluation['allocationStatus'];
+  countsAsSingle: boolean;
+  status: SingleRoomStatus;
+  approvalApplicable?: boolean;
   exemptReason?: SingleRoomQuotaExemptReason;
 };
 
-function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], additionalCostPersonIds: Set<string>, allocationByPerson: Map<string, string | undefined>): SingleRoomControlPerson[] {
-  const bookingsByAthlete = new Map<string, AssignmentGridBooking>();
-  hotels.forEach((hotel) => hotel.slots.forEach((slot) => slot.bookings.forEach((booking) => {
-    if (booking.countsAsSingle) booking.occupants.forEach((occupant) => bookingsByAthlete.set(occupant.athleteId, booking));
-  })));
+function buildSingleRoomControlPeople(card: QuotaCard, allUnits: RoomBookingUnit[], hotels: AssignmentGridHotel[], singleRoomEvaluations: Map<string, PersonQuotaEvaluation>): SingleRoomControlPerson[] {
+  const singleRoomPersonIds = new Set(quotaAssignmentsFromPlanning(hotels).filter(person => person.countsAsSingle).map(person => person.personId));
 
   const people = new Map<string, SingleRoomControlPerson>();
   allUnits.forEach((unit) => unit.occupants.forEach((occupant) => {
-    if (!allocationByPerson.has(occupant.athleteId) || !matchesQuotaAllowanceContext(occupant, card)) return;
+    if (!matchesQuotaAllowanceContext(occupant, card)) return;
 
-    const booking = bookingsByAthlete.get(occupant.athleteId);
-    if (!booking?.countsAsSingle) return;
+    if (!singleRoomEvaluations.has(occupant.athleteId) && occupant.single_room_status !== 'APPROVED_EXTRA') return;
     people.set(occupant.athleteId, {
       athleteId: occupant.athleteId,
       name: occupant.name,
       decisionId: occupant.single_room_decision_id,
-      additionalCost: additionalCostPersonIds.has(occupant.athleteId),
-      allocationStatus: allocationByPerson.get(occupant.athleteId),
+      additionalCost: Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost),
+      allocationStatus: singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus,
+      countsAsSingle: singleRoomPersonIds.has(occupant.athleteId),
+      status: occupant.single_room_status,
+      approvalApplicable: occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined,
       exemptReason: occupant.singleRoomQuotaExemptReason,
     });
   }));
@@ -2280,16 +2364,17 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   if (!card) return <EmptyCenter text="Quote nicht mehr verfügbar." />;
   const state = getQuotaState(card);
   const StateIcon = state.icon;
-  const officialsOver = card.assignedOfficials > card.officialQuota;
+  const officialsOver = card.registeredOfficials > card.officialQuota;
   const quotaEvaluation = evaluateQuotaUsageRow(card);
   const singlesOver = quotaEvaluation.hasViolation;
   const evaluatedGroup = evaluateAllQuotaGroups(rows, quotaAssignmentsFromPlanning(hotels))
     .find(group => group.key === quotaUsageKey(card.nationCode, card.discipline, card.gender));
   // Per-group applicability comes from the backend; status alone is not evidence.
-  const additionalCostPersonIds = new Set(evaluatedGroup?.people.filter(person => person.additionalCost).map(person => person.personId) || []);
-  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, additionalCostPersonIds, new Map(evaluatedGroup?.people.map(person => [person.personId, person.allocationStatus] as const) || []));
+  const singleRoomEvaluations = new Map(evaluatedGroup?.people.map(person => [person.personId, person] as const) || []);
+  const controlPeople = buildSingleRoomControlPeople(card, allUnits, hotels, singleRoomEvaluations);
+  const historicalPeople = controlPeople.filter(person => person.status === 'APPROVED_EXTRA' && !person.countsAsSingle);
   const additionalCostPeople = controlPeople.filter(person => person.additionalCost);
-  const exemptPeople = controlPeople.filter(person => person.exemptReason);
+  const exemptPeople = controlPeople.filter(person => person.allocationStatus === 'EXEMPT');
   const withinQuotaPeople = controlPeople.filter(person => person.allocationStatus === 'COVERED');
   const pendingPeople = controlPeople.filter(person => person.allocationStatus === 'PENDING');
   const sharedDecisionId = additionalCostPeople.find(person => person.decisionId)?.decisionId
@@ -2304,17 +2389,21 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
     </header>
     <div className="flex-1 space-y-4 overflow-auto p-6">
       <DetailSection icon={<Eye className="h-4 w-4" />} title="Übersicht">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials" value={`${card.assignedOfficials} / ${card.officialQuota}`} warning={officialsOver} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} /></div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-6"><KpiBlock label="Athleten" value={`${card.athletes}`} /><KpiBlock label="Officials gemeldet / Limit" value={`${card.registeredOfficials} / ${card.officialQuota}`} warning={officialsOver} title={officialBasisTooltip(card)} /><KpiBlock label="Einzelzimmer" value={`${card.singleRoomsUsed} / ${card.singleRoomsAllowed}`} warning={singlesOver} /><KpiBlock label="Sonder-EZ" value={`${card.quotaExemptSingleRooms ?? 0}`} /><KpiBlock label="Mehrpreise" value={`${additionalCostPeople.length}`} warning={additionalCostPeople.length > 0} /><KpiBlock label="Disposition" value={card.accommodationPeopleRequired ? `${card.accommodationPeopleFullyAssigned} / ${card.accommodationPeopleRequired}` : 'Kein Unterkunftsbedarf'} /></div>
       </DetailSection>
       <QuotaPersonGroups row={rows.find(row=>row.nationCode===card.nationCode && row.discipline===card.discipline && row.gender===card.gender)}/>
       <DetailSection icon={<Bed className="h-4 w-4" />} title="Einzelzimmerentscheidungen">
         {controlPeople.length ? <div className="space-y-3">
           <div className="grid gap-3 md:grid-cols-2">
-            <SingleRoomDecisionGroup title="Mehrpreis" people={additionalCostPeople} status="APPROVED_EXTRA" />
-            <SingleRoomDecisionGroup title="Innerhalb der Quote" people={withinQuotaPeople} status="IN_QUOTA" />
-            <SingleRoomDecisionGroup title="Genehmigung erforderlich" people={pendingPeople} status="PENDING_APPROVAL" />
-            <SingleRoomDecisionGroup title="Ohne Quotenverbrauch" people={exemptPeople} status="IN_QUOTA" />
+            <SingleRoomDecisionGroup title="Mehrpreis genehmigt" people={additionalCostPeople} />
+            <SingleRoomDecisionGroup title="Innerhalb der Quote" people={withinQuotaPeople} />
+            <SingleRoomDecisionGroup title="Genehmigung erforderlich" people={pendingPeople} />
+            <SingleRoomDecisionGroup title="Kostenfreie Ausnahme" people={exemptPeople} />
           </div>
+          {historicalPeople.map(person => <div key={person.athleteId} className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--ops-divider)] pt-2 text-xs">
+            <span>{person.name}</span><SingleRoomAssignmentBadges status={person.status} countsAsSingle={person.countsAsSingle} exemptReason={person.exemptReason} approvalApplicable={person.approvalApplicable} />
+            {person.decisionId && <button onClick={() => onShowDecision(person.decisionId!)} className="font-semibold text-[var(--ops-primary)]">Entscheidung anzeigen</button>}
+          </div>)}
           <div className="flex justify-end border-t border-[var(--ops-divider)] pt-3">
             <OpsButton disabled={!sharedDecisionId} title={!sharedDecisionId ? 'Für diese Quotengruppe ist keine Importentscheidung hinterlegt.' : undefined} onClick={() => sharedDecisionId && onShowDecision(sharedDecisionId)}>Entscheidung anzeigen</OpsButton>
           </div>
@@ -2324,13 +2413,12 @@ function QuotaDetail({ quotaKey, rows, allUnits, assignedUnits, hotels, onShowDe
   </div>;
 }
 
-function SingleRoomDecisionGroup({ title, people, status }: { title: string; people: SingleRoomControlPerson[]; status: 'APPROVED_EXTRA' | 'IN_QUOTA' | 'PENDING_APPROVAL' }) {
+function SingleRoomDecisionGroup({ title, people }: { title: string; people: SingleRoomControlPerson[] }) {
   return <section className="overflow-hidden rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)]">
     <header className="flex items-center justify-between gap-3 border-b border-[var(--ops-divider)] px-3 py-2.5">
       <div><h4 className="text-sm font-extrabold text-[var(--ops-assignment-text-bright)]">{title}</h4><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{people.length} {people.length === 1 ? 'Person' : 'Personen'}</p></div>
-      <SingleRoomAssignmentBadges status={status} />
     </header>
-    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]"><span>{person.name}</span><SingleRoomAssignmentBadges status={status} countsAsSingle exemptReason={person.exemptReason}/></li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
+    {people.length ? <ul className="divide-y divide-[var(--ops-divider)]">{people.map(person => <li key={person.athleteId} className="flex items-center justify-between gap-2 px-3 py-2.5 text-sm font-semibold text-[var(--ops-assignment-text-bright)]"><span>{person.name}</span><SingleRoomAssignmentBadges status={person.status} countsAsSingle={person.countsAsSingle} exemptReason={person.exemptReason} activeSurcharge={person.additionalCost} allocationStatus={person.allocationStatus} approvalApplicable={person.approvalApplicable}/></li>)}</ul> : <p className="px-3 py-4 text-sm text-[var(--ops-text-muted)]">Keine Personen</p>}
   </section>;
 }
 
@@ -2339,6 +2427,7 @@ function DetailSection({ icon, title, children }: { icon: ReactNode; title: stri
 }
 
 function DetailPanel({
+  singleRoomEvaluations,
   quotaReason,
   selectedUnit,
   selectedBookingContext,
@@ -2351,6 +2440,7 @@ function DetailPanel({
   onAcknowledgeImportChanges,
   onShowDecision,
 }: {
+  singleRoomEvaluations: Map<string, PersonQuotaEvaluation>;
   quotaReason?:string;
   selectedUnit: RoomBookingUnit | null;
   selectedBookingContext: { booking: AssignmentGridBooking; slot: AssignmentSlot; hotel: AssignmentGridHotel } | null;
@@ -2363,6 +2453,7 @@ function DetailPanel({
   onAcknowledgeImportChanges: (unit: { occupants: AssignmentChangeSubject[] }) => void;
   onShowDecision: (decisionId: string) => void;
 }) {
+  const permissions=usePermissions();
   if (!selectedUnit && !selectedBookingContext) {
     return (
       <div className="flex h-full flex-col items-center justify-center px-6 text-center">
@@ -2399,7 +2490,7 @@ function DetailPanel({
                 hideNation
                 hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
-                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} /><SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
+                  <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} /><SingleRoomDecisionCard nation={occupant.nationCode} status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
                     <button
                       disabled={pendingAction?.bookingId === booking.bookingId}
@@ -2435,7 +2526,7 @@ function DetailPanel({
           </div>
         </DetailSection>
         <DetailSection icon={<Bed className="h-4 w-4" />} title="Quotenbewertung">
-          <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={pendingAction?.bookingId===booking.bookingId}
+          <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={!permissions.canManageAssignments || pendingAction?.bookingId===booking.bookingId}
             onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>
         </DetailSection>
         <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
@@ -2509,7 +2600,7 @@ function DetailPanel({
               hideNation
               hideDiscipline
               hideRole={!occupant.function || occupant.function === 'Athlet'}
-              footer={<>{occupant.single_room_status !== 'NONE' && occupant.single_room_status !== 'PENDING_APPROVAL' && <SingleRoomDecisionCard status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />}{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
+              footer={<><SingleRoomDecisionCard nation={occupant.nationCode} status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
             />
           ))}
         </div>
@@ -2564,7 +2655,7 @@ function DetailPanel({
         ) : (
           <div className="flex items-center gap-2 rounded-xl border border-amber-700/40 bg-amber-950/15 px-3 py-3 text-xs text-[var(--ops-assignment-text-warning)]">
             <AlertTriangle className="h-3.5 w-3.5" />
-            Zuweisung starten — auf einen Zimmerbereich ziehen
+            {selectedUnit.isFullyAssigned ? 'Bereits vollständig zugewiesen – Aufenthaltssegmente oben.' : 'Zuweisung starten — auf einen Zimmerbereich ziehen'}
           </div>
         )}
       </div>
@@ -2581,12 +2672,34 @@ function ContingentConflict({ arrival, departure, availableFrom, availableUntil 
   return <div className="mt-2 flex items-center gap-1.5 rounded-md border border-[var(--ops-tone-error-border)] bg-[var(--ops-tone-error-surface)] px-2 py-1.5 text-[10px] font-extrabold text-[var(--ops-error)]"><AlertCircle className="h-3.5 w-3.5 shrink-0" />{message}</div>;
 }
 
-function SingleRoomDecisionCard({ status, decisionId, onShowDecision }: { status?: string | null; decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
-  const importStatus = status === 'PENDING_APPROVAL' ? 'Entscheidung offen' : decisionId ? 'Entscheidung dokumentiert' : 'Aus Import übernommen';
+function SingleRoomDecisionCard({ nation, status, decisionId, onShowDecision }: { nation:string; status?: string | null; decisionId?: string | null; onShowDecision: (decisionId: string) => void }) {
+  const navigate=useNavigate();
+  const permissions=usePermissions();
+  const [opening,setOpening]=useState(false);
+  const [error,setError]=useState<string|null>(null);
+  const openDecisionWorkflow=async()=>{
+    setOpening(true);setError(null);
+    try {
+      if(decisionId){const decision=await api.getImportDecision(decisionId);void navigate(`/import?sessionId=${encodeURIComponent(decision.importSession.id)}`);}
+      else {
+        const sessions=await api.getImportSessions();
+        const candidates=sessions.filter(item=>item.nation===nation && !['ARCHIVED','REPLACED','CANCELLED'].includes(item.status));
+        if(candidates.length>1)throw new Error('Mehrere aktuelle Importsessions dieser Nation vorhanden. Bitte den passenden Stand in der Importprüfung auswählen.');
+        const session=candidates[0];
+        if(!session)throw new Error('Keine aktuelle Importsession dieser Nation vorhanden. Die EZ-Entscheidung benötigt einen gültigen Import- und Quotenkontext.');
+        void navigate(`/import?sessionId=${encodeURIComponent(session.id)}`);
+      }
+    } catch(error){setError(error instanceof Error?error.message:'EZ-Entscheidung konnte nicht geöffnet werden.');}
+    finally {setOpening(false);}
+  };
+
+  const importStatus = decisionId ? 'Entscheidung dokumentiert' : status === 'PENDING_APPROVAL' ? 'Klärungsbedarf aus Import' : 'Aus Import übernommen';
   return (
     <div className="mt-2 border-t border-[var(--ops-divider)] pt-2 text-xs text-[var(--ops-text-muted)]">
       <div><span className="font-bold text-[var(--ops-text)]">Importstatus:</span> {importStatus}</div>
       {decisionId && <button onClick={() => onShowDecision(decisionId)} className="mt-1.5 font-semibold text-[var(--ops-primary)] hover:underline">Entscheidung anzeigen</button>}
+      {permissions.canManageImports && <button type="button" disabled={opening} title="Vorhandenen Genehmigungsworkflow öffnen. Für neue Fälle den importierten Stand erneut prüfen; Genehmigungen erst nach dokumentierter Bestätigung." onClick={()=>void openDecisionWorkflow()} className="mt-1.5 block font-semibold text-[var(--ops-primary)] hover:underline disabled:opacity-40">EZ-Entscheidung bearbeiten</button>}
+      {error&&<p role="alert" className="mt-1 text-[var(--ops-error)]">{error}</p>}
     </div>
   );
 }
@@ -2785,6 +2898,7 @@ function getUnitRoomCategory(unit: RoomBookingUnit): RoomCategoryFilter {
  */
 function matchesAssignmentFilters(unit: RoomBookingUnit, filters: AssignmentFilterCriteria) {
   if (filters.status === 'pending' && unit.isFullyAssigned) return false;
+  if (filters.status === 'assigned' && !unit.isFullyAssigned) return false;
   if (filters.nation && unit.nationCode !== filters.nation) return false;
   if ((filters.discipline || filters.gender) && !unit.occupants.some((occupant) =>
     matchesDisciplineAndGender(occupant, filters.discipline, filters.gender))) return false;
@@ -2914,8 +3028,8 @@ function formatGermanDate(value: string) {
   return day && month && year ? `${day}.${month}.${year}` : value;
 }
 
-function hotelHasValidDrop(validations: AssignmentValidationResult[], hotelId: string) {
-  return validations.some((validation) => validation.status !== 'blocked' && validation.slotId.startsWith(`${hotelId}:`));
+function hotelHasValidDrop(validations: AssignmentValidationResult[], hotel: AssignmentGridHotel) {
+  return validations.some((validation) => validation.status !== 'blocked' && (validation.slotId.startsWith(`${hotel.hotelId}:`) || hotel.slots.some(slot=>slot.bookings.some(booking=>validation.slotId===`booking:${booking.bookingId}`))));
 }
 
 function findFirstValidSlot(validations: AssignmentValidationResult[], hotels: AssignmentGridHotel[], hotelId: string) {

@@ -1,3 +1,4 @@
+import { requiresAccommodation } from './accommodationRequirement.ts';
 import type { AccommodationInterval, AssignmentGridHotel, RoomBookingUnit, RoomBookingUnitOccupant } from '../types.ts';
 
 export type DispositionItem = RoomBookingUnit & {openPeriod:AccommodationInterval;canAssign:boolean;previous:string[]};
@@ -5,9 +6,9 @@ export const periodLabel=(interval:AccommodationInterval)=>[interval.checkInDate
 export const dispositionItemId=(ids:string[],period:AccommodationInterval)=>`need:${[...ids].sort().join(',')}:${period.checkInDate}:${period.checkOutDate}`;
 
 /** Presentation adapter only. Every period is copied from backend coverage. */
-export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHotel[]):DispositionItem[] {
+export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHotel[],includeAssigned=false):DispositionItem[] {
   const people=new Map<string,{person:RoomBookingUnitOccupant;unit:RoomBookingUnit}>();
-  units.forEach(unit=>unit.occupants.filter(person=>person.accommodationRequirement!=='NO_ROOM' && person.accommodationCoverage?.coverageStatus!=='NO_ROOM').forEach(person=>people.set(person.athleteId,{person,unit})));
+  units.forEach(unit=>unit.occupants.filter(person=>requiresAccommodation(person) && person.accommodationCoverage?.coverageStatus!=='NO_ROOM').forEach(person=>people.set(person.athleteId,{person,unit})));
   units=units.map(unit=>({...unit,occupants:unit.occupants.filter(person=>people.has(person.athleteId))})).filter(unit=>unit.occupants.length>0);
   const used=new Set<string>(),items:DispositionItem[]=[];
   const add=(ids:string[],period:AccommodationInterval,canAssign=true)=>{
@@ -39,6 +40,14 @@ export function dispositionItems(units:RoomBookingUnit[],hotels:AssignmentGridHo
   people.forEach(({person})=>{
     const coverage=person.accommodationCoverage;
     if(!coverage)return;
+    if(includeAssigned && coverage.coverageStatus==='FULLY_ASSIGNED') {
+      const base=people.get(person.athleteId)!.unit;
+      items.push({...base,unitId:`assigned:${person.athleteId}`,occupants:[person],occupantCount:1,
+        openPeriod:coverage.overallInterval,canAssign:false,isFullyAssigned:true,
+        assignedBookingId:coverage.segments[0]?.bookingId??base.assignedBookingId,
+        previous:coverage.segments.map(s=>`${periodLabel(s)} · ${s.hotelName??'—'}`)});
+      return;
+    }
     if(coverage.coverageStatus==='CONFLICT') {add([person.athleteId],coverage.overallInterval,false);return;}
     coverage.openIntervals.forEach(period=>{
       if(!used.has(dispositionItemId([person.athleteId],period)))add([person.athleteId],period);

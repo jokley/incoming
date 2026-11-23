@@ -1,12 +1,14 @@
-import type { ContingentRow, HotelContactRow, ListKind, ListRow } from './listEngine';
+import { segmentListRows, type ContingentRow, type HotelContactRow, type ListKind, type ListRow } from './listEngine.ts';
 
 export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['hotel', 'Hotel'], ['room', 'Zimmer'], ['roomType', 'Zimmerart'], ['name', 'Name'],
   ['nation', 'Nation'], ['discipline', 'Disziplin / Event'], ['role', 'Funktion'],
-  ['stayWindow','Eventfenster'], ['hotelStayNote','Hotelhinweis Zusatznächte'], ['eventPeriod','Eventzeitraum'], ['allowedStay','Zulässiger Aufenthalt'], ['assessedStay','Bewerteter Aufenthalt'], ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
+  ['stayWindow','Zusatznächte'], ['hotelStayNote','Hotelhinweis Zusatznächte'], ['eventPeriod','Eventzeitraum'], ['allowedStay','Zulässiger Aufenthalt'], ['assessedStay','Bewerteter Aufenthalt'], ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
-  ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'], ['roommate', 'Zimmerpartner'],
+  ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'],
+  ['specialRateSurcharge', 'Sondertarif'], ['approvedExtraSingleSurcharge', 'Genehmigtes zusätzliches EZ'], ['roommate', 'Zimmerpartner'],
   ['athleteRemark', 'Bemerkung Athlet'], ['internalNote', 'Bemerkung Intern'],
+  ['quotaEvaluation', 'EZ-Nutzung (countsAsSingle)'],
 ];
 
 const download = (blob: Blob, filename: string) => {
@@ -17,6 +19,11 @@ const download = (blob: Blob, filename: string) => {
   setTimeout(() => URL.revokeObjectURL(anchor.href), 1000);
 };
 const xml = (text: string) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;');
+const columnName = (index: number) => {
+  let name = '';
+  for (let value = index + 1; value > 0; value = Math.floor((value - 1) / 26)) name = String.fromCharCode(65 + ((value - 1) % 26)) + name;
+  return name;
+};
 
 const crcTable = Array.from({ length: 256 }, (_, index) => {
   let value = index;
@@ -34,7 +41,7 @@ const u32 = (value: number) => [...u16(value & 0xffff), ...u16(value >>> 16)];
 /** Creates a standards-compliant, store-only ZIP container without adding a heavy export dependency. */
 function zip(files: Array<[string, string]>) {
   const encoder = new TextEncoder();
-  const local: number[] = [];
+  const local: Uint8Array[] = [];
   const central: number[] = [];
   let offset = 0;
   files.forEach(([name, contents]) => {
@@ -42,17 +49,26 @@ function zip(files: Array<[string, string]>) {
     const data = encoder.encode(contents);
     const crc = crc32(data);
     const header = [0x50, 0x4b, 0x03, 0x04, ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(filename.length), ...u16(0)];
-    local.push(...header, ...filename, ...data);
+    local.push(new Uint8Array(header), filename, data);
     central.push(0x50, 0x4b, 0x01, 0x02, ...u16(20), ...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0), ...u32(crc), ...u32(data.length), ...u32(data.length), ...u16(filename.length), ...u16(0), ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(offset), ...filename);
     offset += header.length + filename.length + data.length;
   });
-  const end = [0x50, 0x4b, 0x05, 0x06, ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length), ...u32(central.length), ...u32(local.length), ...u16(0)];
-  return new Uint8Array([...local, ...central, ...end]);
+  const end = [0x50, 0x4b, 0x05, 0x06, ...u16(0), ...u16(0), ...u16(files.length), ...u16(files.length), ...u32(central.length), ...u32(offset), ...u16(0)];
+  const result = new Uint8Array(offset + central.length + end.length);
+  let position = 0;
+  for (const chunk of local) { result.set(chunk, position); position += chunk.length; }
+  result.set(central, position);
+  result.set(end, position + central.length);
+  return result;
 }
 
 export function exportExcel(rows: ListRow[], kind: ListKind) {
-  const cells = (values: string[]) => values.map((value, index) => `<c r="${String.fromCharCode(65 + index)}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(personExportColumns.map(([, label]) => label))}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(personExportColumns.map(([key]) => String(row[key])))}</row>`).join('')}</sheetData></worksheet>`;
+  rows = kind==='hotels'||kind==='contingents' ? segmentListRows(rows) : rows;
+  const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
+  const display=(row:ListRow,key:keyof ListRow)=>['stayWindow','hotelStayNote','assessedStay'].includes(key) ? String(row[key] ?? '') : row.segments.length && key in row.segments[0]
+    ? row.segments.map(segment=>key==='quotaEvaluation'?(segment.countsAsSingle?'Ja':'Nein'):String(segment[key as keyof typeof segment] ?? '')).join('\n')
+    : String(row[key] ?? '');
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(personExportColumns.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(personExportColumns.map(([key]) => display(row,key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
     ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
@@ -65,10 +81,10 @@ export function exportExcel(rows: ListRow[], kind: ListKind) {
 
 /** Exports the complete hotel directory, including master-data contacts and notes. */
 export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
-  const fields: Array<[keyof HotelContactRow, string]> = [['hotel', 'Hotel'], ['region', 'Region'], ['location', 'Ort'], ['contactPerson', 'Ansprechpartner'], ['phone', 'Telefon'], ['email', 'E-Mail'], ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contingents', 'Kontingente'], ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Belegte Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Freie Betten'], ['comment', 'Kommentar']];
-  const cells = (values: string[]) => values.map((value, index) => `<c r="${String.fromCharCode(65 + index)}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const display = (row: HotelContactRow, key: keyof HotelContactRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key]);
-  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(fields.map(([, label]) => label))}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(fields.map(([key]) => display(row, key)))}</row>`).join('')}</sheetData></worksheet>`;
+  const fields: Array<[keyof HotelContactRow, string]> = [['hotel','Hotel'],['region','Region'],['location','Ort'],['contactPerson','Ansprechpartner'],['phone','Telefon'],['email','E-Mail'],['hasHalfBoard','HP'],['hasSR','SR'],['contingents','Kontingente'],['inventoryPeriods','Kontingentintervalle'],['totalRooms','Vereinbarte Zimmer (Kontingentsumme)'],['totalBeds','Vereinbarte Betten (Kontingentsumme)'],['assignedBookings','Buchungen (gesamt)'],['assignedPersons','Personen (eindeutig im Hotel)'],['peakRooms','Spitze belegte Zimmer'],['peakPersons','Spitze Personen'],['peakBlockedBeds','Spitze zusätzlich blockierte Betten'],['comment','Kommentar']];
+  const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
+  const display = (row: HotelContactRow, key: keyof HotelContactRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key] ?? '—');
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(fields.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(fields.map(([key]) => display(row, key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
     ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],
@@ -81,15 +97,13 @@ export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
 
 export function exportContingentsExcel(rows: ContingentRow[]) {
   const contingentColumns: Array<[keyof ContingentRow, string]> = [
-    ['hotel', 'Hotel'], ['roomType', 'Zimmerart'], ['region', 'Region'], ['availableFrom', 'Von'], ['availableUntil', 'Bis'],
-    ['totalRooms', 'Zimmer'], ['totalBeds', 'Betten'], ['freeRooms', 'Freie Zimmer'], ['freeBeds', 'Freie Betten'],
-    ['occupiedRooms', 'Belegte Zimmer'], ['occupiedBeds', 'Belegte Betten'], ['occupancy', 'Auslastung %'],
-    ['hasHalfBoard', 'HP'], ['hasSR', 'SR'], ['contactPerson', 'Ansprechpartner'],
-    ['phone', 'Telefon'], ['email', 'E-Mail'], ['comment', 'Kontingent-Kommentar'],
+    ['hotel','Hotel'],['roomType','Zimmerart'],['region','Region'],['availableFrom','Von'],['availableUntil','Bis'],
+    ['totalRooms','Vereinbarte Zimmer'],['totalBeds','Vereinbarte Betten'],['hasHalfBoard','HP'],['hasSR','SR'],
+    ['contactPerson','Ansprechpartner'],['phone','Telefon'],['email','E-Mail'],['comment','Kontingent-Kommentar'],
   ];
-  const cells = (values: string[]) => values.map((value, index) => `<c r="${String.fromCharCode(65 + index)}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
-  const display = (row: ContingentRow, key: keyof ContingentRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : key === 'occupancy' ? row.occupancy.toFixed(0) : String(row[key]);
-  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(contingentColumns.map(([, label]) => label))}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(contingentColumns.map(([key]) => display(row, key)))}</row>`).join('')}</sheetData></worksheet>`;
+  const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
+  const display = (row: ContingentRow, key: keyof ContingentRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key] ?? '—');
+  const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(contingentColumns.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(contingentColumns.map(([key]) => display(row, key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [
     ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>'],
     ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'],

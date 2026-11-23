@@ -638,6 +638,30 @@ class EventCompetition(db.Model):
                 'teamCompetition': competition.team_competition}
 
 
+class AthleteArrivalForecast(db.Model):
+    """Operational totals only; never FIS people, room demand or reservations."""
+    __tablename__ = 'athlete_arrival_forecast'
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.Integer, db.ForeignKey('championship_event.id', ondelete='RESTRICT'), nullable=False, index=True)
+    nation_code = db.Column(db.String(10), nullable=False)
+    discipline = db.Column(db.String(100), nullable=False)
+    gender = db.Column(db.String(1), nullable=False)
+    expected_total = db.Column(db.Integer)
+    check_in_date = db.Column(db.Date)
+    check_out_date = db.Column(db.Date)
+    note = db.Column(db.Text)
+    revision = db.Column(db.Integer, nullable=False, default=1, server_default='1')
+    roster_digest = db.Column(db.String(64), nullable=False)
+    updated_by = db.Column(db.String(100), nullable=False)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    __table_args__ = (
+        db.UniqueConstraint('event_id','nation_code','discipline','gender',name='uq_arrival_forecast_area'),
+        db.CheckConstraint('expected_total IS NULL OR expected_total >= 0',name='arrival_forecast_total'),
+        db.CheckConstraint("gender IN ('M','W')",name='arrival_forecast_gender'),
+        db.CheckConstraint('(check_in_date IS NULL AND check_out_date IS NULL) OR (check_in_date IS NOT NULL AND check_out_date IS NOT NULL AND check_in_date < check_out_date)',name='arrival_forecast_dates'),
+    )
+
+
 class Athlete(db.Model):
     """Athleten und Staff"""
     __tablename__ = 'athlete'
@@ -652,8 +676,8 @@ class Athlete(db.Model):
             "single_room_quota_exempt_reason IN ('WORLD_CHAMPION', 'OTHER')",
             name='single_room_quota_exempt_reason',
         ),
-        db.CheckConstraint("accommodation_requirement_import_value IS NULL OR accommodation_requirement_import_value IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement_import_value'),
-        db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM')", name='accommodation_requirement'),
+        db.CheckConstraint("accommodation_requirement_import_value IS NULL OR accommodation_requirement_import_value IN ('REQUIRED', 'NO_ROOM', 'NO_DISPO')", name='accommodation_requirement_import_value'),
+        db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM', 'NO_DISPO')", name='accommodation_requirement'),
         db.CheckConstraint("accommodation_requirement_source IN ('DEFAULT', 'IMPORT', 'MANUAL')", name='accommodation_requirement_source'),
         db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
         db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL', 'APPROVAL')", name='accommodation_rate_source'),

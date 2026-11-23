@@ -161,3 +161,46 @@ def test_parallel_planning_block_has_no_proven_membership_link():
     checked=assess_stay('2027-03-04','2027-03-22',comps,verified)
     assert checked['allowedStart']=='2027-03-02' and checked['allowedEnd']=='2027-03-12'
     assert checked['outsideNights']==10
+
+
+def test_booked_stay_uses_actual_union_not_person_envelope():
+    from stay_window import assess_booked_stay
+    hotel=NS(id=1,name='A',accommodation_type='STANDARD')
+    def booking(identity,start,end):
+        return NS(id=identity,hotel_id=1,hotel=hotel,room_type_id=1,room_type=NS(name='DZ'),room_number='01',
+            counts_as_single=False,check_in_date=date.fromisoformat(start),check_out_date=date.fromisoformat(end))
+    bookings=[booking(1,'2027-03-01','2027-03-03'),booking(2,'2027-03-02','2027-03-04'),
+        booking(3,'2027-03-15','2027-03-17')]
+    value=assess_booked_stay(bookings,[competition()],[period()])
+    assert (value['nightsBefore'],value['nightsAfter'],value['outsideNights'])==(3,2,5)
+    assert value['intervals']==[{'checkInDate':'2027-03-01','checkOutDate':'2027-03-04'},
+        {'checkInDate':'2027-03-15','checkOutDate':'2027-03-17'}]
+    # Same nights in another hotel do not count twice in the person summary.
+    assert assess_booked_stay(bookings+[bookings[0]],[competition()],[period()])==value
+    assert assess_booked_stay(bookings,[competition()],[period(),period()])['reason']=='EVENT_DATES_UNCLEAR'
+
+
+def test_actual_booking_assessments_refresh_after_schedule_edit(events):
+    owner,_=events;bind(owner)
+    comp=Competition.query.filter_by(display_name='Snowboard Big Air',gender='M').one()
+    event=AccommodationEvent(championship_event_id=owner.id,discipline='Big Air',start_date=date(2027,3,6),end_date=date(2027,3,13))
+    person=Athlete(event_id=owner.id,firstname='Synthetic',lastname='Segments',nation_code='CAN',
+        arrival_date=date(2027,3,1),departure_date=date(2027,3,25),competitions=[comp])
+    hotel=Hotel(name='Synthetic A');other=Hotel(name='Synthetic B');room=RoomType(name='DZ',max_persons=2)
+    db.session.add_all([event,person,hotel,other,room]);db.session.flush()
+    for h,start,end in [(hotel,2,5),(other,14,16)]:
+        booking=RoomBooking(event_id=owner.id,hotel=h,room_type=room,check_in_date=date(2027,3,start),check_out_date=date(2027,3,end))
+        db.session.add(booking);db.session.flush()
+        db.session.add(RoomBookingOccupant(room_booking=booking,athlete=person))
+    db.session.commit()
+    client=app.test_client()
+    assert client.get('/api/athletes').json[0]['stayWindow']['outsideNights']==4
+    assert client.get(f'/api/athletes/{person.id}').json['stayWindow']['outsideNights']==4
+    assert [b['occupants'][0]['athlete']['stayWindow']['outsideNights'] for b in client.get('/api/room-bookings/grouped').json]==[2,2]
+    # Existing event API changes the authoritative period; no booking or person dates change.
+    response=client.put(f'/api/events/{event.id}',json={'startDate':'2027-03-04','endDate':'2027-03-15'})
+    assert response.status_code==200,response.json
+    assert client.get('/api/athletes').json[0]['stayWindow']['outsideNights']==0
+    assert client.get(f'/api/athletes/{person.id}').json['stayWindow']['outsideNights']==0
+    assert all(b['occupants'][0]['athlete']['stayWindow']['outsideNights']==0 for b in client.get('/api/room-bookings/grouped').json)
+    assert person.arrival_date==date(2027,3,1) and person.departure_date==date(2027,3,25)

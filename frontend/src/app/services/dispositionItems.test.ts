@@ -47,3 +47,15 @@ test('external shared booking preserves paired remainder without local inventory
   const items=dispositionItems([unit([person('1')],'first'),unit([person('2')],'second')],hotels);
   assert.equal(items.length,1);assert.equal(items[0].occupants.length,2);assert.deepEqual(items[0].openPeriod,period(14,21));
 });
+
+test('assigned browsing is read-only, distinct by person and never changes open periods',()=>{
+ const assigned=person('1',[],[segment(4,21)],'FULLY_ASSIGNED');
+ const partial=person('2');
+ const units=[unit([assigned,partial],'mixed'),unit([assigned],'duplicate')];
+ const open=dispositionItems(units,[]),all=dispositionItems(units,[],true);
+ assert.deepEqual(all.filter(item=>!item.isFullyAssigned),open);
+ const booked=all.filter(item=>item.isFullyAssigned);
+ assert.equal(booked.length,1);assert.equal(booked[0].canAssign,false);
+ assert.equal(booked[0].assignedBookingId,'10');assert.equal(booked[0].occupants[0].athleteId,'1');
+ assert.equal(all.filter(item=>item.canAssign).length,1);
+});

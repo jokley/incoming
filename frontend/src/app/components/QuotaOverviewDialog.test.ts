@@ -13,10 +13,10 @@ const html=(overview:QuotaOverview,kind='officials',extra={})=>renderToStaticMar
 const text=(value:string)=>value.replace(/<[^>]*>/g,' ').replace(/\s+/g,' ');
 const copy=()=>structuredClone(fixture);
 
-test('officials are grouped in one table with distinct totals, collapsible contexts and existing EZ values',()=>{
+test('officials show context triples in one table with distinct totals and collapsed coverage details',()=>{
  const data=copy(),output=html(data),visible=text(output);
- for(const label of ['14','Officials','0 offene EZ-Kontexte','EZ-Anspruch','EZ-Anfragen','nicht abschließend bewertet','5 Mehrfachzugehörigkeiten','Σ M/W','Berechnungsbasis EZ'])assert.ok(visible.includes(label),label);
- assert.equal((output.match(/<details/g)||[]).length,3);assert.ok(!output.includes(' open=""'));
+ for(const label of ['14','Officials','0 offene EZ-Kontexte','Erlaubt','Angefragt','nicht abschließend bewertet','5 Mehrfachzugehörigkeiten','Berechnungsbasis EZ'])assert.ok(visible.includes(label),label);
+ assert.equal((output.match(/<details/g)||[]).length,data.nations[0].groups.length+1);assert.ok(!output.includes(' open=""'));
  assert.ok(!output.includes('Officials ohne reguläre Abdeckung'));
  assert.ok(output.includes('overflow-x-auto')&&output.includes('role="region"')&&output.includes('tabindex="0"'));
  for(const group of data.nations[0].groups)assert.ok(output.includes(group.name.replaceAll('&','&amp;')));
@@ -46,7 +46,7 @@ test('EZ approvals and exemptions stay visible without inventing officials cover
  const data=copy(),group=data.nations[0].groups[0];
  group.totals.singleRoomsPending=2;group.totals.singleRoomsApproved=1;group.totals.quotaExemptSingleRooms=1;
  const visible=text(html(data));
- for(const label of ['2 EZ offen','Genehmigt','Ausnahmen','nicht abschließend bewertet'])assert.ok(visible.includes(label));
+ for(const label of ['Ausnahmen','nicht abschließend bewertet','Angefragt','Abweichung'])assert.ok(visible.includes(label));
  assert.ok(!visible.includes('Officials überschritten'));
 });
 test('additional unassigned functions remain visible in the distinct person total',()=>{
@@ -65,7 +65,7 @@ test('only athlete view shows competition hierarchy; officials keep direct exist
   assert.equal((output.match(/Sportliche Meldungen · FIS-Zuteilung nicht bestätigt/g)||[]).length,kind==='athlete'?1:0);
   const hierarchy=output.match(/<table[^>]*><caption[^>]*>Sportliche Meldungen[\s\S]*?<\/table>/)?.[0]??'';
   const rows=[...hierarchy.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(row=>text(row[1]).trim());
-  if(kind==='athlete')assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe 1 eindeutige Athleten · 1 Männer · 0 Frauen','Halfpipe 1 / — 0 / — Bewertung unvollständig','Big Air 1 / — 0 / — Bewertung unvollständig']);
+  if(kind==='athlete')assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe','Halfpipe 1 / — 0 / — Bewertung unvollständig','Big Air 1 / — 0 / — Bewertung unvollständig']);
   if(kind==='officials'){
    for(const group of overview.nations[0].groups)assert.ok(output.includes(`aria-label="Officials ${group.name.replaceAll('&','&amp;')} anzeigen"`));
    assert.ok(output.includes('5 Mehrfachzugehörigkeiten'));
@@ -161,4 +161,223 @@ test('general exemption and approved extra are distinct; missing or conflicting 
  const missing=html(overview,'officials',{preview});assert.ok(text(missing).includes('Ausnahme (Grund unklar)'));assert.ok(!missing.includes('data-tone="success"'));
  people.push({...people[0],matchKey:'conflicting-source',singleRoomAllocation:{...people[0].singleRoomAllocation,context:[nation.nationCode,'different-group','W']}});
  const conflicting=html(overview,'officials',{preview});assert.ok(text(conflicting).includes('unvollständig'));assert.ok(!conflicting.includes('data-tone="success"'));
+});
+
+
+test('optional area headers preserve every official context, aggregate and gender cell',()=>{
+ const data=copy(),before=structuredClone(data);
+ const control={quotaGroups:data.nations[0].groups.map(g=>({name:g.name,family:'Freestyle'}))};
+ const flat=html(data,'officials',{control}),off=html(data,'officials',{control,grouped:false});
+ assert.equal(off,flat);
+ const grouped=html(data,'officials',{control,grouped:true});
+ const cells=(value:string)=>[...value.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(m=>m[1]);
+ assert.deepEqual(cells(grouped),cells(flat));
+ assert.equal((grouped.match(/scope="rowgroup"/g)||[]).length,data.nations[0].groups.length+1);
+ assert.match(grouped,/Freestyle \/ Freeski/);
+ assert.deepEqual(data,before);
+ const unknown=html(data,'officials',{grouped:true});assert.match(unknown,/Nicht zugeordnet/);
+});
+
+test('live quota view exposes contextless pending people instead of an empty or fulfilled overall result',async()=>{
+ const Panel=(await server.ssrLoadModule('/src/app/components/Assignments.tsx')).QuotasPanel;
+ const props={rows:[],allUnits:[],assignedUnits:[],onSelect:()=>{},filterNation:'',onFilterNation:()=>{},filterDiscipline:'',onFilterDiscipline:()=>{},filterGender:'',onFilterGender:()=>{},nationOptions:[],disciplineOptions:[],genderOptions:[],refreshing:false};
+ const person={personId:'42',name:'Synthetic Official',nationCode:'AUT',status:'PENDING',context:null,reason:'Kein gültiger Quotenkontext zuordenbar'};
+ const output=renderToStaticMarkup(createElement(Panel,{...props,unallocated:[person]}));
+ const visible=text(output);
+ for(const label of ['1 offene EZ-Klärungsfälle','Synthetic Official','Person 42',person.reason,'Handlungsbedarf'])assert.ok(visible.includes(label),label);
+ assert.ok(!visible.includes('Keine Quoten verfügbar')&&!visible.includes('Quote erfüllt'));
+ const flat=renderToStaticMarkup(createElement(Panel,props));
+ assert.equal(renderToStaticMarkup(createElement(Panel,{...props,unallocated:[]})),flat);
+});
+
+test('person work summary uses supplied totals and hides stale success during evaluation',async()=>{
+ const {PersonWorkSummary,PersonStatusIcons,PersonDispositionContext}=await server.ssrLoadModule('/src/app/components/assignment/PersonDispositionStatus.tsx');
+ const summary={peopleTotal:7,accommodationPeopleRequired:7,fullyAssigned:4,unassigned:1,partiallyAssigned:1,accommodationConflicts:1,roomPreferenceMismatches:2,pendingSingleRoomPeople:3,contextlessPendingSingleRoomPeople:1};
+ const props={summary,scope:'Eventgesamt · Personen',family:'',onFamily:()=>{},onCategory:()=>{},onRetry:()=>{}};
+ const ready=renderToStaticMarkup(createElement(PersonWorkSummary,{...props,ready:true,loading:false}));
+ assert.match(text(ready),/Vollständig 4 \/ 7/);assert.match(text(ready),/EZ ungeklärt 3/);
+ const waiting=renderToStaticMarkup(createElement(PersonWorkSummary,{...props,ready:false,loading:true}));
+ assert.ok(!text(waiting).includes('4 / 7'));assert.match(text(waiting),/wird aktualisiert/);
+ const person={personId:'1',name:'Synthetic',accommodation:{coverageStatus:'FULLY_ASSIGNED'},roomPreference:{status:'MISMATCH',hasMismatch:true},singleRoom:{status:'PENDING',reason:'Kein gültiger Quotenkontext zuordenbar'}};
+ const icons=(valid:boolean)=>renderToStaticMarkup(createElement(PersonDispositionContext.Provider,{value:{people:new Map([['1',person]]),ready:valid,onOpen:()=>{}}},createElement(PersonStatusIcons,{personId:'1'})));
+ assert.equal((icons(true).match(/<button/g)||[]).length,2);
+ assert.ok(icons(true).includes('EZ-Klärung erforderlich')&&icons(true).includes('Zimmerwunsch abweichend'));
+ assert.ok(!icons(false).includes('text-[var(--ops-success)]'));
+});
+
+
+test('person details distinguish reported request, actual accommodation and single-room coverage',async()=>{
+ const {PersonStatusDetails}=await server.ssrLoadModule('/src/app/components/assignment/PersonDispositionStatus.tsx');
+ const person={personId:'1',nationCode:'AUT',personalGender:'W',matchesContextFilters:true,
+  accommodation:{coverageStatus:'FULLY_ASSIGNED',overallInterval:{checkInDate:'2027-03-11',checkOutDate:'2027-03-23'},coveredIntervals:[],openIntervals:[],conflicts:[]},
+  roomPreference:{reportedValue:'Double shared',status:'MATCH',segments:[]},
+  singleRoom:{status:'NO_SINGLE_USE',eligibleContexts:[]}};
+ for(const [raw,label] of [['Double shared','Doppelzimmer (geteilt)'],['Single','Einzelzimmer'],['Double','Doppelzimmer'],['Twin','Zweibettzimmer'],['Custom request','Custom request'],['','Nicht angegeben']]){
+  person.roomPreference.reportedValue=raw;
+  const output=text(renderToStaticMarkup(createElement(PersonStatusDetails,{person,onDetails:()=>{},onBooking:()=>{},onDecision:()=>{}})));
+  assert.ok(output.includes(`Gemeldeter Zimmerwunsch: ${label}`));
+  assert.ok(output.includes('Tatsächliche Unterbringung'));
+  assert.ok(output.includes('EZ-Deckung'));
+  assert.ok(output.includes('Keine EZ-Nutzung'));
+  assert.ok(!output.includes('Vertragszusage'));
+  assert.equal(person.roomPreference.reportedValue,raw);
+ }
+});
+
+function operationalControls(expected=4) {
+ const nation=fixture.nations[0].nationCode,discipline=fixture.nations[0].groups[0].name;
+ const area={areaId:'scope',nationCode:nation,discipline,personalGender:'M',reportedCount:9,expectedTotal:4,virtualPlaces:4,worldChampionCount:0,conflict:false,reasons:[],editable:true,baseToken:'current'};
+ const quota={nationCode:nation,discipline,gender:'M',athletesEntered:9,expectedAthletes:4,officialQuota:6,registeredOfficials:10,singleRoomOfficialBasis:6,singleRoomsAllowed:2,singleRoomsRequested:4,singleRoomsPending:2,approvedExtraSingleRooms:0,officialsExceeded:true,coverageChanged:true,fisOfficialQuota:11,fisSingleRoomsAllowed:3};
+ const values=expected===5?{cap:7,rooms:3,pending:0}:{cap:6,rooms:2,pending:1};
+ Object.assign(quota,{expectedAthletes:expected,officialQuota:values.cap,singleRoomOfficialBasis:values.cap,singleRoomsAllowed:values.rooms,singleRoomsRequested:3,singleRoomsPending:values.pending});
+ const context={...quota,athletes:expected,singleRoomsApproved:0};
+ const overview=copy();overview.nations=[{...overview.nations[0],officials:10,groups:[{name:discipline,athletes:9,officials:10,coverageReviewRequired:false,contexts:[context],totals:{officialQuota:values.cap,singleRoomOfficialBasis:values.cap,expectedAthletes:expected,singleRoomsAllowed:values.rooms,singleRoomsRequested:3,singleRoomsApproved:0,singleRoomsPending:values.pending,quotaExemptSingleRooms:0}}]}] as any;
+ const people=Array.from({length:3},(_,i)=>({matchKey:'o'+i,nationCode:nation,singleRoomQuotaExemptReason:null,singleRoomAllocation:{identity:'o'+i,personKey:'o'+i,status:i<values.rooms?'COVERED':'PENDING',context:[nation,discipline,'M']}}));
+ return {planning:{mode:'IMPORT',rows:[area],operationalQuota:{rows:[quota],overview,people,conflict:false,reasons:[]}},choices:[{areaId:'scope',baseToken:'current',expectedTotal:expected}],onChange:()=>{},disabled:false};
+}
+
+test('athlete dialog removes the NN cards while Officials keeps authoritative operative results',()=>{
+ const nn=operationalControls();
+ const athlete=html(copy(),'athlete',{nn});
+ assert.ok(!athlete.includes('Unterkunftsbedarf und operative Officials-/EZ-Quote'));
+ assert.ok(!athlete.includes('<select'));
+ const visible=text(html(copy(),'officials',{nn}));
+ assert.ok(visible.includes('4 für Unterkunft eingeplant'));
+ assert.ok(visible.includes('2 regulär'));assert.ok(visible.includes('1 noch offen'));
+});
+
+test('Officials view hides stale operative figures during reloads or errors but preserves the named FIS snapshot',()=>{
+ for(const extra of [{busy:true},{error:'Vorschau fehlgeschlagen'}]) {
+  const output=html(copy(),'officials',{nn:{...operationalControls(),...extra}});
+  assert.ok(!output.includes('<table'));
+  assert.ok(output.includes(extra.busy?'Operative Vorschau wird berechnet':'Vorschau fehlgeschlagen'));
+ }
+});
+
+test('unresolved person selections explicitly show the normal fallback in both quota views',()=>{
+ const nn=operationalControls();
+ Object.assign(nn.planning.rows[0],{conflict:true,reasons:['Bestand geändert'],virtualPlaces:0});
+ Object.assign(nn.planning.operationalQuota,{conflict:true,reasons:['Bestand geändert']});
+ Object.assign(nn.planning.operationalQuota.rows[0],{nnForecastBlocked:true,expectedAthletes:9,officialQuota:11,singleRoomOfficialBasis:10,singleRoomsAllowed:3});
+ Object.assign(nn.planning.operationalQuota.overview.nations[0].groups[0].contexts[0],nn.planning.operationalQuota.rows[0]);
+ for(const kind of ['athlete','officials']) {
+  const output=html(copy(),kind,{nn}),visible=text(output);
+  assert.ok(visible.includes(kind==='athlete'?'Personenauswahl klären':'Personenauswahl klären · normale Athletenbasis'));
+  if(kind==='officials'){assert.ok(!visible.includes('9 geplant'));assert.ok(visible.includes('Auswahl ungeklärt; normale Basis'));}
+
+
+  assert.ok(!visible.includes('Operative Officials-Obergrenze 6'));
+  assert.ok(!output.includes('aria-label="NN-Plätze"'));
+ }
+});
+
+
+test('one Officials table and its coverage details use the same operative allocations',()=>{
+ for(const expected of [4,5]) {
+  const nn=operationalControls(expected),output=html(copy(),'officials',{nn}),visible=text(output);
+  assert.ok(!output.includes('<dl'));
+  assert.ok(!visible.includes('Operative Prognose · Unterkunft'));
+  assert.equal((output.match(/<table/g)??[]).length,1); // both triples in the existing context table
+  assert.ok(visible.includes(`${expected} für Unterkunft eingeplant`));
+  assert.ok(visible.includes(expected===4?'2 regulär':'3 regulär'));
+  assert.equal(visible.includes('1 noch offen'),expected===4);
+  assert.equal(visible.includes('Alle 3 EZ gedeckt'),expected===5);
+  assert.ok(visible.includes('Originalmeldungen bleiben erhalten'));
+  assert.ok(visible.includes('Zuordnungen und Bewertungsgrundlage'));
+  assert.ok(!output.includes('Unterkunftserwartung bearbeiten'));
+ }
+});
+
+
+test('operative table keeps paid approvals and verified champion exemptions in its existing chips',()=>{
+ const nn=operationalControls(),op=nn.planning.operationalQuota,nation=op.overview.nations[0];
+ op.people.push({matchKey:'paid',nationCode:nation.nationCode,singleRoomQuotaExemptReason:null,singleRoomAllocation:{identity:'paid',personKey:'paid',status:'APPROVED_EXTRA',context:[nation.nationCode,nation.groups[0].name,'M']}});
+ op.people.push({matchKey:'champ',nationCode:nation.nationCode,singleRoomQuotaExemptReason:'WORLD_CHAMPION',singleRoomAllocation:{identity:'champ',personKey:'champ',status:'EXEMPT',context:[nation.nationCode,nation.groups[0].name,'M']}});
+ Object.assign(nation.groups[0].totals,{singleRoomsRequested:5,singleRoomsApproved:1,quotaExemptSingleRooms:1});
+ Object.assign(nation.groups[0].contexts[0],{singleRoomsRequested:5,singleRoomsApproved:1,quotaExemptSingleRooms:1});
+ const visible=text(html(copy(),'officials',{nn}));
+ assert.ok(visible.includes('2 regulär'));assert.ok(visible.includes('1 zusätzlich genehmigt'));assert.ok(visible.includes('1 WM-Ausnahme'));assert.ok(visible.includes('1 noch offen'));
+});
+
+test('primary operative quota table exposes only the Officials and EZ triples',()=>{
+ const nn=operationalControls();
+ nn.planning.operationalQuota.overview.nations[0].groups[0].contexts[0].officialsDeviation=4;
+ const output=html(copy(),'officials',{nn});
+ const headers=[...output.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(match=>text(match[1]).trim());
+ assert.equal(headers.filter(h=>h==='Erlaubt').length,2);
+ assert.ok(headers.includes('Vorhanden')&&headers.includes('Angefragt'));
+ assert.equal(headers.filter(h=>h==='Abweichung').length,2);
+ assert.ok(!headers.includes('Berechnungsbasis EZ')&&!headers.includes('Genehmigt')&&!headers.includes('Ausnahmen'));
+ assert.ok(text(output).includes('+4')&&text(output).includes('+1'));
+ assert.ok(!output.includes('Σ M/W'));
+});
+
+
+test('disposition uses operative athletes and booked allocations in the same two triples',async()=>{
+ const Panel=(await server.ssrLoadModule('/src/app/components/Assignments.tsx')).QuotasPanel;
+ const props={allUnits:[],assignedUnits:[],onSelect:()=>{},filterNation:'',onFilterNation:()=>{},filterDiscipline:'',onFilterDiscipline:()=>{},filterGender:'',onFilterGender:()=>{},nationOptions:[],disciplineOptions:[],genderOptions:[],refreshing:false};
+ for(const pending of [0,1]) {
+  const row={nationCode:'FIN',discipline:'Freeski Park & Pipe',gender:'M',athletesEntered:9,expectedAthletes:4,officialQuota:6,registeredOfficials:10,officialsDeviation:4,assignedOfficials:4,singleRoomOfficialBasis:6,singleRoomsAllowed:2,singleRoomsUsed:3,singleRoomsRequested:4,singleRoomsPending:pending,quotaExemptSingleRooms:1,approvedExtraSingleRooms:pending?0:1,singleRoomAllocations:[],quotaStatus:pending?'DECISION_REQUIRED':'EXCEPTION_APPROVED'};
+  const output=renderToStaticMarkup(createElement(Panel,{...props,rows:[row]})),visible=text(output);
+  assert.ok(visible.includes('4 für Unterkunft eingeplant'));
+  assert.ok(!visible.includes('9 für Unterkunft eingeplant'));
+  for(const label of ['Erlaubt','Vorhanden','Genutzt','Abweichung'])assert.ok(visible.includes(label),label);
+  assert.equal((visible.match(/Erlaubt/g)||[]).length,2);
+  assert.ok(!visible.includes('EZ-Basis')&&!visible.includes('Regulär gedeckt'));
+  assert.match(visible,/Vorhanden 10 Abweichung \+4/);
+  assert.match(visible,new RegExp(`Genutzt 4 Abweichung ${pending?'\\+1':'0'}`));
+ }
+});
+
+test('import tile does not label the binding operative quota result as a FIS calculation',async()=>{
+ const PreviewCard=(await server.ssrLoadModule('/src/app/components/DataImport.tsx')).PreviewCard;
+ const preview={people:[],rooms:[],errors:[],warnings:[],quotaOverview:copy()};
+ const output=renderToStaticMarkup(createElement(PreviewCard,{preview,peopleRows:[],roomRows:[],onOpen:()=>{}}));
+ assert.ok(text(output).includes('EZ-Kontexte offen · Importprüfung'));
+ assert.ok(!text(output).includes('EZ-Kontexte offen · FIS-Prüfstand'));
+});
+
+test('planned athlete column uses the operative basis without falling back to FIS entries',()=>{
+ for(const expected of [0,4,5,undefined]) {
+  const nn=operationalControls();
+  const row=nn.planning.operationalQuota.overview.nations[0].groups[0].contexts[0];
+  Object.assign(row,{expectedAthletes:expected,athletesEntered:9,athletes:9,officialsDeviation:4});
+  const output=html(copy(),'officials',{nn});
+  const headers=[...output.matchAll(/<th\b[^>]*>(.*?)<\/th>/g)].map(match=>text(match[1]).trim());
+  assert.deepEqual(headers.slice(0,4),['Event Group / Gender','Athleten eingeplant','Officials','Einzelzimmer']);
+  const context=output.match(/<tr><th scope="row"[^>]*>Männer<\/th>(.*?)<\/tr>/)?.[1]??'';
+  const cells=[...context.matchAll(/<td[^>]*>(.*?)<\/td>/g)].map(match=>text(match[1]).trim());
+  assert.deepEqual(cells,[expected==null?'—':String(expected),'6','10','+4','2','3','+1']);
+ }
+});
+
+test('group header keeps distinct Officials and deduplicates pending allocations across gender contexts',()=>{
+ const nn=operationalControls(),op=nn.planning.operationalQuota,group=op.overview.nations[0].groups[0];
+ group.officials=10;group.coverageReviewRequired=true;
+ const male=group.contexts[0];Object.assign(male,{officialsDeviation:4});
+ group.contexts.push({...male,gender:'W',officialQuota:5,officialsDeviation:5});
+ op.people.push({...op.people[2],matchKey:'duplicate-source'});
+ const render=()=>html(copy(),'officials',{nn});
+ const header=(output:string)=>output.match(/<tr[^>]*><th scope="rowgroup"[\s\S]*?<\/tr>/)?.[0]??'';
+ const output=render(),visible=text(header(output));
+ assert.ok(visible.includes('10 eindeutige Officials'));
+ assert.ok(visible.includes('Officials: M +4 · W +5'));
+ assert.ok(visible.includes('EZ: +1 offen'));
+ assert.ok(!visible.includes('+9')&&!visible.includes('Athleten'));
+ assert.ok(header(output).includes('text-[var(--ops-warning)]'));
+ // Header-only presentation cannot change the context rows or their values.
+ const rows=[...output.matchAll(/<tr><th scope="row"[\s\S]*?<\/tr>/g)].map(m=>m[0]);
+ group.coverageReviewRequired=false;for(const c of group.contexts)c.officialsDeviation=0;
+ for(const p of op.people)p.singleRoomAllocation.status='COVERED';
+ const resolved=text(header(render()));
+ assert.ok(resolved.includes('Officials: 0')&&resolved.includes('EZ: 0'));
+ assert.ok(!resolved.includes('EZ offen'));
+ op.people[0].singleRoomAllocation.status='APPROVED_EXTRA';
+ op.people[1].singleRoomAllocation.status='EXEMPT';op.people[1].singleRoomQuotaExemptReason='OTHER';
+ assert.ok(text(header(render())).includes('EZ: 0'));
+ op.people[1].singleRoomQuotaExemptReason=null;
+ assert.ok(text(header(render())).includes('EZ: Prüfung offen'));
+ assert.equal(rows.length,2);
+ const before=render();group.officials=11;
+ assert.deepEqual([...render().matchAll(/<tr><th scope="row"[\s\S]*?<\/tr>/g)].map(m=>m[0]),[...before.matchAll(/<tr><th scope="row"[\s\S]*?<\/tr>/g)].map(m=>m[0]));
 });

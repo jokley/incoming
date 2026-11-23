@@ -1,4 +1,5 @@
 """Person HTTP routes; updates, authentication and mutation auditing remain in app."""
+from accommodation_requirements import NO_ACCOMMODATION
 from accommodation_scope import event_query, event_get
 
 from datetime import datetime
@@ -6,7 +7,7 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request
 
 from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
-from stay_window import assess_stay, load_stay_schedule
+from stay_window import assess_stay, assess_booked_stay, load_stay_schedule
 from accommodation_scope import accommodation_event_id
 from accommodation_coverage import person_accommodation_coverage
 
@@ -81,7 +82,9 @@ def get_athletes():
             a.arrival_date, a.departure_date,
             [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])], a.accommodation_requirement)
         competitions = {competition.id: competition for record in records for competition in record.competitions}
-        data['stayWindow'] = assess_stay(a.arrival_date,a.departure_date,list(competitions.values()),schedule,a.accommodation_requirement)
+        actual_bookings = [booking for record_id in record_ids for booking in bookings_by_person.get(record_id, [])]
+        data['stayWindow'] = (assess_booked_stay(actual_bookings,list(competitions.values()),schedule,a.accommodation_requirement)
+            if actual_bookings else assess_stay(a.arrival_date,a.departure_date,list(competitions.values()),schedule,a.accommodation_requirement))
         data['competitions'] = [competition.to_dict() for competition in sorted(competitions.values(), key=lambda item: item.name)]
         data['disciplines'] = [competition.name for competition in sorted(competitions.values(), key=lambda item: item.name)]
         if not data['disciplines']:
@@ -147,8 +150,8 @@ def get_athletes():
         # not master-data integrity failures. CONFLICT is intentionally reserved
         # for explicit integrity validation and must never be inferred from them.
         data['workflowStatus'] = (
-            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement == 'NO_ROOM' else
-            'NO_ROOM' if a.accommodation_requirement == 'NO_ROOM' else
+            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement in NO_ACCOMMODATION else
+            'NO_ROOM' if a.accommodation_requirement in NO_ACCOMMODATION else
             'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
             'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
             'OPEN_ASSIGNMENT' if not data['assignment']['hasAssignment'] else
@@ -168,12 +171,14 @@ def get_athlete(athlete_id):
         RoomBookingOccupant.athlete_id == athlete.id).options(
             db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     data = athlete.to_dict()
-    data['stayWindow'] = assess_stay(athlete.arrival_date,athlete.departure_date,athlete.competitions,load_stay_schedule(athlete.event_id),athlete.accommodation_requirement)
+    schedule = load_stay_schedule(athlete.event_id)
+    data['stayWindow'] = (assess_booked_stay(bookings,athlete.competitions,schedule,athlete.accommodation_requirement)
+        if bookings else assess_stay(athlete.arrival_date,athlete.departure_date,athlete.competitions,schedule,athlete.accommodation_requirement))
     data['accommodationCoverage'] = person_accommodation_coverage(
         athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
     coverage = data['accommodationCoverage']['coverageStatus']
-    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement == 'NO_ROOM' and coverage == 'CONFLICT' else
-        'NO_ROOM' if athlete.accommodation_requirement == 'NO_ROOM' else
+    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_ACCOMMODATION and coverage == 'CONFLICT' else
+        'NO_ROOM' if athlete.accommodation_requirement in NO_ACCOMMODATION else
         'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
     return jsonify(data)
 
@@ -209,3 +214,22 @@ def acknowledge_athlete_roomlist_change(athlete_id):
     data = athlete.to_dict()
     data['hasPendingRoomlistReview'] = False
     return jsonify(data)
+
+
+@athletes.route('/api/athletes/arrival-planning', methods=['GET'])
+def get_arrival_planning():
+    from arrival_planning import project
+    return jsonify(project(request.args.get('nationCode') or None))
+
+
+@athletes.route('/api/athletes/arrival-planning/<area_id>', methods=['PUT'])
+def save_arrival_forecast(area_id):
+    from arrival_planning import save, ForecastConflict
+    from auth import current_user
+    try:
+        return jsonify(save(area_id,request.get_json(silent=True) or {},current_user().username))
+    except ForecastConflict as exc:
+        return jsonify(error='STALE_ARRIVAL_FORECAST',message=str(exc)),409
+    except (ValueError,TypeError) as exc:
+        db.session.rollback()
+        return jsonify(error='INVALID_ARRIVAL_FORECAST',message=str(exc)),400

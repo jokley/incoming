@@ -45,7 +45,7 @@ export const createOpsMuiTheme = (mode: 'light' | 'dark') => {
     MuiDialogContent: { styleOverrides: { root: { minHeight: 0, overflowY: 'auto', padding: '20px 24px' } } },
     MuiDialogActions: { styleOverrides: { root: { flexShrink: 0, minHeight: 64, gap: 8, padding: '12px 24px', borderTop: `1px solid ${c.divider}` } } },
     MuiDrawer: { styleOverrides: { paper: { backgroundImage: 'none', borderColor: c.border } } },
-    MuiTooltip: { styleOverrides: { tooltip: { backgroundColor: c.surfaceOverlay, border: `1px solid ${c.border}`, boxShadow: shadow.md } } },
+    MuiTooltip: { styleOverrides: { tooltip: { color: c.text, backgroundColor: c.surfaceOverlay, border: `1px solid ${c.border}`, boxShadow: shadow.md } } },
     MuiTableCell: { styleOverrides: { root: { borderBottomColor: c.divider } } },
     MuiOutlinedInput: { styleOverrides: { root: { minHeight: 44, borderRadius: t.layout.radius.md, '&.Mui-focused .MuiOutlinedInput-notchedOutline': { borderColor: c.focus, boxShadow: shadow.focus } } } },
     MuiMenuItem: { styleOverrides: { root: { borderRadius: t.layout.radius.sm, '&.Mui-focusVisible': { backgroundColor: c.surfaceElevated } } } },

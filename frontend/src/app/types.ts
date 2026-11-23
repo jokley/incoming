@@ -1,4 +1,4 @@
-export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM';
+export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM' | 'NO_DISPO';
 export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
 export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL' | 'APPROVAL'; accommodationRateApprovalId?: number; accommodationRateApprovalIds?: number[]; accommodationRateExplanation?: string; }
@@ -122,6 +122,7 @@ export interface SportEntryRules {
   pools:Array<{id:string;regularLimit:number}>;
 }
 export interface QuotaRuleConfig {
+  athleteHousing?:{regularPerGenderByEventGroup:Record<string,number>};
   schemaVersion:1;
   sportEntryRules?:SportEntryRules;
   athletes: Record<'Snowboard'|'Freestyle',{enabled:boolean;totalLimit:number;genderLimit:number}>;
@@ -169,6 +170,7 @@ export interface StayWindow {
  eventStart:string|null;eventEnd:string|null;allowedStart:string|null;allowedEnd:string|null;
  arrivalDate:string|null;departureDate:string|null;nightsBefore:number|null;nightsAfter:number|null;
  outsideNights:number|null;reason:string|null;
+ intervals?: Array<{checkInDate:string;checkOutDate:string}>;
 }
 
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
@@ -304,6 +306,8 @@ export interface RoomBooking {
 }
 
 export interface RoomBookingUnitOccupant extends AccommodationRateFields, AccommodationRequirementFields {
+  provisionalAccommodation?: boolean;
+  provisionalWorldChampion?: boolean;
   accommodationCoverage?: AccommodationCoverage;
   athleteId: string;
   name: string;
@@ -418,6 +422,7 @@ export interface AssignmentSlot {
     availableFrom?: string | null;
     availableUntil?: string | null;
     coversRequestedRange: boolean;
+    intervals?: Array<{availableFrom:string;availableUntil:string}>;
   };
   bookings: AssignmentGridBooking[];
 }
@@ -434,7 +439,9 @@ export interface AssignmentGridHotel {
   slots: AssignmentSlot[];
 }
 
+export interface OperativeAthletePlanning {provisionalPersonIds?:string[];replacedPersonIds:string[];groups:ArrivalPlanningRow[];zeroGroups?:ArrivalPlanningRow[];controlledAreas:number;zeroAreas:number;virtualPlaces:number;conflicts:number}
 export interface AssignmentPlanningView {
+  athletePlanning?:OperativeAthletePlanning;
   timeline: {
     startDate?: string | null;
     endDate?: string | null;
@@ -506,12 +513,14 @@ export interface FisImportIssue {
 
 export type ImportControlKind = 'error'|'clarification'|'info';
 export interface ImportControl {
-  people:Array<{personKey:string;stayWindow?:StayWindow;competitions:Array<{id:string;name:string;group:string|null;gender:string|null}>;quotaContexts:Array<{nation:string;group:string;gender:string}>;internalNote?:string|null}>;
+  quotaGroups?: Array<{name:string;family:string|null}>;
+  people:Array<{personKey:string;stayWindow?:StayWindow;competitions:Array<{id:string;name:string;group:string|null;gender:string|null;family?:string|null}>;quotaContexts:Array<{nation:string;group:string;gender:string}>;internalNote?:string|null}>;
   issues:Array<{kind:ImportControlKind;code:string;message:string;personKeys:string[];source?:string|null;row?:number|null}>;
-  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;people:number;athletes:number;sportEntries?:Array<{nation:string;reported:number;regularMax:number|null;status?:'NUMERIC_OK'|'TITLE_COVERED'|'REVIEW_REQUIRED'|'INCOMPLETE'|'TEAM_RULE';reason?:string;sharedPoolRegularMax?:number;sharedPoolChampionStarters?:number;sharedPoolUnverifiedAdditional?:number;poolPersonKeys?:string[];aboveRegular:number;championStarters:number;unverifiedAdditional:number;personKeys:string[];champions:Array<{personKey:string;source:string}>;sharedPoolReported:number|null;allocationConfirmed:false}>}>;
+  competitions:Array<{id:string;name:string;group:string|null;gender:string|null;family?:string|null;people:number;athletes:number;sportEntries?:Array<{nation:string;reported:number;regularMax:number|null;status?:'NUMERIC_OK'|'TITLE_COVERED'|'REVIEW_REQUIRED'|'INCOMPLETE'|'TEAM_RULE';reason?:string;sharedPoolRegularMax?:number;sharedPoolChampionStarters?:number;sharedPoolUnverifiedAdditional?:number;poolPersonKeys?:string[];aboveRegular:number;championStarters:number;unverifiedAdditional:number;personKeys:string[];champions:Array<{personKey:string;source:string}>;sharedPoolReported:number|null;allocationConfirmed:false}>}>;
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  entryAccommodationSource?: { roomType?: string | null };
   sourceIdentities?:Array<{family:string;staffId:string;function?:string;row?:number}>;
   sourceCompetitorId?:string;confirmedOfficialLinkId?:number;
   sourceRows?:Array<{versionId:number;version:number;row?:number}>;
@@ -620,7 +629,7 @@ export interface FisImportPreview {
     requiredExtent?:QuotaExtent;approvedExtent?:QuotaExtent;uncoveredExtent?:QuotaExtent;
     decisionStatus?:'PENDING'|'APPROVED'|'WITHIN_QUOTA';approvalIds?:number[];
   }>;
-  quotaChecks?: Array<{ nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
+  quotaChecks?: Array<{ registeredOfficials?:number;officialsDeviation?:number;expectedAthletes?:number;athletesEntered?:number;singleRoomOfficialBasis?:number;nnForecastBlocked?:boolean;nationCode:string; discipline:string; gender:string; athletes:number; singleRoomsRequested:number; singleRoomsPending:number; singleRoomsApproved:number; officials:number; officialQuota:number; singleRooms:number; singleRoomsAllowed:number; quotaExemptSingleRooms?:number; officialsExceeded:boolean; singleRoomsExceeded:boolean }>;
   dispositionAnalysis: {
     categories: Record<DispositionImpactCategory, DispositionImpact>;
     changes: ImportChange[];
@@ -723,6 +732,32 @@ export interface QuotaOverview {
     athletesApprovedDistinct:number|null;athleteApprovalFamilies:number;
     athleteFamilies:NonNullable<FisImportPreview['athleteQuotaChecks']>;
     groups:Array<{name:string;athletes:number;officials:number;coverageReviewRequired:boolean;
-      contexts:NonNullable<FisImportPreview['quotaChecks']>;totals:{officialQuota:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;singleRoomsApproved:number;quotaExemptSingleRooms:number}}>
+      contexts:NonNullable<FisImportPreview['quotaChecks']>;totals:{expectedAthletes?:number;singleRoomOfficialBasis?:number;officialQuota:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;singleRoomsApproved:number;quotaExemptSingleRooms:number}}>
   }>;
 }
+
+
+export interface ArrivalPlanningPerson {
+ personId:string;name:string;personalGender:string|null;
+ disciplines:string[];sportFamilies:string[];reasons:string[];hasBooking:boolean;
+ worldChampionMarked:boolean;titleReferences:Array<{id:string;championship:string;championshipYear:number;discipline:string;eventGroup:string}>;
+}
+export interface ArrivalPlanningRow {
+ quotaAthleteCount?:number|null;selectedCount?:number|null;selectedWorldChampionCount?:number;legacyForecastInactive?:boolean;
+ areaId:string;eventId:string;nationCode:string;discipline:string|null;personalGender:string|null;sportFamilies:string[];
+ reportedCount:number;expectedTotal:number|null;bookedPeopleCount:number;usesVirtualPlanning:boolean;virtualPlaces:number;replacedPersonIds:string[];
+ status:'NOT_SET'|'PLANNED'|'CONFLICT';conflict:boolean;reasons:string[];editable:boolean;people:ArrivalPlanningPerson[];worldChampionCount:number;
+ checkInDate:string|null;checkOutDate:string|null;note:string|null;revision:number;updatedBy:string|null;updatedAt:string|null;baseToken:string;
+}
+export interface ArrivalPlanningOverview {eventId:string;nationCode:string|null;reportedCount:number;rows:ArrivalPlanningRow[]}
+export interface ArrivalForecastInput {baseToken:string;expectedTotal:number|null;checkInDate:string|null;checkOutDate:string|null;note:string|null}
+
+
+export interface NNPlanningChoice {areaId:string;baseToken:string;expectedTotal:number|null}
+export interface OperationalQuotaRow {nnForecastBlocked?:boolean;nationCode:string;discipline:string;gender:string;athletesEntered:number;expectedAthletes:number;officialQuota:number;registeredOfficials:number;singleRoomOfficialBasis:number;singleRoomsAllowed:number;singleRoomsRequested:number;singleRoomsPending:number;approvedExtraSingleRooms:number;quotaExemptSingleRooms:number;officialsExceeded:boolean;coverageChanged:boolean;fisOfficialQuota:number;fisSingleRoomsAllowed:number}
+export interface ImportNNPlanning extends ArrivalPlanningOverview {operationalQuota?:{rows:OperationalQuotaRow[];conflict:boolean;reasons:string[];overview?:QuotaOverview;people?:SingleRoomSummaryPerson[]};versionId:string;mode:'IMPORT'|'LIVE';decisions:NNPlanningChoice[];rows:Array<ArrivalPlanningRow & {quotaHints?:Array<{name:string;regularMax:number|null}>}>}
+
+export type SingleRoomSummaryPerson=Pick<FisImportPreview['people'][number],'matchKey'|'existingAthleteId'|'nationCode'|'singleRoomAllocation'|'singleRoomQuotaExemptReason'|'accommodationRequirement'> & {personId?:string|number};
+
+// Existing import-session read contract; manual NN editing is retired.
+export interface NNPlanningControls {planning:ImportNNPlanning;busy?:boolean;error?:string|null}

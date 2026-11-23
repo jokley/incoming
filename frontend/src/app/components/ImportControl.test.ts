@@ -16,7 +16,7 @@ test('hierarchy counts unique athletes per group and competition, combining gend
  const view={...control,competitions:[male,female,air],people:[{personKey:'m',competitions:[male,air]},{personKey:'f',competitions:[female]},{personKey:'a',competitions:[male]},{personKey:'other',competitions:[air]}]};
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
  const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
- assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe 2 eindeutige Athleten · 1 Männer · 1 Frauen','Halfpipe 1 / — 1 / — Bewertung unvollständig','Big Air 1 / — 0 / — Bewertung unvollständig']);
+ assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe','Halfpipe 1 / — 1 / — Bewertung unvollständig','Big Air 1 / — 0 / — Bewertung unvollständig']);
 });
 test('compact person dialog has one closed source section and no note workflow',()=>{
  const html=renderToStaticMarkup(createElement(PersonControlDetails,{person,preview,control}));
@@ -33,7 +33,7 @@ test('five shared SS/BA entrants and an EZ champion exemption do not imply sport
  const view={...control,competitions:[ss,ba],people:people.map(p=>({personKey:p.matchKey,competitions:[ss,ba]}))};
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN'}));
  const rows=[...html.matchAll(/<tr[^>]*>(.*?)<\/tr>/g)].map(m=>m[1].replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim());
- assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe 5 eindeutige Athleten · 5 Männer · 0 Frauen','Slopestyle 5 / — 0 / — Bewertung unvollständig','Big Air 5 / — 0 / — Bewertung unvollständig']);
+ assert.deepEqual(rows,['Wettbewerb Gemeldet / regulär Bewertung','Männer Frauen','Snowboard Park &amp; Pipe','Slopestyle 5 / — 0 / — Bewertung unvollständig','Big Air 5 / — 0 / — Bewertung unvollständig']);
  assert.ok(html.includes('FIS-Zuteilung nicht bestätigt')&&html.includes('Keine FIS-Startfreigabe'));
  for(const unproven of ['5 erlaubt','+1 Weltmeister','Titel vorhanden','Innerhalb'])assert.ok(!html.includes(unproven),unproven);
 });
@@ -45,7 +45,7 @@ test('server-projected personal title and unresolved BA extra remain distinct an
  const people=base.personKeys.map(matchKey=>({...person,matchKey,function:'Athlete',gender:'M',nationCode:'CAN'}));
  const view={...control,competitions:[ss,ba],people:people.map(p=>({personKey:p.matchKey,competitions:[ss,ba]}))};
  const html=renderToStaticMarkup(createElement(CompetitionDistribution,{control:view,preview:{...preview,people},nation:'CAN',onPeople:()=>{throw Error('render must not navigate');}}));
- assert.ok(html.includes('5</button> / 4')&&html.includes('4 regulär + 1 WM')&&html.includes('1 zusätzliche Meldung klären'));
+ assert.ok(html.replace(/<[^>]*>/g,'').includes('5 / 4')&&html.includes('4 regulär + 1 WM')&&html.includes('1 zusätzliche Meldung klären'));
  assert.equal((html.match(/data-tone="success"/g)||[]).length,1);
  assert.equal((html.match(/data-tone="warning"/g)||[]).length,1);
  assert.ok(html.includes('Gemeinsamer Slopestyle-/Big-Air-Pool: 5 eindeutige Personen dieses Geschlechts'));
@@ -83,7 +83,10 @@ test('new individual sports use the same server status and neutral team rows hav
 test('a shared pool excess remains a review even when each competition is within four',()=>{
  const member={...person,matchKey:'m',function:'Athlete',gender:'M',nationCode:'X'};
  const row={...competition,name:"Men's Snowboard Slopestyle",sportEntries:[{nation:'X',reported:4,regularMax:4,status:'REVIEW_REQUIRED',personKeys:['m'],poolPersonKeys:['m','pool-other'],sharedPoolReported:8,sharedPoolRegularMax:4,sharedPoolUnverifiedAdditional:4,champions:[]}]};
- const html=renderToStaticMarkup(createElement(CompetitionDistribution,{nation:'X',onPeople:()=>{},control:{...control,competitions:[row],people:[{personKey:'m',competitions:[row]}]},preview:{...preview,people:[member]}}));
+ const props={nation:'X',onPeople:()=>{},control:{...control,quotaGroups:[{name:row.group,family:'Snowboard'}],competitions:[row],people:[{personKey:'m',competitions:[row]}]},preview:{...preview,people:[member]}};
+ const html=renderToStaticMarkup(createElement(CompetitionDistribution,props));
+ const grouped=renderToStaticMarkup(createElement(CompetitionDistribution,{...props,grouped:true}));
+ assert.equal(grouped.replace(/<tr><th scope="rowgroup" colSpan="4"[^>]*>Snowboard<\/th><\/tr>/,''),html);
  assert.ok(html.includes('4</button> / 4')&&html.includes('gemeinsamen Pool klären – Personen anzeigen'));
  assert.ok(html.includes('8 eindeutige Personen dieses Geschlechts / 4 regulär'));
  assert.ok(!html.includes('data-tone="success"'));
@@ -104,4 +107,43 @@ test('sport rows explain server evidence without a legend, including partial tit
  const covered=render({...base,status:'TITLE_COVERED',reported:5,aboveRegular:1,unverifiedAdditional:0,championStarters:2,champions:[{personKey:'m',source:'https://example.test/result'},{personKey:'other',source:'https://example.test/result'}]});
  assert.ok(covered.includes('4 regulär + 1 WM')&&!covered.includes('4 regulär + 2 WM'));
  assert.ok(covered.includes('verifiziertes Weltmeisterrecht – Personen anzeigen'));
+});
+
+
+test('area grouping adds headings without splitting competition pools or changing existing rows',()=>{
+ const male={...competition,name:"Men's Snowboard Halfpipe"};
+ const athlete={...person,function:'Athlete',nationCode:'CAN'};
+ const view={...control,quotaGroups:[{name:competition.group,family:'Snowboard'}],competitions:[male],people:[{personKey:'a',competitions:[male]}]};
+ const props={control:view,preview:{...preview,people:[athlete]},nation:'CAN'};
+ const render=(extra={})=>renderToStaticMarkup(createElement(CompetitionDistribution,{...props,...extra}));
+ const flat=render();assert.equal(render({grouped:false}),flat);
+ const grouped=render({grouped:true});
+ assert.equal(grouped.replace(/<tr><th scope="rowgroup" colSpan="4"[^>]*>Snowboard<\/th><\/tr>/,''),flat);
+ assert.equal((grouped.match(/Halfpipe<\/th>/g)||[]).length,1);
+});
+
+test('competition limits use only sporting evidence and hide housing totals',()=>{
+ const entry={nation:'FIN',reported:8,regularMax:4,status:'REVIEW_REQUIRED',unverifiedAdditional:4,champions:[] as any[],personKeys:['a'],aboveRegular:4,championStarters:0,sharedPoolReported:null,sharedPoolUnverifiedAdditional:0};
+ const competitions=['ba','ss'].map(id=>({id,name:id==='ba'?'Big Air Herren':'Slopestyle Herren',group:'Freeski Park & Pipe',gender:'M',sportEntries:[entry]}));
+ const control={people:[{personKey:'a',competitions}],competitions,issues:[]};
+ const preview={people:[{matchKey:'a',function:'Athlete',nationCode:'FIN',gender:'M'}]};
+ const area={areaId:'shared',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',reportedCount:9,selectedCount:4};
+ const nn:any={planning:{rows:[area]}};
+ const render=()=>renderToStaticMarkup(createElement(CompetitionDistribution,{preview,control,nation:'FIN',nn}));
+ const original=structuredClone(entry),html=render();
+ assert.ok(!html.includes('für Unterkunft eingeplant')&&!html.includes('eindeutige Athleten gemeldet'));
+ assert.equal((html.match(/aria-label="8 gemeldet, 4 regulär erlaubt. Sportliche Übermeldung prüfen."/g)??[]).length,2);
+ assert.ok(!html.includes('ops-tone-warning-surface')&&!html.includes('rounded-'));
+ assert.deepEqual(entry,original);
+ Object.assign(area,{selectedCount:1});assert.equal(render(),html);
+ Object.assign(entry,{reported:4,aboveRegular:0,unverifiedAdditional:0,status:'NUMERIC_OK'});
+ const normal=render();assert.ok(normal.includes('4 / 4'));assert.ok(!normal.includes('Sportliche Übermeldung prüfen.'));
+ assert.ok(!normal.includes('tabindex="0" class="font-semibold text-[var(--ops-warning)]"'));
+ // A pool-only issue remains visible, without marking an individual starter limit as exceeded.
+ Object.assign(entry,{sharedPoolUnverifiedAdditional:1,status:'REVIEW_REQUIRED'});
+ assert.ok(render().includes('Gemeinsamer Pool: 1 zusätzliche Person klären'));
+ assert.ok(!render().includes('Sportliche Übermeldung prüfen.'));
+ Object.assign(entry,{reported:5,aboveRegular:1,sharedPoolUnverifiedAdditional:0,status:'TITLE_COVERED',championStarters:1,champions:[{personKey:'a',source:'verified'}]});
+ const champion=render();assert.ok(champion.includes('Verifiziertes Weltmeisterrecht berücksichtigt.'));
+ assert.ok(champion.includes('4 regulär + 1 WM')&&!champion.includes('Sportliche Übermeldung prüfen.'));
 });

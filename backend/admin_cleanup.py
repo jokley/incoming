@@ -78,7 +78,7 @@ def safety_backup():
     from database_admin import restore_database_target
     payload=json.dumps({'databaseTarget':restore_database_target()}).encode()
     req=urllib.request.Request(current_app.config['BACKUP_SERVICE_URL'].rstrip('/')+'/cleanup-backup',data=payload,
-        headers={'Content-Type':'application/json','X-Backup-Control-Secret':current_app.config['AUTH_PROXY_SECRET']},method='POST')
+        headers={'Content-Type':'application/json','X-Backup-Control-Secret':current_app.config.get('BACKUP_CONTROL_SECRET', current_app.config['AUTH_PROXY_SECRET'])},method='POST')
     try:
         with urllib.request.urlopen(req,timeout=120) as response:
             result=json.loads(response.read())

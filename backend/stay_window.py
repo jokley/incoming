@@ -3,6 +3,7 @@
 AccommodationEvent end_date is an inclusive event day. allowedEnd=end+1 is
 an exclusive checkout boundary. No tariff, approval or import evidence changes.
 """
+from accommodation_requirements import NO_ACCOMMODATION
 from collections import defaultdict
 from datetime import date, timedelta
 import re
@@ -49,7 +50,7 @@ def assess_stay(arrival, departure, competitions, schedule, requirement='REQUIRE
                   arrivalDate=start.isoformat() if start else None,
                   departureDate=end.isoformat() if end else None,
                   nightsBefore=None, nightsAfter=None, outsideNights=None, reason=None)
-    if requirement == 'NO_ROOM':
+    if requirement in NO_ACCOMMODATION:
         return {**result, 'reason': 'NO_ROOM'}
     if not start or not end or start >= end:
         return {**result, 'reason': 'STAY_DATES_UNCLEAR'}
@@ -77,3 +78,27 @@ def assess_stay(arrival, departure, competitions, schedule, requirement='REQUIRE
     return {**result, 'eventStart': event_start.isoformat(), 'eventEnd': event_end.isoformat(),
             'allowedStart': allowed_start.isoformat(), 'allowedEnd': allowed_end.isoformat(),
             'nightsBefore': before, 'nightsAfter': after, 'outsideNights': before+after}
+
+
+def assess_booked_stay(bookings, competitions, schedule, requirement='REQUIRED'):
+    """Assess the actual union with the existing coverage and window rules.
+
+    Overlap/hotel changes never duplicate nights. No stored dates are clipped or
+    changed; an invalid segment keeps the aggregate unknown rather than partial.
+    """
+    from accommodation_coverage import person_accommodation_coverage
+    bookings = list(bookings)
+    pairs = [(_date(b.check_in_date), _date(b.check_out_date)) for b in bookings]
+    if not pairs or any(not start or not end or start >= end for start, end in pairs):
+        return assess_stay(None, None, competitions, schedule, requirement)
+    start, end = min(p[0] for p in pairs), max(p[1] for p in pairs)
+    result = assess_stay(start, end, competitions, schedule, requirement)
+    if result['reason']:
+        return result
+    intervals = person_accommodation_coverage(start, end, bookings)['coveredIntervals']
+    assessments = [assess_stay(i['checkInDate'], i['checkOutDate'], competitions, schedule, requirement) for i in intervals]
+    for key in ('nightsBefore', 'nightsAfter', 'outsideNights'):
+        result[key] = sum(value[key] for value in assessments)
+    if len(intervals) > 1:
+        result['intervals'] = intervals
+    return result

@@ -275,3 +275,198 @@ def test_repeated_bookings_with_a_single_flag_count_one_person(database):
     recalculate_fis_import_preview(preview)
     assert sum(c['singleRooms'] for c in preview['quotaChecks'])==1
     assert [booking.counts_as_single for booking in RoomBooking.query.order_by(RoomBooking.id)]==[False,True,True]
+
+
+@pytest.mark.parametrize('request_type', ['Double shared', None, 'Single'])
+@pytest.mark.parametrize('flags', [(True,), (False, True, True)])
+def test_retained_athlete_single_matches_live_without_duplicate_requests(database, request_type, flags):
+    from excel_import import PREVIEW_STORE, recalculate_fis_import_preview, confirm_fis_import
+    from app import _build_official_quota_usage_rows
+    from models import Athlete, Hotel, RoomType, RoomBooking, RoomBookingOccupant, db
+    preview = event_roster(genders=('M',), officials=('A',))
+    preview['rooms'] = []
+    recalculate_fis_import_preview(preview)
+    PREVIEW_STORE['retained-athlete'] = preview
+    confirm_fis_import('retained-athlete')
+    athlete = Athlete.query.filter_by(fis_code='M').one()
+    hotel = Hotel(name='Retained athlete'); room = RoomType(name='Double', max_persons=2)
+    for flag in flags:
+        db.session.add(RoomBookingOccupant(athlete=athlete, room_booking=RoomBooking(
+            hotel=hotel, room_type=room, counts_as_single=flag)))
+    db.session.commit()
+    bookings = [(b.id, b.counts_as_single) for b in RoomBooking.query.all()]
+    preview['rooms'] = [] if request_type is None else [dict(person1Key='M', person2Key=None, roomType=request_type)]
+    recalculate_fis_import_preview(preview)
+    checks = preview['quotaChecks']; live = _build_official_quota_usage_rows()
+    assert sum(c['singleRoomsRequested'] for c in checks) == 1
+    assert sum(c['singleRooms'] for c in checks) == sum(r['singleRoomsUsed'] for r in live) == 1
+    assert next(p for p in preview['people'] if p['matchKey']=='M')['singleRoomAllocation']['status']=='COVERED'
+    confirm_fis_import('retained-athlete')
+    assert [(b.id, b.counts_as_single) for b in RoomBooking.query.all()] == bookings
+
+
+def test_retained_athlete_single_reveals_pending_case_in_mixed_population(database):
+    from excel_import import PREVIEW_STORE, recalculate_fis_import_preview, confirm_fis_import
+    from app import _build_official_quota_usage_rows
+    from models import Athlete, Hotel, RoomType, RoomBooking, RoomBookingOccupant, db
+    preview = event_roster(genders=('M',), officials=('A',))
+    preview['rooms'] = []
+    recalculate_fis_import_preview(preview); PREVIEW_STORE['mixed-retained']=preview
+    confirm_fis_import('mixed-retained')
+    hotel=Hotel(name='Mixed retained'); room=RoomType(name='Double',max_persons=2)
+    for person in Athlete.query.all():
+        db.session.add(RoomBookingOccupant(athlete=person,room_booking=RoomBooking(hotel=hotel,room_type=room,counts_as_single=True)))
+    db.session.commit()
+    preview['rooms']=[dict(person1Key='M',person2Key=None,roomType='Double shared')]
+    recalculate_fis_import_preview(preview)
+    row=preview['quotaChecks'][0]; live=_build_official_quota_usage_rows()[0]
+    assert row['singleRoomsRequested']==row['singleRooms']==live['singleRoomsUsed']==2
+    assert row['singleRoomsPending']==live['singleRoomsPending']==1
+    warning=next(w for w in preview['warnings'] if w['code']=='QUOTA_SINGLE_ROOMS_EXCEEDED')
+    assert warning['details']['excessCount']==1
+    assert {p['personKey'] for p in warning['details']['singleRoomCandidates']}=={'M','A'}
+
+
+def test_retained_athlete_approval_and_official_exemption_survive_double_request(database):
+    from excel_import import PREVIEW_STORE, recalculate_fis_import_preview, confirm_fis_import
+    from app import _build_official_quota_usage_rows
+    from models import Athlete, Competition, ImportSession, ImportApproval, Hotel, RoomType, RoomBooking, RoomBookingOccupant, db
+    preview=event_roster(genders=('M',),officials=('A',))
+    preview['rooms'].append(dict(person1Key='M',person2Key=None,roomType='Single'))
+    recalculate_fis_import_preview(preview)
+    session=ImportSession(nation='AUT');db.session.add(session);db.session.flush()
+    c=Competition.query.one()
+    details=dict(quotaMembershipVersion=2,nationCode='AUT',discipline='Ski Cross',gender='M',singleRoomCandidates=[dict(personKey='M',competitionIds=[str(c.id)])])
+    immutable=json.dumps(details)
+    decision=ImportApproval(session_id=session.id,nation='AUT',approval_type='NATION_APPROVED',description='Athlete extra',decision='APPROVED',username='original',quota_details_json=immutable,approved_person_keys_json='["M"]')
+    db.session.add(decision);db.session.commit()
+    PREVIEW_STORE['athlete-approved']=preview;confirm_fis_import('athlete-approved',{'M':decision.id})
+    hotel=Hotel(name='Approved retained');room=RoomType(name='Double',max_persons=2)
+    for person in Athlete.query.all():
+        if person.fis_code=='A': person.single_room_quota_exempt_reason='OTHER'
+        db.session.add(RoomBookingOccupant(athlete=person,room_booking=RoomBooking(hotel=hotel,room_type=room,counts_as_single=True)))
+    db.session.commit()
+    preview['rooms']=[dict(person1Key='M',person2Key=None,roomType='Double shared')]
+    recalculate_fis_import_preview(preview)
+    assert preview['preservedSingleRoomApprovals']['M']['decisionId']==decision.id
+    statuses={p['matchKey']:p['singleRoomAllocation']['status'] for p in preview['people']}
+    assert statuses=={'M':'APPROVED_EXTRA','A':'EXEMPT'}
+    assert {p['personKey']:p['status'] for r in _build_official_quota_usage_rows() for p in r['singleRoomAllocations']}==statuses
+    confirm_fis_import('athlete-approved')
+    assert Athlete.query.filter_by(fis_code='M').one().single_room_decision_id==decision.id
+    assert decision.quota_details_json==immutable and decision.approved_person_keys_json=='["M"]'
+
+
+def test_partial_reimport_retains_athlete_singles_and_foreign_family_memberships(database):
+    from competitions import resolve_quota_memberships
+    from excel_import import PREVIEW_STORE, recalculate_fis_import_preview, confirm_fis_import
+    from app import _build_official_quota_usage_rows
+    from models import Athlete, Competition, Hotel, RoomType, RoomBooking, RoomBookingOccupant, db
+    preview=event_roster(codes=('8185','6193'),genders=('M',),officials=())
+    mapping={c.import_code:c for c in Competition.query.all()}
+    ski={code:c for code,c in mapping.items() if c.quota_discipline=='Ski Cross'}
+    snow={code:c for code,c in mapping.items() if c.quota_discipline=='Snowboard Cross'}
+    other=deepcopy(preview['people'][0]);other.update(matchKey='F',fisCode='F',firstname='Other family',competitionImportCodes=list(ski))
+    preview['people'].append(resolve_quota_memberships(other,ski))
+    recalculate_fis_import_preview(preview);PREVIEW_STORE['partial-athletes']=preview
+    confirm_fis_import('partial-athletes')
+    people_before={p.fis_code:(p.id,{c.id for c in p.competitions}) for p in Athlete.query.all()}
+    hotel=Hotel(name='Partial retained');room=RoomType(name='Double',max_persons=2)
+    for person in Athlete.query.all():
+        db.session.add(RoomBookingOccupant(athlete=person,room_booking=RoomBooking(hotel=hotel,room_type=room,counts_as_single=True)))
+    db.session.commit()
+    shared=deepcopy(preview['people'][0]);shared['competitionImportCodes']=list(snow)
+    resolve_quota_memberships(shared,snow)
+    preview.update(people=[shared],rooms=[],replacementScope={'kind':'SPORT_FAMILY','family':'Snowboard'})
+    recalculate_fis_import_preview(preview)
+    assert len(preview['people'])==1 and len(preview['evaluationPeople'])==2
+    assert set(next(p for p in preview['evaluationPeople'] if p['matchKey']=='M')['quotaDisciplines'])=={'Ski Cross','Snowboard Cross'}
+    checks=preview['quotaChecks'];live=_build_official_quota_usage_rows()
+    assert sum(c['singleRoomsRequested'] for c in checks)==sum(r['singleRoomsUsed'] for r in live)==2
+    # FIS review remains unchanged. Operative entitlement now requires actual
+    # Officials, while both retained physical athlete singles remain explicit.
+    from arrival_planning import operational_quota_projection,project
+    from quota_rules import rules_for_event
+    by_key={p['personKey']:p for check in checks for p in check['singleRoomAllocations']}
+    effective=preview['evaluationPeople']
+    demands=[dict(p,countsAsSingle=p['matchKey'] in by_key) for p in effective]
+    operational=operational_quota_projection(project(),effective,demands,rules_for_event())['rows']
+    assert {p['personKey']:p['status'] for c in operational for p in c['singleRoomAllocations']}=={p['personKey']:p['status'] for r in live for p in r['singleRoomAllocations']}
+    assert sum(r['singleRoomsPending'] for r in live)==2
+
+    from imports.change_plan import build_plan
+    from imports.read_context import ImportReadContext
+    plan=build_plan(preview,ImportReadContext(preview['eventId']))
+    assert not plan['people']['remove'] and not plan['memberships']['remove']
+    confirm_fis_import('partial-athletes',change_plan=plan)
+    assert {p.fis_code:(p.id,{c.id for c in p.competitions}) for p in Athlete.query.all()}==people_before
+    assert RoomBooking.query.count()==2 and all(b.counts_as_single for b in RoomBooking.query.all())
+
+
+@pytest.mark.parametrize('extra', [{}, {'singleRoomStatus':'APPROVED_EXTRA','approvedQuotaContexts':[dict(nationCode='AUT',discipline='Ski Cross',gender='M')]}])
+def test_contextless_pending_allocations_survive_optional_projection(extra):
+    p=official('orphan',('Ski Cross','Freestyle'),**extra)
+    view=evaluate_quota_usage([p],[p,deepcopy(p)],include_unallocated=True)
+    assert view['rows']==evaluate_quota_usage([p],[p,deepcopy(p)])==[]
+    assert len(view['unallocatedSingleRooms'])==1
+    assert view['unallocatedSingleRooms'][0]['status']=='PENDING'
+    assert view['unallocatedSingleRooms'][0]['context'] is None
+    assert view['unallocatedSingleRooms'][0]['personId']=='orphan'
+
+
+def test_optional_projection_preserves_covered_approved_and_exempt_rows():
+    people=[official('normal'),official('paid',singleRoomStatus='APPROVED_EXTRA',approvedQuotaContexts=[dict(nationCode='AUT',discipline='Ski Cross',gender='W')]),official('free',singleRoomQuotaExemptReason='OTHER')]
+    roster=[*athletes(),*people]
+    view=evaluate_quota_usage(roster,people,include_unallocated=True)
+    assert view['rows']==evaluate_quota_usage(roster,people)
+    assert view['unallocatedSingleRooms']==[]
+    assert {p['status'] for r in view['rows'] for p in r['singleRoomAllocations']}=={'COVERED','APPROVED_EXTRA','EXEMPT'}
+    exempt=official('unmapped-free',(),singleRoomQuotaExemptReason='OTHER')
+    assert evaluate_quota_usage([exempt],[exempt],include_unallocated=True)['unallocatedSingleRooms']==[]
+
+
+@pytest.mark.parametrize('expected,official_count,cap,basis',[(None,10,11,10),(4,10,6,6),(4,3,6,3),(5,10,7,7),(0,10,0,0)])
+def test_operational_forecast_uses_configured_rules_and_actual_officials(expected,official_count,cap,basis):
+    from quota_rules import standard_rules
+    from fis_rules import compute_single_room_entitlement
+    rules=standard_rules();rules['officials']['allowance']=2
+    rules['singleRooms']=[{'upTo':3,'rooms':1},{'upTo':6,'rooms':2},{'upTo':None,'rooms':4}]
+    roster=[dict(personId=f'a{i}',function='Athlete',nationCode='AUT',gender='M',quotaDisciplines=['Ski Cross','Ski Cross']) for i in range(9)]
+    staff=[official(str(i)) for i in range(official_count)]
+    # Multiple identical roster/membership records cannot inflate either basis.
+    all_people=[*roster,*roster[:1],*staff,*staff[:1]]
+    original=evaluate_quota_usage(all_people,staff,rules)[0]
+    bases={} if expected is None else {X:expected}
+    row=evaluate_quota_usage(all_people,staff,rules,operational_athletes=bases)[0]
+    assert row['athletesEntered']==9 and row['registeredOfficials']==official_count
+    assert row['officialQuota']==cap and row['singleRoomOfficialBasis']==basis
+    assert row['singleRoomsAllowed']==compute_single_room_entitlement(basis,rules['singleRooms'])
+    assert len(row['singleRoomAllocations'])==official_count
+    assert row['singleRoomsPending']==max(0,official_count-row['singleRoomsAllowed'])
+    assert original['officialQuota']==11 and original['singleRoomOfficialBasis']==11
+
+
+def test_operational_contexts_and_approved_exempt_people_stay_independent():
+    from quota_rules import standard_rules
+    roster=[dict(personId=f'a{g}{i}',function='Athlete',nationCode='AUT',gender=g,quotaDisciplines=['Ski Cross']) for g in ('M','W') for i in range(9)]
+    staff=[official('paid',singleRoomStatus='APPROVED_EXTRA',approvedQuotaContexts=[dict(nationCode=X[0],discipline=X[1],gender=X[2])]),official('champ',singleRoomQuotaExemptReason='WORLD_CHAMPION'),*[official(str(i)) for i in range(8)]]
+    before=__import__('copy').deepcopy(staff)
+    initial=evaluate_quota_usage([*roster,*staff],staff,standard_rules(),operational_athletes={})
+    changed=evaluate_quota_usage([*roster,*staff],staff,standard_rules(),operational_athletes={X:4})
+    assert changed[0]['officialQuota']==6
+    assert changed[1]['officialQuota']==initial[1]['officialQuota']==11
+    assert changed[1]['singleRoomsAllowed']==initial[1]['singleRoomsAllowed']
+    allocations=[a for row in changed for a in row['singleRoomAllocations']]
+    assert len(allocations)==len({a['identity'] for a in allocations})==10
+    assert next(a for a in allocations if a['identity']=='paid')['status']=='APPROVED_EXTRA'
+    assert next(a for a in allocations if a['identity']=='champ')['status']=='EXEMPT'
+    assert staff==before
+
+
+def test_operational_official_allowance_is_an_event_parameter():
+    from quota_rules import standard_rules
+    rules=standard_rules();rules['officials']['allowance']=5
+    roster=[dict(personId=f'a{i}',function='Athlete',nationCode='AUT',gender='M',quotaDisciplines=['Ski Cross']) for i in range(9)]
+    staff=[official(str(i)) for i in range(10)]
+    row=evaluate_quota_usage([*roster,*staff],staff,rules,operational_athletes={X:4})[0]
+    assert row['officialQuota']==9 and row['singleRoomOfficialBasis']==9

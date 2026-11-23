@@ -44,15 +44,7 @@ def recognize(person, existing, overrides, event_id, carried_keys=(), override_r
         from models import Event
         championship = db.session.get(Event, int(event_id)) if event_id else None
         if championship and championship.is_world_championship and (person.get('function') or '').strip().lower() == 'athlete' and person.get('fisCode'):
-            from models import WorldChampionRecognition
-            from sqlalchemy import or_,and_,exists
-            links=WorldChampionRecognition
-            selected_ids = json.loads(championship.world_champion_list_json)['titleIds'] if championship.world_champion_list_json else None
-            references = WorldChampion.query.filter(
-                *([WorldChampion.id.in_(selected_ids)] if selected_ids is not None else []),
-                WorldChampion.fis_code==canonical_fis_code(person['fisCode']),WorldChampion.active.is_(True),WorldChampion.entitlement_enabled.is_(True),WorldChampion.title_type=='INDIVIDUAL',
-                or_(exists().where(links.title_id==WorldChampion.id,links.event_id==int(event_id),links.active.is_(True)),
-                    and_(WorldChampion.event_id==int(event_id),~exists().where(links.title_id==WorldChampion.id,links.event_id==WorldChampion.event_id)))).order_by(WorldChampion.id).all()
+            references = applicable_title_references(championship, [person['fisCode']])
         historical = existing and reason == 'WORLD_CHAMPION' and not (championship and championship.is_world_championship)
         reason = 'WORLD_CHAMPION' if references or historical else None
         source = 'AUTO_REFERENCE' if references or source == 'AUTO_REFERENCE' else None
@@ -118,3 +110,18 @@ def audit_recognition(event_id,title_id,old,new):
         changes_json=json.dumps({'titleId':str(title_id),'old':old,'new':new}),
         entity_refs_json=event_audit_refs({'titleId':str(title_id)},event_id)))
     g.atomic_import_audit=True
+
+
+def applicable_title_references(championship, fis_codes):
+    """Read-only exact title evidence, also used by operative forecasts."""
+    if not championship or not championship.is_world_championship or not fis_codes:
+        return []
+    from models import WorldChampionRecognition
+    from sqlalchemy import or_,and_,exists
+    links=WorldChampionRecognition
+    selected_ids = json.loads(championship.world_champion_list_json)['titleIds'] if championship.world_champion_list_json else None
+    return WorldChampion.query.filter(
+        *([WorldChampion.id.in_(selected_ids)] if selected_ids is not None else []),
+        WorldChampion.fis_code.in_([canonical_fis_code(code) for code in fis_codes]),WorldChampion.active.is_(True),WorldChampion.entitlement_enabled.is_(True),WorldChampion.title_type=='INDIVIDUAL',
+        or_(exists().where(links.title_id==WorldChampion.id,links.event_id==championship.id,links.active.is_(True)),
+            and_(WorldChampion.event_id==championship.id,~exists().where(links.title_id==WorldChampion.id,links.event_id==WorldChampion.event_id)))).order_by(WorldChampion.id).all()

@@ -12,7 +12,8 @@ export function apiResponseError(body: unknown, fallback: string): Error {
   return new Error(typeof body === 'string' && body.trim() ? body : fallback);
 }
 
-export function requireSuccessfulApiResponse(response: Pick<Response,'ok'|'statusText'>, body: unknown): void {
+export function requireSuccessfulApiResponse(response: Pick<Response,'ok'|'statusText'> & { status?: number }, body: unknown): void {
+  if (!response.ok && response.status === 413) throw new Error('Die Datei überschreitet die Uploadgrenze des Servers oder eines vorgeschalteten Proxys (HTTP 413).');
   if (!response.ok) throw apiResponseError(body, `API Error: ${response.statusText}`);
 }
 

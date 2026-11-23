@@ -1,5 +1,6 @@
 """Small, fail-closed guard for the dedicated local PostgreSQL test database."""
 import os
+import re
 import unittest
 
 from sqlalchemy.engine import make_url
@@ -13,7 +14,7 @@ def validate_test_url(value, environment):
     """Validate before opening a connection; never include credentials in errors."""
     try:
         url = make_url(value)
-        safe = (
+        local = (
             environment == 'test'
             and url.drivername in {'postgresql', 'postgresql+psycopg'}
             and url.host in {'127.0.0.1', 'localhost', '::1'}
@@ -23,12 +24,28 @@ def validate_test_url(value, environment):
             and url.password == 'incoming_test'
             and not url.query
         )
+        # CodeServer reaches TEST through Docker DNS, never through a host port.
+        # Destructive fixtures must use a separate DB AND a dedicated login role;
+        # the shared incoming_test database/user cannot match this allowlist.
+        codeserver = (
+            environment == 'test'
+            and url.drivername in {'postgresql', 'postgresql+psycopg'}
+            and url.host == 'incoming-test-postgres'
+            and url.port == 5432
+            and re.fullmatch(r'incoming_devreg_[0-9a-f]{16}', url.database or '') is not None
+            and url.username == url.database
+            and bool(url.password)
+            and not url.query
+        )
+        safe = local or codeserver
     except (ValueError, TypeError, ArgumentError):
         safe = False
     if not safe:
         raise ValueError('Unsafe test target: require FLASK_ENV=test and the dedicated '
                          'loopback:55432 incoming_test database/user with local test credentials '
-                         'and no URL query options. Never use a production URL.')
+                         'and no URL query options, or an isolated incoming_devreg_<16 hex> '
+                         'database with a matching dedicated role on incoming-test-postgres:5432. '
+                         'Never use the shared TEST database or a production URL.')
     return url.set(drivername='postgresql+psycopg').render_as_string(hide_password=False)
 
 

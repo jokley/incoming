@@ -4,7 +4,7 @@ import json
 import pandas as pd
 import pytest
 from test_import_event_identity import events
-from test_event_quota_rules import bind
+from test_event_quota_rules import bind,housing_revision
 from test_safe_reimport import run, review, booking
 from app import app
 from models import db, Athlete, ImportSession, ImportApproval
@@ -469,3 +469,63 @@ def test_changed_source_facts_invalidate_current_composed_review(owner):
     response=app.test_client().post(f"/api/import/sessions/{b['session']['id']}/import?eventId={owner.id}",json={'versionId':combined.json['currentVersionId']})
     assert response.status_code==409 and response.json['error']=='STALE_PREVIEW'
     assert Athlete.query.count()==0
+
+
+
+def test_partial_reimport_preserves_forecasts_and_bookings_and_exposes_roster_changes(owner):
+    initial=upload(owner,'SB');run(initial,owner);run(upload(owner,'FS'),owner)
+    client=app.test_client()
+    areas=client.get('/api/athletes/arrival-planning').json['rows']
+    from models import AthleteArrivalForecast
+    expected={}
+    for row in areas:
+        db.session.add(AthleteArrivalForecast(event_id=owner.id,nation_code=row['nationCode'],discipline=row['discipline'],gender=row['personalGender'],expected_total=1,roster_digest='historical',updated_by='tester',revision=1))
+        expected[row['areaId']]=1
+    db.session.commit()
+    room=booking(Athlete.query.filter_by(function='Athlete').all()[:2])
+    columns=lambda:({c.name:getattr(room,c.name) for c in room.__table__.columns},[(o.id,o.athlete_id) for o in room.occupants])
+    before=columns()
+    # Remove a non-booked FS athlete; SB import, room partners and bookings stay untouched.
+    corrected=rows('FS')[1:]
+    run(upload(owner,'FS',data=corrected),owner,True)
+    current=client.get('/api/athletes/arrival-planning').json['rows']
+    assert {r['areaId']:r['expectedTotal'] for r in current}==expected
+    assert all(r['legacyForecastInactive'] and not r['usesVirtualPlanning'] for r in current)
+    assert columns()==before
+
+
+@pytest.mark.parametrize('limit',[1,3,4])
+def test_nn_preview_uses_effective_partial_roster_and_preserves_foreign_forecast(owner,limit):
+    from models import AthleteArrivalForecast
+    housing_revision(owner,{'Snowboard Park & Pipe':limit,'Freeski Park & Pipe':limit})
+    client=app.test_client()
+    initial=upload(owner,'SB');run(initial,owner)
+    sid=initial['session']['id']
+    row=client.get(f'/api/import/sessions/{sid}').json['nnPlanning']['rows'][0]
+    forecast=AthleteArrivalForecast(event_id=owner.id,nation_code=row['nationCode'],discipline=row['discipline'],gender=row['personalGender'],expected_total=1,roster_digest='historical',updated_by='tester',revision=1)
+    db.session.add(forecast);db.session.commit();identity=forecast.id
+    incoming=upload(owner,'FS')
+    current=client.get(f'/api/import/sessions/{sid}').json
+    areas=current['nnPlanning']['rows']
+    assert sum(r['reportedCount'] for r in areas)==7  # 2 retained SB + 5 incoming FS.
+    assert {r['discipline'] for r in areas}=={'Snowboard Park & Pipe','Freeski Park & Pipe'}
+    assert next(r for r in areas if r['areaId']==row['areaId'])['expectedTotal']==1
+    assert {r['discipline']:r['selectedCount'] for r in areas}=={'Snowboard Park & Pipe':min(2,limit),'Freeski Park & Pipe':min(5,limit)}
+    run(incoming,owner)
+    assert AthleteArrivalForecast.query.one().id==identity
+    assert AthleteArrivalForecast.query.one().expected_total==1 and AthleteArrivalForecast.query.one().revision==1
+
+
+def test_excel_analytics_combines_current_family_heads_only(owner):
+    initial = upload(owner, 'SB')
+    upload(owner, 'FS', session_id=initial['session']['id'])
+    upload(owner, 'SB', data=rows('SB')[1:], session_id=initial['session']['id'])
+    response = app.test_client().get('/api/analytics/import-demand')
+    assert response.status_code == 200, response.json
+    nation, = response.json
+    assert nation['nation'] == 'ARG'
+    assert not nation.get('conflict')
+    expected = {row['Fiscode'] for row in rows('SB')[1:] + rows('FS')}
+    assert {p['matchKey'] for p in nation['people']} == expected
+    assert len(nation['people']) == len(expected)
+    assert Athlete.query.count() == 0

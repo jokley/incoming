@@ -29,6 +29,7 @@ export interface NationClarification {
  replies:Array<{comment:string;user:string;timestamp:string}>;
 }
 export interface ImportSession {
+  nnPlanning?:import('../types').ImportNNPlanning;
   submissions?:Array<{family:string;versionId:string;version:number;people:number;athletes:number;status:ImportSessionStatus;errors:number}>;
   submissionTotal?:{people:number|null;athletes?:number;retainedPeople?:number;conflict?:string};
   nationClarifications?:{subjects:NationClarificationSubject[];items:NationClarification[];selectionDigest?:string;

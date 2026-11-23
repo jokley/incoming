@@ -41,13 +41,12 @@ def bind_admin_target():
 
 def bind_reset_target():
     """Global reset authority still names one explicit, pin-compatible target."""
-    from flask import current_app
     from models import db,Event
     from imports.event_context import normalize_event_id
-    from event_ownership_runtime import deployment_event_id,OperationalEventError
+    from event_ownership_runtime import deployment_event_id,OperationalEventError,operational_event_is_pinned
     value=request.headers.get('X-Championship-Event-ID')
     owner=normalize_event_id(value) if value is not None else deployment_event_id()
-    if current_app.config.get('OPERATIONAL_EVENT_ID') and owner!=deployment_event_id():
+    if operational_event_is_pinned() and owner!=deployment_event_id():
         raise OperationalEventError('Reset target conflicts with the pinned championship')
     event=db.session.get(Event,owner)
     if event is None or not event.active: abort(403)

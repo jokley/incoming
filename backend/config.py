@@ -27,6 +27,7 @@ class RuntimeSettings:
     environment: str
     backup_dir: Path
     backup_service_url: str
+    backup_control_secret: str
 
     @classmethod
     def from_environment(cls, base_dir: Path | None = None):
@@ -50,6 +51,7 @@ class RuntimeSettings:
             environment=os.environ.get('FLASK_ENV', ''),
             backup_dir=Path(os.environ.get('BACKUP_DIR', '/backups')),
             backup_service_url=os.environ.get('BACKUP_SERVICE_URL', 'http://backup:8080'),
+            backup_control_secret=os.environ.get('BACKUP_CONTROL_SECRET', os.environ.get('AUTH_PROXY_SECRET', '')),
         )
 
     def apply(self, app):
@@ -68,6 +70,7 @@ class RuntimeSettings:
             RUNTIME_ENV=self.environment,
             BACKUP_DIR=str(self.backup_dir),
             BACKUP_SERVICE_URL=self.backup_service_url,
+            BACKUP_CONTROL_SECRET=self.backup_control_secret,
             RESTORE_COORDINATION_REQUIRED=True,
             DATABASE_MAINTENANCE_MODE=os.environ.get('DATABASE_MAINTENANCE_MODE', '').lower() == 'true',
             OPERATIONAL_EVENT_ID=os.environ.get("OPERATIONAL_EVENT_ID"),

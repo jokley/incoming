@@ -1,3 +1,4 @@
+import { requiresAccommodation } from '../services/accommodationRequirement.ts';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import { AccommodationRequirementField } from './AccommodationRequirementField';
 import type { AccommodationRequirement } from '../types';
@@ -28,8 +29,8 @@ import { ContentCard, EmptyState, InfoPanel, InlineActionLink, OpsButton, PageHe
 import { semanticToneClasses } from '../design-system/components/primitives';
 import { api } from '../services/api';
 import { assignmentWorkspaceHref } from '../services/auditActivity';
-import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
-import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel, competitionDisplayName } from '../services/competitionPresentation';
+import { competitionFilterGroups, competitionGroupSelected, toggleCompetitionGroup, matchesCompetitionSelection, sportAreaOptions, type CompetitionFilterGroup } from '../services/athleteCompetitionFilters';
+import { competitionDisplayList, competitionMembershipList, previewEventGroupLabel, competitionDisplayName, sportAreaValue } from '../services/competitionPresentation';
 import { accommodationSurcharge } from '../services/accommodationSurcharge';
 import { athleteWorkCategory, WORK_CATEGORY_LABELS } from '../services/workflowStatus';
 import { ImportConflictNotice } from './ImportConflictNotice';
@@ -183,7 +184,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
             <ReadonlyField label="Nation" value={athlete?.nationCode} />
             <ReadonlyField label="Wettbewerbe" value={competitionDisplayList(athlete?.disciplines, athlete?.discipline)} />
             <ReadonlyField label="Aufenthalte" value={athlete?.stays?.map(stay => `${date(stay.arrivalDate)} – ${date(stay.departureDate)}${stay.discipline ? ` (${competitionDisplayName(stay.discipline)})` : ''}`).join(', ')} />
-            <ReadonlyField label="Gender" value={genderLabel(athlete?.gender || athlete?.forGender)} />
+            <ReadonlyField label="Gender" value={genderLabel(athlete?.gender)} />
             <ReadonlyField label="Funktion" value={athlete?.function || 'Athlet'} />
             <ReadonlyField label="FIS-ID" value={athlete?.fisCode} emptyValue="Keine FIS-ID" />
             <Box sx={{ gridColumn: '1 / -1' }}><ReadonlyField label="Bemerkung Athlet" value={athlete?.additionalItems} emptyValue="Keine FIS-Bemerkung" /></Box>
@@ -312,13 +313,12 @@ export function Athletes() {
 
   const groups = useMemo(() => ({
     nation: countValues(athletes, athlete => athlete.nationCode),
-    sport: countValues(athletes, athlete => athlete.competitions?.[0]?.sport || ''),
     competitions: competitionFilterGroups(athletes),
-    gender: countValues(athletes, athlete => genderLabel(athlete.gender || athlete.forGender)),
+    gender: countValues(athletes, athlete => genderLabel(athlete.gender)),
     function: personFunctionOptions(athletes),
     status: [
       { value: '', label: 'Alle', count: athletes.length },
-      { value: 'open', label: 'Offen', count: athletes.filter(athlete => athlete.accommodationRequirement!=='NO_ROOM' && personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
+      { value: 'open', label: 'Offen', count: athletes.filter(athlete => requiresAccommodation(athlete) && personAccommodation(athlete).status!=='FULLY_ASSIGNED').length },
       { value: 'no-room', label: 'Kein Zimmer benötigt', count: athletes.filter(athlete=>athlete.accommodationRequirement==='NO_ROOM').length },
       { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
@@ -327,20 +327,19 @@ export function Athletes() {
     notes: [{ value: 'present', label: 'Mit Hinweisen', count: athletes.filter(athlete => Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim())).length }],
   }), [athletes]);
 
-  const filtered = useMemo(() => athletes.filter(athlete => {
+  const areaCandidates = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
     const category = athleteWorkCategory(athlete);
-    const statusMatches = !filters.status || (filters.status === 'open' ? athlete.accommodationRequirement!=='NO_ROOM' && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
-    const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || athlete.accommodationRequirement!=='NO_ROOM'));
+    const statusMatches = !filters.status || (filters.status === 'open' ? requiresAccommodation(athlete) && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
+    const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || requiresAccommodation(athlete)));
     const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
       && (!filters.nation || athlete.nationCode === filters.nation)
-      && (!filters.sport || athlete.competitions?.some(competition => competition.sport === filters.sport))
       && matchesCompetitionSelection(athlete, filters.competitions)
-      && (!filters.gender || genderLabel(athlete.gender || athlete.forGender) === filters.gender)
+      && (!filters.gender || genderLabel(athlete.gender) === filters.gender)
       && (!filters.rate || (athlete.accommodationRateCategory || 'STANDARD')===filters.rate)
       && matchesPersonFunction(athlete, filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
@@ -349,6 +348,9 @@ export function Athletes() {
       && reviewMatches
       && movementMatches;
   }), [athletes, filters, requestedDate, requestedMovement, requestedReview, requestedSingleRoomStatus, search]);
+
+  const areaOptions = useMemo(() => sportAreaOptions(areaCandidates, filters.competitions), [areaCandidates, filters.competitions]);
+  const filtered = useMemo(() => areaCandidates.filter(athlete => matchesCompetitionSelection(athlete, filters.competitions, filters.sport)), [areaCandidates, filters.competitions, filters.sport]);
 
   const activeFilterCount = Object.entries(filters).filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value)).length;
   const setFilter = (key: FilterKey, value: string) => setFilters(current => ({ ...current, [key]: value }));
@@ -367,8 +369,8 @@ export function Athletes() {
         </div>
         <nav aria-label="Athletenfilter" className="space-y-5 p-3 xl:min-h-0 xl:flex-1 xl:overflow-y-auto">
           <FilterGroup title="Nationen" filterKey="nation" items={groups.nation} selected={filters.nation} onSelect={setFilter} />
-          <FilterGroup title="Sport" filterKey="sport" items={groups.sport} selected={filters.sport} onSelect={setFilter} />
-          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || item.sports.includes(filters.sport))} selected={filters.competitions} onToggle={group => setFilters(current => ({ ...current, competitions: toggleCompetitionGroup(group, current.competitions) }))} />
+          <FilterGroup title="Bereich" filterKey="sport" items={areaOptions} selected={filters.sport} onSelect={setFilter} />
+          <CompetitionFilter items={groups.competitions.filter(item => !filters.sport || item.sports.some(sport => sportAreaValue(sport) === filters.sport))} selected={filters.competitions} onToggle={group => setFilters(current => ({ ...current, competitions: toggleCompetitionGroup(group, current.competitions) }))} />
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Unterkunftstarif" filterKey="rate" items={[{value:"STANDARD",label:"Standard",count:athletes.filter(p=>p.accommodationRateCategory!=="SPECIAL").length},{value:"SPECIAL",label:"Sondertarif",count:athletes.filter(p=>p.accommodationRateCategory==="SPECIAL").length}]} selected={filters.rate} onSelect={setFilter}/>
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
@@ -389,15 +391,15 @@ export function Athletes() {
           </div>
         </div>
         <div className="min-h-[24rem] overflow-x-auto overflow-y-auto xl:min-h-0 xl:flex-1">
-          <table className="w-full min-w-[1050px] table-fixed border-separate border-spacing-0 text-left text-sm">
-            <colgroup><col className="w-[16%]"/><col className="w-[6%]"/><col className="w-[13%]"/><col className="w-[8%]"/><col className="w-[8%]"/><col className="w-[13%]"/><col className="w-[7%]"/><col className="w-[9%]"/><col className="w-[12%]"/><col className="w-[8%]"/></colgroup>
+          <table className="w-full min-w-[1150px] table-fixed border-separate border-spacing-0 text-left text-sm">
+            <colgroup>{[16,5,6,13,8,8,12,7,9,9,7].map((width,index)=><col key={index} style={{width:`${width}%`}}/>)}</colgroup>
             <thead className="sticky top-0 z-10 bg-[var(--ops-surface-elevated)] text-[10px] font-extrabold uppercase tracking-[0.12em] text-[var(--ops-text-subtle)]">
-              <tr>{['Name', 'Nation', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
+              <tr>{['Name', 'Nation', 'Gender', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
             </thead>
             <tbody>
               {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className="group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)]">
                 <Cell><div><b className="block whitespace-nowrap text-[15px] font-extrabold leading-5 text-[var(--ops-text)]">{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><AccommodationRateChip category={athlete.accommodationRateCategory}/><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
-                <Cell><b>{athlete.nationCode}</b></Cell>
+                <Cell><b>{athlete.nationCode}</b></Cell><Cell>{genderLabel(athlete.gender)}</Cell>
                 <Cell><div className="min-w-0"><b className="ops-table-wrap block font-bold text-[var(--ops-text)]" title={previewEventGroupLabel(athlete.quotaDisciplines)}>{previewEventGroupLabel(athlete.quotaDisciplines)}</b><span className="ops-table-wrap block text-xs text-[var(--ops-text-muted)]">{competitionMembershipList(athlete.competitions)}</span><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell><span className="block truncate" title={personAccommodation(athlete).details || personAccommodation(athlete).hotelLabel}>{personAccommodation(athlete).hotelLabel==='—' ? '—' : <InlineActionLink onClick={event=>{event.stopPropagation();navigate(personAccommodation(athlete).segments.length>1 ? assignmentWorkspaceHref({personId:athlete.id}) : `/hotels?hotelId=${personAccommodation(athlete).segments[0]?.hotelId || athlete.assignment?.hotelId || ''}`);}}>{personAccommodation(athlete).hotelLabel}</InlineActionLink>}</span></Cell>

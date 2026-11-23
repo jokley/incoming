@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import type { AccommodationCoverage, RoomBookingUnitOccupant } from '../types.ts';
+import type { AccommodationCoverage, RoomBookingUnitOccupant, Athlete, RoomBooking } from '../types.ts';
+import {createListRows} from '../lists/listEngine.ts';
 
 // Load TSX with the project's existing Vite toolchain; no browser/server port.
 const server=await createServer({server:{middlewareMode:true,hmr:false,ws:false,watch:null},
@@ -12,7 +13,27 @@ const {PersonAccommodationPanel}=await server.ssrLoadModule('/src/app/components
 const {DispositionQueueCard}=await server.ssrLoadModule('/src/app/components/assignment/DispositionQueueCard.tsx');
 const {SplitPreview}=await server.ssrLoadModule('/src/app/components/assignment/SplitAssignmentDialog.tsx');
 const {ExternalStayPreview}=await server.ssrLoadModule('/src/app/components/assignment/ExternalStayDialog.tsx');
+const {DataRows}=await server.ssrLoadModule('/src/app/components/Lists.tsx');
 await server.close();
+
+test('list accommodation cells show every segment and navigate to its own booking',()=>{
+ const person={id:'1',firstname:'One',lastname:'Person'} as Athlete;
+ const bookings=['A','B'].map((hotel,index)=>({id:String(index+1),hotel:{id:hotel,name:`Hotel ${hotel}`},roomType:{id:'dz',name:'DZ'},roomNumber:String(index+1),checkInDate:`2027-03-${14+index*3}`,checkOutDate:`2027-03-${17+index*3}`,countsAsSingle:index===0,occupants:[{athlete:person}]})) as unknown as RoomBooking[];
+ const destinations:string[]=[];
+ const props={rows:createListRows([person],bookings),showHotel:true,navigate:(href:string)=>destinations.push(href)};
+ const html=renderToStaticMarkup(createElement(DataRows,props));
+ assert.equal((html.match(/<tr /g)||[]).length,1);
+ for(const text of ['Hotel A','Hotel B','DZ 1','DZ 2','14.03.27','17.03.27','20.03.27','>Ja<','>Nein<'])assert.ok(html.includes(text),text);
+ const visit=(node:unknown):void=>{
+  if(Array.isArray(node)){node.forEach(visit);return;}
+  if(!node||typeof node!=='object')return;
+  const element=node as {type?:string;props?:{children?:unknown;onClick?:()=>void}};
+  if(element.type==='button'&&String(element.props?.children).startsWith('DZ '))element.props?.onClick?.();
+  visit(element.props?.children);
+ };
+ visit(DataRows(props));
+ assert.deepEqual(destinations,['/assignments?assignmentId=1&hotelId=A&athleteId=1','/assignments?assignmentId=2&hotelId=B&athleteId=1']);
+});
 
 const span=(start:number,end:number)=>({checkInDate:`2027-03-${start}`,checkOutDate:`2027-03-${end}`});
 const segment=(id:string,start:number,end:number,hotel:string)=>({bookingId:id,...span(start,end),hotelId:id,

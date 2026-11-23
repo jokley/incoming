@@ -279,3 +279,27 @@ class PostgresMigrationTest(unittest.TestCase):
             external = conn.execute(text("INSERT INTO hotel (name, accommodation_type) VALUES ('Kühtai','EXTERNAL') RETURNING id")).scalar_one()
             conn.execute(text("INSERT INTO room_booking (hotel_id, check_in_date, check_out_date) VALUES (:h,'2027-03-14','2027-03-20')"),{'h':external})
         self.assertTrue(next(c for c in inspect(engine).get_columns('room_booking') if c['name']=='room_type_id')['nullable'])
+
+    def test_arrival_status_removal_refuses_non_null_values(self):
+        url=postgres_test_url();engine=create_engine(url);self.addCleanup(engine.dispose)
+        environment={**os.environ,'DATABASE_URL':url}
+        def migrate(target,down=False):
+            return subprocess.run([sys.executable,'-m','alembic','-c','alembic.ini','downgrade' if down else 'upgrade',target],cwd=BACKEND,env=environment,capture_output=True,text=True)
+        with engine.begin() as conn:
+            conn.execute(text('DROP SCHEMA public CASCADE'));conn.execute(text('CREATE SCHEMA public'))
+        initial=migrate('20261016_02');self.assertEqual(initial.returncode,0,initial.stderr)
+        complete_reviewed_test_ownership(engine,environment)
+        back=migrate('20261118_02',True);self.assertEqual(back.returncode,0,back.stderr)
+        with engine.begin() as conn:
+            owner=conn.scalar(text('SELECT id FROM championship_event LIMIT 1'))
+            conn.execute(text("INSERT INTO athlete(event_id,firstname,lastname,nation_code,single_room_status,arrival_status) VALUES (:owner,'Guard','Original','FIN','NONE','EXPECTED')"),{'owner':owner})
+        blocked=migrate('head')
+        self.assertNotEqual(blocked.returncode,0)
+        self.assertIn('Manual arrival statuses exist',blocked.stderr)
+        with engine.begin() as conn:
+            self.assertEqual(conn.scalar(text("SELECT arrival_status FROM athlete WHERE firstname='Guard'")),'EXPECTED')
+            conn.execute(text("UPDATE athlete SET arrival_status=NULL WHERE firstname='Guard'"))
+        upgraded=migrate('head');self.assertEqual(upgraded.returncode,0,upgraded.stderr)
+        with engine.connect() as conn:
+            self.assertNotIn('arrival_status',{c['name'] for c in inspect(conn).get_columns('athlete')})
+            self.assertEqual(conn.scalar(text("SELECT count(*) FROM athlete WHERE firstname='Guard' AND lastname='Original'")),1)

@@ -33,6 +33,11 @@ class AuthenticatedUser:
     groups: tuple[str, ...]
     permissions: frozenset[str]
     is_superadmin: bool = False
+    is_dev_fallback: bool = False
+
+    @property
+    def is_dev_admin(self) -> bool:
+        return self.is_dev_fallback and self.has_permission('admin.reset')
 
     def has_permission(self, permission: str) -> bool:
         return '*' in self.permissions or permission in self.permissions or (
@@ -72,8 +77,13 @@ def load_user_from_request():
     proxy_authenticated = bool(expected_proxy_secret and username)
     groups = _split_groups(request.headers.get('X-Authenticated-Groups', ''))
 
+    is_dev_fallback = False
     # Explicit opt-in for local development only. Never set this in production.
     if not username and dev_user:
+        is_dev_fallback = bool(
+            current_app.config.get('RUNTIME_ENV') == 'development'
+            and not expected_proxy_secret and not supplied_proxy_secret
+        )
         username = dev_user.strip()
         groups = _split_groups(current_app.config.get('AUTH_DEV_GROUPS', 'incoming-admin'))
 
@@ -86,6 +96,7 @@ def load_user_from_request():
         email=request.headers.get('X-Authenticated-Email', '').strip(),
         groups=groups,
         permissions=_permissions(groups),
+        is_dev_fallback=is_dev_fallback,
         is_superadmin=bool(proxy_authenticated and superadmin_username() and username == superadmin_username()),
     )
 

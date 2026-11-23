@@ -1,7 +1,55 @@
+import type { AccommodationCoverage, AccommodationRequirement, SingleRoomQuotaExemptReason } from '../types';
+
+export interface UnallocatedSingleRoom {
+  personId: string;
+  name: string;
+  nationCode: string;
+  status: 'PENDING';
+  context: null;
+  reason: string;
+}
+export interface PersonDispositionStatus {
+  personId: string; eventId: string; name: string; nationCode: string;
+  personalGender: string; personType: 'ATHLETE' | 'OFFICIAL'; function: string | null;
+  accommodationRequirement: AccommodationRequirement;
+  sportFamilies: string[]; quotaDisciplines: string[]; quotaContexts: string[][];
+  matchesContextFilters: boolean;
+  accommodation: AccommodationCoverage;
+  roomPreference: {
+    reportedValue: string | null; reportedKind: 'SINGLE' | 'DOUBLE' | 'UNKNOWN';
+    status: 'MATCH' | 'MISMATCH' | 'UNKNOWN' | 'UNASSIGNED' | 'NOT_APPLICABLE'; hasMismatch: boolean;
+    segments: Array<AccommodationCoverage['segments'][number] & {
+      capacity: number | null; occupantCount: number;
+      physicalUsage: 'SINGLE_ROOM' | 'SHARED_DOUBLE' | 'SOLE_DOUBLE' | 'UNKNOWN';
+      comparison: 'MATCH' | 'MISMATCH' | 'UNKNOWN';
+    }>;
+  };
+  singleRoom: {
+    hasSingleUse: boolean; status: 'NO_SINGLE_USE' | 'COVERED' | 'APPROVED_EXTRA' | 'EXEMPT' | 'PENDING' | 'UNKNOWN';
+    context: string[] | null; eligibleContexts: string[][]; bookingIds: string[];
+    storedApprovalId: string | null; approvalApplicable: boolean; applicableApprovalId: string | null;
+    approvedContexts: string[][]; exemptionReason: SingleRoomQuotaExemptReason; reason: string | null;
+  };
+}
+export type PersonDispositionSummary = Record<'peopleTotal' | 'accommodationPeopleRequired' | 'fullyAssigned' |
+  'unassigned' | 'partiallyAssigned' | 'accommodationConflicts' | 'roomPreferenceMismatches' |
+  'pendingSingleRoomPeople' | 'contextlessPendingSingleRoomPeople', number> & {operationalAccommodationDemand?:number;virtualPlaces?:number;virtualGroups?:number;planningConflicts?:number};
+
+export interface OfficialQuotaOverview {
+  rows: OfficialQuotaUsage[];
+  unallocatedSingleRooms: UnallocatedSingleRoom[];
+  /** Present only when includePeople=true; absence is not an evaluated green state. */
+  personPlanning?:import('../types').OperativeAthletePlanning;
+  personStatuses?: PersonDispositionStatus[];
+  personSummary?: PersonDispositionSummary;
+  personFilters?: {nationCode:string|null;discipline:string|null;gender:string|null;sportFamily:string|null;
+    personType:string|null;personalGender:string|null;contextlessPendingIncluded:boolean};
+}
+
 export type ComplianceStatus = 'ok' | 'over' | 'missing';
 
 export interface OfficialQuotaUsage {
-  functionGroups?: Array<{function:string|null;count:number;people:Array<{personId:string;name:string;isAssigned:boolean;accommodationRequirement?:'REQUIRED'|'NO_ROOM';accommodationRateCategory:'STANDARD'|'SPECIAL';accommodationRateSource:'DEFAULT'|'MANUAL'}>}>;
+  functionGroups?: Array<{function:string|null;count:number;people:Array<{personId:string;name:string;isAssigned:boolean;accommodationRequirement?:AccommodationRequirement;accommodationRateCategory:'STANDARD'|'SPECIAL';accommodationRateSource:'DEFAULT'|'MANUAL'}>}>;
   accommodationPeopleRequired?: number;
   accommodationPeopleFullyAssigned?: number;
   accommodationPeoplePartiallyAssigned?: number;
@@ -12,7 +60,12 @@ export interface OfficialQuotaUsage {
   discipline: string;
   gender: string;
   athletesEntered: number;
+  expectedAthletes?: number;
+  singleRoomsRequested?: number;
+  officialsDeviation?: number;
   officialQuota: number;
+  registeredOfficials?: number;
+  singleRoomOfficialBasis?: number;
   singleRoomsAllowed: number;
   assignedOfficials: number;
   singleRoomsUsed: number;
