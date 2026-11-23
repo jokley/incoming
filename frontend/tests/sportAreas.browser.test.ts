@@ -325,7 +325,7 @@ test('event housing editor uses one dynamic field per group and the existing rev
  assert.deepEqual(errors,[]);
 });
 
-test('analytics switches between event, saved Excel drafts, imported people and legacy live data', async t => {
+test('analytics switches between event, saved Excel drafts, imported people and booked live data', async t => {
  const root=fileURLToPath(new URL('../',import.meta.url));
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',
    cacheDir:await mkdtemp(`${tmpdir()}/incoming-excel-analytics-`),
@@ -360,17 +360,17 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  await page.getByRole('button',{name:'Excel',exact:true}).click();
  await daily.getByRole('row',{name:/Reserve EZ/}).waitFor();
  assert.match(await daily.getByRole('row',{name:/Reserve EZ/}).innerText(),/-1/);
- assert.match(await daily.getByRole('row',{name:/Reserve zum bekannten Bedarf/}).innerText(),/\+1/);
+ assert.match(await daily.getByRole('row',{name:/Reserve zum bekannten Bedarf/}).innerText(),/\+2/);
  assert.equal(await daily.getByRole('row',{name:'Bekannter Zimmerbedarf'}).locator('td').first().innerText(),'2');
- assert.equal(await daily.getByRole('row',{name:'Kontingent für Excel'}).locator('td').first().innerText(),'3');
+ assert.equal(await daily.getByRole('row',{name:'DZ-Kontingent'}).locator('td').first().innerText(),'4');
  await page.getByText('Bekannter Zimmerpeak',{exact:true}).waitFor();
  await page.getByText(/Personen pro Nacht ohne eindeutige Zimmerart/).waitFor();
  await page.getByText(/Vorläufige Excel-Prognose/).waitFor();
  await page.getByRole('button',{name:'Import',exact:true}).click();
  await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).waitFor();
- assert.match(await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).innerText(),/2/);
+ assert.equal(await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).locator('td').first().innerText(),'1');
  await page.getByRole('button',{name:'Live',exact:true}).click();
- await daily.getByRole('row',{name:/DZ-Bedarf \(Live\)/}).waitFor();
+ assert.equal(await daily.getByRole('row',{name:/DZ-Bedarf \(Live\)/}).locator('td').first().innerText(),'2');
  await page.getByRole('tab',{name:/Hotelrisiken/}).click();
  await page.getByText('Risiko über den Zeitraum',{exact:true}).waitFor();
  await page.getByRole('tab',{name:/Nationen & Bedarf/}).click();

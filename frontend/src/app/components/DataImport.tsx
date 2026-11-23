@@ -1,5 +1,4 @@
 import { concreteRoomDemand, excelDemandRecords } from '../services/planningCalculations';
-import type { RoomBooking } from '../types';
 import type {AccommodationRequirement, NNPlanningControls} from '../types';
 import {OfficialLinkDialog,type OfficialLinkProposal} from './OfficialLinkDialog';
 import { usePermissions } from '../auth/AuthProvider';
@@ -481,7 +480,6 @@ export function PreviewCard({operational,preview,peopleRows,roomRows,onOpen,cont
  const openPeople=()=>onOpen({title:'Personen der Importvorschau',rows:peopleRows,headers:PEOPLE_HEADERS});
  const openRooms=()=>onOpen({title:'Zimmer der Importvorschau',rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});
  const personFilters=(['error','clarification','noRoom','stay','stayUnclear','singleRoom','special'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>!i.code.startsWith('ROOM_')).length??0):(preview?.people.filter(p=>personMatchesImportFilter(p,filter,preview,control)).length??0)})).filter(h=>h.count);
- const [bookings,setBookings]=useState<RoomBooking[]>();
  const planning=operational?.planning;
  const demandPeople=useMemo(()=>{
    if(!preview)return [];
@@ -493,22 +491,14 @@ export function PreviewCard({operational,preview,peopleRows,roomRows,onOpen,cont
      return ids.size===1?{...person,existingAthleteId:[...ids][0]}:person;
    });
  },[preview,planning]);
- const needsBookingData=demandPeople.some(person=>person.existingAthleteId!=null);
- useEffect(()=>{
-   if(!needsBookingData)return;
-   let current=true;
-   void api.getRoomAssignments().then(value=>{if(current)setBookings(value);}).catch(()=>{if(current)setBookings(undefined);});
-   return ()=>{current=false;};
- },[preview,needsBookingData]);
  const demand=useMemo(()=>{
    if(!preview)return null;
    const excluded=planning?.rows.flatMap(row=>row.replacedPersonIds)??[];
-   return concreteRoomDemand(excelDemandRecords(demandPeople,preview.rooms,excluded),bookings??[],
-     { bookingPersonIds: demandPeople.flatMap(person=>person.existingAthleteId==null?[]:[String(person.existingAthleteId)]) });
- },[preview,planning,demandPeople,bookings]);
+   return concreteRoomDemand(excelDemandRecords(demandPeople,preview.rooms,excluded));
+ },[preview,planning,demandPeople]);
  const peak=demand?.days.reduce((best,day)=>day.rooms>best.rooms?day:best,demand.days[0]);
  const provisional=demand?.provisional||Boolean(preview?.errors.length||planning?.rows.some(row=>row.conflict)
-   ||!planning||(bookings===undefined&&needsBookingData));
+   ||!planning);
  const sportIssues=sportClarifications(control);
  const ez=preview?singleRoomSummary(preview):null;
  const roomFilters=(['error','clarification','partner'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>i.code.startsWith('ROOM_')).length??0):(preview?.rooms.filter(r=>roomMatchesImportFilter(r,filter,preview,control)).length??0)})).filter(h=>h.count);
@@ -516,7 +506,7 @@ export function PreviewCard({operational,preview,peopleRows,roomRows,onOpen,cont
  return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle={importScopeLabel(preview) || undefined}/>{onGrouped&&<div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span id="import-group-label">Gruppieren:</span><ToggleButtonGroup size="small" exclusive value={grouped} aria-labelledby="import-group-label" onChange={(_,value:boolean|null)=>{if(value!==null)onGrouped(value);}}><ToggleButton value={false}>Aus</ToggleButton><ToggleButton value={true}>Ein</ToggleButton></ToggleButtonGroup></div>}<div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
   <div className={tile}><button type="button" onClick={openPeople} className="text-left"><strong>Personen</strong><p>{preview?.people.length??0} Personen{preview?.replacementScope?.kind==='SPORT_FAMILY'&&!preview?.submissionSources ? ' aus diesen Dateien' : ''}</p></button>{personFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('people',h.filter):openPeople()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {importListFilters[h.filter]}</button>)}{preview&&!personFilters.some(h=>h.filter==='error'||h.filter==='clarification'||h.filter==='stay'||h.filter==='stayUnclear')&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
   <div className={tile}><button type="button" onClick={openRooms} className="text-left"><strong>Zimmerzuordnungen</strong><p>{preview?.rooms.length??0} Zimmerangaben</p></button>{roomFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('rooms',h.filter):openRooms()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {h.filter==='partner'?'Partner ungeklärt':importListFilters[h.filter]}</button>)}{preview&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Zimmerbedarf{provisional?' (vorläufig)':''}
-    {peak?<> · {new Date(peak.date+'T00:00:00Z').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'})}: {peak.rooms} {demand?.unknownRooms || demand?.unknownDates ? 'bekannt' : 'gesamt'} · {peak.dz} DZ · {peak.ez} EZ{peak.otherRooms>0?` · ${peak.otherRooms} sonstige`:''}{demand?.unknownRooms?` · bis zu ${demand.unknownRooms} Personen ohne Zimmerart`:''}</>: !provisional ? ' · 0 gesamt · 0 DZ · 0 EZ' : ' · keine belastbaren Nachtwerte'}
+    {peak?<> · {new Date(peak.date+'T00:00:00Z').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'})}: {peak.rooms} {demand?.unknownRooms || demand?.unknownDates ? 'bekannt' : 'gesamt'} · {peak.dz} DZ · {peak.ez} EZ{demand?.unknownRooms?` · bis zu ${demand.unknownRooms} Personen ohne Zimmerart`:''}</>: !provisional ? ' · 0 gesamt · 0 DZ · 0 EZ' : ' · keine belastbaren Nachtwerte'}
     {demand?.unknownDates?` · ${demand.unknownDates} ohne Zeitraum`:''}</p>}{preview&&!roomFilters.length&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
   <div className={tile}><button type="button" onClick={()=>onOpen({title:'Officials & EZ-Quote'})} className="text-left"><strong>Officials & EZ-Quote</strong>{operational&&<span className="block text-xs">Operativ: {operational.busy?'wird berechnet …':operational.error||!operational.planning.operationalQuota?'Bewertung nicht verfügbar':operational.planning.operationalQuota?.conflict||operational.planning.operationalQuota?.rows.some(row=>row.officialsExceeded||row.singleRoomsPending>0||row.coverageChanged)?'Klärungsbedarf':'aktuell bewertet'}</span>}<span className="block">{preview?.quotaOverview?.nations.reduce((sum,n)=>sum+n.ezDecisionsOpen,0)??0} EZ-Kontexte offen · Importprüfung</span><span className="block pt-2">{ez&&!ez.complete||preview?.quotaOverview?.nations.some(n=>n.coverageReviewRequired||n.incomplete)?'Abdeckung prüfen':ez?.counts.PENDING?'EZ-Entscheidung offen':'OK'}</span></button>{ez&&ez.counts.PENDING>0&&<button type="button" className="mt-2 text-left text-sm text-[var(--ops-primary)]" onClick={()=>onPeople?.({role:'people',personKeys:ez.personKeys.PENDING})}>{ez.counts.PENDING} EZ-Personen offen</button>}</div>
   <div className={tile}><button type="button" onClick={()=>onOpen({title:'Athleten-/Disziplinquote'})} className="flex flex-col gap-1 text-left"><strong>Athleten-/Disziplinquote</strong>{preview?.athleteQuotaChecks?.map(q=><span key={`${q.nationCode}/${q.topLevelDiscipline}`}>{sportAreaLabel(q.topLevelDiscipline)}: {q.athleteQuotaUsed} / {q.athleteQuotaLimit} · Familienquote</span>)}<span>{preview?<AthleteQuotaPreviewStatus preview={preview}/>: 'Noch keine Vorschau'}</span></button>{sportIssues.length>0&&<button type="button" onClick={()=>onOpen({title:'Athleten-/Disziplinquote',focusSport:true})} title={sportIssues.map(row=>`${row.nation} · ${row.name}`).join('; ')} className="mt-2 text-left text-sm font-bold text-[var(--ops-warning)]">{sportIssues.length} {sportIssues.length===1?'Sportliche Prüfung offen':'Wettbewerbspositionen prüfen'}<span className="block text-xs font-normal">{sportIssues.map(row=>`${competitionDisplayName(row.name)} ${row.gender==='M'?'Männer':['F','W'].includes(row.gender??'')?'Frauen':row.gender??''}`).join(' · ')}</span></button>}</div>

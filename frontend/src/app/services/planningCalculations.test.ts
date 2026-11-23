@@ -35,7 +35,7 @@ test('external bookings contribute no local rooms or beds',async t=>{
   assert.deepEqual(buildHotelRiskRows([external],[booking]),[]);
 });
 
-test('concrete demand deduplicates confirmed pairs and booking occupants and keeps real gaps', async t => {
+test('concrete demand deduplicates confirmed pairs and keeps real gaps', async t => {
   const server = await createServer({ configFile: false, envFile: false, logLevel: 'silent',
     server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom' });
   t.after(() => server.close());
@@ -62,53 +62,70 @@ test('concrete demand deduplicates confirmed pairs and booking occupants and kee
   const booking = { id: 'one', hotel, roomType: dz, countsAsSingle: true,
     checkInDate: '2027-03-04', checkOutDate: '2027-03-05', occupants: [{ athlete: { id: '1' } }] };
   const records = excelDemandRecords(people, rooms, ['preview:bench']);
-  const demand = concreteRoomDemand(records, [booking, booking]);
-  assert.deepEqual(demand.days.map(({ ez, dz, beds, blocked, unknown }: Record<string, number>) =>
-    [ez, dz, beds, blocked, unknown]), [[1, 1, 4, 0, 1], [1, 0, 1, 0, 0], [0, 2, 2, 1, 0], [0, 0, 0, 0, 0]]);
+  const demand = concreteRoomDemand(records);
+  assert.deepEqual(demand.days.map(({ ez, dz, beds, unknown }: Record<string, number>) =>
+    [ez, dz, beds, unknown]), [[1, 1, 4, 1], [1, 0, 1, 0], [0, 1, 2, 0], [0, 0, 0, 0]]);
   assert.equal(demand.provisional, true);
   const [first, second] = buildCapacityTimeline({ hotels: [hotel], events: [], athletes: [], bookings: [booking] }, demand);
   assert.equal(first.liveRoomReserve, 1);
   assert.equal(first.liveEzReserve, -1);
   assert.equal(second.liveEzReserve, 0);
   assert.equal(second.demandDz, 0);
-  const joining = concreteRoomDemand(records, [{ ...booking, countsAsSingle: false }]);
-  assert.equal(joining.days[2].dz, 1);
   const mismatched = concreteRoomDemand(excelDemandRecords([
     people[0], { ...people[1], arrivalDate: '2027-03-03', departureDate: '2027-03-04' },
-  ], [pair], []), []);
+  ], [pair], []));
   assert.deepEqual(mismatched.days.map(({ beds }: { beds: number }) => beds), [1, 1, 0]);
   assert.equal(mismatched.provisional, true);
 });
 
-test('Excel counts source occupants once and subtracts other bookings from capacity only', async t => {
+test('all four sources compare independent demand with the same dated room contracts', async t => {
   const server = await createServer({ configFile: false, envFile: false, logLevel: 'silent',
     server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom' });
   t.after(() => server.close());
-  const { concreteRoomDemand, excelDemandRecords, buildCapacityTimeline } =
+  const { concreteRoomDemand, excelDemandRecords, importedDemandRecords, buildCapacityTimeline } =
     await server.ssrLoadModule('/src/app/services/planningCalculations.ts');
-  const dates = { arrivalDate: '2027-03-02', departureDate: '2027-03-03' };
-  const roomType = { id: 'dz', name: 'DZ', maxPersons: 2 };
-  const hotel = { id: 'h', name: 'Hotel', roomInventories: [
-    { id: 'i', roomType, roomCount: 2, availableFrom: dates.arrivalDate, availableUntil: dates.arrivalDate },
-  ] };
+  const dates = { arrivalDate: '2027-03-02', departureDate: '2027-03-04' };
+  const dz = { id: 'dz', name: 'DZ', maxPersons: 2 };
+  const ez = { id: 'ez', name: 'EZ / DU', maxPersons: 2 };
+  const other = { id: 'other', name: 'Apartment', maxPersons: 4 };
+  const hotel = { id: 'h', name: 'Hotel', roomInventories: [dz, ez, other].map((roomType, index) => ({
+    id: roomType.id, roomType, roomCount: index === 2 ? 3 : 1,
+    availableFrom: dates.arrivalDate, availableUntil: index === 1 ? dates.arrivalDate : dates.departureDate,
+  })) };
   const bookings = ['A', 'B'].map((nationCode, i) => ({
-    id: nationCode, hotel, roomType, countsAsSingle: i === 1, checkInDate: dates.arrivalDate,
+    id: nationCode, hotel, roomType: dz, countsAsSingle: i === 1, checkInDate: dates.arrivalDate,
     checkOutDate: dates.departureDate, occupants: [{ athlete: { id: String(i + 1), nationCode } }],
   }));
-  const data = { hotels: [hotel], bookings, athletes: [], events: [] };
-  const booked = { ...dates, matchKey: 'booked', existingAthleteId: 1, roomType: 'Double' };
-  const open = { ...dates, matchKey: 'open', roomType: 'Double' };
-  const project = (people: Array<typeof booked | typeof open>) => concreteRoomDemand(
-    excelDemandRecords(people, [], [], 'A:'), bookings, { separateOutsideBookings: true });
-  const covered = project([booked]);
-  assert.deepEqual([covered.days[0].rooms, covered.days[0].beds], [1, 1]);
-  assert.deepEqual(covered.days[0].outside, { rooms: 1, ez: 0, dz: 1, beds: 2 });
-  const [balanced] = buildCapacityTimeline(data, covered);
-  assert.deepEqual([balanced.assignedRooms, balanced.excelRoomSupply, balanced.liveRoomReserve, balanced.liveDzReserve],
-    [2, 1, 0, 0]);
-  const [short] = buildCapacityTimeline(data, project([booked, open]));
-  assert.deepEqual([short.demandRooms, short.demandBeds, short.liveRoomReserve, short.liveDzReserve],
-    [2, 2, -1, -1]);
-  const [empty] = buildCapacityTimeline({ ...data, hotels: [] }, project([]));
-  assert.deepEqual([empty.demandRooms, empty.demandBeds, empty.liveRoomReserve, empty.liveDzReserve], [0, 0, 0, 0]);
+  const athletes = [{ ...dates, id: '1', roomType: 'Single' }];
+  const data = { hotels: [hotel], bookings, athletes, events: [
+    { startDate: dates.arrivalDate, endDate: dates.arrivalDate, personDemand: 6 },
+  ] };
+  const excel = concreteRoomDemand(excelDemandRecords([
+    { ...dates, matchKey: 'A', existingAthleteId: 1, roomType: 'Single' },
+    { ...dates, matchKey: 'C', roomType: 'Single' },
+  ], [], []));
+  const imported = concreteRoomDemand(importedDemandRecords(athletes, []));
+  for (const [source, demand, expected] of [
+    ['event', undefined, [4, 2, 2]],
+    ['excel', excel, [2, 2, 0]],
+    ['import', imported, [1, 1, 0]],
+    ['live', undefined, [2, 0, 2]],
+  ] as const) {
+    const [first, second, checkout] = buildCapacityTimeline(data, demand, source);
+    assert.deepEqual([first.roomSupply, first.ezSupply, first.dzSupply], [5, 1, 1]);
+    assert.deepEqual([second.roomSupply, second.ezSupply, second.dzSupply], [4, 0, 1]);
+    const actual = source === 'event' ? [first.plannedRooms, first.plannedEz, first.plannedDz]
+      : [first.demandRooms, first.demandEz, first.demandDz];
+    assert.deepEqual(actual, expected);
+    const reserves = source === 'event' ? [first.eventRoomReserve, first.eventEzReserve, first.eventDzReserve]
+      : [first.liveRoomReserve, first.liveEzReserve, first.liveDzReserve];
+    assert.deepEqual(reserves, expected.map((value, index) => [5, 1, 1][index] - value));
+    if (source === 'event') assert.equal(checkout.plannedRooms, 0);
+    else assert.equal(checkout.demandRooms, 0);
+    if (source !== 'live') {
+      const [withoutBookings] = buildCapacityTimeline({ ...data, bookings: [] }, demand, source);
+      assert.deepEqual([withoutBookings.eventRoomReserve, withoutBookings.liveRoomReserve],
+        [first.eventRoomReserve, first.liveRoomReserve]);
+    }
+  }
 });
