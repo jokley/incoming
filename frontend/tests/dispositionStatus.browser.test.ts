@@ -35,7 +35,12 @@ test('person overview drills into assigned people, refreshes after persistence, 
   const occupants=people().map(p=>({athleteId:p.personId,name:p.name,firstname:p.name,lastname:'Synthetic',nationCode:p.nationCode,function:p.function,gender:p.personalGender,quotaDisciplines:p.quotaDisciplines,roomType:p.personId==='open'&&singleWish?'Single':'Double shared',accommodationRequirement:'REQUIRED',accommodationRateCategory:'STANDARD',accommodationRateSource:'DEFAULT',arrivalDate:interval.checkInDate,departureDate:interval.checkOutDate,accommodationCoverage:p.accommodation,hasPendingReview:false,importChangeTypes:[],importChangeDetails:[],single_room_status:'NONE',single_room_decision_id:p.singleRoom.storedApprovalId}));
   const units=occupants.map(p=>({unitId:`unit-${p.athleteId}`,sourceRowKey:p.athleteId,nationCode:p.nationCode,occupants:[p],roomType:'Double shared',roomTypeLabel:'double',roomCategoryLabel:'dz',occupantCount:1,...interval,specialMealFlags:[],statusBadges:[],assignmentWarnings:[],isFullyAssigned:p.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED'}));
   const slots=people().flatMap(p=>p.accommodation.segments.map((s,index)=>({slotId:`h:r:${s.bookingId}`,slotIndex:index+1,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:s.roomNumber,inventoryRoomCount:6,dateCoverage:{availableFrom:interval.checkInDate,availableUntil:interval.checkOutDate,coversRequestedRange:true},bookings:[{bookingId:s.bookingId,hotelId:'h',roomTypeId:'r',roomNumber:s.roomNumber,capacity:2,checkInDate:s.checkInDate,checkOutDate:s.checkOutDate,countsAsSingle:s.countsAsSingle,occupants:[occupants.find(o=>o.athleteId===p.personId)]}]})));
-  return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},hotels:[{hotelId:'h',hotelName:'Synthetic Hotel',slots:[...slots,{slotId:'h:r:free',slotIndex:9,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:'Zimmer 09',inventoryRoomCount:9,dateCoverage:{availableFrom:interval.checkInDate,availableUntil:interval.checkOutDate,coversRequestedRange:true},bookings:[]}]}],validationByUnit:{}};
+  const coverage = (availableFrom:string,availableUntil:string) => ({availableFrom,availableUntil,coversRequestedRange:true,intervals:[{availableFrom,availableUntil}]});
+  const firstSlots=slots.map(slot=>({...slot,inventoryId:'1',dateCoverage:coverage(interval.checkInDate,interval.checkOutDate)}));
+  const free={slotId:'h:r:free',slotIndex:9,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:'Zimmer 09',inventoryRoomCount:9,dateCoverage:coverage(interval.checkInDate,interval.checkOutDate),inventoryId:'1',bookings:[]};
+  const later={...free,slotId:'h:r:later',slotIndex:1,roomNumber:'K2-1',inventoryRoomCount:1,dateCoverage:coverage('2027-03-23','2027-03-31'),inventoryId:'2'};
+  return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},hotels:[{hotelId:'h',hotelName:'Synthetic Hotel',slots:[...firstSlots,free,later]}],validationByUnit:{}};
+
  };
  const event={id:'1',name:'Synthetic status event',active:true,planningPeriods:[]};
  const errors:string[]=[],writes:string[]=[],requests:string[]=[];page.on('pageerror',e=>errors.push(e.message));
@@ -83,6 +88,14 @@ test('person overview drills into assigned people, refreshes after persistence, 
  await nation.selectOption('');
  // A valid join is a hotel target even when there is no free-room target.
  await page.getByText('Synthetic Hotel',{exact:true}).first().click();
+ const groups=page.locator('[data-room-type-group="r"] > button');
+ assert.equal(await groups.count(),2);
+ assert.match(await groups.nth(0).innerText(),/11\.03\.–23\.03\.2027/);
+ assert.match(await groups.nth(1).innerText(),/0\/1 Zimmer · 0\/2 Betten/);
+ assert.match(await groups.nth(1).innerText(),/23\.03\.–31\.03\.2027/);
+ await groups.nth(1).click();
+ assert.equal(await groups.nth(0).getAttribute('aria-expanded'),'true');
+ assert.equal(await groups.nth(1).getAttribute('aria-expanded'),'false');
  const openCard=page.getByRole('group',{name:/^Offen ·/});
  const join=openCard.getByRole('button',{name:'Person hier zuweisen',exact:true});
  await join.waitFor();

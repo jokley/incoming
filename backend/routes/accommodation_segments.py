@@ -98,6 +98,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             'hotelId': str(target.hotel_id) if target else data.get('hotelId'),
             'roomTypeId': target.room_type_id if target else data.get('roomTypeId'),
             'roomNumber': target.room_number if target else data.get('roomNumber'),
+            'inventoryId': data.get('inventoryId'),
             'checkInDate': data['checkInDate'], 'checkOutDate': data['checkOutDate'],
         }
         if existing or target:

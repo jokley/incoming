@@ -427,7 +427,7 @@ def create_simulation():
         assignments = 0
         assigned_people = 0
         hotel_ids = set()
-        bookings_by_slot = {}
+        bookings_by_slot = {str(booking.id): booking for booking in bookings}
         for hotel_id, room_type_id, check_in_date, check_out_date in existing_bookings:
             bookings_by_slot.setdefault((hotel_id, room_type_id), []).append(
                 (check_in_date, check_out_date))
@@ -1100,14 +1100,12 @@ def _calculate_unit_validation(unit, slot, existing_bookings):
         blocking_messages.append(f'{unit["roomType"]} passt nicht auf {slot["roomTypeName"]}')
 
     if not slot['dateCoverage']['coversRequestedRange']:
-        warning_messages.append('Kontingent-Zeitraum deckt den gewünschten Aufenthalt nicht vollständig ab')
+        blocking_messages.append('Kontingent-Zeitraum deckt den gewünschten Aufenthalt nicht vollständig ab')
 
     for booking in existing_bookings:
         if booking.id == unit.get('assignedBookingId'):
             continue
         if str(booking.hotel_id) != str(slot['hotelId']) or str(booking.room_type_id) != str(slot['roomTypeId']):
-            continue
-        if (_planned_room_key(booking.room_number) or booking.room_number or '') != (slot['roomNumber'] or ''):
             continue
         if _dates_overlap(
             booking.check_in_date,
@@ -1145,48 +1143,94 @@ def _planned_room_key(room_number):
     return _planned_room_number(int(match.group(1))) if match else None
 
 
+def _inventory_room_number(inventory_id, index):
+    # Store the inventory identity in the existing virtual room key (VARCHAR(20)).
+    return f'K{inventory_id:x}-{index:x}'
+
+
+def _inventory_room_coordinates(room_number):
+    match = re.fullmatch(r'K([0-9a-f]{1,8})-([0-9a-f]{1,8})', room_number or '')
+    return tuple(int(value, 16) for value in match.groups()) if match else (None, None)
+
+
 def _build_virtual_slots(hotel, room_type, inventories, bookings):
-    slot_count = sum(inv.room_count for inv in inventories)
-    relevant_bookings = [
-        booking for booking in bookings
-        if booking.hotel_id == hotel.id and booking.room_type_id == room_type.id
-    ]
-    bookings_by_room_number = {}
-    unmatched_bookings = []
-    for booking in relevant_bookings:
-        key = _planned_room_key(booking.room_number)
-        if key:
-            bookings_by_room_number.setdefault(key, []).append(booking)
-        else:
-            unmatched_bookings.append(booking)
+    from assignment_availability import inventory_covers
     slots = []
-    for index in range(slot_count):
-        room_number = _planned_room_number(index + 1)
-        slot_bookings = bookings_by_room_number.get(room_number, [])
-        if not slot_bookings and unmatched_bookings:
-            slot_bookings = [unmatched_bookings.pop(0)]
-        slot_bookings = sorted(slot_bookings, key=lambda booking: (booking.check_in_date or datetime.max.date(), booking.id))
-        slots.append({
-            'slotId': f'{hotel.id}:{room_type.id}:{index + 1}',
-            'hotelId': str(hotel.id),
-            'hotelName': hotel.name,
-            'roomTypeId': str(room_type.id),
-            'roomTypeName': room_type.name,
-            'capacity': room_type.max_persons,
-            'slotIndex': index + 1,
-            'roomNumber': room_number,
-            'inventoryRoomCount': slot_count,
-            'dateCoverage': {
-                'availableFrom': min(inv.available_from for inv in inventories).isoformat() if inventories else None,
-                'availableUntil': max(inv.available_until for inv in inventories).isoformat() if inventories else None,
-                'coversRequestedRange': True,
-                'intervals': [{'availableFrom': inv.available_from.isoformat(),
-                    'availableUntil': inv.available_until.isoformat()}
-                    for inv in sorted(inventories, key=lambda inv: (inv.available_from, inv.available_until))],
-            },
-            'bookings': slot_bookings,
-        })
+    by_inventory = {}
+    for inventory in sorted(inventories, key=lambda row: (row.available_from, row.available_until, row.id)):
+        coverage = {'availableFrom': inventory.available_from.isoformat(),
+                    'availableUntil': inventory.available_until.isoformat()}
+        rows = [{
+            'slotId': f'{hotel.id}:{room_type.id}:{inventory.id}:{index}',
+            'inventoryId': str(inventory.id),
+            'hotelId': str(hotel.id), 'hotelName': hotel.name,
+            'roomTypeId': str(room_type.id), 'roomTypeName': room_type.name,
+            'capacity': room_type.max_persons, 'slotIndex': index,
+            'roomNumber': _inventory_room_number(inventory.id, index),
+            'roomLabel': _planned_room_number(index),
+            'inventoryRoomCount': inventory.room_count,
+            'dateCoverage': {**coverage, 'coversRequestedRange': True, 'intervals': [coverage]},
+            'bookings': [],
+        } for index in range(1, inventory.room_count + 1)]
+        by_inventory[inventory.id] = (inventory, rows)
+        slots.extend(rows)
+
+    def place(booking):
+        inventory_id, index = _inventory_room_coordinates(booking.room_number)
+        if inventory_id is not None:
+            inventory, rows = by_inventory.get(inventory_id, (None, []))
+            if 0 < index <= len(rows) and inventory_covers(inventory, booking.check_in_date, booking.check_out_date):
+                return rows[index - 1]
+            # A removed or modified contingent must never move a persisted virtual room.
+            return None
+        key = _planned_room_key(booking.room_number)
+        preferred = int(key.split()[-1]) if key else None
+        for inventory, rows in by_inventory.values():
+            if not inventory_covers(inventory, booking.check_in_date, booking.check_out_date):
+                continue
+            ordered = ([rows[preferred - 1]] if preferred and preferred <= len(rows) else []) + rows
+            for slot in ordered:
+                if not any(_dates_overlap(b.check_in_date, b.check_out_date,
+                                          booking.check_in_date, booking.check_out_date) for b in slot['bookings']):
+                    return slot
+        return None
+
+    relevant = [b for b in bookings if b.hotel_id == hotel.id and b.room_type_id == room_type.id]
+    # Place persisted virtual IDs first; use date coverage for legacy room numbers.
+    for booking in sorted(relevant, key=lambda b: (_inventory_room_coordinates(b.room_number)[0] is None,
+                                                   b.check_in_date or datetime.max.date(), b.id)):
+        slot = place(booking)
+        if slot is None:
+            slot = {
+                'slotId': f'{hotel.id}:{room_type.id}:legacy:{booking.id}', 'inventoryId': None,
+                'hotelId': str(hotel.id), 'hotelName': hotel.name,
+                'roomTypeId': str(room_type.id), 'roomTypeName': room_type.name,
+                'capacity': room_type.max_persons, 'slotIndex': 0, 'roomNumber': booking.room_number,
+                'inventoryRoomCount': 0, 'dateCoverage': {'coversRequestedRange': False, 'intervals': []},
+                'bookings': [],
+            }
+            slots.append(slot)
+        slot['bookings'].append(booking)
     return slots
+
+
+def inventory_slot_guard(hotel, room_type, inventories, bookings, start, end, *, selected, room_number):
+    from assignment_availability import inventory_guard, inventory_covers, NO_SINGLE_CONTINGENT
+    candidates = [row for row in inventories if (selected is None or row.id == selected.id)
+                  and inventory_covers(row, start, end)]
+    if not candidates:
+        return NO_SINGLE_CONTINGENT
+    slots = _build_virtual_slots(hotel, room_type, inventories, bookings)
+    historical = [booking for slot in slots if slot['inventoryId'] is None for booking in slot['bookings']]
+    for inventory in candidates:
+        rows = [slot for slot in slots if slot['inventoryId'] == str(inventory.id)]
+        if inventory_guard([inventory], historical + [b for slot in rows for b in slot['bookings']], start, end):
+            continue
+        if selected and any(slot['roomNumber'] == room_number and any(
+                _dates_overlap(b.check_in_date, b.check_out_date, start, end) for b in slot['bookings']) for slot in rows):
+            return 'ROOM_BOOKING_OVERLAP', 'Zimmer ist im benötigten Zeitraum nicht verfügbar.'
+        return None
+    return 'KONTINGENT_EXCEEDED', 'Ausgewähltes Kontingent ist im benötigten Zeitraum belegt.'
 
 
 def _find_booking_for_athlete(booking_map, athlete_id):
@@ -1386,7 +1430,7 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
     for hotel_section in hotel_sections:
         for slot in hotel_section['slots']:
             slot_copy = dict(slot)
-            covers_requested_range = True
+            covers_requested_range = slot['inventoryId'] is not None
             date_coverage = slot['dateCoverage']
             if (date_coverage['availableFrom'] and date_coverage['availableUntil']
                     and unit.get('checkInDate') and unit.get('checkOutDate')):
@@ -1395,10 +1439,7 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
                     and date_coverage['availableUntil'] >= unit['checkOutDate'])
             slot_copy['dateCoverage'] = dict(date_coverage)
             slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
-            relevant_bookings = bookings_by_slot.get(
-                (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
-                [],
-            )
+            relevant_bookings = [bookings_by_slot[row['bookingId']] for row in slot['bookings']]
             validations.append({
                 'slotId': slot['slotId'],
                 **_calculate_unit_validation(unit, slot_copy, relevant_bookings),
@@ -1427,12 +1468,10 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     timeline_end = max(all_dates).isoformat() if all_dates else None
 
     bookings_by_hotel_room_type = {}
-    bookings_by_slot = {}
+    bookings_by_slot = {str(booking.id): booking for booking in bookings}
     for booking in bookings:
         hotel_room_type_key = (booking.hotel_id, booking.room_type_id)
         bookings_by_hotel_room_type.setdefault(hotel_room_type_key, []).append(booking)
-        slot_key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
-        bookings_by_slot.setdefault(slot_key, []).append(booking)
 
     hotel_sections = []
     for hotel in hotels:
@@ -1440,6 +1479,10 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
         for inventory in ([] if hotel.accommodation_type == 'EXTERNAL' else hotel.room_inventories or []):
             by_room_type.setdefault(inventory.room_type_id, {'roomType': inventory.room_type, 'inventories': []})
             by_room_type[inventory.room_type_id]['inventories'].append(inventory)
+
+        for booking in bookings:
+            if booking.hotel_id == hotel.id and booking.room_type and hotel.accommodation_type != 'EXTERNAL':
+                by_room_type.setdefault(booking.room_type_id, {'roomType': booking.room_type, 'inventories': []})
 
         slots = []
         for room_type_id, payload in by_room_type.items():
@@ -1467,7 +1510,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                     'bookings': [
                         {
                             'bookingId': str(booking.id),
-                            'roomNumber': slot['roomNumber'],
+                            'roomNumber': _planned_room_key(booking.room_number) or booking.room_number,
                             'hotelId': str(booking.hotel_id),
                             'roomTypeId': str(booking.room_type_id),
                             'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
@@ -1630,12 +1673,24 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     if not external:
         from assignment_availability import inventory_guard
         inventories = event_query(HotelRoomInventory).filter_by(hotel_id=hotel_id, room_type_id=room_type_id).all()
-        query = event_query(RoomBooking).filter_by(hotel_id=hotel_id, room_type_id=room_type_id).filter(
-            RoomBooking.check_in_date < check_out_date, RoomBooking.check_out_date > check_in_date)
+        query = event_query(RoomBooking).filter_by(hotel_id=hotel_id, room_type_id=room_type_id)
         if existing_booking:
             query = query.filter(RoomBooking.id != existing_booking.id)
         other_bookings = query.all()
+        selected_id, selected_index = _inventory_room_coordinates(data.get('roomNumber'))
+        explicit_id = data.get('inventoryId')
+        if explicit_id is not None and str(selected_id) != str(explicit_id):
+            return None, None, _booking_error('INVALID_INVENTORY', 'Zimmer gehört nicht zum ausgewählten Kontingent.')
+        if selected_id is not None:
+            selected = next((row for row in inventories if row.id == selected_id), None)
+            if not selected or not 0 < selected_index <= selected.room_count:
+                return None, None, _booking_error('INVALID_INVENTORY', 'Ausgewähltes Kontingent oder Zimmer ist nicht mehr verfügbar.')
+        else:
+            selected = None
         failure = inventory_guard(inventories, other_bookings, check_in_date, check_out_date)
+        if not failure:
+            failure = inventory_slot_guard(hotel, room_type, inventories, other_bookings, check_in_date, check_out_date,
+                                           selected=selected, room_number=data.get('roomNumber'))
         if failure:
             return None, None, _booking_error(*failure)
         if data.get('roomNumber') and any(
@@ -3573,10 +3628,7 @@ def get_assignment_planning_validations(validation_key):
         unit = {**index[ids[0]][1], **interval, 'assignedBookingId': None,
                 'occupants': [index[identity][0] for identity in ids],
                 'allowedRoomTypeLabels': ['single', 'double'] if len(ids) == 1 else ['double']}
-        by_slot = {}
-        for booking in event_query(RoomBooking).all():
-            key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
-            by_slot.setdefault(key, []).append(booking)
+        by_slot = {str(booking.id): booking for booking in event_query(RoomBooking).all()}
         return _assignment_jsonify({'validationKey': validation_key,
             'validations': _build_unit_validations(unit, planning['hotels'], by_slot)})
     planning = _build_assignment_planning_view({validation_key}, assignment_interval=interval)
@@ -3600,6 +3652,7 @@ def create_room_booking():
     payload_data = {
         'athleteIds': data.get('athleteIds') or [],
         'hotelId': data.get('hotelId'),
+        'inventoryId': data.get('inventoryId'),
         'roomTypeId': data.get('roomTypeId'),
         'roomNumber': data.get('roomNumber'),
         'checkInDate': data.get('checkInDate'),
@@ -3644,6 +3697,7 @@ def update_assigned_unit(booking_id):
     payload_data = {
         'athleteIds': [str(occ.athlete_id) for occ in (booking.occupants or []) if occ.athlete_id],
         'hotelId': data.get('hotelId') or str(booking.hotel_id),
+        'inventoryId': data.get('inventoryId'),
         'roomTypeId': data.get('roomTypeId') or str(booking.room_type_id),
         'roomNumber': data.get('roomNumber', booking.room_number),
         'checkInDate': data.get('checkInDate') or (booking.check_in_date.isoformat() if booking.check_in_date else None),

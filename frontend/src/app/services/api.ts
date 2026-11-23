@@ -742,7 +742,7 @@ class ApiService {
     return this.request('/assignments/segments',{method:'POST',body:JSON.stringify(plan)});
   }
 
-  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
+  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;inventoryId?:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
     return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
   }
 
