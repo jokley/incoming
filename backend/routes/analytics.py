@@ -177,13 +177,24 @@ def get_import_demand():
             people_fields = ('matchKey', 'existingAthleteId', 'function', 'nationCode', 'arrivalDate', 'departureDate',
                              'roomType', 'sharedWithName', 'accommodationRequirement', 'accommodationRequirementReviewRequired')
             room_fields = ('person1Key', 'person2Key', 'roomType', 'checkInDate', 'checkOutDate', 'sharedWithRawName')
+            room_conflict = any(
+                issue['code'].startswith(('ROOM_', 'ACCOMMODATION_REQUIREMENT_', 'IMPORT_SHARED_'))
+                and issue['code'] != 'ROOM_LIST_NO_DATA'
+                for issue in preview.get('errors', []) + preview.get('warnings', [])
+            )
+            zero_rooms = bool(people) and not preview.get('errors') and all(
+                person.get('accommodationRequirement') == person.get('importAccommodationRequirement') == 'NO_ROOM'
+                for person in people
+            )
+            room_status = ('conflict' if room_conflict else 'zero' if zero_rooms else
+                           'missing' if preview.get('roomListHasNoData') or not preview['rooms'] else 'available')
             nations.append(dict(nation=session.nation,
                 people=[{key: p.get(key) for key in people_fields} for p in people],
                 rooms=[{key: r.get(key) for key in room_fields} for r in preview['rooms']],
-                excludedIds=selection['replacedPersonIds'],
-                provisional=bool(preview.get('errors') or selection['conflicts'] or scope not in {'FULL_NATION', 'SPORT_FAMILY'} or stale_composition or len(evaluation) > len(people))))
+                excludedIds=selection['replacedPersonIds'], roomStatus=room_status,
+                provisional=bool(room_status in {'missing', 'conflict'} or preview.get('errors') or selection['conflicts'] or scope not in {'FULL_NATION', 'SPORT_FAMILY'} or stale_composition or len(evaluation) > len(people))))
         except ImportValidationError as exc:
             nations.append(dict(nation=session.nation, people=[], rooms=[], excludedIds=[],
-                                provisional=True, conflict=exc.code))
+                                provisional=True, roomStatus='conflict', conflict=exc.code))
 
     return jsonify(json.loads(encoded(nations)))

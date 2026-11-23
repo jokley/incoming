@@ -187,7 +187,7 @@ type DemandPerson = Pick<import('../types.ts').FisImportPreviewPerson,
   'accommodationRequirement' | 'accommodationRequirementReviewRequired'>;
 type DemandRoom = Pick<import('../types.ts').FisImportPreviewRoom,
   'person1Key' | 'person2Key' | 'roomType' | 'checkInDate' | 'checkOutDate' | 'sharedWithRawName'>;
-export type ExcelDemand = { nation: string; people: DemandPerson[]; rooms: DemandRoom[]; excludedIds: string[]; provisional: boolean; conflict?: string };
+export type ExcelDemand = { nation: string; people: DemandPerson[]; rooms: DemandRoom[]; excludedIds: string[]; provisional: boolean; conflict?: string; roomStatus?: 'available' | 'zero' | 'missing' | 'conflict' };
 
 type DemandStay = { start: string; end: string; type: string; partner?: string; unclear?: boolean; secondary?: boolean };
 type DemandRecord = { key: string; stays: DemandStay[]; provisional?: boolean };
@@ -285,4 +285,36 @@ export function concreteRoomDemand(records: DemandRecord[]) {
       unknown, provisional: provisional || unclear || unknown > 0 };
   });
   return { days, unknownDates, unknownRooms: days.reduce((max, day) => Math.max(max, day.unknown), 0), provisional: provisional || days.some(day => day.provisional) };
+}
+
+/** Keep actual booking nights and people aligned with the existing room categories. */
+export function bookedNationDemand(bookings: RoomBooking[]) {
+  const nations = new Map<string, Map<string, RoomBooking>>();
+  for (const booking of bookings) {
+    for (const { athlete } of booking.occupants) {
+      if (!athlete.nationCode) continue;
+      const rooms = nations.get(athlete.nationCode) ?? new Map();
+      rooms.set(booking.id, booking);
+      nations.set(athlete.nationCode, rooms);
+    }
+  }
+  return [...nations].map(([nation, rooms]) => {
+    const bookings = [...rooms.values()];
+    const people = (rows: RoomBooking[]) => new Set(rows.flatMap(booking => booking.occupants
+      .filter(({ athlete }) => athlete.nationCode === nation).map(({ athlete }) => athlete.id))).size;
+    const dated = bookings.filter(booking => onDay(booking.checkInDate, booking.checkOutDate, dayKey(booking.checkInDate)));
+    const dates = dated.flatMap(booking => [dayKey(booking.checkInDate), dayKey(booking.checkOutDate)]).sort();
+    const days = (dates.length ? daysBetween(dates[0], dates.at(-1)!) : []).map(date => {
+      const active = bookings.filter(booking => onDay(booking.checkInDate, booking.checkOutDate, date));
+      // Shared rooms are apportioned by recorded occupants across nations.
+      const share = (booking: RoomBooking) => booking.occupants.filter(({ athlete }) => athlete.nationCode === nation).length / booking.occupants.length;
+      return {
+        date, beds: people(active),
+        ez: active.filter(booking => inventoryRoomCategory(booking.roomType) === 'EZ').reduce((sum, booking) => sum + share(booking), 0),
+        dz: active.filter(booking => inventoryRoomCategory(booking.roomType) === 'DZ').reduce((sum, booking) => sum + share(booking), 0),
+      };
+    });
+    return { nation, count: people(bookings), datedCount: people(dated), days,
+      provisional: dated.length !== bookings.length || bookings.some(booking => !inventoryRoomCategory(booking.roomType)) };
+  });
 }

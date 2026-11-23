@@ -874,3 +874,31 @@ def test_excel_analytics_reads_current_draft_before_confirm_without_writes(event
     assert Athlete.query.count() == 0
     db.session.expire_all()
     assert version.preview_json == before
+
+
+@pytest.mark.parametrize(('room_type', 'conflict', 'expected'), [
+    ('No room', False, 'zero'),
+    ('Double', False, 'missing'),
+    ('No room', True, 'conflict'),
+])
+def test_excel_analytics_distinguishes_sui_room_evidence(events, room_type, conflict, expected):
+    event = events[0]
+
+    def swiss(rows):
+        for row in rows:
+            row.update(Nationcode='SUI', Room_type=room_type)
+
+    rooms = [dict(Firstname='Person0', Lastname='Snapshot', Nationcode='SUI', Room_type='Double',
+                  Arrival_date='20.03.2027', Departure_date='22.03.2027')] if conflict else None
+    preview = upload(event, changed=swiss, room_data=rooms, valid=not conflict)
+    response = app.test_client().get('/api/analytics/import-demand')
+    assert response.status_code == 200, response.json
+    swiss_demand, = response.json
+    assert swiss_demand['nation'] == 'SUI'
+    assert swiss_demand['roomStatus'] == expected
+    if expected != 'zero':
+        assert swiss_demand['provisional']
+    if conflict:
+        assert any(error['code']=='ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT' for error in preview['errors'])
+        assert review(preview, event).status_code == 409
+    assert Athlete.query.count() == 0
