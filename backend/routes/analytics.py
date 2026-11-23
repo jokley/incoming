@@ -2,6 +2,7 @@
 from accommodation_scope import event_query
 
 from datetime import datetime
+import json
 
 from flask import Blueprint, jsonify, request
 
@@ -112,3 +113,99 @@ def get_occupancy_timeline():
         timeline.append(event_data)
 
     return jsonify(timeline)
+
+
+@analytics.route('/api/analytics/import-demand', methods=['GET'])
+def get_import_demand():
+    """Read the event's current source set without opening or updating reviews."""
+    from accommodation_scope import accommodation_event_id
+    from arrival_planning import operative_projection, project_import_people
+    from excel_import import recalculate_fis_import_preview
+    from imports.change_plan import encoded
+    from imports.event_context import ImportValidationError
+    from imports.identity import _find_existing_athlete
+    from imports.read_context import ImportReadContext
+    from imports.workflow import (imported_submission_ids, load_version_preview, merge_submission_previews,
+                                  require_submission_sources, review_approvals, submission_heads)
+    from models import ImportSession, db
+
+    event_id = accommodation_event_id()
+    context = ImportReadContext(event_id)
+    sessions = event_query(ImportSession).filter(
+        ImportSession.status.notin_(('ARCHIVED', 'REPLACED', 'CANCELLED'))
+    ).options(db.selectinload(ImportSession.versions), db.selectinload(ImportSession.history),
+              db.selectinload(ImportSession.approvals)).order_by(ImportSession.nation).all()
+    nations = []
+    for session in sessions:
+        if not session.current_version:
+            nations.append(dict(nation=session.nation, people=[], rooms=[], excludedIds=[],
+                                provisional=True, roomStatus='missing', importStatus='NO_PREVIEW'))
+            continue
+        try:
+            preview = load_version_preview(session.current_version)
+            heads = submission_heads(session)
+            scope = (preview.get('replacementScope') or {}).get('kind')
+            stale_composition = False
+            using_current_version = True
+            if scope == 'SPORT_FAMILY' and heads:
+                selected = preview.get('submissionSources') or {}
+                current = {family: version.id for family, version in heads.items()}
+                if selected == current:
+                    try:
+                        require_submission_sources(session, preview)
+                    except ImportValidationError:
+                        stale_composition = True
+                        using_current_version = False
+                        preview = merge_submission_previews(list(heads.values()), read_context=context, read_only=True)
+                elif len(heads) != 1 or session.current_version_id not in current.values():
+                    stale_composition = bool(selected)
+                    using_current_version = False
+                    preview = merge_submission_previews(list(heads.values()), read_context=context, read_only=True)
+            imported_ids = imported_submission_ids(session)
+            source_ids = {session.current_version_id} if using_current_version else set()
+            source_ids.update((preview.get('submissionSources') or {}).values())
+            import_status = session.status if session.status != 'IMPORTED' else 'DRAFT'
+            if preview.get('errors'):
+                import_status = 'ERROR'
+            elif source_ids and source_ids.issubset(imported_ids):
+                import_status = 'IMPORTED'
+            if using_current_version and session.current_version_id in imported_ids:
+                preview.pop('accommodationRequirementOverrides', None)
+                preview.pop('accommodationRateOverrides', None)
+            preview['_currentApprovalIds'] = [a.id for a in review_approvals(session, preview)]
+            recalculate_fis_import_preview(preview, read_context=context)
+            people = preview['people']
+            evaluation = preview.get('evaluationPeople', people)
+            for person in evaluation:
+                existing = _find_existing_athlete(person, context.athlete_maps)
+                person['existingAthleteId'] = existing.id if existing else None
+            if evaluation is not people:
+                matched_ids = {p['matchKey']: p['existingAthleteId'] for p in evaluation}
+                for person in people:
+                    person['existingAthleteId'] = matched_ids.get(person['matchKey'])
+            selection = operative_projection(project_import_people(evaluation, context, session.nation))
+            people_fields = ('matchKey', 'existingAthleteId', 'function', 'nationCode', 'arrivalDate', 'departureDate',
+                             'roomType', 'sharedWithName', 'accommodationRequirement', 'accommodationRequirementReviewRequired')
+            room_fields = ('person1Key', 'person2Key', 'roomType', 'checkInDate', 'checkOutDate', 'sharedWithRawName')
+            room_conflict = any(
+                issue['code'].startswith(('ROOM_', 'ACCOMMODATION_REQUIREMENT_', 'IMPORT_SHARED_'))
+                and issue['code'] != 'ROOM_LIST_NO_DATA'
+                for issue in preview.get('errors', []) + preview.get('warnings', [])
+            )
+            zero_rooms = bool(people) and not preview.get('errors') and all(
+                person.get('accommodationRequirement') == person.get('importAccommodationRequirement') == 'NO_ROOM'
+                for person in people
+            )
+            room_status = ('conflict' if room_conflict else 'zero' if zero_rooms else
+                           'missing' if preview.get('roomListHasNoData') or not preview['rooms'] else 'available')
+            nations.append(dict(nation=session.nation,
+                people=[{key: p.get(key) for key in people_fields} for p in people],
+                rooms=[{key: r.get(key) for key in room_fields} for r in preview['rooms']],
+                excludedIds=selection['replacedPersonIds'], roomStatus=room_status,
+                importStatus=import_status,
+                provisional=bool(room_status in {'missing', 'conflict'} or preview.get('errors') or selection['conflicts'] or scope not in {'FULL_NATION', 'SPORT_FAMILY'} or stale_composition or len(evaluation) > len(people))))
+        except ImportValidationError as exc:
+            nations.append(dict(nation=session.nation, people=[], rooms=[], excludedIds=[],
+                                provisional=True, roomStatus='conflict', importStatus='ERROR', conflict=exc.code))
+
+    return jsonify(json.loads(encoded(nations)))

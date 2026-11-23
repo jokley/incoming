@@ -1,8 +1,29 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { ImportApproval, ImportSession } from '../data/importSessions.ts';
-import { buildOperationsTask } from './importDecision.ts';
+import { buildOperationsTask, initialSingleRoomSelection } from './importDecision.ts';
 import { previewEventGroupLabel } from './competitionPresentation.ts';
+
+test('single-room preselection is unique, eligible and subordinate to saved decisions', () => {
+  const candidate = {personKey:'A',name:'Candidate'};
+  const task = {approval:{decision:'PENDING',approvedPersonKeys:[]},excessCount:1,
+    singleRoomCandidates:[candidate],singleRoomReviewPeople:[candidate]} as unknown as import('./importDecision.ts').OperationsTask;
+  assert.deepEqual(initialSingleRoomSelection(task), ['A']);
+  assert.deepEqual(initialSingleRoomSelection({...task,excessCount:2}), ['A']);
+  assert.deepEqual(initialSingleRoomSelection({...task,excessCount:0}), []);
+  assert.deepEqual(initialSingleRoomSelection({...task,singleRoomReviewPeople:[]}), []);
+  assert.deepEqual(initialSingleRoomSelection({...task,singleRoomCandidates:[candidate,{personKey:'B',name:'Other'}]}), []);
+  assert.deepEqual(initialSingleRoomSelection({...task,singleRoomCandidates:[{...candidate,singleRoomQuotaExemptReason:'WORLD_CHAMPION'}]}), []);
+  const saved = {...task,approval:{...task.approval,approvedPersonKeys:['B']}};
+  assert.deepEqual(initialSingleRoomSelection(saved), ['B']);
+  assert.notEqual(initialSingleRoomSelection(saved), saved.approval.approvedPersonKeys);
+  assert.deepEqual(initialSingleRoomSelection({...task,approval:{...task.approval,approvedPersonKeys:['A','B']}}), ['A','B']);
+  assert.deepEqual(initialSingleRoomSelection({...task,approval:{...task.approval,decision:'APPROVED'}}), []);
+  assert.deepEqual(initialSingleRoomSelection({...task,approval:{...task.approval,decision:'NEW_LIST_ANNOUNCED'}}), []);
+  assert.deepEqual(initialSingleRoomSelection({...task,approval:{...task.approval,quotaDetails:{decisionKind:'ATHLETE_QUOTA'}}}), []);
+  assert.deepEqual(initialSingleRoomSelection(null), []);
+  assert.deepEqual(saved.approval.approvedPersonKeys, ['B']);
+});
 
 test('multi-group preview shows all exact event groups separately from athlete top-level', () => {
   assert.equal(previewEventGroupLabel(['Snowboard Alpine', 'Snowboard Cross', 'Snowboard Park & Pipe']),

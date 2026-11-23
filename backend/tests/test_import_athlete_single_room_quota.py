@@ -88,7 +88,7 @@ def test_real_brazil_groups_are_within_single_room_quota():
     }
 
 
-def test_three_halfpipe_athletes_create_one_person_single_room_excess(database):
+def test_athlete_requests_without_officials_have_no_regular_official_entitlement(database):
     people = [
         person('PATRICK', ['Snowboard Halfpipe']),
         person('AUGUSTINHO', ['Snowboard Halfpipe']),
@@ -100,8 +100,8 @@ def test_three_halfpipe_athletes_create_one_person_single_room_excess(database):
                    if item['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED')
 
     assert warning['details']['importedSingleRooms'] == 3
-    assert warning['details']['singleRoomsAllowed'] == 2
-    assert warning['details']['excessCount'] == 1
+    assert warning['details']['singleRoomsAllowed'] == 0
+    assert warning['details']['excessCount'] == 3
     assert {candidate['personKey'] for candidate in warning['details']['singleRoomCandidates']} == {
         'PATRICK', 'AUGUSTINHO', 'THIRD',
     }
@@ -155,5 +155,5 @@ def test_preview_exempt_athlete_with_shared_quota_discipline_counts_once(databas
     warnings = build_quota_warnings([athlete], [room('MOGUL')], checks)
     assert len(checks) == 1
     assert checks[0]['quotaExemptSingleRooms'] == 1
-    assert (checks[0]['singleRooms'], checks[0]['singleRoomsAllowed']) == (0, 1)
+    assert (checks[0]['singleRooms'], checks[0]['singleRoomsAllowed']) == (0, 0)
     assert not warnings

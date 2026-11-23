@@ -5,6 +5,7 @@ otherwise valid segments contribute to diagnostic coverage, but conflicts always
 override coverage status. Invalid/out-of-stay segments are never clipped.
 """
 from datetime import date, datetime
+from accommodation_requirements import NO_ACCOMMODATION
 
 
 def booking_intervals_overlap(start_a, end_a, start_b, end_b):
@@ -27,15 +28,15 @@ def _interval(start, end):
 def person_accommodation_coverage(arrival, departure, bookings, requirement='REQUIRED'):
     """Calculate one person's coverage from all their bookings, without writes."""
     start, end = _date(arrival), _date(departure)
-    if requirement == 'NO_ROOM':
+    if requirement in NO_ACCOMMODATION:
         records = list(bookings)
         if not records:
             return {'overallInterval': _interval(start, end), 'segments': [], 'coveredIntervals': [],
                     'openIntervals': [], 'conflicts': [], 'coverageStatus': 'NO_ROOM',
-                    'accommodationRequirement': 'NO_ROOM'}
+                    'accommodationRequirement': requirement}
         diagnostic = person_accommodation_coverage(arrival, departure, records)
-        diagnostic.update(coverageStatus='CONFLICT', openIntervals=[], accommodationRequirement='NO_ROOM')
-        diagnostic['conflicts'].append({'code': 'NO_ROOM_HAS_BOOKINGS', 'bookingIds': [str(b.id) for b in records]})
+        diagnostic.update(coverageStatus='CONFLICT', openIntervals=[], accommodationRequirement=requirement)
+        diagnostic['conflicts'].append({'code': f'{requirement}_HAS_BOOKINGS', 'bookingIds': [str(b.id) for b in records]})
         return diagnostic
     overall_valid = bool(start and end and start < end)
     conflicts, segments, candidates, dated = [], [], [], []
@@ -109,3 +110,88 @@ def person_accommodation_coverage(arrival, departure, bookings, requirement='REQ
             'coveredIntervals': [_interval(*item) for item in covered],
             'openIntervals': [_interval(*item) for item in gaps],
             'conflicts': conflicts, 'coverageStatus': status}
+
+
+def person_disposition_status(person, coverage, bookings, allocation, *, room_request_kind=None,
+                              quota_contexts=(), approved_contexts=()):
+    """Explain existing persisted evidence; never allocate slots or change decisions.
+
+    Room preference compares the imported wish to physical occupancy. A sole DZ
+    with single valuation is explicit single use; without it the desired shared
+    use is not established. Unknown inventory/occupants/dates never imply MATCH.
+    """
+    # A source label such as "Double single" does not establish a shared-DZ wish.
+    # Keep the original label and leave this ambiguous preference unevaluated.
+    if room_request_kind == 'double' and 'single' in str(person.get('roomRequest') or '').casefold():
+        room_request_kind = None
+    unique = {str(b.id): b for b in bookings}
+    segments = []
+    for source in coverage['segments']:
+        booking = unique[source['bookingId']]
+        capacity = getattr(booking.room_type, 'max_persons', None) if booking.room_type else None
+        occupants = {item.athlete_id for item in getattr(booking, 'occupants', [])}
+        count = len(occupants)
+        physical = ('SINGLE_ROOM' if capacity == 1 and count == 1 else
+                    'SHARED_DOUBLE' if capacity == 2 and count == 2 else
+                    'SOLE_DOUBLE' if capacity == 2 and count == 1 else 'UNKNOWN')
+        actual_single = physical == 'SINGLE_ROOM' or (physical == 'SOLE_DOUBLE' and source['countsAsSingle'])
+        shared_double = physical == 'SHARED_DOUBLE' and not source['countsAsSingle']
+        comparison = 'UNKNOWN'
+        if not source['conflictCodes'] and room_request_kind in {'single', 'double'}:
+            if actual_single:
+                comparison = 'MATCH' if room_request_kind == 'single' else 'MISMATCH'
+            elif shared_double:
+                comparison = 'MATCH' if room_request_kind == 'double' else 'MISMATCH'
+        segments.append({**source, 'capacity': capacity, 'occupantCount': count,
+                         'physicalUsage': physical, 'comparison': comparison})
+    mismatch = any(s['comparison'] == 'MISMATCH' for s in segments)
+    preference = ('NOT_APPLICABLE' if person.get('accommodationRequirement') in NO_ACCOMMODATION else
+                  'UNASSIGNED' if not segments else 'MISMATCH' if mismatch else
+                  'MATCH' if coverage['coverageStatus'] == 'FULLY_ASSIGNED' and
+                  all(s['comparison'] == 'MATCH' for s in segments) else 'UNKNOWN')
+    single = any(b.counts_as_single for b in unique.values())
+    status = allocation['status'] if single and allocation else 'UNKNOWN' if single else 'NO_SINGLE_USE'
+    context = allocation['context'] if single and allocation else None
+    reason = ('Kein gültiger Quotenkontext zuordenbar' if status == 'PENDING' and context is None else
+              'Keine reguläre EZ-Deckung oder anwendbare Zusatzgenehmigung' if status == 'PENDING' else
+              'EZ-Bewertung nicht verfügbar' if status == 'UNKNOWN' else None)
+    approval_applicable = bool(person.get('singleRoomStatus') == 'APPROVED_EXTRA'
+                              and not person.get('singleRoomQuotaExemptReason') and approved_contexts)
+    return {k: person.get(k) for k in ('personId', 'eventId', 'name', 'nationCode', 'personalGender',
+                                      'personType', 'function', 'sportFamilies', 'quotaDisciplines')} | {
+        'personId': str(person['personId']),
+        'accommodationRequirement': person.get('accommodationRequirement') or 'REQUIRED',
+        'quotaContexts': [list(c) for c in sorted(quota_contexts)],
+        'accommodation': coverage,
+        'roomPreference': {'reportedValue': person.get('roomRequest'),
+                           'reportedKind': room_request_kind.upper() if room_request_kind in {'single', 'double'} else 'UNKNOWN',
+                           'status': preference, 'hasMismatch': mismatch and preference != 'NOT_APPLICABLE',
+                           'segments': segments},
+        'singleRoom': {'hasSingleUse': single, 'status': status, 'context': context,
+                       'eligibleContexts': allocation['eligibleContexts'] if single and allocation else [],
+                       'bookingIds': sorted(key for key,b in unique.items() if b.counts_as_single),
+                       'storedApprovalId': person.get('singleRoomDecisionId'),
+                       'approvalApplicable': approval_applicable,
+                       'applicableApprovalId': person.get('singleRoomDecisionId') if approval_applicable else None,
+                       'approvedContexts': [list(c) for c in sorted(approved_contexts)] if approval_applicable else [],
+                       'exemptionReason': person.get('singleRoomQuotaExemptReason'), 'reason': reason}}
+
+
+def summarize_person_disposition(people,excluded_accommodation_ids=()):
+    """Each counter is a predicate over the same unique, displayed people list.
+
+    Accommodation, room preference and single-use categories can overlap; their
+    sum is not a distinct total, nor is it a count of open quota contexts.
+    """
+    people = list({p['personId']: p for p in people}.values())
+    excluded=set(excluded_accommodation_ids)
+    accommodation_people=[p for p in people if p['personId'] not in excluded]
+    statuses = [p['accommodation']['coverageStatus'] for p in accommodation_people]
+    pending = [p for p in people if p['singleRoom']['status'] == 'PENDING']
+    return {'peopleTotal': len(people),
+            'accommodationPeopleRequired': sum(p['accommodationRequirement'] not in NO_ACCOMMODATION for p in accommodation_people),
+            'fullyAssigned': statuses.count('FULLY_ASSIGNED'), 'unassigned': statuses.count('UNASSIGNED'),
+            'partiallyAssigned': statuses.count('PARTIALLY_ASSIGNED'), 'accommodationConflicts': statuses.count('CONFLICT'),
+            'roomPreferenceMismatches': sum(p['roomPreference']['hasMismatch'] for p in people),
+            'pendingSingleRoomPeople': len(pending),
+            'contextlessPendingSingleRoomPeople': sum(p['singleRoom']['context'] is None for p in pending)}

@@ -405,11 +405,13 @@ class SingleRoomStatusTest(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             payload = response.get_json()['preview']
             check = payload['quotaChecks'][0]
-            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 2))
+            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 1))
             self.assertEqual(check['quotaExemptSingleRooms'], 1)
-            self.assertFalse(any(warning['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
-                                 for warning in payload['warnings']))
-            self.assertFalse(any(approval['decision'] == 'PENDING'
+            # Two actual Officials supply one regular slot; the exemption covers
+            # the athlete, leaving one of the Officials for an explicit decision.
+            self.assertTrue(any(warning['code'] == 'QUOTA_SINGLE_ROOMS_EXCEEDED'
+                                for warning in payload['warnings']))
+            self.assertTrue(any(approval['decision'] == 'PENDING'
                                  for approval in response.get_json()['approvals']))
             self.assertIsNone(Athlete.query.filter_by(fis_code='O0').first())
 
@@ -417,9 +419,9 @@ class SingleRoomStatusTest(unittest.TestCase):
                 f'/api/import/sessions/{session.id}/single-room-exemptions/O0',
                 headers={'X-Authenticated-User': 'editor', 'X-Authenticated-Groups': 'incoming-admin'},
                 json={'reason': None})
-            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.status_code, 200, response.get_json())
             check = response.get_json()['preview']['quotaChecks'][0]
-            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (3, 2))
+            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (3, 1))
             self.assertEqual(check['quotaExemptSingleRooms'], 0)
             self.assertTrue(any(approval['decision'] == 'PENDING'
                                 for approval in response.get_json()['approvals']))
@@ -479,7 +481,7 @@ class SingleRoomStatusTest(unittest.TestCase):
             stay = recalculated['dispositionAnalysis']['categories']['stayChanged']['records'][0]
             self.assertEqual(stay['new'], {'arrival': '2027-03-11', 'departure': '2027-03-15'})
             check = recalculated['quotaChecks'][0]
-            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 2))
+            self.assertEqual((check['singleRooms'], check['singleRoomsAllowed']), (2, 1))
             self.assertEqual(check['quotaExemptSingleRooms'], 1)
 
 

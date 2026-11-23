@@ -35,7 +35,7 @@ test('all six AUT-style proposals can be selected while both scoped identities s
  const html=renderToStaticMarkup(createElement(Choices,{candidates,selected:candidates.map(p=>p.key),busy:false,onToggle:()=>{}}));
  assert.equal((html.match(/type="checkbox"/g)||[]).length,6);assert.equal((html.match(/checked=""/g)||[]).length,6);
  for(let i=0;i<6;i++){assert.ok(html.includes(`SB-${i}`));assert.ok(html.includes(`FS-${i}`));}
- assert.ok(html.includes('Snowboard')&&html.includes('Freestyle/Freeski'));
+ assert.ok(html.includes('Snowboard')&&html.includes('Freestyle / Freeski'));
 });
 test('long AUS-style lists retain every selectable source pair and mark different functions',()=>{
  const long=Array.from({length:24},(_,i)=>({...candidates[0],key:`aus${i}`,name:`AUS Official ${i}`,identities:[{family:'Snowboard',staffId:`SB-${i}`,function:'NSA Coach',row:i+2},{family:'Freestyle',staffId:`FS-${i}`,function:'NSA Medical',row:i+3}]}));

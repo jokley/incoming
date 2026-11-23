@@ -1,9 +1,12 @@
+import {PersonStatusIcons} from './PersonDispositionStatus';
+import { hasApplicableSingleRoomApproval, matchesQuotaAllowanceContext, singleRoomBadgeLabels } from '../../services/quotaEvaluation';
+import { semanticToneClasses } from '../../design-system/components/primitives';
 import {queueRoomRequest} from '../../services/assignmentPresentation';
 import { queueFunctionLabel } from '../../services/queuePersonType';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { DispositionDragContext } from './DispositionDragContext';
 import { useContext, useState } from 'react';
-import { MoreHorizontal } from 'lucide-react';
+import { Crown, MoreHorizontal } from 'lucide-react';
 import { IconButton, Menu, MenuItem } from '@mui/material';
 import type { DispositionItem } from '../../services/dispositionItems';
 import { periodLabel } from '../../services/dispositionItems';
@@ -15,7 +18,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
   onExternal?:()=>void;
   splitOptions?:{bookingId:string;label:string}[];onSplit?:(bookingId:string)=>void;
 }) {
-  const {queueTargets,hotelId}=useContext(DispositionDragContext);
+  const {queueTargets,hotelId,hotelBookingIds}=useContext(DispositionDragContext);
   const [splitAnchor,setSplitAnchor]=useState<HTMLElement|null>(null);
   const externalEligibility=externalStayEligibility(unit.occupants);
   const enabled=canEditAssignments && unit.canAssign && !pending;
@@ -29,7 +32,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
   };
   const targetState=(people:string[])=>{
     const key=people.length===1 ? `${unit.unitId}:athlete:${people[0]}` : unit.unitId;
-    const targets=queueTargets?.[key]?.filter(v=>v.slotId.startsWith(`${hotelId}:`));
+    const targets=queueTargets?.[key]?.filter(v=>v.slotId.startsWith(`${hotelId}:`) || (v.slotId.startsWith('booking:') && hotelBookingIds?.includes(v.slotId.slice(8))));
     return !hotelName ? {available:true,reason:''} : {available:!!targets?.some(v=>v.status!=='blocked'),reason:targets?.[0]?.messages[0] ?? 'Verfügbarkeit wird geprüft …'};
   };
   const action=(people:string[],label:string)=>{
@@ -48,13 +51,18 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
     <div className="flex items-center justify-between gap-2">
       <b className="text-sm tabular-nums">{periodLabel(unit.openPeriod)}</b>
       {sharedRequest && <span aria-label={`Zimmerwunsch für beide: ${sharedRequest}`} className="ml-auto text-[11px] font-semibold text-[var(--ops-text-muted)]">{sharedRequest}</span>}
-      <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.canAssign ? 'Offen' : 'Prüfen'}</span>
+      <span className="shrink-0 rounded border border-[var(--ops-border)] px-1.5 py-0.5 text-[10px] font-semibold">{unit.isFullyAssigned ? 'Zugewiesen' : unit.canAssign ? 'Offen' : 'Prüfen'}</span>
     </div>
     <div className="mt-2 space-y-1">
-      {unit.occupants.map(person=><div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
-        <div className="min-w-0"><span className="flex items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span>{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
+      {unit.occupants.map(person=>{
+        const approved = person.approvedQuotaContexts?.some(context => matchesQuotaAllowanceContext(person,context)
+          && hasApplicableSingleRoomApproval({...context,singleRoomStatus:person.single_room_status,
+            singleRoomQuotaExemptReason:person.singleRoomQuotaExemptReason,approvedQuotaContexts:person.approvedQuotaContexts}));
+        const champion = person.provisionalWorldChampion || singleRoomBadgeLabels(false,undefined,person.singleRoomQuotaExemptReason).includes('👑 WM');
+        return <div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
+        <div className="min-w-0"><span className="flex flex-wrap items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span><PersonStatusIcons personId={person.athleteId}/>{person.provisionalAccommodation&&<span title="Automatisch vorläufig aus der aktuellen bestätigten Entry List für die Unterkunft ausgewählt." className="rounded border border-[var(--ops-border)] px-1 text-[10px] text-[var(--ops-text-muted)]">Vorläufig</span>}{champion && <span title={person.provisionalWorldChampion?"Verifizierter Weltmeister-Zusatzplatz aus der aktuellen Entry List; keine zusätzliche EZ-Genehmigung.":"Weltmeister – hinterlegte EZ-Ausnahme"} aria-label="Weltmeister"><Crown className="h-3.5 w-3.5 text-amber-500 fill-amber-200"/></span>}{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}{approved && <span title="Aktuell anwendbare kostenpflichtige EZ-Vorabgenehmigung; vor Zuteilung noch kein aktiver EZ-Mehrpreis." className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${semanticToneClasses.success}`}>Mehrpreis genehmigt</span>}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
         {enabled && action([person.athleteId],unit.occupants.length===1 ? 'Person' : person.firstname)}
-      </div>)}
+      </div>;})}
     </div>
     {unit.previous.length>0 && <div className="mt-2 text-[10px] leading-snug text-[var(--ops-text-muted)]" title={unit.previous.join('\n')}><span className="font-semibold">Bisher: </span><span className="line-clamp-2 break-words">{unit.previous.join(' · ')}</span></div>}
     {enabled && <>
@@ -69,4 +77,13 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
       </>}
     </div>}
   </div>;
+}
+
+
+/** Existing planning conflicts, never virtual reservation or assignment cards. */
+export function PlanningClarification({group}:{group:import('../../types').ArrivalPlanningRow}) {
+ return <article aria-label={`Planungsklärung ${group.nationCode} ${group.discipline??''}`} className="rounded-lg border border-[var(--ops-border)] p-2 text-xs">
+  <strong>{group.nationCode} · {group.discipline??'Zuordnung klären'} · {group.personalGender??'Gender klären'}</strong>
+  <p className="text-[var(--ops-warning)]">{group.reasons.join(' ')}</p>
+ </article>;
 }

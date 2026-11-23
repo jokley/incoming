@@ -112,3 +112,10 @@ test('a real rejected close remains a failure when the server is not archived',a
  }),error=>error===rejection);
  assert.equal(reads,2);
 });
+
+
+test('HTTP 413 explains the upload limit instead of exposing nginx HTML', () => {
+  assert.throws(() => requireSuccessfulApiResponse(new Response('', {status:413}),
+    '<html><h1>413 Request Entity Too Large</h1><hr>nginx</html>'),
+    error => error instanceof Error && error.message.includes('HTTP 413') && !error.message.includes('<html>'));
+});

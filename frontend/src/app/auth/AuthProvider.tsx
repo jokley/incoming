@@ -54,7 +54,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return (
       <div className="flex min-h-screen flex-col items-center justify-center gap-4 text-gray-700">
         <p>Deine Sitzung ist abgelaufen oder du bist nicht angemeldet.</p>
-        <button className="rounded bg-blue-600 px-4 py-2 text-white" onClick={() => window.location.assign('/')}>Anmelden</button>
+        <button className="rounded bg-blue-600 px-4 py-2 text-white" onClick={() => window.location.assign(import.meta.env.BASE_URL)}>Anmelden</button>
       </div>
     );
   }

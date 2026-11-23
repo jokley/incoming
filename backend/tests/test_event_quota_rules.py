@@ -241,3 +241,96 @@ def test_parallel_fixation_has_exactly_one_winner(events):
     db.session.expire_all()
     assert db.session.get(Event,owner).quota_rules_revision==1
     assert AuditEvent.query.filter_by(activity='Quotenregeln verbindlich fixiert').count()==1
+
+
+def housing_revision(event, limits):
+    client=app.test_client();state=client.get(endpoint(event)).json
+    config=deepcopy(state['config']);config['athleteHousing']={'regularPerGenderByEventGroup':limits}
+    data=dict(config=config,isWorldChampionship=state['isWorldChampionship'],reason='Unterkunftskontingent bewusst geändert',expectedDigest=state['digest'],expectedRevision=state['revision'])
+    preview=client.post(endpoint(event)+'/revision-preview',json=data)
+    assert preview.status_code==200,preview.json
+    result=client.post(endpoint(event)+'/revisions',json=dict(data,confirm=True,confirmationDigest=preview.json['confirmationDigest']))
+    assert result.status_code==200,result.json
+    assert client.post(endpoint(event)+'/revisions',json=dict(data,confirm=True,confirmationDigest=preview.json['confirmationDigest'])).status_code==409
+    return preview.json
+
+
+@pytest.mark.parametrize('value',[-1,1.5,True,'3',None])
+def test_housing_rejects_invalid_numbers(events,value):
+    a,_=events;config=standard_rules();config['athleteHousing']={'regularPerGenderByEventGroup':{'Snowboard Alpine':value}}
+    with pytest.raises(ValueError):validate_rules(config,a.id)
+
+
+def test_housing_legacy_reads_and_initial_fix_preserve_evidence(events):
+    from test_import_event_identity import person
+    from quota_rules import athlete_housing_limit,rule_projection
+    a,_=events;state=draft(a);raw=a.quota_rules_json;digest=state['digest']
+    assert athlete_housing_limit(state['config'],'Snowboard Alpine')==4
+    assert app.test_client().get(endpoint(a)).json['digest']==digest
+    assert a.quota_rules_json==raw and 'athleteHousing' not in json.loads(raw)
+    person(a)
+    config=standard_rules();config['athleteHousing']={'regularPerGenderByEventGroup':{'Snowboard Alpine':3}}
+    state=draft(a,config);assert fix(a,state).status_code==409
+    assert Athlete.query.count()==1
+    config['athleteHousing']['regularPerGenderByEventGroup']['Snowboard Alpine']=4
+    state=draft(a,config);assert fix(a,state).status_code==200
+    before=(a.quota_rules_json,a.quota_rules_revision,rule_projection(a)['digest'])
+    assert rules_for_event(a.id)==config
+    assert before==(a.quota_rules_json,a.quota_rules_revision,rule_projection(a)['digest'])
+    assert app.test_client().put(endpoint(a),json={'config':config,'expectedDigest':state['digest']}).status_code==409
+    bad=deepcopy(config);bad['athleteHousing']['regularPerGenderByEventGroup']['Orphan']=4
+    with pytest.raises(ValueError):validate_rules(bad,a.id)
+
+
+@pytest.mark.parametrize('limit',[0,3,5])
+def test_housing_selection_gender_event_isolation_and_revision(events,limit):
+    from arrival_planning import project
+    a,b=events;bind(a);bind(b)
+    for current in (a,b):
+        app.config['OPERATIONAL_EVENT_ID']=str(current.id)
+        def genders(rows):
+            for i,p in enumerate(rows):
+                if i>=8:p['Gender']='W';p['WSC_PGS_W_6172']=p.pop('WSC_PGS_M_6170')
+        run(upload(current,codes=tuple(str(9940000+i) for i in range(11)),changed=genders),current)
+    app.config['OPERATIONAL_EVENT_ID']=str(a.id)
+    proposal=housing_revision(a,{'Snowboard Alpine':limit,'Snowboard Cross':2})
+    assert 'athleteHousing' not in proposal['before']['config']
+    assert proposal['after']['config']['athleteHousing']['regularPerGenderByEventGroup']['Snowboard Alpine']==limit
+    rows={r['personalGender']:r for r in project('JPN')['rows']}
+    assert (rows['M']['selectedCount'],rows['W']['selectedCount'])==(limit,min(3,limit))
+    assert rows['M']['selectedPersonIds']==[str(p.id) for p in Athlete.query.filter_by(event_id=a.id,gender='M').order_by(Athlete.id).all()[:limit]]
+    assert Athlete.query.filter_by(event_id=a.id).count()==11
+    app.config['OPERATIONAL_EVENT_ID']=str(b.id)
+    assert {r['personalGender']:r['selectedCount'] for r in project('JPN')['rows']}=={'M':4,'W':3}
+
+
+def test_housing_groups_reimport_and_sport_limits_remain_separate(events):
+    from arrival_planning import project
+    a,_=events;bind(a);housing_revision(a,{'Snowboard Alpine':1,'Snowboard Cross':2})
+    codes=tuple(str(9950000+i) for i in range(8))
+    def groups(rows):
+        for p in rows[4:]:p['WSC_SBX_M_6191']=p.pop('WSC_PGS_M_6170')
+    first=upload(a,codes,changed=groups);run(first,a)
+    for order in (codes,tuple(reversed(codes))):
+        if order!=codes:run(upload(a,order,changed=groups),a,destructive=True)
+        rows={r['discipline']:r for r in project('JPN')['rows']}
+        assert {g:r['selectedCount'] for g,r in rows.items()}=={'Snowboard Alpine':1,'Snowboard Cross':2}
+        chosen={Athlete.query.filter_by(id=int(i)).one().fis_code for r in rows.values() for i in r['selectedPersonIds']}
+        assert chosen==set(order[:1]+order[4:6])
+        assert Athlete.query.count()==8 and RoomBooking.query.count()==0
+    assert 'sportEntryRules' not in rules_for_event(a.id)
+    assert rules_for_event(a.id)['athletes']==standard_rules()['athletes']
+
+
+def test_housing_revision_requires_fresh_import_review(events):
+    from arrival_planning import project
+    a,_=events;bind(a)
+    codes=tuple(str(9960000+i) for i in range(9))
+    old=upload(a,codes)
+    housing_revision(a,{'Snowboard Alpine':3})
+    denied=review(old,a)
+    assert denied.status_code==409,denied.json
+    assert Athlete.query.count()==0 and RoomBooking.query.count()==0
+    run(upload(a,codes),a)
+    assert project('JPN')['rows'][0]['quotaAthleteCount']==3
+    assert Athlete.query.count()==9

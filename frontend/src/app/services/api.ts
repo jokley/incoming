@@ -1,7 +1,8 @@
+import type { ExcelDemand } from './planningCalculations';
 import { DatabaseGeneration } from './databaseGeneration';
 import { EventRequestScope } from '../events/eventRequestScope';
 import type { EventCapabilities } from '../events/activeEventStore';
-import type { SingleRoomQuotaExemptReason } from '../types';
+import type { AccommodationRequirement, SingleRoomQuotaExemptReason } from '../types';
 import type {
   RoomType,
   Hotel,
@@ -22,7 +23,7 @@ import type {
 } from '../types';
 import type { ChampionshipEvent, EventCompetitionMapping } from '../types';
 import type { AuthenticatedUser, AuditEvent } from '../types';
-import type { OfficialQuotaUsage } from './fisRules';
+import type { OfficialQuotaUsage, OfficialQuotaOverview } from './fisRules';
 import type { ImportApproval, ImportDecision, ImportSession } from '../data/importSessions';
 import { finishAssignmentRequest, isMeasuredAssignmentRequest, startAssignmentMeasurement } from './assignmentPerformance';
 import { downloadResponse } from './download';
@@ -36,9 +37,8 @@ import {
   mockRoomAvailability
 } from '../data/mockData';
 
-// In production we want to default to same-origin (`/api`) so deployments work without env vars.
-// For local dev you can set: VITE_API_URL=http://localhost:5000/api
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+// Keep API calls on the same origin and under the configured application base.
+const API_BASE_URL = import.meta.env.VITE_API_URL || `${import.meta.env.BASE_URL}api`;
 
 // USE MOCK DATA - Set to true for offline testing
 const USE_MOCK_DATA = false;
@@ -63,6 +63,13 @@ let mockEvents = initialEvents.map(e => ({
 }));
 let mockAthletes = [...initialAthletes];
 let mockRoomBookings: RoomBooking[] = [];
+
+const isBackupInformation = (value: unknown): value is DatabaseBackup => {
+  if (!value || typeof value !== 'object') return false;
+  const backup = value as DatabaseBackup;
+  return typeof backup.filename === 'string' && backup.filename.length > 0
+    && Number.isFinite(backup.size) && backup.size >= 0 && Number.isFinite(backup.modified);
+};
 
 class ApiService {
   async observeCurrentUser() { return this.request('/auth/me',{method:'POST'}); }
@@ -89,7 +96,7 @@ class ApiService {
   async saveEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules`,{method:'PUT',body:JSON.stringify(data)}); }
   async fixEventQuotaRules(id:string,data:unknown):Promise<import('../types').EventQuotaRules> { return this.request(`/admin/events/${id}/quota-rules/fix`,{method:'POST',body:JSON.stringify(data)}); }
 
-  private readonly databaseGeneration = new DatabaseGeneration(() => window.location.assign('/'));
+  private readonly databaseGeneration = new DatabaseGeneration(() => window.location.assign(import.meta.env.BASE_URL));
   readonly eventScope = new EventRequestScope();
   async getActiveEventContext(): Promise<EventCapabilities> { return this.request('/active-event-context'); }
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
@@ -208,15 +215,37 @@ class ApiService {
     return this.request('/admin/simulation', { method: 'DELETE' });
   }
 
-  async getDatabaseStatus(): Promise<DatabaseStatus> { return this.request('/admin/database/status'); }
-  async getDatabaseBackups(): Promise<DatabaseBackup[]> { return this.request('/admin/database/backups'); }
+  async getDatabaseStatus(): Promise<DatabaseStatus> {
+    const value = await this.request<DatabaseStatus>('/admin/database/status');
+    if (!value || typeof value !== 'object' || !['available','unavailable'].includes(value.databaseStatus ?? '')
+        || typeof value.postgresVersion !== 'string' || !Number.isFinite(value.databaseSize)
+        || !Number.isFinite(value.backupCount)) throw new Error('Ungültige Antwort für den Datenbankstatus.');
+    return value;
+  }
+  async getDatabaseBackups(): Promise<DatabaseBackup[]> {
+    const value = await this.request<DatabaseBackup[]>('/admin/database/backups');
+    if (!Array.isArray(value) || !value.every(backup => isBackupInformation(backup)
+        && ['automatic','manual','pre-restore'].includes(backup.category ?? ''))) {
+      throw new Error('Ungültige Antwort für die Backupliste.');
+    }
+    return value;
+  }
   async createDatabaseBackup(): Promise<{ status: string }> { return this.request('/admin/database/backup', { method: 'POST' }); }
   async importDatabaseBackup(file: File): Promise<DatabaseBackup> {
     const form = new FormData(); form.append('file', file);
     const payload = await this.request<DatabaseBackup>('/admin/database/import', { method: 'POST', body: form });
+    if (!isBackupInformation(payload) || payload.size <= 0 || payload.local !== true
+        || typeof payload.token !== 'string' || !payload.token) throw new Error('Ungültige Antwort für den Backup-Import.');
     return { ...payload, localFile: file };
   }
-  async getRestoreStatus(): Promise<RestoreJob> { return this.request('/admin/database/restore-status'); }
+  async getRestoreStatus(): Promise<RestoreJob> {
+    const value = await this.request<RestoreJob>('/admin/database/restore-status');
+    if (!value || typeof value !== 'object' || !['IDLE','QUEUED','DRAINING','SAFETY_BACKUP',
+        'RESTORING','VERIFYING','SUCCEEDED','RECOVERY_REQUIRED'].includes(value.state)) {
+      throw new Error('Ungültige Antwort für den Restorestatus.');
+    }
+    return value;
+  }
   async restoreDatabaseBackup(backup: DatabaseBackup, confirmation: string): Promise<RestoreJob> {
     // Imported and server-side backups deliberately use the exact same request
     // shape and endpoint. The backup service chooses the token when present and
@@ -549,9 +578,13 @@ class ApiService {
     return this.request<Athlete[]>('/athletes');
   }
 
+  async getArrivalPlanning(nationCode?:string):Promise<import('../types').ArrivalPlanningOverview> {
+    return this.request('/athletes/arrival-planning'+(nationCode?`?nationCode=${encodeURIComponent(nationCode)}`:''));
+  }
+
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
-  async updateAthlete(id: string, data: { accommodationRequirement?: 'REQUIRED' | 'NO_ROOM' | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
+  async updateAthlete(id: string, data: { accommodationRequirement?: AccommodationRequirement | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
     return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
@@ -597,6 +630,10 @@ class ApiService {
   // ============================================================================
   // ROOM ASSIGNMENTS
   // ============================================================================
+
+  async getImportDemand(): Promise<ExcelDemand[]> {
+    return this.request<ExcelDemand[]>('/analytics/import-demand');
+  }
 
   async getRoomAssignments(): Promise<RoomBooking[]> {
     if (USE_MOCK_DATA) {
@@ -947,7 +984,7 @@ class ApiService {
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
-  async stageAccommodationRequirement(sessionId: string, personKey: string, accommodationRequirement: 'REQUIRED' | 'NO_ROOM' | null): Promise<ImportSession> {
+  async stageAccommodationRequirement(sessionId: string, personKey: string, accommodationRequirement: AccommodationRequirement | null): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/accommodation-requirements/${encodeURIComponent(personKey)}`, {method:'PATCH',body:JSON.stringify({accommodationRequirement})});
   }
   async stageAccommodationRate(sessionId: string, personKey: string, accommodationRateCategory: 'STANDARD' | 'SPECIAL'): Promise<ImportSession> {
@@ -963,7 +1000,7 @@ class ApiService {
       body: JSON.stringify(payload),
     });
   }
-  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION'|'SPORT_FAMILY';confirmDestructiveChanges:boolean}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
+  async approveImportSession(id: string, review?: {planDigest:string;snapshotScope:'FULL_NATION'|'SPORT_FAMILY';confirmDestructiveChanges:boolean;nnPlanning?:import('../types').NNPlanningChoice[]}): Promise<ImportSession> { return this.request(`/import/sessions/${id}/approve`, { method: 'POST', body: JSON.stringify(review) }); }
   async recheckImportSession(id:string,selection?:{sourceVersionId?:string;sourceVersionIds?:string[]}):Promise<ImportSession> { return this.request(`/import/sessions/${id}/recheck`,{method:'POST',body:JSON.stringify(selection??{})}); }
   async importSession(id: string, versionId?:string|null): Promise<FisImportConfirmResult> { return requireImportConfirmation(await this.request(`/import/sessions/${id}/import`, { method: 'POST',body:JSON.stringify({versionId}) })); }
   async archiveImportSession(id: string, versionId: string|null): Promise<ImportSession> { return this.request(`/import/sessions/${id}/archive`, { method: 'POST',body:JSON.stringify({versionId}) }); }
@@ -980,6 +1017,13 @@ class ApiService {
 
   async getFisMockFiles(): Promise<FisMockFilePair[]> {
     return this.request<FisMockFilePair[]>('/import/fis/mock-files');
+  }
+
+  async getOfficialQuotaOverview(params?: { nationCode?: string; discipline?: string; gender?: string; includePeople?: boolean; sportFamily?: string; personType?: 'ATHLETE' | 'OFFICIAL'; personalGender?: string }): Promise<OfficialQuotaOverview> {
+    if (USE_MOCK_DATA) return {rows:[],unallocatedSingleRooms:[]};
+    const query = new URLSearchParams({includeUnallocated:'true'});
+    for (const [key,value] of Object.entries(params ?? {})) if (value) query.set(key,String(value));
+    return this.request<OfficialQuotaOverview>(`/fis/official-quotas?${query}`);
   }
 
   // FIS official quotas

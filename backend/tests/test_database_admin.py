@@ -116,6 +116,29 @@ class DatabaseAdminTest(unittest.TestCase):
                          {'filename': None, 'category': None, 'token': 'abc', 'actor': 'contract-admin', 'confirmation': 'RESTORE DATABASE', 'schemaContract':schema_contract(),'databaseTarget':{'host':'postgres','port':5432,'database':'isolated'}})
 
     @patch('database_admin.urllib.request.urlopen')
+    def test_dev_restore_uses_outgoing_control_secret_without_proxy_auth(self, urlopen):
+        self.app.config.update(AUTH_PROXY_SECRET='', BACKUP_CONTROL_SECRET='outgoing-only')
+        response = MagicMock(status=202)
+        response.read.return_value = b'{"state":"QUEUED"}'
+        urlopen.return_value.__enter__.return_value = response
+        result = self.client.post('/api/admin/database/restore',
+                                  json={'token': 'test', 'confirmation': 'RESTORE DATABASE'})
+        self.assertEqual(result.status_code, 202)
+        self.assertEqual(urlopen.call_args.args[0].get_header('X-backup-control-secret'), 'outgoing-only')
+        self.assertEqual(self.app.config['AUTH_PROXY_SECRET'], '')
+
+    @patch('database_admin.urllib.request.urlopen')
+    def test_safety_backup_uses_the_same_outgoing_control_secret(self, urlopen):
+        from admin_cleanup import safety_backup
+        self.app.config.update(AUTH_PROXY_SECRET='', BACKUP_CONTROL_SECRET='outgoing-only')
+        response = MagicMock(status=200)
+        response.read.return_value = b'{"status":"success","filename":"safe.dump.gz","category":"manual","size":5}'
+        urlopen.return_value.__enter__.return_value = response
+        with self.app.app_context():
+            self.assertEqual(safety_backup()['size'], 5)
+        self.assertEqual(urlopen.call_args.args[0].get_header('X-backup-control-secret'), 'outgoing-only')
+
+    @patch('database_admin.urllib.request.urlopen')
     def test_server_and_imported_backups_use_same_restore_request_shape(self, urlopen):
         restored = MagicMock(status=200)
         restored.read.return_value = json.dumps({'status': 'success'}).encode()

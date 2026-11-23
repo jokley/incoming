@@ -68,7 +68,7 @@ def measured():
 @pytest.mark.parametrize('path,budget',[
     ('/api/athletes',30),('/api/room-bookings/grouped',30),
     ('/api/assignments/planning-view?includeValidations=false',35),
-    ('/api/fis/official-quotas',35)])
+    ('/api/fis/official-quotas',35),('/api/fis/official-quotas?includePeople=true',35)])
 def test_300_people_20_selected_exact_json_and_query_budget(population,monkeypatch,path,budget):
     client=app.test_client()
     import approval_projection
@@ -108,3 +108,41 @@ def test_unapproved_decisions_keep_the_canonical_short_circuit():
     person=SimpleNamespace()
     assert applicable_approval_groups(decision,person)==set()
     assert ApprovalReadProjection().groups(decision,person)==set()
+
+
+def test_person_projection_batches_distinct_historical_versions_and_keeps_decisions_immutable(population):
+    from models import ImportSessionVersion
+    a,_,people,decisions=population
+    upload=decisions[0].session
+    original=json.loads(decisions[0].quota_details_json)
+    for index,p in enumerate(people[0][:20],start=2):
+        version=ImportSessionVersion(session=upload,version=index,preview_json=json.dumps({'eventId':a.id}),uploaded_by='test')
+        db.session.add(version);db.session.flush()
+        details={**original,'singleRoomCandidates':[{'personKey':p.fis_code,'competitionIds':[str(p.competitions[0].id)]}]}
+        decision=ImportApproval(session_id=upload.id,version_id=version.id,nation='JPN',
+            approval_type='QUOTA_SINGLE_ROOMS_EXCEEDED',description='Historical reference',decision='APPROVED',username='test',
+            approved_person_keys_json=json.dumps([p.fis_code]),quota_details_json=json.dumps(details))
+        db.session.add(decision);db.session.flush();p.single_room_decision=decision
+    booking=RoomBooking.query.filter_by(event_id=a.id).first();booking.counts_as_single=True
+    db.session.commit()
+    before={d.id:(d.quota_details_json,d.approved_person_keys_json) for d in ImportApproval.query.all()}
+    db.session.remove()
+    with measured() as queries:
+        response=app.test_client().get('/api/fis/official-quotas?includePeople=true')
+    assert response.status_code==200,response.json
+    assert len(queries)<=38
+    assert not any(sql.lstrip().upper().startswith(('INSERT ','UPDATE ','DELETE ')) for sql in queries)
+    records=response.json['personStatuses']
+    active=next(p for p in records if p['singleRoom']['hasSingleUse'])
+    assert active['singleRoom']['status']=='APPROVED_EXTRA'
+    assert active['singleRoom']['applicableApprovalId']==active['singleRoom']['storedApprovalId']
+    inactive=[p for p in records if p['singleRoom']['approvalApplicable'] and not p['singleRoom']['hasSingleUse']]
+    assert inactive and all(p['singleRoom']['status']=='NO_SINGLE_USE' for p in inactive)
+    booked_person=db.session.get(Athlete,int(active['personId']))
+    booked_person.competitions=[];db.session.commit()
+    after=app.test_client().get('/api/fis/official-quotas?includePeople=true').json
+    lost=next(p for p in after['personStatuses'] if p['personId']==active['personId'])
+    assert lost['singleRoom']['status']=='PENDING' and lost['singleRoom']['context'] is None
+    assert lost['singleRoom']['storedApprovalId']==active['singleRoom']['storedApprovalId']
+    assert lost['singleRoom']['applicableApprovalId'] is None
+    assert before=={d.id:(d.quota_details_json,d.approved_person_keys_json) for d in ImportApproval.query.all()}

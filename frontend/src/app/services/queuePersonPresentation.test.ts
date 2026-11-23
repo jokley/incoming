@@ -15,3 +15,28 @@ for(const fn of ['Athlete','NSA Guest','NSA Technician']) {
   const room=renderToStaticMarkup(createElement(OccupantCard,{person,status:'assigned'}));assert.match(room,new RegExp(fn));
  });
 }
+
+test('queue shows applicable advance approval without changing requests or asserting active cost', () => {
+  const person={athleteId:'paid',name:'Approved Person',firstname:'Approved',nationCode:'AUT',
+    function:'Official',gender:'M',roomType:'Double shared',quotaDisciplines:['Ski Cross'],single_room_status:'APPROVED_EXTRA',
+    approvedQuotaContexts:[{nationCode:'AUT',discipline:'Ski Cross',gender:'W'}]};
+  const render=(people:unknown[])=>renderToStaticMarkup(createElement(DispositionQueueCard,{unit:{unitId:'need',occupants:people,openPeriod:{checkInDate:'2027-03-14',checkOutDate:'2027-03-21'},canAssign:true,previous:[]},selected:false,onSelect:()=>{},onDragStart:()=>{},onDragEnd:()=>{},onQuickAssign:()=>{},canEditAssignments:true,pending:false}));
+  const html=render([person]);
+  assert.match(html,/>Mehrpreis genehmigt</);
+  assert.match(html,/Zimmerwunsch: DZ/);
+  assert.match(html,/kein aktiver EZ-Mehrpreis/);
+  assert.ok(!html.includes('>Mehrpreis<'));
+  for(const change of [
+    {approvedQuotaContexts:[]}, {approvedQuotaContexts:undefined,approvedQuotaDisciplines:['Ski Cross']},
+    {approvedQuotaContexts:[{nationCode:'ITA',discipline:'Ski Cross',gender:'W'}]},
+    {quotaDisciplines:['Snowboard Cross']}, {function:'Athlete'},
+    {singleRoomQuotaExemptReason:'OTHER'}, {single_room_status:'IN_QUOTA'},
+  ]) assert.ok(!render([{...person,...change}]).includes('>Mehrpreis genehmigt<'),JSON.stringify(change));
+  const champion=render([{...person,roomType:'Single',singleRoomQuotaExemptReason:'WORLD_CHAMPION'}]);
+  assert.match(champion,/lucide-crown/); assert.match(champion,/Weltmeister/);
+  assert.match(champion,/Zimmerwunsch: EZ/); assert.ok(!champion.includes('>Mehrpreis genehmigt<'));
+  assert.ok(!render([{...person,singleRoomQuotaExemptReason:'OTHER'}]).includes('lucide-crown'));
+  const pair=render([person,{...person,athleteId:'other'}]);
+  assert.match(pair,/Zimmerwunsch für beide: DZ/);
+  for(const unwanted of ['EZ angefordert','Innerhalb Quote','Kostenfrei genehmigt','Entscheidung offen']) assert.ok(!html.includes(unwanted));
+});

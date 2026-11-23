@@ -49,6 +49,27 @@ def person(key='A', codes=('8185',), gender='M', role='Athlete', **extra):
         gender=gender, forGender='A', competitionImportCodes=list(mapping), **extra), mapping)
 
 
+@pytest.mark.parametrize('registered', [0, 1, 3, 4, 6, 7, 9])
+def test_official_roster_assignment_and_current_entitlement_basis_are_distinct(registered):
+    # Current catalogue connects Art. 9.1.3 allowance to Art. 13.3; it does not
+    # establish a roster-capped basis. Preserve that policy pending clarification.
+    athletes = [person(f'A{i}') for i in range(5)]
+    officials = [person(f'O{i}', role='Official') for i in range(registered)]
+    rows = evaluate_quota_usage([*athletes, *officials], officials[:1])
+    row = rows[0]
+    assert row['officialQuota'] == 7
+    assert row['registeredOfficials'] == registered
+    assert row['assignedOfficials'] == min(registered, 1)
+    assert row['singleRoomOfficialBasis'] == 7
+    assert row['singleRoomsAllowed'] == 3
+
+
+@pytest.mark.parametrize('athletes,expected', [(1, 1), (2, 2), (4, 2), (5, 3)])
+def test_existing_single_room_tier_boundaries_remain_unchanged(athletes, expected):
+    row = evaluate_quota_usage([person(f'A{i}') for i in range(athletes)])[0]
+    assert row['singleRoomsAllowed'] == expected
+
+
 def test_all_31_exact_catalogue_and_frozen_migration_mappings_agree():
     actual = {group: {c.code for c in COMPETITIONS if c.quota_discipline == group} for group in EXPECTED}
     assert actual == EXPECTED
@@ -95,6 +116,7 @@ def test_official_gender_never_allocates_usage(official_gender, for_gender):
     assert {(r['gender'], r['athletesEntered'], r['assignedOfficials'], r['singleRoomsUsed'])
             for r in rows} == {('M', 1, 1, 1), ('W', 1, 1, 0)}
     assert all((r['officialQuota'], r['singleRoomsAllowed']) == (3, 1) for r in rows)
+    assert all(r['registeredOfficials'] == 1 and r['singleRoomOfficialBasis'] == 3 for r in rows)
     assert disposition_by_quota_group(roster, {'O'}) == {
         ('AUT', 'Ski Cross', g): {'peopleTotal': 2, 'peopleAssigned': 1} for g in ('M', 'W')}
     assert single_room_usage_by_quota_group(roster, {'O'}) == {
@@ -301,3 +323,52 @@ def test_mapped_official_without_athletes_is_explicit_preview_review(database):
     recalculate_fis_import_preview(preview)
     assert preview['quotaChecks'] == []
     assert any(w['code'] == 'ENTRY_QUOTA_ALLOWANCE_UNRESOLVED' for w in preview['warnings'])
+
+
+def test_grouping_families_require_unchanged_event_and_snapshot_evidence(database):
+    from competitions import competition_athlete_family
+    from imports.read_context import ImportReadContext
+    from import_control import build_import_control
+    c = Competition(**COMPETITION_BY_IMPORT_CODE['WSC_SXT_A_8185']._asdict())
+    db.session.add(c); db.session.flush()
+    owner = prepare_import_championship([c])
+    other = Event(name='Other display event')
+    db.session.add(other); db.session.flush()
+    mapping = next(m for m in owner.competition_mappings if m.active)
+    competition = mapping.competition
+    family = competition_athlete_family(competition)
+    person = dict(matchKey='display-only', function='Athlete', gender='M', nationCode='AUT',
+                  athleteQuotaFamilies=[family], quotaDisciplines=[competition.quota_discipline],
+                  competitionMemberships=[dict(competitionId=str(competition.id),
+                    importCode=mapping.import_code, quotaDiscipline=competition.quota_discipline)])
+    preview = dict(eventId=owner.id, people=[person], rooms=[], errors=[], warnings=[])
+    original = deepcopy(preview)
+    context = ImportReadContext(owner.id)
+    view = build_import_control(preview, context)
+    assert next(c for c in view['competitions'] if c['id']==str(competition.id))['family']==family
+    assert next(g for g in view['quotaGroups'] if g['name']==competition.quota_discipline)['family']==family
+    assert preview==original
+    old_group = competition.quota_discipline
+    competition.quota_discipline = 'Changed after review'
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    old_sport = competition.sport
+    competition.sport = 'Freeski'  # Explicit evidence recognized by the central resolver.
+    competition.quota_discipline = 'Configured custom group'
+    person['competitionMemberships'][0]['quotaDiscipline'] = competition.quota_discipline
+    person['quotaDisciplines'] = [competition.quota_discipline]
+    view = build_import_control(preview, context)
+    assert next(g for g in view['quotaGroups'] if g['name']==competition.quota_discipline)['family']==family
+    assert old_group not in {g['name'] for g in view['quotaGroups']}
+    competition.quota_discipline = old_group
+    person['competitionMemberships'][0]['quotaDiscipline'] = old_group
+    person['quotaDisciplines'] = [old_group]
+    competition.sport = old_sport
+    person.pop('athleteQuotaFamilies')
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    person['athleteQuotaFamilies']=[family]
+    mapping.active=False
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    mapping.active=True
+    preview['eventId']=other.id
+    assert next(c for c in build_import_control(preview, context)['competitions'] if c['id']==str(competition.id))['family'] is None
+    db.session.rollback()

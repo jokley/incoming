@@ -1,4 +1,5 @@
 """Read-only, request-local accommodation eligibility; never writes allocations."""
+from accommodation_requirements import NO_ACCOMMODATION
 from accommodation_scope import event_query
 from datetime import date
 from types import SimpleNamespace
@@ -8,12 +9,23 @@ from accommodation_defaults import default_counts_as_single
 
 
 def inventory_guard(inventories, bookings, start, end):
-    rooms = sum(i.room_count for i in inventories if i.available_from <= start and i.available_until >= end)
-    if not rooms:
-        return 'NO_KONTINGENT', 'Kein Kontingent für den benötigten Zeitraum.'
     overlapping = [b for b in bookings if booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end)]
-    if physical_room_usage(overlapping) >= rooms:
-        return 'KONTINGENT_EXCEEDED', 'Zimmer im benötigten Zeitraum nicht verfügbar.'
+    # Compare supply and use over the same interval. A later contingent must
+    # count when its bookings count; also check dates when supply decreases.
+    checkpoints = sorted({start, end,
+        *(value for i in inventories for value in (i.available_from, i.available_until) if start < value < end),
+        *(value for b in overlapping for value in (b.check_in_date, b.check_out_date) if start < value < end)})
+    for day, next_day in zip(checkpoints, checkpoints[1:]):
+        rooms = sum(i.room_count for i in inventories if i.available_from <= day and i.available_until >= next_day)
+        if not rooms:
+            intervals = ', '.join(sorted({f'{i.available_from:%d.%m.%Y}–{i.available_until:%d.%m.%Y}' for i in inventories}))
+            return 'NO_KONTINGENT', (f'Kein Kontingent am {day:%d.%m.%Y} für den Aufenthalt {start:%d.%m.%Y}–{end:%d.%m.%Y} (Check-out). '
+                + (f'Kontingentintervalle: {intervals}.' if intervals else 'Keine Kontingentintervalle vorhanden.'))
+        active = [b for b in overlapping if b.check_in_date <= day < b.check_out_date]
+        used = physical_room_usage(active)
+        if used >= rooms:
+            return 'KONTINGENT_EXCEEDED', (f'Zimmer am {day:%d.%m.%Y} im benötigten Zeitraum nicht verfügbar. '
+                f'{used} von {rooms} Kontingentzimmern belegt.')
     return None
 
 
@@ -74,12 +86,21 @@ def project(planning, needs, population_ids, loaded=None):
         for identity in ids:
             person = people.get(identity)
             coverage = (person or {}).get('accommodationCoverage', {})
-            valid = valid and bool(person and person.get('accommodationRequirement') != 'NO_ROOM' and coverage.get('coverageStatus') != 'CONFLICT' and interval in coverage.get('openIntervals', []))
+            valid = valid and bool(person and person.get('accommodationRequirement') not in NO_ACCOMMODATION and coverage.get('coverageStatus') != 'CONFLICT' and interval in coverage.get('openIntervals', []))
             marker = (identity, start, end)
             if marker in seen:
                 raise ValueError('Doppelter offener Zeitraum')
             seen.add(marker)
         validated.append((need['key'], ids, start, end, valid))
+
+    # The planning view already maps custom room numbers to their visible slot.
+    # Consume that mapping for both serialized and request-local ORM snapshots.
+    slot_booking_ids = {slot['slotId']: {str(b['bookingId'] if isinstance(b, dict) else b.id)
+        for b in slot['bookings']} for hotel in planning['hotels'] for slot in hotel['slots']}
+
+    def belongs_to_slot(booking, slot):
+        return (str(booking.id) in slot_booking_ids[slot['slotId']]
+            or (_planned_room_key(booking.room_number) or booking.room_number) == slot['roomNumber'])
 
     guard_cache={}
 
@@ -97,6 +118,10 @@ def project(planning, needs, population_ids, loaded=None):
         if slot['capacity'] < len(ids):
             return f"Nur {slot['capacity']} Platz verfügbar."
         allowed = ['single', 'double'] if len(ids) == 1 else ['double']
+        # A two-place apartment can accommodate the same one/two-person needs.
+        # Keep larger apartments and all capacity/date/occupancy guards unchanged.
+        if slot['capacity'] == 2:
+            allowed.append('appartment')
         if _room_type_label(slot['roomTypeName']) not in allowed:
             return 'Zimmer passt nicht zum Zimmerwunsch.'
         key = (hotel['hotelId'], slot['roomTypeId'])
@@ -104,7 +129,7 @@ def project(planning, needs, population_ids, loaded=None):
         failure = cached_guard(key, rows, start, end, extra=extra)
         if failure:
             return failure[1]
-        if any((_planned_room_key(b.room_number) or b.room_number) == slot['roomNumber'] and booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end) for b in rows):
+        if any(belongs_to_slot(b, slot) and booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end) for b in rows):
             return 'Zimmer im benötigten Zeitraum nicht verfügbar.'
         return None
 
@@ -121,7 +146,7 @@ def project(planning, needs, population_ids, loaded=None):
         failure = cached_guard((hotel['hotelId'],slot['roomTypeId']),rows,start,end,excluded=booking.id,extra=extra)
         if failure:
             return failure[1]
-        if any((_planned_room_key(b.room_number) or b.room_number)==slot['roomNumber'] and booking_intervals_overlap(b.check_in_date,b.check_out_date,start,end) for b in rows):
+        if any((_planned_room_key(b.room_number) or b.room_number)==(_planned_room_key(booking.room_number) or booking.room_number) and booking_intervals_overlap(b.check_in_date,b.check_out_date,start,end) for b in rows):
             return 'Zimmer im benötigten Zeitraum nicht verfügbar.'
         return None
 
@@ -141,7 +166,7 @@ def project(planning, needs, population_ids, loaded=None):
             join_options=[]
             for slot in hotel['slots']:
                 for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
-                    if (_planned_room_key(booking.room_number) or booking.room_number) != slot['roomNumber']:
+                    if not belongs_to_slot(booking, slot):
                         continue
                     reason=join_reason(hotel,slot,booking,ids,start,end,valid,[])
                     results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
@@ -156,7 +181,7 @@ def project(planning, needs, population_ids, loaded=None):
                     reason=eligibility(hotel,slot,[identity],start,end,valid,[])
                     results.append({'slotId':slot['slotId'],'status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
                     for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
-                        if (_planned_room_key(booking.room_number) or booking.room_number) == slot['roomNumber']:
+                        if belongs_to_slot(booking, slot):
                             reason=join_reason(hotel,slot,booking,[identity],start,end,valid,[])
                             results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
         # A constructive feasibility witness, not an allocation or optimizer.
@@ -204,7 +229,7 @@ def project(planning, needs, population_ids, loaded=None):
                     accommodated.update((identity, key) for identity in ids)
                     break
         required = {(identity, key) for key, ids, *_ in validated for identity in ids
-                    if identity in people and people[identity].get('accommodationRequirement') != 'NO_ROOM'}
+                    if identity in people and people[identity].get('accommodationRequirement') not in NO_ACCOMMODATION}
         total_people = {identity for identity, _ in required}
         complete_people = {identity for identity in total_people if all(pair in accommodated for pair in required if pair[0] == identity)}
         count = len(complete_people)

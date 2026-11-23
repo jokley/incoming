@@ -1,4 +1,36 @@
 import test from 'node:test';
+import {groupImportItems,personImportPlacement,roomImportPlacement,quotaImportPlacement} from './importHints.ts';
+
+test('optional grouping partitions existing references without changing memberships, rows or allocations',()=>{
+ const people=[
+  {matchKey:'a',athleteQuotaFamilies:['Area A'],quotaDisciplines:['Custom Group'],singleRoomAllocation:{context:['AUT','Custom Group','M'],status:'COVERED'}},
+  {matchKey:'b',athleteQuotaFamilies:['Area A'],quotaDisciplines:['Custom Group','Other Group']},
+  {matchKey:'c',athleteQuotaFamilies:['Area A','Area B'],quotaDisciplines:['Custom Group','Third Group']},
+  {matchKey:'d',athleteQuotaFamilies:[],quotaDisciplines:[]},
+ ] as unknown as import('../types.ts').FisImportPreview['people'];
+ const preview={people,rooms:[],submissionSources:{'Area A':10,'Area B':20},errors:[{code:'BLOCKED'}]} as unknown as import('../types.ts').FisImportPreview;
+ const original=JSON.stringify(preview);
+ const grouped=groupImportItems(people,personImportPlacement);
+ assert.equal(grouped.flatMap(g=>g.items).length,people.length);
+ for(const p of people)assert.equal(grouped.flatMap(g=>g.items).filter(item=>item===p).length,1);
+ assert.deepEqual(grouped.map(g=>[g.area,g.group,g.items.length]),[['Area A',undefined,2],['Gemeinsam / nicht eindeutig zugeordnet',undefined,2]]);
+ assert.equal(grouped.reduce((sum,g)=>sum+g.items.length,0),people.length);
+ const room={person1Key:'a',person2Key:'b',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2}]} as import('../types.ts').FisImportPreviewRoom;
+ assert.deepEqual(roomImportPlacement(room,preview),{area:'Area A'});
+ const both={...room,sourceRows:[...room.sourceRows!,{versionId:20,version:2,row:2}]};
+ const rows=[room,both,{...room,person2Key:'missing'}];
+ const roomGroups=groupImportItems(rows,r=>roomImportPlacement(r,preview));
+ assert.equal(roomGroups.flatMap(g=>g.items).length,3);
+ assert.equal(roomGroups[1].area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(roomGroups[1].items[0],both);assert.equal(both.sourceRows.length,2);
+ assert.equal(roomImportPlacement({...room,person2Key:null},preview).area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(roomImportPlacement({...room,person2Key:'c'},preview).area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(roomImportPlacement({...room,sourceRows:[{versionId:99,version:1,row:2}]},preview).area,'Gemeinsam / nicht eindeutig zugeordnet');
+ assert.equal(quotaImportPlacement('Custom Group',{quotaGroups:[{name:'Custom Group',family:'Area A'}]} as any).area,'Area A');
+ assert.equal(quotaImportPlacement('Unknown').area,'Nicht zugeordnet');
+ assert.equal(JSON.stringify(preview),original);
+ assert.deepEqual(groupImportItems([],personImportPlacement),[]);
+});
 import type {FisImportPreview} from '../types.ts';
 import assert from 'node:assert/strict';
 import { importHintCategories } from './importHints.ts';
@@ -147,4 +179,25 @@ test('contradictory personal allocation contexts retain one person but cannot im
  const preview={people:[person,{...person,matchKey:'another-source',singleRoomAllocation:{...person.singleRoomAllocation,context:['ITA','Snowboard Cross','M']}}],rooms:[]} as unknown as FisImportPreview;
  const before=structuredClone(preview),summary=singleRoomSummary(preview,'ITA');
  assert.equal(summary.requested,1);assert.equal(summary.counts.COVERED,1);assert.equal(summary.complete,false);assert.deepEqual(preview,before);
+});
+
+test('preview exclusions use stable backend identities, not list order or names',async()=>{
+ const {deferredImportPersonKeys}=await import('./importHints.ts');
+ const preview:any={people:[{matchKey:'new',nationCode:'FIN',function:'Athlete'},{matchKey:'saved',existingAthleteId:42,nationCode:'FIN',function:'Athlete'},{matchKey:'booked',existingAthleteId:43,nationCode:'FIN',function:'Athlete'},{matchKey:'staff',nationCode:'FIN',function:'Coach'}]};
+ const planning:any={mode:'IMPORT',rows:[{conflict:false,replacedPersonIds:['preview:new','42','preview:staff']}]};
+ const before=JSON.stringify({preview,planning});
+ assert.deepEqual([...deferredImportPersonKeys(preview,planning)],['new','saved']);
+ preview.people.reverse();assert.deepEqual([...deferredImportPersonKeys(preview,planning)].sort(),['new','saved']);preview.people.reverse();
+ assert.equal(JSON.stringify({preview,planning}),before);
+ planning.rows[0].conflict=true;assert.equal(deferredImportPersonKeys(preview,planning).size,0);
+ assert.equal(deferredImportPersonKeys(preview).size,0);
+});
+
+test('live exclusions resolve persisted read-model IDs without changing the imported snapshot',async()=>{
+ const {deferredImportPersonKeys}=await import('./importHints.ts');
+ const preview:any={people:[{matchKey:'fis-code',nationCode:'FIN',function:'Athlete'}]};
+ const planning:any={mode:'LIVE',rows:[{conflict:false,replacedPersonIds:['77']}],operationalQuota:{people:[{matchKey:'fis-code',nationCode:'FIN',personId:77},{matchKey:'fis-code',nationCode:'SWE',personId:88}]}};
+ assert.deepEqual([...deferredImportPersonKeys(preview,planning)],['fis-code']);
+ planning.operationalQuota.people.push({matchKey:'fis-code',nationCode:'FIN',personId:99});
+ assert.equal(deferredImportPersonKeys(preview,planning).size,0);
 });

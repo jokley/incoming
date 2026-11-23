@@ -1,4 +1,7 @@
-"""Start the existing backend or backup service with a pinned local target."""
+"""Legacy isolated restore verification; ordinary CodeServer uses incoming.test.env.
+
+Explicit isolated configuration only. Never creates a local environment file.
+"""
 import argparse
 import os
 import re
@@ -26,7 +29,7 @@ def local_environment(values, inherited):
     unknown = set(values) - {'DATABASE_URL', 'POSTGRES_BIN', 'VITE_API_URL',
                             'OPERATIONAL_EVENT_ID', 'EVENT_OWNERSHIP_PLAN', 'BACKUP_PORT'}
     if unknown:
-        raise ValueError('Unsupported .env.local keys: ' + ', '.join(sorted(unknown)))
+        raise ValueError('Unsupported isolated restore keys: ' + ', '.join(sorted(unknown)))
     if values.get('VITE_API_URL', '/api') != '/api':
         raise ValueError('Local frontend must use VITE_API_URL=/api')
     port = values.get('BACKUP_PORT', '58080')
@@ -63,17 +66,17 @@ def local_environment(values, inherited):
 
 
 def configure(config_file=None):
-    local = Path(config_file).resolve() if config_file else ROOT / '.env.local'
+    if not config_file:
+        raise ValueError('Use incoming.test.env for CodeServer; legacy restore tools require an explicit --env-file')
+    local = Path(config_file).resolve()
     if not local.exists():
-        if config_file:
-            raise ValueError('Explicit local environment file does not exist')
-        shutil.copyfile(ROOT / '.env.local.example', local)
+        raise ValueError('Explicit isolated environment file does not exist')
     values = {}
     for line in local.read_text(encoding='utf-8-sig').splitlines():
         if line.strip() and not line.lstrip().startswith('#'):
             key, separator, value = line.partition('=')
             if not separator or key.strip() in values:
-                raise ValueError('Use unique, plain KEY=value entries in .env.local')
+                raise ValueError('Use unique, plain KEY=value entries in the isolated restore file')
             values[key.strip()] = value.strip()
     env = local_environment(values, os.environ)
     pg_bin = values.get('POSTGRES_BIN')
@@ -91,7 +94,7 @@ def configure(config_file=None):
     for name in ('psql', 'pg_dump', 'pg_restore'):
         executable = shutil.which(name)
         if not executable:
-            raise ValueError(f'{name} missing; set POSTGRES_BIN in .env.local')
+            raise ValueError(f'{name} missing; set POSTGRES_BIN in the isolated restore file')
         version = subprocess.check_output([executable, '--version'], text=True)
         if ' (PostgreSQL) 17.' not in version:
             raise ValueError(f'{name} must be PostgreSQL 17')
@@ -117,7 +120,7 @@ def configure(config_file=None):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('service', choices=('backup', 'backend', 'check'))
-    parser.add_argument('--env-file', help='Explicit local-only configuration; leaves .env.local unchanged')
+    parser.add_argument('--env-file', required=True, help='Legacy isolated restore configuration, never incoming.test.env')
     args = parser.parse_args()
     try:
         configure(args.env_file)
@@ -125,7 +128,7 @@ def main():
         parser.exit(1, f'Local startup refused: {error}\n')
     except Exception as error:
         # Do not echo connection strings or inherited credentials on failure.
-        parser.exit(1, f'Local startup refused ({type(error).__name__}). Check .env.local, '
+        parser.exit(1, f'Local startup refused ({type(error).__name__}). Check the explicit isolated configuration, '
                     'PostgreSQL 17 tools and the loopback incoming_test database.\n')
     if args.service == 'backup':
         sys.path.insert(0, str(ROOT / 'backup'))

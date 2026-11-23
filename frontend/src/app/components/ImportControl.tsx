@@ -1,11 +1,14 @@
+import { requirementLabel } from '../services/accommodationRequirement';
+import {Tooltip} from '@mui/material';
+import type {NNPlanningControls} from '../types';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import {Fragment,useEffect,useRef,type ReactNode} from 'react';
-import {sportClarifications} from '../services/importHints';
+import {groupImportItems,quotaImportPlacement,sportClarifications} from '../services/importHints';
 import type {QuotaPeopleFilter} from '../services/importHints';
 import type {FisImportPreview,FisImportPreviewPerson,ImportControl} from '../types';
 import type {ImportSession} from '../data/importSessions';
-import {ContentCard,EnterpriseDialog,OpsButton,SectionHeader,StatusChip} from '../design-system';
-import {disciplineDisplayName} from '../services/competitionPresentation';
+import {ContentCard,EnterpriseDialog,OpsButton,SectionHeader} from '../design-system';
+import {disciplineDisplayName,sportAreaLabel} from '../services/competitionPresentation';
 import {stayWindowNights} from '../services/stayWindow';
 import {importFindings} from '../services/importFindings';
 import {FindingEvidence} from './ImportClarifications';
@@ -24,18 +27,18 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
   {issues.map(issue=><section key={issue.id} className="space-y-2 rounded border border-[var(--ops-border)] p-2"><p className="text-sm font-bold">{issue.kind==='error'?'Blockierend · ':''}{issue.message}</p><FindingEvidence finding={issue} preview={preview}/></section>)}
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Person"/><dl className="grid gap-2 sm:grid-cols-2"><Fact label="Funktion">{value(person.function)}</Fact><Fact label="Geschlecht">{value(person.gender)}</Fact></dl><h4 className="text-sm font-bold">Wettbewerbe</h4><ul className="text-sm">{row?.competitions.map(c=><li key={c.id}>{c.name}</li>)}</ul></ContentCard>
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><dl className="grid gap-2 sm:grid-cols-2">
-   <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':'Unterkunft benötigt'}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
+   <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':requirementLabel(person.accommodationRequirement)}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
    <Fact label="Zimmerpartner">{partners.length?[...new Set(partners)].join('; '):person.sharedWithName||(/^double/i.test(person.roomType??'')?'Zimmerpartner fehlt':'Nicht angegeben')}</Fact>
    <Fact label="Aufenthalt">{value(person.arrivalDate)} – {value(person.departureDate)}</Fact><Fact label="Unterkunftstarif">{person.accommodationRateCategory==='SPECIAL'?'Sondertarif':'Standard'}</Fact><Fact label="EZ-Status">{entitlement(person.singleRoomEntitlement)}{person.singleRoomQuotaExemptReason?` · ${person.singleRoomQuotaExemptReason==='WORLD_CHAMPION'?'Weltmeister-EZ-Ausnahme':'EZ-Ausnahme'}`:''}</Fact>
    {row?.stayWindow?.eventStart&&<Fact label="Eventzeitraum / zulässige An- und Abreise">{row.stayWindow.eventStart} – {row.stayWindow.eventEnd}<br/>{row.stayWindow.allowedStart} – {row.stayWindow.allowedEnd}</Fact>}
   </dl></ContentCard>
-  <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer font-bold">Technische Details und Quellen</summary><p className="mt-2">{person.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Entry List · Zeile ${person.rowNumber}`} · For_gender: {value(person.forGender)}</p>{person.sourceIdentities?.map((i,index)=><p key={index}>{i.family==='Freestyle'?'Freestyle/Freeski':i.family} · Staff-ID {i.staffId} · {i.function} · Quellzeile {i.row??'—'}</p>)}<p>Quotenkontexte: {row?.quotaContexts.map(c=>`${c.group} · ${c.gender}`).join('; ')||'Nicht hinterlegt'}</p><p>Unterkunft: {value(person.accommodationRequirementSource)} · Tarif: {value(person.accommodationRateSource)}</p>{rooms.map((r,i)=><p key={i}>Room List · {r.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Zeile ${r.rowNumber}`}: {r.roomType} · {value(r.checkInDate)} – {value(r.checkOutDate)} · Partnerangabe: {value(r.sharedWithRawName)}</p>)}</details>
+  <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer font-bold">Technische Details und Quellen</summary><p className="mt-2">{person.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Entry List · Zeile ${person.rowNumber}`} · For_gender: {value(person.forGender)}</p>{person.sourceIdentities?.map((i,index)=><p key={index}>{sportAreaLabel(i.family)} · Staff-ID {i.staffId} · {i.function} · Quellzeile {i.row??'—'}</p>)}<p>Quotenkontexte: {row?.quotaContexts.map(c=>`${c.group} · ${c.gender}`).join('; ')||'Nicht hinterlegt'}</p><p>Unterkunft: {value(person.accommodationRequirementSource)} · Tarif: {value(person.accommodationRateSource)}</p>{rooms.map((r,i)=><p key={i}>Room List · {r.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Zeile ${r.rowNumber}`}: {r.roomType} · {value(r.checkInDate)} – {value(r.checkOutDate)} · Partnerangabe: {value(r.sharedWithRawName)}</p>)}</details>
  </div>;
 }
 export function ImportPersonDialog({person,preview,session,onClose,canWrite=false,onPeople,onQuestion}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void;canWrite?:boolean;onPeople?:()=>void;onQuestion?:()=>void}) {
  return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<>{onPeople&&<OpsButton onClick={onPeople}>In Personenliste anzeigen</OpsButton>}{onQuestion&&<OpsButton disabled={!canWrite} onClick={onQuestion}>Rückfrage dokumentieren</OpsButton>}<OpsButton onClick={onClose}>Schließen</OpsButton></>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
-export function CompetitionDistribution({control,preview,nation,onPeople,focusSport}:{control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
+export function CompetitionDistribution({grouped=false,control,preview,nation,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
  const tableRef=useRef<HTMLDivElement>(null);
  useEffect(()=>{if(focusSport)tableRef.current?.querySelector('[data-sport-review="true"]')?.scrollIntoView({block:'center'});},[focusSport,control,nation]);
  if(!control||!preview)return null;
@@ -69,7 +72,7 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
   const hint=[...(team?[team]:[]),...genders.flatMap(row=>row.entry?[row.entry]:[])].map(entry=>`${entry.reason??'Gespeicherte Sportbewertung.'} Endgültige FIS-Zuteilung nicht bestätigt.${entry.sharedPoolReported!==null?` Gemeinsamer Slopestyle-/Big-Air-Pool: ${entry.sharedPoolReported} eindeutige Personen dieses Geschlechts / ${entry.sharedPoolRegularMax??'—'} regulär.`:''}${entry.champions.length?` Titelquelle: ${entry.champions.map(c=>c.source).join(', ')}`:''}`).join(' ')||'Keine eindeutige gespeicherte Wettbewerbsbewertung.';
   const action=(label:string,personKeys:string[],description:string)=>onPeople&&nation&&personKeys.length?<button type="button" className="text-left underline decoration-dotted underline-offset-2" style={{fontSize:'inherit',fontWeight:'inherit'}} aria-label={description} onClick={()=>onPeople({nation,role:'athletes',personKeys})}>{label}</button>:label;
   const explanations=genders.filter(({entry,reported})=>reported>0&&entry&&entry.status!=='INCOMPLETE'&&(entry.unverifiedAdditional>0||(entry.sharedPoolUnverifiedAdditional??0)>0||(entry.aboveRegular>0&&entry.champions.length>0)||entry.status==='REVIEW_REQUIRED'));
-  const chip=<StatusChip tone={team||missing?'neutral':review?'warning':'success'}><span className="min-w-0 whitespace-normal [overflow-wrap:anywhere]">
+  const chip=<span data-tone={team||missing?'neutral':review?'warning':'success'} className={`min-w-0 whitespace-normal text-xs [overflow-wrap:anywhere] ${review?'text-[var(--ops-warning)]':'text-[var(--ops-text-muted)]'}`}>
    {team?'Teamwettbewerb – gesonderte Regel':<>
     {missing&&<span className="block">Bewertung unvollständig</span>}
     {!missing&&!review&&!champion&&'Innerhalb der Grenze'}
@@ -83,11 +86,14 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
      </span>;
     })}
    </>}
-  </span></StatusChip>;
+  </span>;
   return <>
-   {genders.map(({competition,reported,entry},i)=><td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2" title={hint}>
-    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" style={{fontSize:'inherit'}} aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {entry?.regularMax??'—'}
-   </td>)}
+   {genders.map(({competition,reported,entry},i)=>{
+    const aboveRegular=entry&&entry.regularMax!=null&&entry.status!=='INCOMPLETE'&&entry.status!=='TEAM_RULE'&&(entry.aboveRegular??0)>0;
+    return <td key={i} className="whitespace-nowrap px-1 py-1 text-right tabular-nums sm:px-2">
+    {onPeople&&nation&&entry?<button type="button" className="font-bold text-[var(--ops-primary)] underline decoration-dotted" style={{fontSize:'inherit'}} aria-label={`${competition?.name}: ${reported} Athleten anzeigen`} onClick={()=>onPeople({nation,role:'athletes',personKeys:entry.personKeys,competition:competition?.name})}>{reported}</button>:reported} / {aboveRegular?<Tooltip title={`${reported} gemeldet, ${entry.regularMax} regulär erlaubt. ${entry.status==='TITLE_COVERED'?'Verifiziertes Weltmeisterrecht berücksichtigt.':'Sportliche Übermeldung prüfen.'}`}><span tabIndex={0} className="font-semibold text-[var(--ops-warning)]">{entry.regularMax}</span></Tooltip>:entry?.regularMax??'—'}
+
+   </td>;})}
    <td className="ops-table-wrap px-1 py-1 sm:px-2 [&_svg]:hidden sm:[&_svg]:block" title={hint}>{chip}</td>
   </>;
  };
@@ -96,15 +102,14 @@ export function CompetitionDistribution({control,preview,nation,onPeople,focusSp
   <table className="w-full table-fixed text-[11px] sm:table-auto sm:text-sm"><caption className="pb-2 text-left text-xs text-[var(--ops-text-muted)]">Sportliche Meldungen · FIS-Zuteilung nicht bestätigt</caption>
    <colgroup><col className="w-[24%] sm:w-auto"/><col className="w-[18%] sm:w-auto"/><col className="w-[18%] sm:w-auto"/><col className="w-[40%] sm:w-auto"/></colgroup>
    <thead><tr><th scope="col" rowSpan={2} className="ops-table-wrap px-1 py-2 text-left sm:px-2">Wettbewerb</th><th scope="colgroup" colSpan={2} className="ops-table-wrap px-1 py-1 text-center font-normal sm:px-2">Gemeldet / regulär</th><th scope="col" rowSpan={2} className="ops-table-wrap px-1 py-2 text-left sm:px-2">Bewertung</th></tr><tr>{['Männer','Frauen'].map(label=><th scope="col" key={label} className="px-1 pb-2 text-right sm:px-2">{label}</th>)}</tr></thead>
-   <tbody>{groups.map(group=>{
+   <tbody>{(grouped?groupImportItems(groups,group=>({area:quotaImportPlacement(group??'',control).area})):[{area:'',items:groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={4} className="bg-[var(--ops-surface-elevated)] px-1 py-2 text-left sm:px-2">{section.area}</th></tr>}{section.items.map(group=>{
     const list=competitions.filter(c=>c.group===group);
     const names=[...new Set(list.map(c=>disciplineDisplayName(c.name)))];
-    const groupCounts=counts(new Set(list.map(c=>c.id)));
     return <Fragment key={group??'unknown'}>
-     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}<span className="ml-2 text-xs font-normal text-[var(--ops-text-muted)]">{groupCounts[2]} eindeutige Athleten · {groupCounts[0]} Männer · {groupCounts[1]} Frauen</span></th></tr>
+     <tr className="border-t border-[var(--ops-divider)]"><th scope="rowgroup" colSpan={4} className="ops-table-wrap px-1 py-2 text-left sm:px-2">{group||'Nicht zugeordnet'}</th></tr>
      {names.map(name=><tr key={name} data-sport-review={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))} className={list.some(c=>disciplineDisplayName(c.name)===name&&reviewIds.has(c.id))?'border-l-2 border-l-[var(--ops-warning)]':undefined}><th scope="row" className="ops-table-wrap py-1 pl-1 pr-1 text-left font-normal sm:pl-5 sm:pr-2">{name}</th>{cells(new Set(list.filter(c=>disciplineDisplayName(c.name)===name).map(c=>c.id)))}</tr>)}
     </Fragment>;
-   })}</tbody>
+   })}</Fragment>)}</tbody>
   </table>
   <p className="mt-2 text-xs text-[var(--ops-text-muted)]">Keine FIS-Startfreigabe. Wettbewerbe nicht addieren.</p>
  </div>;

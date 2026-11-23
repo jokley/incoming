@@ -3,6 +3,17 @@ export function previewEventGroupLabel(groups?: string[]): string {
   return groups?.join(', ') || '—';
 }
 
+/** Presentation aliases for existing sport/family values, never a quota mapping.
+ * Unknown values remain visible; Competition identities and Event Groups are untouched. */
+export function sportAreaValue(sport?: string | null): 'Snowboard' | 'Freestyle' | null {
+  return sport === 'Snowboard' ? 'Snowboard'
+    : ['Freestyle', 'Freeski', 'Freestyle Ski'].includes(sport || '') ? 'Freestyle' : null;
+}
+
+export function sportAreaLabel(sport?: string | null): string {
+  return sportAreaValue(sport) === 'Freestyle' ? 'Freestyle / Freeski' : sport || '—';
+}
+
 export function competitionDisplayName(name?: string | null): string {
   if (!name) return '';
   return name.replace(/^(?:Men's|Women's)\s+/i, '').replace(/^Mixed\s+/i, '');

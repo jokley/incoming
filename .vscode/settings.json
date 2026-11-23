@@ -1,0 +1,15 @@
+{
+  "files.watcherExclude": {
+    "**/.git/**": true,
+    "**/node_modules/**": true,
+    "**/.pnpm-store/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true
+  },
+  "search.exclude": {
+    "**/node_modules/**": true,
+    "**/.pnpm-store/**": true,
+    "**/.venv/**": true,
+    "**/__pycache__/**": true
+  }
+}

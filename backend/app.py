@@ -1,6 +1,6 @@
 from quota_rules import rules_for_event, accommodation_rule_event
 from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object, event_audit_refs
-from accommodation_requirements import requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
+from accommodation_requirements import BOOKING_MESSAGE, NO_ACCOMMODATION, REQUIREMENTS, INVALID_REQUIREMENT, requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
@@ -323,7 +323,7 @@ def _required_permission():
     if request.method in {'GET', 'HEAD', 'OPTIONS'}:
         return 'data.read'
     if path.startswith('/api/import/'):
-        return 'imports.write'
+        return 'data.read' if path.endswith('/nn-preview') else 'imports.write'
     if path.startswith('/api/assignments/') or path.startswith('/api/room-assignments'):
         return 'assignments.write'
     return 'data.write'
@@ -602,6 +602,8 @@ app.before_request(validate_import_request_context)
 
 
 def _audit_entity():
+    if g.api_path.startswith('/api/athletes/arrival-planning/'):
+        return 'athlete-arrival-forecast',g.api_path.rsplit('/',1)[-1]
     parts = [part for part in g.api_path.removeprefix('/api/').split('/') if part]
     entity_type = parts[0] if parts else 'api'
     entity_id = next((part for part in parts[1:] if part.isdigit()), None)
@@ -662,6 +664,12 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         room = ' – '.join(filter(None, [room_type.get('name'), booking.get('roomNumber')]))
         if room:
             details.append(f'Zimmer: {room}')
+
+    elif entity_type == 'athlete-arrival-forecast':
+        ref('planningAreaId',entity_id)
+        category,title='Anreiseplanung','Athletenprognose gespeichert'
+        label=' · '.join(str(response.get(k) or '') for k in ('nationCode','discipline','personalGender'))
+        details.append(f"Erwartete Gesamtzahl: {(snapshot or {}).get('expectedTotal')} → {response.get('expectedTotal')}")
 
     elif entity_type == 'hotels':
         hotel_id = entity_id or response.get('id')
@@ -743,6 +751,8 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         label = response.get('nation') or payload.get('nation') or 'Importsession'
         if request.path.endswith('/approve'):
             title = 'Import freigegeben'
+        elif request.path.endswith('/nn-planning'):
+            title='NN-Unterkunftsplanung entschieden'
         elif request.path.endswith('/import'):
             title = 'Import durchgeführt'
         elif '/approvals/' in request.path:
@@ -771,7 +781,7 @@ def audit_successful_mutation(response):
         response.headers['X-Request-ID']=getattr(g,'request_id','')
         return response
     user = current_user()
-    if getattr(g, 'api_path', None) == '/api/assignments/availability':
+    if getattr(g, 'api_path', None) == '/api/assignments/availability' or request.endpoint=='preview_import_nn_planning':
         return response
     if (user is None or request.method not in {'POST', 'PUT', 'PATCH', 'DELETE'}
             or not getattr(g, 'api_path', None) or response.status_code >= 400):
@@ -782,6 +792,8 @@ def audit_successful_mutation(response):
         if payload:
             payload = {key: value for key, value in payload.items()
                        if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
+        if payload and entity_type == 'athlete-arrival-forecast':
+            payload={**payload,'previousForecast':getattr(g,'audit_snapshot',None),'newRevision':(response.get_json(silent=True) or {}).get('revision')}
         if payload and 'accommodationRequirement' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
             payload = {**payload, 'accommodation_requirement': {'old': g.audit_snapshot.get('accommodationRequirement', 'REQUIRED'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirement')},
                 'accommodation_requirement_source': {'old': g.audit_snapshot.get('accommodationRequirementSource', 'DEFAULT'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirementSource')}}
@@ -1168,6 +1180,9 @@ def _build_virtual_slots(hotel, room_type, inventories, bookings):
                 'availableFrom': min(inv.available_from for inv in inventories).isoformat() if inventories else None,
                 'availableUntil': max(inv.available_until for inv in inventories).isoformat() if inventories else None,
                 'coversRequestedRange': True,
+                'intervals': [{'availableFrom': inv.available_from.isoformat(),
+                    'availableUntil': inv.available_until.isoformat()}
+                    for inv in sorted(inventories, key=lambda inv: (inv.available_from, inv.available_until))],
             },
             'bookings': slot_bookings,
         })
@@ -1254,9 +1269,9 @@ def _build_room_booking_units():
         candidates = [candidate for candidate in candidates if candidate.id != athlete.id]
         return candidates[0] if len(candidates) == 1 else None
 
-    athletes = [a for a in athletes if a.accommodation_requirement != 'NO_ROOM']
-    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement != 'NO_ROOM'] for k, values in athletes_by_name_and_nation.items()}
-    athletes_by_name = {k: [a for a in values if a.accommodation_requirement != 'NO_ROOM'] for k, values in athletes_by_name.items()}
+    athletes = [a for a in athletes if a.accommodation_requirement not in NO_ACCOMMODATION]
+    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name_and_nation.items()}
+    athletes_by_name = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name.items()}
     consumed_ids = set()
     projected_groups = []
     for athlete in athletes:
@@ -1476,7 +1491,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
-                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement == 'NO_ROOM',
+                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement in NO_ACCOMMODATION,
                                     'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
                                     'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
@@ -1519,7 +1534,15 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
         else:
             unassigned_units.append(unit)
 
+    from arrival_planning import project,operative_projection
+    athlete_planning=operative_projection(project())
+    provisional=set(athlete_planning['provisionalPersonIds'])
+    for unit in unassigned_units+assigned_units:
+        for person in unit['occupants']:
+            person['provisionalAccommodation']=person['athleteId'] in provisional
+            person['provisionalWorldChampion']=person['athleteId'] in athlete_planning['worldChampionPersonIds']
     return {
+        'athletePlanning':athlete_planning,
         'timeline': {
             'startDate': timeline_start,
             'endDate': timeline_end,
@@ -1706,13 +1729,25 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
     db.session.flush()
 
 
-def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None):
+def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=None, *, include_unallocated=False, include_people=False,
+                                     sport_family=None, person_type=None, personal_gender=None):
     from approval_projection import projected_approval_groups
     athletes = event_query(Athlete).options(db.selectinload(Athlete.competitions))
+    if include_people:
+        athletes = athletes.options(db.selectinload(Athlete.single_room_decision).joinedload(ImportApproval.session))
     if nation_code:
         athletes = athletes.filter(Athlete.nation_code == nation_code)
     # Allocate across all eligible groups before applying display filters.
     athletes = athletes.all()
+    if include_people:
+        # Keep immutable version evidence alive in the identity map. The canonical
+        # resolver uses session.get; distinct historical decisions must not turn
+        # this read into one version query per person.
+        version_ids = {a.single_room_decision.version_id for a in athletes
+                       if a.single_room_decision and a.single_room_decision.version_id}
+        approval_versions = ImportSessionVersion.query.join(ImportSession,
+            ImportSession.id == ImportSessionVersion.session_id).filter(
+            ImportSession.event_id == accommodation_event_id(), ImportSessionVersion.id.in_(version_ids)).all() if version_ids else []
     roster = [{'personId': a.id, 'nationCode': a.nation_code, 'discipline': a.discipline,
                'quotaDisciplines': quota_disciplines(a.competitions),
                'gender': a.gender, 'forGender': a.for_gender,
@@ -1742,15 +1777,23 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     # The persisted assignment flag is the sole source of truth for operational
     # quota usage. The physical room type and import entitlement stay unchanged.
     assigned = []
+    person_approvals = {}
     for athlete, person in zip(athletes, roster):
-        if athlete.id not in booking_by_athlete:
+        if athlete.id not in booking_by_athlete and not include_people:
             continue
         evidence = projected_approval_groups(athlete.single_room_decision, athlete, roster=athletes)
+        person_approvals[athlete.id] = evidence
+        if athlete.id not in booking_by_athlete:
+            continue
         assigned.append({**person, 'countsAsSingle': booking_by_athlete[athlete.id],
             'singleRoomStatus': athlete.single_room_status,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence)] if athlete.single_room_status == 'APPROVED_EXTRA' else []})
-    rows = evaluate_quota_usage(roster, assigned,rules_for_event(accommodation_event_id()))
+    from arrival_planning import project,operational_athlete_basis
+    forecast=project(nation_code)
+    forecast_basis=operational_athlete_basis(forecast)
+    evaluation = evaluate_quota_usage(roster, assigned, rules_for_event(accommodation_event_id()), include_unallocated=True, include_allocations=include_people, operational_athletes=forecast_basis)
+    rows = evaluation['rows']
     disposition = disposition_by_quota_group(roster, booking_by_athlete)
     allocation_by_person = {item['personId']: item for row in rows for item in row['singleRoomAllocations']}
     approved_by_key = {}
@@ -1849,8 +1892,64 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
         row['unresolvedHistoricalApprovalIds'] = sorted(set(unresolved_approvals))
         row['quotaStatus'] = ('DECISION_REQUIRED' if row['singleRoomsPending'] > 0 else
             'EXCEPTION_APPROVED' if decisions['approved'] else 'FULFILLED')
-    return [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
+    rows = [row for row in rows if (not gender or row['gender'] == normalize_gender(gender))
             and (not discipline or row['discipline'] == discipline)]
+    if include_unallocated or include_people:
+        by_id = {p['personId']: p for p in roster}
+        # These people have no group/gender to filter by. The roster is already
+        # scoped to the authorized event and optional nation, before allocation.
+        result = {'rows': rows, 'unallocatedSingleRooms': [dict(
+            personId=str(item['personId']), name=by_id[item['personId']]['name'],
+            nationCode=by_id[item['personId']]['nationCode'], status='PENDING', context=None,
+            reason='Kein gültiger Quotenkontext zuordenbar')
+            for item in evaluation['unallocatedSingleRooms']]}
+        if include_people:
+            from accommodation_coverage import person_disposition_status, summarize_person_disposition
+            from competitions import competition_athlete_family
+            allocations = {item['personId']: item for item in evaluation['singleRoomAllocations']}
+            people = []
+            for athlete, person in zip(athletes, roster):
+                families = sorted({family for c in athlete.competitions if (family := competition_athlete_family(c))})
+                kind = 'ATHLETE' if (athlete.function or '').strip().lower() == 'athlete' else 'OFFICIAL'
+                if person_type and kind != person_type:
+                    continue
+                if personal_gender and normalize_gender(athlete.gender) != normalize_gender(personal_gender):
+                    continue
+                contexts = quota_keys(person, allowance_contexts=allowance_contexts)
+                allocation = allocations.get(athlete.id)
+                contextless = bool(allocation and allocation['status'] == 'PENDING' and allocation['context'] is None)
+                matches = ((not sport_family or sport_family in families) and
+                           (not discipline or discipline in person['quotaDisciplines']) and
+                           (not gender or any(c[2] == normalize_gender(gender) for c in contexts)))
+                if not matches and not contextless:
+                    continue
+                data = {**person, 'personId': str(athlete.id), 'eventId': str(athlete.event_id),
+                        'personalGender': normalize_gender(athlete.gender), 'personType': kind,
+                        'sportFamilies': families, 'roomRequest': athlete.room_type,
+                        'singleRoomStatus': athlete.single_room_status,
+                        'singleRoomDecisionId': str(athlete.single_room_decision_id) if athlete.single_room_decision_id else None}
+                projected = person_disposition_status(data, coverage_by_id[str(athlete.id)],
+                    all_person_bookings.get(athlete.id, []), allocation,
+                    room_request_kind=_room_type_label(athlete.room_type), quota_contexts=contexts,
+                    approved_contexts=person_approvals.get(athlete.id, set()))
+                projected['matchesContextFilters'] = matches
+                people.append(projected)
+            from arrival_planning import project,operative_projection
+            forecast['rows']=[row for row in forecast['rows'] if (not person_type or person_type=='ATHLETE')
+                and (not discipline or row['discipline']==discipline or not row['editable'])
+                and (not sport_family or sport_family in row['sportFamilies'])
+                and (not gender or row['personalGender']==normalize_gender(gender) or not row['editable'])
+                and (not personal_gender or row['personalGender']==normalize_gender(personal_gender))]
+            planning=operative_projection(forecast)
+            summary=summarize_person_disposition(people,planning['replacedPersonIds'])
+            summary.update(virtualPlaces=0,virtualGroups=0,planningConflicts=planning['conflicts'],
+                operationalAccommodationDemand=summary['accommodationPeopleRequired']+planning['virtualPlaces'])
+            result.update(personPlanning=planning,personStatuses=people, personSummary=summary,
+                          personFilters=dict(nationCode=nation_code, discipline=discipline, gender=gender,
+                              sportFamily=sport_family, personType=person_type, personalGender=personal_gender,
+                              contextlessPendingIncluded=True))
+        return result
+    return rows
 
 
 CRITICAL_ROUTE_ALIASES = [
@@ -2285,6 +2384,15 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
         payload['importControl'] = build_import_control(payload['preview'],read_context)
         from import_control import nation_clarifications
         payload['nationClarifications'] = nation_clarifications(session, payload['preview'], payload['importControl'])
+        from arrival_planning import import_projection
+        payload['nnPlanning']=import_projection(session,payload['preview'],payload['importControl'],live=session.status in {'IMPORTED','ARCHIVED'},read_context=read_context)
+    if include_preview and session.status=='ARCHIVED':
+        from arrival_planning import import_projection
+        payload['nnPlanning']=import_projection(session,{}, {},live=True)
+        if payload.get('preview'):
+            from imports.read_context import ImportReadContext
+            from import_control import build_import_control
+            payload['importControl']=build_import_control(payload['preview'],ImportReadContext(session.event_id))
     return payload
 
 
@@ -2303,8 +2411,8 @@ def stage_accommodation_requirement(session_id, person_key):
     if session.status in {'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'} or not session.current_version:
         return jsonify(error='The current import version is no longer editable'), 409
     data = request.get_json(silent=True) or {}
-    if 'accommodationRequirement' not in data or (data['accommodationRequirement'] is not None and (not isinstance(data['accommodationRequirement'], str) or data['accommodationRequirement'] not in {'REQUIRED', 'NO_ROOM'})):
-        return jsonify(error='accommodationRequirement must be REQUIRED, NO_ROOM or null'), 400
+    if 'accommodationRequirement' not in data or (data['accommodationRequirement'] is not None and (not isinstance(data['accommodationRequirement'], str) or data['accommodationRequirement'] not in REQUIREMENTS)):
+        return jsonify(error=INVALID_REQUIREMENT), 400
     preview = json.loads(session.current_version.preview_json or '{}')
     validate_session_event(session, preview)
     _import_session_raw_preview(session)
@@ -2321,7 +2429,7 @@ def stage_accommodation_requirement(session_id, person_key):
     try:
         recalculate_fis_import_preview(preview)
         if any(e.get('code') == 'ACCOMMODATION_REQUIREMENT_BOOKINGS' and e.get('details', {}).get('personKey') == person_key for e in preview.get('errors', [])):
-            raise RequirementConflict('NO_ROOM_HAS_BOOKINGS', 'Für diese Person bestehen Unterkunftszuweisungen. Bitte diese zuerst ausdrücklich entfernen.')
+            raise RequirementConflict(f"{target['accommodationRequirement']}_HAS_BOOKINGS", BOOKING_MESSAGE)
         if staged_raw:
             staged_raw['accommodationRequirementOverrides'] = preview['accommodationRequirementOverrides']
             staged_raw['_currentApprovalIds'] = preview['_currentApprovalIds']
@@ -2488,6 +2596,10 @@ def stage_single_room_quota_exemption(session_id, person_key):
             description=f"{'Single Rooms' if is_single else 'Officials'} überschritten ({current} / {allowed})",
             quota_details_json=json.dumps(details, ensure_ascii=False),
             decision='PENDING', username=current_user().username))
+    # Derived pending tasks were replaced; do not pass their deleted IDs to
+    # the existing event-bound approval validation during refresh.
+    db.session.flush()
+    db.session.expire(session, ['approvals'])
     session.status = ('WAITING_FOR_NATION'
                       if quota_issues or other_open_approval
                       else 'PROFESSIONALLY_REVIEWED')
@@ -2716,6 +2828,44 @@ def reconcile_single_room_tasks(session):
     session.status = 'WAITING_FOR_NATION' if any(a.decision != 'APPROVED' for a in session.current_approvals) else 'EXCEPTION_APPROVED'
 
 
+@app.route('/api/import/sessions/<int:session_id>/nn-preview',methods=['POST'])
+def preview_import_nn_planning(session_id):
+    # Read-only POST: no decision, forecast, session or audit mutation.
+    configured_event_id()
+    session=ImportSession.query.get_or_404(session_id)
+    data=request.get_json(silent=True) or {}
+    if not session.current_version or str(data.get('versionId'))!=str(session.current_version_id) or session.status in {'CANCELLED','REPLACED'}:
+        return jsonify(error='STALE_PREVIEW',message='Aktuelle Importversion neu laden.'),409
+    from arrival_planning import import_projection
+    try:
+        live=session.status in {'IMPORTED','ARCHIVED'}
+        preview={} if live else _current_session_preview(session)
+        if not live:verify_plan(preview,(preview.get('_workflow') or {}).get('plan'))
+        return jsonify(import_projection(session,preview,{},live=live,choices=data.get('nnPlanning',[])))
+    except ImportValidationError as exc:
+        return jsonify(exc.to_dict()),409
+
+
+@app.route('/api/import/sessions/<int:session_id>/nn-planning',methods=['POST'])
+def decide_import_nn_planning(session_id):
+    lock_accommodation_writes()
+    session=ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
+    data=request.get_json(silent=True) or {}
+    if session.status not in {'IMPORTED','ARCHIVED'} or str(data.get('versionId'))!=str(session.current_version_id):
+        return jsonify(error='STALE_PREVIEW',message='Nur den aktuell übernommenen Bestand bearbeiten.'),409
+    from arrival_planning import import_projection,prepare_import_decisions,apply_import_decisions
+    try:
+        decisions=prepare_import_decisions(session,import_projection(session,{}, {},live=True),data.get('nnPlanning',[]))
+        apply_import_decisions(session,decisions,current_user().username)
+        db.session.commit()
+        return jsonify(_current_session_payload(session,include_preview=True))
+    except ImportValidationError as exc:
+        db.session.rollback();return jsonify(exc.to_dict()),409
+    except Exception:
+        db.session.rollback();app.logger.exception('NN decision rolled back')
+        return jsonify(error='NN_PLANNING_FAILED',message='NN-Planung vollständig zurückgerollt.'),400
+
+
 @app.route('/api/import/sessions/<int:session_id>/approve', methods=['POST'])
 def approve_import_session(session_id):
     lock_accommodation_writes()
@@ -2742,6 +2892,13 @@ def approve_import_session(session_id):
         return jsonify(error='IMPORT_SCOPE_CONFIRMATION_REQUIRED',message='Aktuellen Ersetzungsbereich und Änderungsplan bestätigen.'),409
     if plan['requiresDestructiveConfirmation'] and data.get('confirmDestructiveChanges') is not True:
         return jsonify(error='IMPORT_DELETION_CONFIRMATION_REQUIRED',message='Entfernungen einschließlich Buchungsfolgen ausdrücklich bestätigen.'),409
+    from arrival_planning import import_projection,prepare_import_decisions
+    from quota_rules import fingerprint
+    try:
+        nn=prepare_import_decisions(session,import_projection(session,stored,{}),data.get('nnPlanning',[]))
+    except ImportValidationError as exc:
+        db.session.rollback();return jsonify(exc.to_dict()),409
+    workflow.update(nnPlanning=nn,nnPlanningDigest=fingerprint(nn))
     workflow.update(state='APPROVED',approvedDigest=plan['digest'],confirmedScope=plan['snapshotScope'],
         destructiveConfirmed=data.get('confirmDestructiveChanges') is True)
     stored['_workflow']=workflow
@@ -2783,6 +2940,12 @@ def import_approved_session(session_id):
         decisions.update({key:value['decisionId'] for key,value in preview.get('preservedSingleRoomApprovals',{}).items()})
         token=session.current_version.preview_token
         result=confirm_fis_import(token,decisions,confirmer=current_user().username,persisted_preview=preview,change_plan=plan)
+        from arrival_planning import apply_import_decisions
+        from quota_rules import fingerprint
+        if workflow.get('nnPlanning'):
+            if fingerprint(workflow['nnPlanning'])!=workflow.get('nnPlanningDigest'):
+                raise ImportValidationError('STALE_PREVIEW','NN-Entscheidung wurde nach Freigabe geändert.')
+            apply_import_decisions(session,workflow['nnPlanning'],current_user().username)
         session.status,session.imported_at='IMPORTED',datetime.utcnow()
         workflow.update(state='IMPORTED',result=result)
         preview['_workflow']=workflow
@@ -3230,6 +3393,8 @@ def import_athletes(lines, section_info, end_line):
 # Athletes
 def _update_athlete_operations(athlete, data):
     """Update only accommodation-team-owned fields; FIS fields stay read-only."""
+    if 'arrivalStatus' in data:
+        return jsonify(error='REMOVED_PERSON_FIELD',message='Individueller Anreisestatus wird nicht mehr verwendet.'),400
     if 'accommodationRateCategory' in data:
         try:
             category = validate_category(data['accommodationRateCategory'])
@@ -3241,13 +3406,13 @@ def _update_athlete_operations(athlete, data):
         db.session.refresh(athlete)
         g.audit_snapshot = athlete.to_dict()
         value = data['accommodationRequirement']
-        if value is not None and (not isinstance(value, str) or value not in {'REQUIRED', 'NO_ROOM'}):
-            return jsonify(error='accommodationRequirement must be REQUIRED, NO_ROOM or null'), 400
+        if value is not None and (not isinstance(value, str) or value not in REQUIREMENTS):
+            return jsonify(error=INVALID_REQUIREMENT), 400
         requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
             {'requirement': value, 'base': requirement_projection(athlete)})
-        if requirement_change['accommodationRequirement'] == 'NO_ROOM':
+        if requirement_change['accommodationRequirement'] in NO_ACCOMMODATION:
             from accommodation_requirements import ensure_no_bookings
-            ensure_no_bookings(athlete)
+            ensure_no_bookings(athlete, requirement_change['accommodationRequirement'])
     previous_exempt_reason = athlete.single_room_quota_exempt_reason
     protected = {'additionalItems', 'additional_items'}
     if protected.intersection(data):
@@ -3332,15 +3497,30 @@ def get_official_quotas():
     nation_code = request.args.get('nationCode')
     discipline = request.args.get('discipline')
     gender = request.args.get('gender')
+    if request.args.get('includePeople') == 'true':
+        if (request.args.get('personType') not in {None, 'ATHLETE', 'OFFICIAL'} or
+                (request.args.get('personalGender') and normalize_gender(request.args['personalGender']) not in {'M', 'W'})):
+            return jsonify(error='INVALID_PERSON_FILTER', message='Personenart oder persönliches Geschlecht ungültig.'), 400
     try:
         with _assignment_phase('quota'):
             rows = _build_official_quota_usage_rows(
                 nation_code=nation_code,
                 discipline=discipline,
-                gender=gender
+                gender=gender,
+                include_unallocated=request.args.get('includeUnallocated') == 'true',
+                include_people=request.args.get('includePeople') == 'true',
+                sport_family=request.args.get('sportFamily'), person_type=request.args.get('personType'),
+                personal_gender=request.args.get('personalGender')
             )
     except QuotaGenderValidationError as error:
         return quota_gender_review_response(error)
+    if request.args.get('includeOperational')=='true':
+        from types import SimpleNamespace
+        from arrival_planning import import_projection
+        projection=import_projection(SimpleNamespace(event_id=accommodation_event_id(),nation=nation_code,current_version_id=None),{}, {},live=True)
+        operative=projection['operationalQuota']
+        operative['rows']=[row for row in operative['rows'] if (not discipline or row['discipline']==discipline) and (not gender or row['gender']==normalize_gender(gender))]
+        rows={**(rows if isinstance(rows,dict) else {'rows':rows}),'operationalQuota':operative}
     return _assignment_jsonify(rows)
 
 

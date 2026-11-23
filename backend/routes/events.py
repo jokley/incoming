@@ -297,7 +297,9 @@ def fix_event_quota_rules(event_id):
     if (data.get('confirm') is not True or data.get('expectedDigest')!=rule_projection(event)['digest']
             or data.get('preflightFingerprint')!=preflight['fingerprint']):
         return jsonify(error='QUOTA_FIX_CONFIRMATION_REQUIRED',preflight=preflight),409
-    if preflight['blockers'] or (any(preflight['counts'].values()) and {k:v for k,v in config.items() if k!='sportEntryRules'}!=standard_rules()):
+    from quota_rules import PROVISIONAL_HOUSING_REGULAR_LIMIT
+    housing=config.get('athleteHousing',{}).get('regularPerGenderByEventGroup',{})
+    if preflight['blockers'] or (any(preflight['counts'].values()) and ({k:v for k,v in config.items() if k not in {'sportEntryRules','athleteHousing'}}!=standard_rules() or any(value!=PROVISIONAL_HOUSING_REGULAR_LIMIT for value in housing.values()))):
         return jsonify(error='QUOTA_INITIALIZATION_BLOCKED',preflight=preflight,
                        message='Bestand erfordert eine geprüfte Initialisierung; keine Daten wurden bereinigt.'),409
     event.quota_rules_fixed_at=datetime.utcnow()

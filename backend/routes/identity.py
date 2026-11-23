@@ -1,6 +1,6 @@
 """Identity read endpoint; authentication remains app-wide."""
 
-from flask import Blueprint, jsonify, current_app, request
+from flask import Blueprint, jsonify, request
 
 from auth import current_user
 
@@ -18,16 +18,16 @@ def get_authenticated_user():
 @identity.route('/api/active-event-context', methods=['GET'])
 def get_active_event_context():
     """Only explicit operational capability, never the championship catalogue."""
-    from event_ownership_runtime import authorize_event, deployment_event_id
+    from event_ownership_runtime import authorize_event, deployment_event_id, operational_event_is_pinned
     from models import Event, EventAccess, db
     user = current_user()
-    if user.is_superadmin:
+    if user.is_superadmin or user.is_dev_admin:
         from sqlalchemy import literal
         query = db.session.query(Event, literal(True)).filter(Event.active.is_(True))
     else:
         query = db.session.query(Event, EventAccess.can_write).join(EventAccess).filter(
             EventAccess.username == user.username, Event.active.is_(True))
-    pinned = deployment_event_id() if current_app.config.get('OPERATIONAL_EVENT_ID') else None
+    pinned = deployment_event_id() if operational_event_is_pinned() else None
     if pinned is not None:
         authorize_event(pinned)
         query = query.filter(Event.id == pinned)

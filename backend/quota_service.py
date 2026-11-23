@@ -266,13 +266,15 @@ def single_room_usage_by_quota_group(people, single_room_person_ids=(), exempt_p
             for r in evaluate_quota_usage(people, assigned) if r['singleRoomsUsed']}
 
 
-def evaluate_quota_usage(people, assigned_people=(), rules=None):
+def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unallocated=False, include_allocations=False, operational_athletes=None):
     """Return quota rows for a roster and its assigned officials.
 
     ``people`` is the authoritative roster. ``assigned_people`` contains one
     record per assigned official and may carry ``countsAsSingle``. Keeping this
     calculation free of database concerns lets previews project the same rules
     that the disposition applies to persisted records.
+    The optional read envelope retains contextless PENDING results without
+    inventing a quota row; default import and legacy callers still receive rows.
     """
     from quota_rules import evaluation_rules
     rules = evaluation_rules(rules)
@@ -280,12 +282,18 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None):
     if errors:
         raise QuotaGenderValidationError(errors)
     athletes = {}
+    operative_athletes = {}
+    officials = {}
     assigned = {}
     keys = set()
     for person, key in _distinct_memberships(people):
         keys.add(key)
         if (person.get('function') or '').strip().lower() == 'athlete':
             athletes[key] = athletes.get(key, 0) + 1
+            if person.get('accommodationRequirement') != 'NO_DISPO':
+                operative_athletes[key] = operative_athletes.get(key, 0) + 1
+        elif operational_athletes is None or person.get('accommodationRequirement') != 'NO_DISPO':
+            officials[key] = officials.get(key, 0) + 1
     for person, key in _distinct_memberships(assigned_people, people):
         keys.add(key)
         if (person.get('function') or '').strip().lower() != 'athlete':
@@ -294,18 +302,27 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None):
     rows = []
     for nation, discipline, gender in sorted(keys):
         key = (nation, discipline, gender)
-        official_quota = compute_official_quota(athletes.get(key, 0), rules['officials']['allowance'])
+        athlete_basis = athletes.get(key, 0) if operational_athletes is None else operational_athletes.get(key, operative_athletes.get(key, 0))
+        official_quota = compute_official_quota(athlete_basis, rules['officials']['allowance'])
+        single_basis = official_quota if operational_athletes is None else min(officials.get(key, 0), official_quota)
         rows.append({
             'nationCode': nation,
             'discipline': discipline,
             'gender': gender,
             'athletesEntered': athletes.get(key, 0),
             'officialQuota': official_quota,
-            'singleRoomsAllowed': compute_single_room_entitlement(official_quota, rules['singleRooms']),
+            'registeredOfficials': officials.get(key, 0),
+            'officialsDeviation': max(0, officials.get(key, 0)-official_quota),
+            # Official FIS projection stays unchanged. Operational reads explicitly
+            # opt into forecast athletes and the capped, distinct Officials basis.
+            'singleRoomOfficialBasis': single_basis,
+            'singleRoomsAllowed': compute_single_room_entitlement(single_basis, rules['singleRooms']),
             'assignedOfficials': assigned.get(key, 0),
             'singleRoomsUsed': 0,
             'quotaExemptSingleRooms': 0,
         })
+    if operational_athletes is not None:
+        for row in rows:row['expectedAthletes']=operational_athletes.get((row['nationCode'],row['discipline'],row['gender']),operative_athletes.get((row['nationCode'],row['discipline'],row['gender']),0))
     capacities = {(r['nationCode'], r['discipline'], r['gender']): r['singleRoomsAllowed'] for r in rows}
     allocation = allocate_single_rooms(assigned_people, capacities, people)
     for row in rows:
@@ -314,8 +331,15 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None):
         row['singleRoomsUsed'] = sum(p['status'] != 'EXEMPT' for p in routed)
         row['quotaExemptSingleRooms'] = sum(p['status'] == 'EXEMPT' for p in routed)
         row['singleRoomAllocations'] = routed
+        row['singleRoomsRequested'] = len(routed)
         row['singleRoomsCovered'] = sum(p['status'] == 'COVERED' for p in routed)
         row['singleRoomsPending'] = sum(p['status'] == 'PENDING' for p in routed)
+    if include_unallocated or include_allocations:
+        result = {'rows': rows, 'unallocatedSingleRooms': [p for p in allocation
+            if p['status'] == 'PENDING' and p['context'] is None]}
+        if include_allocations:
+            result['singleRoomAllocations'] = allocation
+        return result
     return rows
 
 
