@@ -350,7 +350,7 @@ test('analytics switches between event, saved Excel drafts, imported people and 
      {id:'B',hotel:{id:'h',name:'Test'},roomType,checkInDate:stay.arrivalDate,checkOutDate:stay.departureDate,occupants:[{athlete:{id:'b',nationCode:'CZE'}}]},
    ],
    '/athletes/arrival-planning':{rows:[]},
-   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'},{...stay,matchKey:'p',existingAthleteId:1,roomType:'Double'},{...stay,matchKey:'unknown'}],rooms:[],excludedIds:[],provisional:false}],
+   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'},{...stay,matchKey:'p',existingAthleteId:1,roomType:'Double'},{...stay,matchKey:'unknown'}],rooms:[],excludedIds:[],provisional:false},{nation:'SUI',people:[],rooms:[],excludedIds:[],roomStatus:'zero',provisional:false}],
   };
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{}});
  });
@@ -375,4 +375,15 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  await page.getByText('Risiko über den Zeitraum',{exact:true}).waitFor();
  await page.getByRole('tab',{name:/Nationen & Bedarf/}).click();
  await page.getByRole('heading',{name:'Nationen & Bedarfsstruktur',exact:true}).waitFor();
+ const sources = page.getByRole('group',{name:'Bedarfsquelle'});
+ assert.deepEqual(await sources.getByRole('button').allTextContents(),['Excel','Import','Live']);
+ await sources.getByRole('button',{name:'Excel'}).click();
+ await page.getByText('0 Zimmer gemeldet',{exact:true}).waitFor();
+ await page.getByText('6 Bettennächte',{exact:true}).waitFor();
+ await sources.getByRole('button',{name:'Import'}).click();
+ await page.getByText('2 Bettennächte',{exact:true}).waitFor();
+ assert.equal(await page.getByText('0 Zimmer gemeldet',{exact:true}).count(),0);
+ await sources.getByRole('button',{name:'Live'}).click();
+ await page.getByRole('button',{name:/CZE.*2 Bettennächte/}).waitFor();
+
 });

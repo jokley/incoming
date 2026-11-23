@@ -129,3 +129,22 @@ test('all four sources compare independent demand with the same dated room contr
     }
   }
 });
+
+test('nation live demand follows booking nights and apportions mixed-nation rooms once', async t => {
+  const server = await createServer({ configFile: false, envFile: false, logLevel: 'silent',
+    server: { middlewareMode: true, hmr: false, ws: false, watch: null }, appType: 'custom' });
+  t.after(() => server.close());
+  const { bookedNationDemand } = await server.ssrLoadModule('/src/app/services/planningCalculations.ts');
+  const booking = {
+    id: 'shared', checkInDate: '2027-03-02', checkOutDate: '2027-03-04', roomType: { maxPersons: 2, name: 'DZ' },
+    occupants: [{ athlete: { id: 's', nationCode: 'SUI' } }, { athlete: { id: 'p', nationCode: 'POL' } }],
+  };
+  const later = { ...booking, id: 'later', checkInDate: '2027-03-05', checkOutDate: '2027-03-06',
+    roomType: { maxPersons: 1, name: 'EZ' }, occupants: [booking.occupants[0]] };
+  const [sui, pol] = bookedNationDemand([booking, later, booking]);
+  assert.equal(sui.count, 1);
+  assert.equal(pol.count, 1);
+  assert.deepEqual(sui.days.map(({ beds, ez, dz }: Record<string, number>) => [beds, ez, dz]),
+    [[1, 0, 0.5], [1, 0, 0.5], [0, 0, 0], [1, 1, 0], [0, 0, 0]]);
+  assert.equal(pol.days[0].dz + sui.days[0].dz, 1);
+});
