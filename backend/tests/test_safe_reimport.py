@@ -860,12 +860,18 @@ def test_excel_analytics_reads_current_draft_before_confirm_without_writes(event
     assert staged.status_code == 200, staged.json
     version = db.session.get(ImportSessionVersion, int(draft['session']['currentVersionId']))
     before = version.preview_json
+    db.session.add(ImportSession(event_id=first.id, nation='CZE', status='DRAFT'))
+    db.session.commit()
     with patch.dict(app.config, OPERATIONAL_EVENT_ID=str(other.id)):
         assert client.get('/api/analytics/import-demand').json == []
     response = client.get('/api/analytics/import-demand')
     assert response.status_code == 200, response.json
-    nation, = response.json
-    assert nation['nation'] == 'JPN'
+    nations = {item['nation']: item for item in response.json}
+    assert set(nations) == {'CZE', 'JPN'}
+    assert nations['CZE']['importStatus'] == 'NO_PREVIEW'
+    assert nations['CZE']['provisional'] and nations['CZE']['roomStatus'] == 'missing'
+    nation = nations['JPN']
+    assert nation['importStatus'] != 'IMPORTED'
     people = {p['matchKey']: p for p in nation['people']}
     assert set(people) == {'9300954', '9300955'}
     assert people['9300954']['arrivalDate'] == '2027-03-03'

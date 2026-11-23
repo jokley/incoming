@@ -320,3 +320,27 @@ def test_history_cleanup_preserves_evidence_even_with_second_event(events,monkey
     assert response.json['counts']['workflowEvents']==0
     from models import Event
     assert Event.query.count()==2
+
+
+def test_deleting_last_contingent_keeps_global_hotel_and_both_events_bookings(inventory, monkeypatch):
+    a, b, hotel, _, _, bookings, invs = inventory
+    client = app.test_client()
+    hotel_before = snapshot(Hotel, id=hotel.id)
+    bookings_before = snapshot(RoomBooking)
+    occupants_before = snapshot(RoomBookingOccupant)
+    foreign_inventory = snapshot(HotelRoomInventory, event_id=b.id)
+    owned = client.get(f'/api/hotels/{hotel.id}')
+    assert owned.status_code == 200
+    assert len(owned.json['roomInventories']) == 1
+    assert client.delete(f'/api/hotels/{hotel.id}/inventory/{invs[0].id}').status_code == 204
+    for owner, expected_inventory, booking in ((a, [], bookings[0]), (b, [str(invs[1].id)], bookings[1])):
+        monkeypatch.setitem(app.config, 'OPERATIONAL_EVENT_ID', str(owner.id))
+        response = client.get('/api/hotels')
+        assert response.status_code == 200
+        summary = next(row for row in response.json if row['id'] == str(hotel.id))
+        assert [row['id'] for row in summary['roomInventories']] == expected_inventory
+        assert [row['id'] for row in client.get('/api/room-bookings/grouped').json] == [str(booking.id)]
+    assert snapshot(Hotel, id=hotel.id) == hotel_before
+    assert snapshot(HotelRoomInventory, event_id=b.id) == foreign_inventory
+    assert snapshot(RoomBooking) == bookings_before
+    assert snapshot(RoomBookingOccupant) == occupants_before
