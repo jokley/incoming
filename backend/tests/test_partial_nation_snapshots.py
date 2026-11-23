@@ -514,3 +514,18 @@ def test_nn_preview_uses_effective_partial_roster_and_preserves_foreign_forecast
     run(incoming,owner)
     assert AthleteArrivalForecast.query.one().id==identity
     assert AthleteArrivalForecast.query.one().expected_total==1 and AthleteArrivalForecast.query.one().revision==1
+
+
+def test_excel_analytics_combines_current_family_heads_only(owner):
+    initial = upload(owner, 'SB')
+    upload(owner, 'FS', session_id=initial['session']['id'])
+    upload(owner, 'SB', data=rows('SB')[1:], session_id=initial['session']['id'])
+    response = app.test_client().get('/api/analytics/import-demand')
+    assert response.status_code == 200, response.json
+    nation, = response.json
+    assert nation['nation'] == 'ARG'
+    assert not nation.get('conflict')
+    expected = {row['Fiscode'] for row in rows('SB')[1:] + rows('FS')}
+    assert {p['matchKey'] for p in nation['people']} == expected
+    assert len(nation['people']) == len(expected)
+    assert Athlete.query.count() == 0

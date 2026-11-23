@@ -67,7 +67,7 @@ def submission_summary(session):
     return result
 
 
-def merge_submission_previews(versions, *, consistency_only=False, read_context=None):
+def merge_submission_previews(versions, *, consistency_only=False, read_context=None, read_only=False):
     """Compose parsed sources; reuse the existing exact identity matcher.
 
     No live writes, quota decisions or date/room guessing happen here. Source
@@ -88,7 +88,11 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     from .official_links import source_view, proposals, issue_proposal
     for version,source in sources:
         candidates=proposals(source.get('people',[]),(source.get('replacementScope') or {}).get('family'),version.session,context)
-        if candidates:issue_proposal(version.session,candidates)
+        if candidates:
+            if read_only:
+                raise ImportValidationError('OFFICIAL_IDENTITY_REVIEW_REQUIRED',
+                    'Mögliche identische Officials benötigen eine geprüfte Zuordnung.')
+            issue_proposal(version.session,candidates)
     sources=[(v,source_view(s,(s.get('replacementScope') or {}).get('family'),context)) for v,s in sources]
     shared_issues=[]
     imported=imported_submission_ids(versions[0].session)

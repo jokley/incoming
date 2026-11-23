@@ -1,15 +1,18 @@
 import type { AssignmentSlot, RoomBookingUnit, RoomBookingUnitOccupant } from '../types.ts';
 
+export function explicitRoomRequest(roomType?: string | null): string {
+  const request = roomType?.trim() ?? '';
+  const value = request.toLowerCase();
+  if (value.includes('single') || value.startsWith('ez') || value.startsWith('sr')) return 'EZ';
+  if (value.includes('double') || value.startsWith('dz')) return 'DZ';
+  return request;
+}
+
 /** Display only: person room request from the canonical planning projection.
  * Never infer a request from assigned capacity, tariff or quota status. */
 export function queueRoomRequest(person:Pick<RoomBookingUnitOccupant,'roomType'>, unit:Pick<RoomBookingUnit,'roomType'|'roomTypeLabel'|'roomCategoryLabel'>):string {
-  const request=person.roomType?.trim();
-  if(request) {
-    const value=request.toLowerCase();
-    if(value.includes('single') || value.startsWith('ez') || value.startsWith('sr'))return 'EZ';
-    if(value.includes('double') || value.startsWith('dz'))return 'DZ';
-    return request;
-  }
+  const request=explicitRoomRequest(person.roomType);
+  if(request)return request;
   if(unit.roomCategoryLabel==='ez' || unit.roomTypeLabel==='single')return 'EZ';
   if(unit.roomCategoryLabel==='dz' || unit.roomTypeLabel==='double')return 'DZ';
   return unit.roomType || '—';
