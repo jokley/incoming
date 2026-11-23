@@ -8,6 +8,14 @@ from accommodation_mutations import physical_room_usage
 from accommodation_defaults import default_counts_as_single
 
 
+NO_SINGLE_CONTINGENT = ('NO_KONTINGENT', 'Kein einzelnes Kontingent deckt den gesamten Aufenthalt ab. '
+                        'Bitte einen passenden Zeitraum oder getrennte Aufenthaltssegmente wählen.')
+
+
+def inventory_covers(inventory, start, end):
+    return bool(start and end and inventory.available_from <= start < end <= inventory.available_until)
+
+
 def inventory_guard(inventories, bookings, start, end):
     overlapping = [b for b in bookings if booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end)]
     # Compare supply and use over the same interval. A later contingent must
@@ -57,15 +65,17 @@ def load_context():
         for inventory in hotel.room_inventories:
             inventories.append(inventory)
             by_type.setdefault(inventory.room_type_id, []).append(inventory)
+        room_types = {rows[0].room_type_id: rows[0].room_type for rows in by_type.values()}
+        room_types.update({b.room_type_id: b.room_type for b in bookings if b.hotel_id == hotel.id and b.room_type})
         sections.append({'hotelId':str(hotel.id),'accommodationType':hotel.accommodation_type,
             'slots':[] if hotel.accommodation_type == 'EXTERNAL' else [slot
-                for rows in by_type.values()
-                for slot in _build_virtual_slots(hotel,rows[0].room_type,rows,bookings)]})
+                for type_id, room_type in room_types.items()
+                for slot in _build_virtual_slots(hotel,room_type,by_type.get(type_id,[]),bookings)]})
     return {'units':{'assigned':[],'unassigned':[{'occupants':occupants}]},'hotels':sections}, (inventories,bookings)
 
 
 def project(planning, needs, population_ids, loaded=None):
-    from app import _room_type_label, _planned_room_key
+    from app import _room_type_label, _planned_room_key, _inventory_room_coordinates
     from models import HotelRoomInventory, RoomBooking, db
     inventories, bookings = loaded if loaded is not None else (
         event_query(HotelRoomInventory).all(),
@@ -98,16 +108,32 @@ def project(planning, needs, population_ids, loaded=None):
     slot_booking_ids = {slot['slotId']: {str(b['bookingId'] if isinstance(b, dict) else b.id)
         for b in slot['bookings']} for hotel in planning['hotels'] for slot in hotel['slots']}
 
+    booking_inventory = {identity: slot['inventoryId']
+        for hotel in planning['hotels'] for slot in hotel['slots']
+        for identity in slot_booking_ids[slot['slotId']]}
+    inventories_by_id = {str(row.id): row for row in inventories}
+
     def belongs_to_slot(booking, slot):
         return (str(booking.id) in slot_booking_ids[slot['slotId']]
-            or (_planned_room_key(booking.room_number) or booking.room_number) == slot['roomNumber'])
+            or (booking.id < 0 and booking.room_number == slot['roomNumber']))
 
-    guard_cache={}
+    guard_cache = {}
 
-    def cached_guard(key, rows, start, end, excluded=None, extra=()):
-        cache_key=(key,start,end,excluded,tuple((b.id,b.room_number,b.check_in_date,b.check_out_date) for b in extra))
+    def cached_guard(key, slot, rows, start, end, excluded=None, extra=()):
+        inventory_id = slot['inventoryId']
+        inventory = inventories_by_id.get(inventory_id)
+        cache_key = (key, inventory_id, start, end, excluded,
+                     tuple((b.id,b.room_number,b.check_in_date,b.check_out_date) for b in extra))
         if cache_key not in guard_cache:
-            guard_cache[cache_key]=inventory_guard(inv_index.get(key,[]),rows,start,end)
+            failure = inventory_guard(inv_index.get(key, []), rows, start, end)
+            if not failure:
+                if inventory and inventory_covers(inventory, start, end):
+                    assigned = [b for b in rows if booking_inventory.get(str(b.id)) in (None, inventory_id)
+                        and (b.id >= 0 or _inventory_room_coordinates(b.room_number)[0] == inventory.id)]
+                    failure = inventory_guard([inventory], assigned, start, end)
+                else:
+                    failure = NO_SINGLE_CONTINGENT
+            guard_cache[cache_key] = failure
         return guard_cache[cache_key]
 
     def eligibility(hotel, slot, ids, start, end, valid, extra):
@@ -126,7 +152,7 @@ def project(planning, needs, population_ids, loaded=None):
             return 'Zimmer passt nicht zum Zimmerwunsch.'
         key = (hotel['hotelId'], slot['roomTypeId'])
         rows = booking_index.get(key, []) + extra
-        failure = cached_guard(key, rows, start, end, extra=extra)
+        failure = cached_guard(key, slot, rows, start, end, extra=extra)
         if failure:
             return failure[1]
         if any(belongs_to_slot(b, slot) and booking_intervals_overlap(b.check_in_date, b.check_out_date, start, end) for b in rows):
@@ -143,7 +169,7 @@ def project(planning, needs, population_ids, loaded=None):
         if len(booking.occupants) + len(ids) > slot['capacity']:
             return f"Nur {max(0,slot['capacity']-len(booking.occupants))} Platz verfügbar."
         rows = [b for b in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]) if b.id != booking.id] + extra
-        failure = cached_guard((hotel['hotelId'],slot['roomTypeId']),rows,start,end,excluded=booking.id,extra=extra)
+        failure = cached_guard((hotel['hotelId'],slot['roomTypeId']),slot,rows,start,end,excluded=booking.id,extra=extra)
         if failure:
             return failure[1]
         if any((_planned_room_key(b.room_number) or b.room_number)==(_planned_room_key(booking.room_number) or booking.room_number) and booking_intervals_overlap(b.check_in_date,b.check_out_date,start,end) for b in rows):

@@ -6,7 +6,7 @@ import { filterQueuePersonType, type QueuePersonType } from '../services/queuePe
 import { QuotaPersonGroups } from './assignment/QuotaPersonGroups';
 import { ExternalStayDialog, type ExternalStayTarget } from './assignment/ExternalStayDialog';
 import { periodLabel } from '../services/dispositionItems';
-import { slotPersonCount, slotOperationalUsed, bookingFreeCapacity } from '../services/assignmentRoomUsage';
+import { assignmentCapacityPeak, bookingFreeCapacity } from '../services/assignmentRoomUsage';
 import {hotelFitLabel,queueDemandSummary,matchesHotelFit,compareHotelFit,type HotelFit} from '../services/assignmentSuitability';
 import { DispositionDragContext } from './assignment/DispositionDragContext';
 import { DispositionQueueCard,PlanningClarification } from './assignment/DispositionQueueCard';
@@ -224,7 +224,7 @@ export function Assignments() {
 
   useEffect(() => {
     if (!requestedRoomTypeId || !planning || !activeHotelId) return;
-    const frame = window.requestAnimationFrame(() => document.getElementById(`room-group-${requestedRoomTypeId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
+    const frame = window.requestAnimationFrame(() => Array.from(document.querySelectorAll<HTMLElement>('[data-room-type-group]')).find(row => row.dataset.roomTypeGroup === requestedRoomTypeId)?.scrollIntoView({ behavior: 'smooth', block: 'center' }));
     return () => window.cancelAnimationFrame(frame);
   }, [activeHotelId, planning, requestedRoomTypeId]);
 
@@ -555,35 +555,6 @@ export function Assignments() {
     await assignUnitToSlot(unitId, validSlot, athleteIds);
   };
 
-  const handleAssignToRoomType = async (unitId: string, hotelId: string, roomTypeId: string, athleteIds?: string[]) => {
-    if (!permissions.canManageAssignments) {
-      setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
-      return;
-    }
-    let validations: AssignmentValidationResult[];
-    const targetGeneration=validationGenerationRef.current;
-    try {
-      validations = await ensureAssignmentValidations(unitId, athleteIds,undefined);
-    } catch (err) {
-      setError(extractErrorMessage(err, 'Zimmerprüfung konnte nicht geladen werden.'));
-      return;
-    }
-    if(targetGeneration!==validationGenerationRef.current) return;
-    const slot = findFirstValidSlotForRoomType(validations, allHotels, hotelId, roomTypeId);
-    const joins=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.filter(slot=>slot.roomTypeId===roomTypeId).flatMap(slot=>slot.bookings).filter(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked')) ?? [];
-    const unit=unitById.get(unitId);
-    const sharedRequest=unit?.occupants.filter(person=>!athleteIds?.length || athleteIds.includes(person.athleteId)).every(person=>queueRoomRequest(person,unit)==='DZ');
-    // Fill a unique shared-room target instead of creating another booking.
-    // Otherwise keep the existing free-room / join fallback; explicit drops remain unrestricted by wishes.
-    const join=(!slot || (sharedRequest && joins.length===1)) ? joins[0] : undefined;
-    if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
-    if (!slot) {
-      setError('Für diesen Zimmertyp gibt es kein gültiges freies Zimmer.');
-      return;
-    }
-    await assignUnitToSlot(unitId, slot, athleteIds);
-  };
-
   const assignUnitToSlot = async (unitId: string, slot: AssignmentSlot, athleteIds?: string[]) => {
     if (!permissions.canManageAssignments) {
       setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
@@ -599,7 +570,7 @@ export function Assignments() {
       setSaving(true);
       setError(null);
       await api.addAccommodationSegments({
-        hotelId:slot.hotelId,roomTypeId:slot.roomTypeId,roomNumber:slot.roomNumber || undefined,
+        hotelId:slot.hotelId,roomTypeId:slot.roomTypeId,inventoryId:slot.inventoryId ?? undefined,roomNumber:slot.roomNumber || undefined,
         checkInDate:target.checkInDate!,checkOutDate:target.checkOutDate!,athleteIds:normalizedAthleteIds,
       });
       setDragging(null);
@@ -872,7 +843,6 @@ export function Assignments() {
                   onDropHotel={(hotelId) => permissions.canManageAssignments && focusedNeed && void handleAssignToHotel(focusedNeed!.unitId, hotelId, focusedNeed!.athleteIds)}
                   onDragOverRoomType={(roomTypeKey) => setDragOverRoomTypeKey(roomTypeKey)}
                   onDragLeaveRoomType={() => setDragOverRoomTypeKey(null)}
-                  onDropRoomType={(hotelId, roomTypeId) => permissions.canManageAssignments && focusedNeed && void handleAssignToRoomType(focusedNeed!.unitId, hotelId, roomTypeId, focusedNeed!.athleteIds)}
                   dragOverBookingId={dragOverBookingId}
                   onDragOverBooking={(bookingId) => setDragOverBookingId(bookingId)}
                   onDragLeaveBooking={() => setDragOverBookingId(null)}
@@ -1367,7 +1337,6 @@ function DispatchWorkspace({
   onDropHotel,
   onDragOverRoomType,
   onDragLeaveRoomType,
-  onDropRoomType,
   onDragOverBooking,
   onDragLeaveBooking,
   onDropBooking,
@@ -1398,7 +1367,6 @@ function DispatchWorkspace({
   onDropHotel: (hotelId: string) => void;
   onDragOverRoomType: (roomTypeKey: string) => void;
   onDragLeaveRoomType: () => void;
-  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
   onDragOverBooking: (bookingId: string) => void;
   onDragLeaveBooking: () => void;
   onDropBooking: (booking: AssignmentGridBooking) => void;
@@ -1433,7 +1401,6 @@ function DispatchWorkspace({
           onDropHotel={onDropHotel}
           onDragOverRoomType={onDragOverRoomType}
           onDragLeaveRoomType={onDragLeaveRoomType}
-          onDropRoomType={onDropRoomType}
           onDragOverBooking={onDragOverBooking}
           onDragLeaveBooking={onDragLeaveBooking}
           onDropBooking={onDropBooking}
@@ -1470,7 +1437,6 @@ function HotelGridOrDetail({
   onDropHotel,
   onDragOverRoomType,
   onDragLeaveRoomType,
-  onDropRoomType,
   onDragOverBooking,
   onDragLeaveBooking,
   onDropBooking,
@@ -1501,7 +1467,6 @@ function HotelGridOrDetail({
   onDropHotel: (hotelId: string) => void;
   onDragOverRoomType: (roomTypeKey: string) => void;
   onDragLeaveRoomType: () => void;
-  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
   onDragOverBooking: (bookingId: string) => void;
   onDragLeaveBooking: () => void;
   onDropBooking: (booking: AssignmentGridBooking) => void;
@@ -1553,7 +1518,6 @@ function HotelGridOrDetail({
             dragOverBookingId={dragOverBookingId}
             onDragOverRoomType={onDragOverRoomType}
             onDragLeaveRoomType={onDragLeaveRoomType}
-            onDropRoomType={onDropRoomType}
             onDragOverBooking={onDragOverBooking}
             onDragLeaveBooking={onDragLeaveBooking}
             onDropBooking={onDropBooking}
@@ -1608,8 +1572,7 @@ function HotelGridView({
   onDropHotel: (hotelId: string) => void;
   pendingHotelId: string | null;
 }) {
-  const usedBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slotPersonCount(slot), 0), 0);
-  const totalBeds = hotels.reduce((sum, hotel) => sum + hotel.slots.reduce((slotSum, slot) => slotSum + slot.capacity, 0), 0);
+  const {usedBeds, totalBeds, date: peakDay} = useMemo(() => assignmentCapacityPeak(hotels.flatMap(hotel => hotel.slots)), [hotels]);
 
   return (
     <div className="flex h-full flex-col">
@@ -1635,7 +1598,7 @@ function HotelGridView({
         </div>
         <div className="ml-auto flex items-center gap-3 text-xs">
           <span className="font-mono text-[var(--ops-assignment-text-body)]">
-            <strong className="text-[var(--ops-assignment-text-bright)]">{usedBeds}</strong> / {totalBeds} Betten
+            <strong className="text-[var(--ops-assignment-text-bright)]">{usedBeds}</strong> / {totalBeds} Betten {peakDay && `· ${formatShortDate(peakDay)}`}
           </span>
           <div className="w-24">
             <CapacityBar pct={totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0} />
@@ -1691,9 +1654,9 @@ function HotelCard({
 }) {
   const {fits,validations}=useContext(DispositionDragContext);
   const fit=fits?.[hotel.hotelId];
-  const totals = summarizeHotel(hotel);
+  const totals = useMemo(() => summarizeHotel(hotel), [hotel]);
   const regionColor = REGION_COLORS[hotel.region || ''] || 'var(--ops-primary)';
-  const contingentRange = getHotelContingentRange(hotel);
+  const contingentRange = contingentPeriodLabel(hotel.slots);
 
   return (
     <div
@@ -1748,8 +1711,8 @@ function HotelCard({
           </div>
           <CapacityBar pct={totals.percent} className="h-1.5" />
           <div className="mt-1.5 flex items-center justify-between text-[9px] text-[var(--ops-assignment-text-muted)]">
-            <span>{totals.usedRooms} Zimmer belegt</span>
-            <span>{totals.totalRooms - totals.usedRooms} frei</span>
+            <span>{totals.usedRooms} Zimmer belegt {totals.date && `· ${formatShortDate(totals.date)}`}</span>
+            <span>{totals.remainingRooms} frei</span>
           </div>
         </div>
 
@@ -1758,7 +1721,7 @@ function HotelCard({
             <div key={row.roomTypeId}>
               <div className="mb-1 flex items-center justify-between gap-2 text-[9px]">
                 <span className="truncate text-[10px] font-bold text-[var(--ops-text-subtle)]">{row.roomTypeName}</span>
-                <span className="whitespace-nowrap font-mono text-[10px] font-bold text-[var(--ops-text)]">{row.usedBeds} / {row.totalBeds} belegt</span>
+                <span className="whitespace-nowrap font-mono text-[10px] font-bold text-[var(--ops-text)]">{row.usedBeds} / {row.totalBeds} belegt {row.date && `· ${formatShortDate(row.date)}`}</span>
               </div>
               <CapacityBar pct={row.totalBeds > 0 ? Math.round((row.usedBeds / row.totalBeds) * 100) : 0} className="h-1" />
               <div className="mt-1 text-right text-[9px] font-bold text-[var(--ops-success)]">{Math.max(0, row.totalBeds - row.operationalUsed)} frei</div>
@@ -1785,7 +1748,6 @@ function HotelDetailView({
   dragOverBookingId,
   onDragOverRoomType,
   onDragLeaveRoomType,
-  onDropRoomType,
   onDragOverBooking,
   onDragLeaveBooking,
   onDropBooking,
@@ -1801,7 +1763,6 @@ function HotelDetailView({
   dragOverBookingId: string | null;
   onDragOverRoomType: (roomTypeKey: string) => void;
   onDragLeaveRoomType: () => void;
-  onDropRoomType: (hotelId: string, roomTypeId: string) => void;
   onDragOverBooking: (bookingId: string) => void;
   onDragLeaveBooking: () => void;
   onDropBooking: (booking: AssignmentGridBooking) => void;
@@ -1814,13 +1775,14 @@ function HotelDetailView({
   const grouped = useMemo(() => {
     const map = new Map<string, AssignmentSlot[]>();
     for (const slot of hotel.slots) {
-      const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
+      const key = slot.inventoryId ?? `legacy-${slot.roomTypeId}`;
       if (!map.has(key)) map.set(key, []);
       map.get(key)!.push(slot);
     }
     return Array.from(map.entries()).map(([key, slots]) => ({
-      roomTypeId: key.split('|')[0],
-      roomTypeName: key.split('|')[1],
+      key, inventoryId: slots[0].inventoryId,
+      roomTypeId: slots[0].roomTypeId,
+      roomTypeName: slots[0].roomTypeName,
       slots:stableRoomSlots(slots),
     }));
   }, [hotel.slots]);
@@ -1831,8 +1793,8 @@ function HotelDetailView({
 
   const {fits}=useContext(DispositionDragContext);
   const fit=fits?.[hotel.hotelId];
-  const totals = summarizeHotel(hotel);
-  const contingentRange = getHotelContingentRange(hotel);
+  const totals = useMemo(() => summarizeHotel(hotel), [hotel]);
+  const contingentRange = contingentPeriodLabel(hotel.slots);
 
   return (
     <div className="flex h-full flex-col">
@@ -1862,7 +1824,7 @@ function HotelDetailView({
                 {totals.usedBeds}
                 <span className="text-sm text-[var(--ops-assignment-text-faint)]">/{totals.totalBeds}</span>
               </div>
-              <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">belegte Betten</div>
+              <div className="text-[10px] uppercase tracking-wide text-[var(--ops-assignment-text-muted)]">belegte Betten {totals.date && `· ${formatShortDate(totals.date)}`}</div>
             </div>
             <div className="w-24">
               <CapacityBar pct={totals.percent} />
@@ -1875,12 +1837,13 @@ function HotelDetailView({
         <div className="space-y-2.5">
           {grouped.map((group) => {
             const summary = summarizeRoomType(group.slots);
-            const isOpen = openRoomTypes[group.roomTypeId] ?? true;
+            const isOpen = openRoomTypes[group.key] ?? true;
 
             return (
-              <div id={`room-group-${group.roomTypeId}`} key={group.roomTypeId} className="scroll-mt-4 overflow-hidden rounded-2xl border border-[var(--ops-border)]">
+              <div data-room-type-group={group.roomTypeId} key={group.key} className="scroll-mt-4 overflow-hidden rounded-2xl border border-[var(--ops-border)]">
                 <button
-                  onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.roomTypeId]: !isOpen }))}
+                  aria-expanded={isOpen}
+                  onClick={() => setOpenRoomTypes((current) => ({ ...current, [group.key]: !isOpen }))}
                   className="flex w-full items-center gap-3 bg-[var(--ops-surface-overlay)] px-3 py-2.5 text-left hover:bg-[var(--ops-surface-overlay)]"
                 >
                   <ChevronDown className={`h-4 w-4 text-[var(--ops-assignment-text-faint)] transition-transform ${isOpen ? '' : '-rotate-90'}`} />
@@ -1894,14 +1857,14 @@ function HotelDetailView({
                     <div className="mt-0.5 text-xs font-mono text-[var(--ops-assignment-text-muted)]">
                       {summary.usedRooms}/{summary.totalRooms} Zimmer · {summary.usedBeds}/{summary.totalBeds} Betten
                     </div>
-                    <div className="mt-0.5 text-[11px] text-[var(--ops-assignment-text-muted)]">{contingentPeriodLabel(group.slots)}</div>
+                    <div className="mt-0.5 text-[11px] text-[var(--ops-assignment-text-muted)]">{group.inventoryId === null ? 'Bestehende Buchungen ohne eindeutige Kontingentdeckung' : contingentPeriodLabel(group.slots)}</div>
                   </div>
                   <div className="w-32">
                     <CapacityBar pct={summary.percent} />
                   </div>
                 </button>
 
-                {isOpen && contingentComments(hotel,group.roomTypeId).length>0 && <div className="grid gap-3 border-t border-[var(--ops-divider)] px-3 py-2 sm:grid-cols-2">{contingentComments(hotel,group.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
+                {isOpen && contingentComments(hotel,group.roomTypeId,group.inventoryId).length>0 && <div className="grid gap-3 border-t border-[var(--ops-divider)] px-3 py-2 sm:grid-cols-2">{contingentComments(hotel,group.roomTypeId,group.inventoryId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
                 {isOpen && (
                   <div className="grid auto-rows-fr grid-cols-1 gap-2 bg-[var(--ops-surface-elevated)] p-2 2xl:grid-cols-2">
                     {group.slots.map((slot,index)=>{
@@ -1949,11 +1912,11 @@ function HotelDetailView({
                         {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[var(--ops-surface)]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
                         <div className="flex min-w-0 flex-1 items-start gap-3">
                           <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
-                            {entry.slot.roomNumber || `#${index + 1}`}
+                            {entry.slot.roomLabel || entry.slot.roomNumber || `#${index + 1}`}
                           </span>
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
-                              {entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`} · {intervalLabel({checkInDate:entry.booking.checkInDate ?? null,checkOutDate:entry.booking.checkOutDate ?? null})}
+                              {entry.slot.roomLabel || entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`} · {intervalLabel({checkInDate:entry.booking.checkInDate ?? null,checkOutDate:entry.booking.checkOutDate ?? null})}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
                               <><span className={`rounded-md px-1.5 py-0.5 font-bold ${bookingFreeCapacity(entry.booking)>0 ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
@@ -2011,7 +1974,7 @@ function HotelDetailView({
                             : 'border-[var(--ops-border-strong)] bg-[var(--ops-surface-overlay)] text-[var(--ops-assignment-text-body)]'
                         }`}
                       >
-                        <div className="text-[11px] font-semibold">{slot.roomNumber || `Zimmer ${slot.slotIndex}`}</div>
+                        <div className="text-[11px] font-semibold">{slot.roomLabel || slot.roomNumber || `Zimmer ${slot.slotIndex}`}</div>
                         <div className="text-sm font-extrabold">
                           {draggingUnitId && !canDrop ? (slotValidation?.messages[0] ?? 'Verfügbarkeit wird geprüft …') : dragOverRoomTypeKey === roomTargetKey
                             ? 'Loslassen, um neue Zuweisung anzulegen'
@@ -2513,7 +2476,7 @@ function DetailPanel({
                 <div className="mt-1 text-xs text-[var(--ops-text-muted)]">{hotel.location || '—'}</div>
               </div>
               <div className="shrink-0 text-right">
-                <div className="text-xs font-bold text-[var(--ops-text)]">{slot.roomNumber || `Zimmer ${String(slot.slotIndex).padStart(2, '0')}`}</div>
+                <div className="text-xs font-bold text-[var(--ops-text)]">{slot.roomLabel || slot.roomNumber || `Zimmer ${String(slot.slotIndex).padStart(2, '0')}`}</div>
                 <div className="mt-1 text-[10px] font-semibold text-[var(--ops-text-muted)]">{slot.roomTypeName} · {booking.occupants.length} / {booking.capacity || 0} belegt</div>
               </div>
             </div>
@@ -2521,7 +2484,7 @@ function DetailPanel({
               <span className="font-semibold text-[var(--ops-text-muted)]">Hotelkontingent</span>
               <span className="font-mono font-bold text-[var(--ops-text)]">{formatShortDate(slot.dateCoverage.availableFrom)} – {formatShortDate(slot.dateCoverage.availableUntil)}</span>
             </div>
-            {(visibleAssignmentComment(hotel.comment) || contingentComments(hotel,slot.roomTypeId).length>0) && <div className="mt-2 grid gap-2 border-t border-[var(--ops-divider)] pt-2"><AssignmentComment label="Hotelkommentar" comment={hotel.comment}/>{contingentComments(hotel,slot.roomTypeId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
+            {(visibleAssignmentComment(hotel.comment) || contingentComments(hotel,slot.roomTypeId,slot.inventoryId).length>0) && <div className="mt-2 grid gap-2 border-t border-[var(--ops-divider)] pt-2"><AssignmentComment label="Hotelkommentar" comment={hotel.comment}/>{contingentComments(hotel,slot.roomTypeId,slot.inventoryId).map(item=><AssignmentComment key={item.id} label={`Kontingentkommentar · ${formatShortDate(item.availableFrom)} – ${formatShortDate(item.availableUntil)}`} comment={item.comment}/>)}</div>}
             <ContingentConflict arrival={booking.checkInDate} departure={booking.checkOutDate} availableFrom={slot.dateCoverage.availableFrom} availableUntil={slot.dateCoverage.availableUntil}/>
           </div>
         </DetailSection>
@@ -2548,9 +2511,10 @@ function DetailPanel({
 
   const pendingChanges = Array.from(new Set(selectedUnit.occupants.filter((occ) => occ.hasPendingReview).flatMap((occ) => occ.importChangeTypes)));
   const assignedHotel = hotels.find(hotel => hotel.hotelId === (selectedAssignedUnit?.assignedHotelId || selectedUnit.assignedHotelId));
-  const assignedSlots = assignedHotel?.slots.filter(slot => !selectedUnit.assignedRoomTypeId || slot.roomTypeId === selectedUnit.assignedRoomTypeId) || [];
-  const availableFrom = assignedSlots.map(slot => slot.dateCoverage.availableFrom).filter((value): value is string => Boolean(value)).sort()[0];
-  const availableUntil = assignedSlots.map(slot => slot.dateCoverage.availableUntil).filter((value): value is string => Boolean(value)).sort().at(-1);
+  const bookingId = selectedAssignedUnit?.assignedBookingId ?? selectedUnit.assignedBookingId;
+  const assignedSlot = assignedHotel?.slots.find(slot => slot.bookings.some(booking => booking.bookingId === bookingId));
+  const {availableFrom, availableUntil} = assignedSlot?.dateCoverage ?? {};
+
 
   return (
     <div className="flex h-full flex-col overflow-y-auto">
@@ -2951,81 +2915,31 @@ function assignmentHotelOperationalState(hotel: AssignmentGridHotel):Operational
 }
 
 function summarizeHotel(hotel: AssignmentGridHotel) {
-  const roomTypeMap = new Map<string, { roomTypeId: string; roomTypeName: string; usedBeds: number; operationalUsed:number; totalBeds: number; capacity: number }>();
-  let usedBeds = 0;
-  let operationalUsed=0;
-  let totalBeds = 0;
-  let usedRooms = 0;
-
+  const byType = new Map<string, AssignmentSlot[]>();
   for (const slot of hotel.slots) {
-    const key = `${slot.roomTypeId}|${slot.roomTypeName}`;
-    const slotUsedBeds = slotPersonCount(slot);
-    usedBeds += slotUsedBeds;
-    operationalUsed+=slotOperationalUsed(slot);
-    totalBeds += slot.capacity;
-    if (slot.bookings.length > 0) usedRooms += 1;
-
-    if (!roomTypeMap.has(key)) {
-      roomTypeMap.set(key, {
-        roomTypeId: slot.roomTypeId,
-        roomTypeName: slot.roomTypeName,
-        usedBeds: 0,
-        operationalUsed:0,
-        totalBeds: 0,
-        capacity: slot.capacity,
-      });
-    }
-
-    const current = roomTypeMap.get(key)!;
-    current.usedBeds += slotUsedBeds;
-    current.operationalUsed+=slotOperationalUsed(slot);
-    current.totalBeds += slot.capacity;
+    const slots = byType.get(slot.roomTypeId) ?? [];
+    slots.push(slot);
+    byType.set(slot.roomTypeId, slots);
   }
-
-  const starts = hotel.slots.map((slot) => slot.dateCoverage.availableFrom).filter(Boolean) as string[];
-  const ends = hotel.slots.map((slot) => slot.dateCoverage.availableUntil).filter(Boolean) as string[];
-  const days = starts.length && ends.length
-    ? Math.max(1, differenceInDays(starts.sort()[0], ends.sort()[ends.length - 1]))
-    : 0;
-
+  const summary = summarizeRoomType(hotel.slots);
   return {
-    usedBeds,
-    operationalUsed,
-    totalBeds,
-    usedRooms,
-    totalRooms: hotel.slots.length,
-    percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
-    days,
-    roomTypes: Array.from(roomTypeMap.values()),
+    ...summary,
+    roomTypes: [...byType.values()].map(slots => ({
+      roomTypeId: slots[0].roomTypeId,
+      roomTypeName: slots[0].roomTypeName,
+      ...summarizeRoomType(slots),
+    })),
   };
 }
 
 function summarizeRoomType(slots: AssignmentSlot[]) {
-  const totalRooms = slots.length;
-  const totalBeds = slots.reduce((sum, slot) => sum + slot.capacity, 0);
-  const usedRooms = slots.filter((slot) => slot.bookings.length > 0).length;
-  const usedBeds = slots.reduce((sum, slot) => sum + slotPersonCount(slot), 0);
+  const peak = assignmentCapacityPeak(slots);
   return {
-    totalRooms,
-    remainingRooms: Math.max(0, totalRooms - usedRooms),
-    totalBeds,
-    usedRooms,
-    usedBeds,
-    percent: totalBeds > 0 ? Math.round((usedBeds / totalBeds) * 100) : 0,
+    ...peak,
+    remainingRooms: Math.max(0, peak.totalRooms - peak.usedRooms),
+    percent: peak.totalBeds > 0 ? Math.min(100, Math.round((peak.usedBeds / peak.totalBeds) * 100)) : 0,
     capacityPerRoom: slots[0]?.capacity || 0,
   };
-}
-
-function getHotelContingentRange(hotel: AssignmentGridHotel) {
-  const starts = hotel.slots.map((slot) => slot.dateCoverage.availableFrom).filter((date): date is string => Boolean(date)).sort();
-  const ends = hotel.slots.map((slot) => slot.dateCoverage.availableUntil).filter((date): date is string => Boolean(date)).sort();
-  if (!starts.length || !ends.length) return 'Zeitraum nicht hinterlegt';
-  return `${formatGermanDate(starts[0])} – ${formatGermanDate(ends[ends.length - 1])}`;
-}
-
-function formatGermanDate(value: string) {
-  const [year, month, day] = value.slice(0, 10).split('-');
-  return day && month && year ? `${day}.${month}.${year}` : value;
 }
 
 function hotelHasValidDrop(validations: AssignmentValidationResult[], hotel: AssignmentGridHotel) {
@@ -3042,26 +2956,11 @@ function findFirstValidSlot(validations: AssignmentValidationResult[], hotels: A
   return null;
 }
 
-function findFirstValidSlotForRoomType(validations: AssignmentValidationResult[], hotels: AssignmentGridHotel[], hotelId: string, roomTypeId: string) {
-  const hotel = hotels.find((item) => item.hotelId === hotelId);
-  if (!hotel) return null;
-  for (const slot of hotel.slots.filter((entry) => entry.roomTypeId === roomTypeId)) {
-    const result = validations.find((entry) => entry.slotId === slot.slotId);
-    if (result && result.status !== 'blocked') return slot;
-  }
-  return null;
-}
-
 function findAssignedUnitForBooking(bookingId: string, assignedUnits: RoomBookingUnit[]) {
   return assignedUnits.find((unit) => unit.assignedBookingId === bookingId) ?? null;
 }
 
-function differenceInDays(start: string, end: string) {
-  const startDate = new Date(start);
-  const endDate = new Date(end);
-  const diff = endDate.getTime() - startDate.getTime();
-  return Math.max(0, Math.round(diff / (1000 * 60 * 60 * 24)));
-}
+
 
 function extractErrorMessage(error: unknown, fallback: string) {
   if (error instanceof Error && error.message) return error.message;

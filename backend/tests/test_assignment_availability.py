@@ -83,8 +83,10 @@ def test_multi_inventory_envelope_is_not_valid_contingent(state):
     db.session.add(HotelRoomInventory(hotel=state[2],room_type=state[3],room_count=10,available_from=date(2027,3,20),available_until=date(2027,3,31)))
     db.session.commit()
     assert projection(state)['hotels'][str(state[2].id)]['state']=='NO_FIT'
-    slot=routes._build_assignment_planning_view(set())['hotels'][0]['slots'][0]
-    assert slot['dateCoverage']['intervals']==[{'availableFrom':'2027-03-01','availableUntil':'2027-03-18'}, {'availableFrom':'2027-03-20','availableUntil':'2027-03-31'}]
+    slots=routes._build_assignment_planning_view(set())['hotels'][0]['slots']
+    assert {slot['dateCoverage']['availableFrom'] for slot in slots} == {'2027-03-01', '2027-03-20'}
+    assert all(len(slot['dateCoverage']['intervals']) == 1 for slot in slots)
+
 
 
 def test_adjacent_uses_can_reuse_room(state):
@@ -306,17 +308,19 @@ def test_est_join_after_previous_segment_preserves_booking_and_single_wish(state
     assert status['singleRoom']['status']=='NO_SINGLE_USE'
 
 
-def test_adjacent_contingents_cover_full_stay_but_checkout_boundary_is_exclusive(state):
+def test_adjacent_contingents_require_separate_segments(state):
     inv=HotelRoomInventory.query.one();inv.room_count=1
     inv.available_from=date(2027,3,2);inv.available_until=date(2027,3,6)
     db.session.add(HotelRoomInventory(hotel=state[2],room_type=state[3],room_count=1,
         available_from=date(2027,3,6),available_until=date(2027,3,11)))
     state[1][0].arrival_date=date(2027,3,2);state[1][0].departure_date=date(2027,3,11)
     db.session.commit()
-    assert projection(state,(0,),2,11)['targets']['0'][0]['status']=='valid'
+    assert all(target['status'] == 'blocked' for target in projection(state,(0,),2,11)['targets']['0'])
     response=state[0].post('/api/assignments/segments',json={**data(state,2,11),'athleteIds':[str(state[1][0].id)]})
-    assert response.status_code==201,response.json
-    assert RoomBooking.query.count()==1
+    assert response.status_code==400 and response.json['reasonCode']=='NO_KONTINGENT'
+    add(state,2,6)
+    add(state,6,11)
+    assert RoomBooking.query.count()==2
     # Ending the last contingent one day early must reject the last night.
     HotelRoomInventory.query.filter_by(available_from=date(2027,3,6)).one().available_until=date(2027,3,10)
     db.session.commit()
@@ -334,9 +338,57 @@ def test_full_period_capacity_shortage_matches_projection_and_write(state):
     db.session.commit()
     original=add(state,2,11,person=0,countsAsSingle=True)['booking']
     result=projection(state,(1,),2,11)
-    target=next(v for v in result['targets']['1'] if v['slotId'].endswith(':2'))
+    target=next(v for v in result['targets']['1'] if v['slotId'].endswith(f':{inv.id}:1'))
     assert target['status']=='blocked' and '06.03.2027' in target['messages'][0]
     response=state[0].post('/api/assignments/segments',json={**data(state,2,11,room='Zimmer 02'),'athleteIds':[str(state[1][1].id)]})
     assert response.status_code==400 and response.json['reasonCode']=='KONTINGENT_EXCEEDED'
     assert response.json['message']==target['messages'][0]
     assert RoomBooking.query.count()==1 and str(RoomBooking.query.one().id)==original['id']
+
+def test_explicit_contingents_preserve_adjacent_capacity_and_booking_identity(state):
+    client, people, hotel, room_type = state[:4]
+    first = HotelRoomInventory.query.one()
+    first.room_count = 1
+    first.available_until = date(2027,3,20)
+    second = HotelRoomInventory(hotel=hotel,room_type=room_type,room_count=2,
+        available_from=date(2027,3,20),available_until=date(2027,3,31))
+    db.session.add(second)
+    people[0].departure_date = date(2027,3,20)
+    people[1].arrival_date = date(2027,3,20)
+    db.session.commit()
+
+    def slots():
+        return routes._build_assignment_planning_view(set())['hotels'][0]['slots']
+
+    early, later_one, later_two = slots()
+    assert [slot['inventoryId'] for slot in (early,later_one,later_two)] == [str(first.id),str(second.id),str(second.id)]
+    assert early['inventoryRoomCount'] == 1 and later_one['inventoryRoomCount'] == 2
+    assert len({slot['roomNumber'] for slot in (early,later_one,later_two)}) == 3
+
+    def assign(person, slot, start, end, **overrides):
+        payload = {**data(state,start,end,room=slot['roomNumber']),
+                   'athleteIds':[str(person.id)], 'inventoryId':slot['inventoryId'], **overrides}
+        return client.post('/api/assignments/segments',json=payload)
+
+    assert assign(people[1], early, 20, 27).json['reasonCode'] == 'NO_KONTINGENT'
+    assert assign(people[1], later_one, 20, 27, inventoryId=early['inventoryId']).json['reasonCode'] == 'INVALID_INVENTORY'
+    assert assign(people[2], early, 14, 27).json['reasonCode'] == 'NO_KONTINGENT'
+    assert client.post('/api/assignments/segments',json={**data(state,14,27),
+        'athleteIds':[str(people[2].id)]}).json['reasonCode'] == 'NO_KONTINGENT'
+    booking = assign(people[0], early, 14, 20)
+    assert booking.status_code == 201, booking.json
+    early_id = booking.json['booking']['id']
+    shown = slots()
+    assert [b['bookingId'] for b in shown[0]['bookings']] == [early_id]
+    assert shown[1]['bookings'] == shown[2]['bookings'] == []
+    targets = projection(state,(1,),20,27)['targets']['1']
+    valid = {target['slotId'] for target in targets if target['status'] == 'valid'}
+    assert later_one['slotId'] in valid and later_two['slotId'] in valid and early['slotId'] not in valid
+    assert assign(people[1], later_one, 20, 27).status_code == 201
+    assert db.session.get(RoomBooking,int(early_id)).room_number == early['roomNumber']
+
+    db.session.delete(first)
+    db.session.commit()
+    retired = [slot for slot in slots() if slot['inventoryId'] is None]
+    assert [b['bookingId'] for slot in retired for b in slot['bookings']] == [early_id]
+    assert db.session.get(RoomBooking,int(early_id)).room_number == early['roomNumber']

@@ -410,6 +410,8 @@ export interface AssignmentGridBooking {
 
 export interface AssignmentSlot {
   slotId: string;
+  inventoryId?: string | null;
+  roomLabel?: string;
   hotelId: string;
   hotelName: string;
   roomTypeId: string;

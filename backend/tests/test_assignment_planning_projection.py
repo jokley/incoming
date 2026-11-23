@@ -428,14 +428,14 @@ class AssignmentPlanningProjectionTest(unittest.TestCase):
 
         replanned = self.planning()
         room = replanned['hotels'][0]['slots'][0]
-        self.assertEqual(room['roomNumber'], 'Zimmer 01')
+        self.assertEqual(room['roomLabel'], 'Zimmer 01')
 
         reassigned = client.post('/api/assignments/bookings', json={
             'athleteIds': [athlete_id], 'hotelId': hotel_id, 'roomTypeId': room_type_id,
             'roomNumber': room['roomNumber'], 'checkInDate': '2027-03-10', 'checkOutDate': '2027-03-14',
         })
         self.assertEqual(reassigned.status_code, 201)
-        self.assertEqual(reassigned.get_json()['roomNumber'], 'Zimmer 01')
+        self.assertEqual(reassigned.get_json()['roomNumber'], room['roomNumber'])
 
     def test_booking_creation_accepts_athlete_ids_without_unit_id(self):
         with app.app_context():

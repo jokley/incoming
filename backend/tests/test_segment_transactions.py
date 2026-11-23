@@ -107,7 +107,8 @@ def test_pair_http_audit_and_interval_validation(state):
     response=client.get('/api/assignments/planning-view/validations/'+urllib.parse.quote(key,safe='')+'?checkInDate=2027-03-20&checkOutDate=2027-03-27',headers=headers)
     assert response.status_code==200,response.get_json()
     # The adjacent earlier reservation must not block the selected open period.
-    slot=next(v for v in response.get_json()['validations'] if v['slotId']==f'{state[1]}:{state[2]}:1')
+    first_room=next(slot for hotel in planning['hotels'] for slot in hotel['slots'] if slot['slotIndex']==1)
+    slot=next(v for v in response.get_json()['validations'] if v['slotId']==first_room['slotId'])
     assert slot['status']!='blocked',slot
     response=client.post('/api/assignments/segments',json={**payload(state,20,27,'Zimmer 03'),'athleteIds':[str(p) for p in state[0]]},headers=headers)
     assert response.status_code==201,response.get_json()

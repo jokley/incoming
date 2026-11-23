@@ -255,7 +255,7 @@ def test_lat_four_people_two_pairs_import_assignment_reimport(events,monkeypatch
         return response.json
     def confirm(p):
         sid=p['session']['id'];released=app.test_client().post(f'/api/import/sessions/{sid}/approve',json={
-            'planDigest':p['changePlan']['digest'],'snapshotScope':'FULL_NATION','confirmDestructiveChanges':True})
+            'planDigest':p['changePlan']['digest'],'snapshotScope':p['changePlan']['snapshotScope'],'confirmDestructiveChanges':True})
         assert released.status_code==200,released.json
         response=app.test_client().post(f'/api/import/sessions/{sid}/import',json={'versionId':p['session']['currentVersionId']})
         assert response.status_code==200,response.json
@@ -344,3 +344,14 @@ def test_deleting_last_contingent_keeps_global_hotel_and_both_events_bookings(in
     assert snapshot(HotelRoomInventory, event_id=b.id) == foreign_inventory
     assert snapshot(RoomBooking) == bookings_before
     assert snapshot(RoomBookingOccupant) == occupants_before
+
+def test_segment_cannot_use_foreign_event_inventory(inventory):
+    from app import _inventory_room_number
+    _, _, _, _, _, _, inventories = inventory
+    foreign = inventories[1]
+    before = snapshot(RoomBooking)
+    response = app.test_client().post('/api/assignments/segments', json={
+        **payload(inventory), 'inventoryId': str(foreign.id), 'roomNumber': _inventory_room_number(foreign.id, 1)})
+    assert response.status_code == 400
+    assert response.json['reasonCode'] == 'INVALID_INVENTORY'
+    assert snapshot(RoomBooking) == before
