@@ -255,7 +255,7 @@ def test_lat_four_people_two_pairs_import_assignment_reimport(events,monkeypatch
         return response.json
     def confirm(p):
         sid=p['session']['id'];released=app.test_client().post(f'/api/import/sessions/{sid}/approve',json={
-            'planDigest':p['changePlan']['digest'],'snapshotScope':'FULL_NATION','confirmDestructiveChanges':True})
+            'planDigest':p['changePlan']['digest'],'snapshotScope':p['changePlan']['snapshotScope'],'confirmDestructiveChanges':True})
         assert released.status_code==200,released.json
         response=app.test_client().post(f'/api/import/sessions/{sid}/import',json={'versionId':p['session']['currentVersionId']})
         assert response.status_code==200,response.json
