@@ -303,13 +303,13 @@ function NationsView({ data }: { data: AnalyticsData }) {
     requested === 'excel' || requested === 'live' ? requested : 'import');
   const { excel, imported, forecastError } = useDemandSources(source);
   const projections = useMemo(() => {
-    if (source === 'live') return bookedNationDemand(data.bookings).map(row => ({ ...row, status: undefined }));
+    if (source === 'live') return bookedNationDemand(data.bookings).map(row => ({ ...row, status: undefined, importStatus: undefined }));
     if (source === 'excel') return excel?.map(nation => {
       const records = excelDemandRecords(nation.people, nation.rooms, nation.excludedIds);
       const demand = concreteRoomDemand(records);
       const count = new Set(records.map(person => person.key)).size;
       return { nation: nation.nation, count, datedCount: Math.max(0, count - demand.unknownDates),
-        days: demand.days, provisional: nation.provisional || demand.provisional, status: nation.roomStatus };
+        days: demand.days, provisional: nation.provisional || demand.provisional, status: nation.roomStatus, importStatus: nation.importStatus };
     });
     if (!imported) return undefined;
     const nations = new Set(data.athletes.map(person => person.nationCode).filter(Boolean));
@@ -317,9 +317,8 @@ function NationsView({ data }: { data: AnalyticsData }) {
     return [...nations].flatMap(nation => {
       const records = importedDemandRecords(data.athletes.filter(person => person.nationCode === nation), excluded);
       const count = new Set(records.map(person => person.key)).size;
-      if (!count) return [];
       const demand = concreteRoomDemand(records);
-      return [{ ...demand, nation, count, datedCount: Math.max(0, count - demand.unknownDates), status: undefined }];
+      return [{ ...demand, nation, count, datedCount: Math.max(0, count - demand.unknownDates), status: count === 0 ? 'zero' as const : undefined, importStatus: undefined }];
     });
   }, [source, excel, imported, data.athletes, data.bookings]);
   const dates = (projections ?? []).flatMap(row => row.days.map(day => day.date)).sort();
@@ -333,7 +332,7 @@ function NationsView({ data }: { data: AnalyticsData }) {
     return { ...row, ez: roomPeak.ez, dz: roomPeak.dz, share: total ? row.count / total * 100 : 0,
       presence, bedNights, averageStay: row.datedCount ? bedNights / row.datedCount : 0, peak: Math.max(...presence, 0) };
   }).sort((a, b) => b.bedNights - a.bedNights || b.count - a.count);
-  const top = rows.slice(0, 12);
+  const top = rows.filter(row => row.importStatus !== 'NO_PREVIEW' && (source !== 'import' || row.count > 0)).slice(0, 12);
   const maxNights = Math.max(...top.map(row => row.bedNights), 1);
   const maxPresence = Math.max(...top.flatMap(row => row.presence), 1);
   const biggestPeak = [...rows].sort((a, b) => b.peak - a.peak)[0];
@@ -353,6 +352,31 @@ function NationsView({ data }: { data: AnalyticsData }) {
     </Kpis>
     <DataPanel title={<ChartHeading title="Bedarf nach Nation" subtitle="Bettennächte und Aufenthaltsdauer der Top-Nationen." description="Längere Balken bedeuten mehr belegte Betten über den gesamten Aufenthalt."/>} actions={<span className="text-xs text-[var(--ops-text-muted)]">Top 12 · sortiert nach Bettennächten</span>}>
       {!top.length ? <EmptyState title="Noch keine Nationenanmeldungen"/> : <div className="space-y-2 p-4">{top.map((row, index) => <button type="button" key={row.nation} onClick={() => navigate(`/lists?entity=persons&group=nation&nation=${row.nation}`)} className="grid w-full grid-cols-[2rem_4rem_minmax(12rem,1fr)_5rem_6rem] items-center gap-3 rounded-lg p-1.5 text-left text-xs hover:bg-[var(--ops-surface-elevated)]"><span className="font-mono text-[var(--ops-text-subtle)]">{index + 1}</span><b>{row.nation}</b><span className="relative h-5 overflow-hidden rounded bg-[var(--ops-surface-overlay)]"><i className="absolute inset-y-0 left-0 bg-[var(--ops-primary)]" style={{ width: `${row.bedNights / maxNights * 100}%` }}/><span className="relative z-10 px-2 font-mono font-bold text-white mix-blend-difference">{row.days.length || row.status === 'zero' ? `${row.bedNights} Bettennächte` : '—'}</span></span><span>{row.status === 'zero' ? '0 Zimmer gemeldet' : row.status === 'missing' ? 'Room List fehlt' : row.status === 'conflict' ? 'Room List prüfen' : `${row.count} Pers.`}{row.provisional && row.status !== 'zero' && <small className="block">vorläufig</small>}</span><span>{row.datedCount ? `${row.averageStay.toLocaleString('de-DE', { maximumFractionDigits: 1 })} Nächte Ø` : '—'}</span></button>)}</div>}
+    </DataPanel>
+    <DataPanel title="Alle Nationen" actions={<StatusChip tone="info">{sourceLabels[source]} · {rows.length} Nationen</StatusChip>}>
+      {rows.length > 0 ? <div className="overflow-x-auto"><table className={tableClass} aria-label="Vollständige Nationenübersicht">
+        <thead><tr>{['Nation','Personen','Bettennächte','EZ am Peak','DZ am Peak','Meldestand'].map(label => <th key={label} className="px-3 py-2 text-left">{label}</th>)}</tr></thead>
+        <tbody>{rows.map(row => {
+          const zero = row.status === 'zero';
+          const dated = row.days.length > 0 || zero;
+          const status = [row.importStatus === 'ERROR' ? 'Fehlerhaft'
+            : row.importStatus === 'NO_PREVIEW' ? 'Keine Vorschau'
+            : row.importStatus === 'WAITING_FOR_NATION' || row.importStatus === 'NATION_CLARIFICATION' ? 'Klärung offen'
+            : row.importStatus === 'APPROVED' ? 'Freigegeben, noch nicht importiert'
+            : row.importStatus && row.importStatus !== 'IMPORTED' ? 'Noch nicht bestätigt' : '',
+            zero ? (source === 'excel' ? '0 Zimmer gemeldet' : 'Kein operativer Bedarf')
+              : row.status === 'missing' ? 'Room List fehlt' : row.status === 'conflict' ? 'Room List prüfen' : '',
+            row.provisional && !zero ? 'Vorläufig' : ''].filter(Boolean).join(' · ');
+          return <tr key={row.nation} className="border-t border-[var(--ops-divider)]">
+            <th scope="row" className="px-3 py-2 text-left">{row.nation}</th>
+            <td className="px-3 py-2">{row.count || (zero ? 0 : '—')}</td>
+            <td className="px-3 py-2">{dated ? row.bedNights : '—'}</td>
+            <td className="px-3 py-2">{dated ? row.ez.toLocaleString('de-DE', { maximumFractionDigits: 2 }) : '—'}</td>
+            <td className="px-3 py-2">{dated ? row.dz.toLocaleString('de-DE', { maximumFractionDigits: 2 }) : '—'}</td>
+            <td className="px-3 py-2">{status || (row.importStatus === 'IMPORTED' ? 'Importiert' : '—')}</td>
+          </tr>;
+        })}</tbody>
+      </table></div> : projections && <EmptyState title="Keine Nationen für diese Quelle" />}
     </DataPanel>
     <DataPanel title={<ChartHeading title="Aufenthaltsprofil der Top-Nationen" subtitle="Gleichzeitig anwesende Personen je Tag." description="Dunklere Felder bedeuten eine höhere Anwesenheit im Vergleich zum größten Tageswert."/>} actions={<span className="text-xs text-[var(--ops-text-muted)]">Gleichzeitig anwesende Personen</span>}>
       {!top.length || !days.length ? <EmptyState title="Keine Aufenthaltszeiträume vorhanden"/> : <div className="overflow-x-auto p-3"><div className="min-w-max"><div className="grid items-end gap-1 text-[10px] text-[var(--ops-text-subtle)]" style={{ gridTemplateColumns: `6rem repeat(${days.length}, 1.5rem)` }}><span>Nation</span>{days.map((day, index) => <span key={day} className="-rotate-45 origin-bottom-left pb-1">{index % 2 === 0 ? formatDay(day) : ''}</span>)}</div>{top.filter(row => row.days.length || row.status === 'zero').map(row => <button type="button" key={row.nation} onClick={() => navigate(`/lists?entity=persons&group=nation&nation=${row.nation}`)} className="grid items-center gap-1 border-t border-[var(--ops-divider)] py-1 hover:bg-[var(--ops-surface-elevated)]" style={{ gridTemplateColumns: `6rem repeat(${days.length}, 1.5rem)` }}><b className="text-left text-xs">{row.nation}</b>{row.presence.map((count, index) => <span key={days[index]} title={`Nation ${row.nation} · ${formatFullDay(days[index])} · ${count} Personen · Anteil am Tagesmaximum: ${Math.round(count / maxPresence * 100)} %`} className="flex h-5 items-center justify-center rounded-sm text-[9px] font-bold" style={{ background: count ? `color-mix(in srgb, var(--ops-primary) ${Math.max(18, count / maxPresence * 100)}%, var(--ops-surface))` : 'var(--ops-surface-overlay)', color: count / maxPresence > .55 ? 'white' : 'var(--ops-text-muted)' }}>{count || ''}</span>)}</button>)}</div></div>}

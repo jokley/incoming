@@ -337,6 +337,10 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  const event={id:'1',name:'Synthetic analytics',active:true};
  const stay={arrivalDate:'2027-03-02',departureDate:'2027-03-04',accommodationRequirement:'REQUIRED'};
  const roomType={id:'dz',name:'DZ',maxPersons:2};
+ const extraNations=Array.from({length:13},(_,index)=>({
+   nation:'X'+String(index).padStart(2,'0'), people:[{...stay,matchKey:'single',roomType:'Double'}],
+   rooms:[],excludedIds:[],provisional:false,importStatus:'DRAFT',
+ }));
  const people=[{...stay,id:'1',firstname:'One',lastname:'Person',nationCode:'POL',roomType:'Double'}];
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname.slice(4);
@@ -350,7 +354,9 @@ test('analytics switches between event, saved Excel drafts, imported people and 
      {id:'B',hotel:{id:'h',name:'Test'},roomType,checkInDate:stay.arrivalDate,checkOutDate:stay.departureDate,occupants:[{athlete:{id:'b',nationCode:'CZE'}}]},
    ],
    '/athletes/arrival-planning':{rows:[]},
-   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'},{...stay,matchKey:'p',existingAthleteId:1,roomType:'Double'},{...stay,matchKey:'unknown'}],rooms:[],excludedIds:[],provisional:false},{nation:'SUI',people:[],rooms:[],excludedIds:[],roomStatus:'zero',provisional:false}],
+   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'},{...stay,matchKey:'p',existingAthleteId:1,roomType:'Double'},{...stay,matchKey:'unknown'}],rooms:[],excludedIds:[],provisional:false},{nation:'SUI',people:[],rooms:[],excludedIds:[],roomStatus:'zero',provisional:false},...extraNations,
+    {nation:'ERR',people:[],rooms:[],excludedIds:[],roomStatus:'conflict',provisional:true,importStatus:'ERROR'},
+    {nation:'NEW',people:[],rooms:[],excludedIds:[],roomStatus:'missing',provisional:true,importStatus:'NO_PREVIEW'}],
   };
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{}});
  });
@@ -360,8 +366,8 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  await page.getByRole('button',{name:'Excel',exact:true}).click();
  await daily.getByRole('row',{name:/Reserve EZ/}).waitFor();
  assert.match(await daily.getByRole('row',{name:/Reserve EZ/}).innerText(),/-1/);
- assert.match(await daily.getByRole('row',{name:/Reserve zum bekannten Bedarf/}).innerText(),/\+2/);
- assert.equal(await daily.getByRole('row',{name:'Bekannter Zimmerbedarf'}).locator('td').first().innerText(),'2');
+ assert.match(await daily.getByRole('row',{name:/Reserve zum bekannten Bedarf/}).innerText(),/-11/);
+ assert.equal(await daily.getByRole('row',{name:'Bekannter Zimmerbedarf'}).locator('td').first().innerText(),'15');
  assert.equal(await daily.getByRole('row',{name:'DZ-Kontingent'}).locator('td').first().innerText(),'4');
  await page.getByText('Bekannter Zimmerpeak',{exact:true}).waitFor();
  await page.getByText(/Personen pro Nacht ohne eindeutige Zimmerart/).waitFor();
@@ -378,10 +384,18 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  const sources = page.getByRole('group',{name:'Bedarfsquelle'});
  assert.deepEqual(await sources.getByRole('button').allTextContents(),['Excel','Import','Live']);
  await sources.getByRole('button',{name:'Excel'}).click();
- await page.getByText('0 Zimmer gemeldet',{exact:true}).waitFor();
+ const all=page.getByRole('table',{name:'Vollständige Nationenübersicht'});
+ await page.getByText('Excel · 17 Nationen',{exact:true}).waitFor();
+ assert.equal(await all.locator('tbody tr').count(),17);
+ assert.equal(await page.getByRole('button',{name:/(POL|X[0-9]{2}).*Bettennächte/}).count(),12);
+ await all.getByRole('row',{name:/SUI.*0 Zimmer gemeldet/}).waitFor();
+ await all.getByRole('row',{name:/ERR.*Fehlerhaft/}).waitFor();
+ assert.equal(await all.getByRole('row',{name:/NEW.*Keine Vorschau/}).locator('td').nth(1).innerText(),'—');
+ await all.getByRole('row',{name:/X12.*Noch nicht bestätigt/}).waitFor();
  await page.getByText('6 Bettennächte',{exact:true}).waitFor();
  await sources.getByRole('button',{name:'Import'}).click();
  await page.getByText('2 Bettennächte',{exact:true}).waitFor();
+ assert.equal(await all.locator('tbody tr').count(),1);
  assert.equal(await page.getByText('0 Zimmer gemeldet',{exact:true}).count(),0);
  await sources.getByRole('button',{name:'Live'}).click();
  await page.getByRole('button',{name:/CZE.*2 Bettennächte/}).waitFor();

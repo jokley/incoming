@@ -138,6 +138,8 @@ def get_import_demand():
     nations = []
     for session in sessions:
         if not session.current_version:
+            nations.append(dict(nation=session.nation, people=[], rooms=[], excludedIds=[],
+                                provisional=True, roomStatus='missing', importStatus='NO_PREVIEW'))
             continue
         try:
             preview = load_version_preview(session.current_version)
@@ -159,7 +161,15 @@ def get_import_demand():
                     stale_composition = bool(selected)
                     using_current_version = False
                     preview = merge_submission_previews(list(heads.values()), read_context=context, read_only=True)
-            if using_current_version and session.current_version_id in imported_submission_ids(session):
+            imported_ids = imported_submission_ids(session)
+            source_ids = {session.current_version_id} if using_current_version else set()
+            source_ids.update((preview.get('submissionSources') or {}).values())
+            import_status = session.status if session.status != 'IMPORTED' else 'DRAFT'
+            if preview.get('errors'):
+                import_status = 'ERROR'
+            elif source_ids and source_ids.issubset(imported_ids):
+                import_status = 'IMPORTED'
+            if using_current_version and session.current_version_id in imported_ids:
                 preview.pop('accommodationRequirementOverrides', None)
                 preview.pop('accommodationRateOverrides', None)
             preview['_currentApprovalIds'] = [a.id for a in review_approvals(session, preview)]
@@ -192,9 +202,10 @@ def get_import_demand():
                 people=[{key: p.get(key) for key in people_fields} for p in people],
                 rooms=[{key: r.get(key) for key in room_fields} for r in preview['rooms']],
                 excludedIds=selection['replacedPersonIds'], roomStatus=room_status,
+                importStatus=import_status,
                 provisional=bool(room_status in {'missing', 'conflict'} or preview.get('errors') or selection['conflicts'] or scope not in {'FULL_NATION', 'SPORT_FAMILY'} or stale_composition or len(evaluation) > len(people))))
         except ImportValidationError as exc:
             nations.append(dict(nation=session.nation, people=[], rooms=[], excludedIds=[],
-                                provisional=True, roomStatus='conflict', conflict=exc.code))
+                                provisional=True, roomStatus='conflict', importStatus='ERROR', conflict=exc.code))
 
     return jsonify(json.loads(encoded(nations)))

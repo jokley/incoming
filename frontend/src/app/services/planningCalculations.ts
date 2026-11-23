@@ -39,7 +39,7 @@ const inventoryOnDay = (items: HotelRoomInventory[], date: string) =>
   items.filter(item => dayKey(item.availableFrom) <= date && dayKey(item.availableUntil) >= date);
 
 // Use the same contract category in room comparisons and hotel risk.
-function inventoryRoomCategory(type?: HotelRoomInventory['roomType'] | null) {
+export function inventoryRoomCategory(type?: HotelRoomInventory['roomType'] | null) {
   if (type?.maxPersons === 1 || /(^|\W)EZ(\W|$)/i.test(type?.name ?? '')) return 'EZ';
   if (type?.maxPersons === 2) return 'DZ';
 }
@@ -187,7 +187,7 @@ type DemandPerson = Pick<import('../types.ts').FisImportPreviewPerson,
   'accommodationRequirement' | 'accommodationRequirementReviewRequired'>;
 type DemandRoom = Pick<import('../types.ts').FisImportPreviewRoom,
   'person1Key' | 'person2Key' | 'roomType' | 'checkInDate' | 'checkOutDate' | 'sharedWithRawName'>;
-export type ExcelDemand = { nation: string; people: DemandPerson[]; rooms: DemandRoom[]; excludedIds: string[]; provisional: boolean; conflict?: string; roomStatus?: 'available' | 'zero' | 'missing' | 'conflict' };
+export type ExcelDemand = { nation: string; people: DemandPerson[]; rooms: DemandRoom[]; excludedIds: string[]; provisional: boolean; conflict?: string; importStatus?: string; roomStatus?: 'available' | 'zero' | 'missing' | 'conflict' };
 
 type DemandStay = { start: string; end: string; type: string; partner?: string; unclear?: boolean; secondary?: boolean };
 type DemandRecord = { key: string; stays: DemandStay[]; provisional?: boolean };

@@ -235,7 +235,7 @@ test('provisional real people remain draggable and blocked selections preserve r
  assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
 });
 
-test('hotel overview keeps contracts and timeline without a date filter',async t=>{
+test('hotel periods and selected dates preserve empty hotels and existing bookings',async t=>{
  const root=fileURLToPath(new URL('../',import.meta.url));
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-hotels-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
@@ -244,24 +244,54 @@ test('hotel overview keeps contracts and timeline without a date filter',async t
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const event={id:'1',name:'Synthetic hotel event',active:true,planningPeriods:[]};
  const types=[{id:'dz',name:'DZ / DU',maxPersons:2},{id:'ez',name:'EZ / DU',maxPersons:1}];
- const hotel={id:'h',name:'Synthetic Daneu',accommodationType:'HOTEL',roomInventories:types.map((roomType,i)=>({id:'inv'+i,hotelId:'h',roomTypeId:roomType.id,roomType,roomCount:i?8:10,availableFrom:'2027-03-08',availableUntil:'2027-03-22'}))};
+ const hotel={id:'h',name:'Synthetic Daneu',accommodationType:'HOTEL',roomInventories:types.map((roomType,i)=>({id:'inv'+i,hotelId:'h',roomTypeId:roomType.id,roomType,roomCount:i?8:10,availableFrom:i?'2027-03-16':'2027-03-08',availableUntil:i?'2027-03-22':'2027-03-15'}))};
+ const empty={id:'e',name:'Synthetic Empty',location:'Brand',roomInventories:[]};
+ const booked={id:'b',hotel:{id:'h',name:hotel.name},roomType:types[1],checkInDate:'2027-03-16',checkOutDate:'2027-03-18',occupants:[{athlete:{id:'1'}}]};
  const errors:string[]=[],writes:string[]=[];page.on('pageerror',error=>errors.push(error.message));
  await page.route('**/api/**',async route=>{
   const request=route.request(),path=new URL(request.url()).pathname.slice(4);
   if(request.method()!=='GET'&&path!=='/auth/me')writes.push(path);
-  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/hotels':[hotel],'/room-types':types,'/room-bookings/grouped':[]};
+  if(request.method()==='DELETE'&&path.startsWith('/hotels/h/inventory/')){
+   hotel.roomInventories=hotel.roomInventories.filter(item=>!path.endsWith('/'+item.id));
+   return route.fulfill({status:204});
+  }
+  const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/hotels':[hotel,empty],'/room-types':types,'/room-bookings/grouped':[booked]};
   return route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected synthetic request'}});
  });
- await page.goto(`${origin}/hotels`);
+ await page.goto(`${origin}/hotels`,{timeout:30000});
  await page.getByRole('heading',{name:'Hotels & Zimmerkontingente',exact:true}).waitFor();
- await page.getByText('Inventarzimmer',{exact:true}).waitFor();
+ await page.getByText('Kontingente im Gesamtzeitraum',{exact:true}).waitFor();
+ const hotelButton=page.getByRole('button',{name:/^Synthetic Daneu/});
+ const emptyButton=page.getByRole('button',{name:/^Synthetic Empty/});
+ assert.match(await hotelButton.innerText(),/10 Zimmer gleichzeitig/);
+ assert.match(await emptyButton.innerText(),/Kein Kontingent/);
+ await emptyButton.click();
+ await page.getByText('Für dieses Hotel sind noch keine Zeiträume angelegt.',{exact:true}).waitFor();
+ await hotelButton.click();
  assert.equal(await page.locator('input[type="date"]').count(),0);
  assert.equal(await page.getByText('Stichtag (Belegungsnacht)',{exact:true}).count(),0);
  const contracts=page.locator('b').filter({hasText:/^\d+ gesamt$/});
  assert.deepEqual((await contracts.allTextContents()).map(s=>s.trim()),['10 gesamt','20 gesamt','8 gesamt','8 gesamt']);
  await page.getByText('Timeline',{exact:true}).waitFor();
  await page.getByText('Tatsächliche Kontingent- und Buchungszeiträume',{exact:true}).waitFor();
- await mkdir('/workspace/artifacts',{recursive:true});
- await page.screenshot({path:'/workspace/artifacts/hotel-contract-inventory.png',animations:'disabled'});
- assert.deepEqual(writes,[]);assert.deepEqual(errors,[]);
+ await page.getByRole('button',{name:'Stichtag',exact:true}).click();
+ const day=page.getByLabel('Stichtag (Belegungsnacht)');
+ await day.fill('2027-03-07');
+ assert.match(await hotelButton.innerText(),/Kein Kontingent am Stichtag/);
+ await day.fill('2027-03-10');
+ await page.getByText('Inventarzimmer',{exact:true}).waitFor();
+ assert.match(await hotelButton.innerText(),/10 Zimmer frei am Stichtag/);
+ await page.getByRole('button',{name:'Gesamtzeitraum',exact:true}).click();
+ for(const id of ['inv0','inv1']){
+   await page.getByRole('button',{name:'Kontingent löschen',exact:true}).first().click();
+   await Promise.all([
+     page.waitForResponse(response=>response.url().endsWith('/api/hotels')&&response.request().method()==='GET'),
+     page.getByRole('dialog').getByRole('button',{name:'Löschen',exact:true}).click(),
+   ]);
+ }
+ await page.getByText('Buchungen ohne ausreichendes Kontingent',{exact:true}).waitFor();
+ await page.getByText('Buchungen',{exact:true}).first().waitFor();
+ assert.match(await hotelButton.innerText(),/Kein Kontingent/);
+ assert.deepEqual(writes,['/hotels/h/inventory/inv0','/hotels/h/inventory/inv1']);
+ assert.deepEqual(errors,[]);
 });
