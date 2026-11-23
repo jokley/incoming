@@ -94,7 +94,7 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname.slice(4);requests.push(`${route.request().method()} ${path}`);const bodies:Record<string,unknown>={'/auth/me':{username:'local-admin',displayName:'local-admin',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session};await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});});
  await page.goto(`${origin}/import?sessionId=1`);
  const grouping=page.getByRole('group',{name:'Gruppieren:'});await grouping.waitFor();
- await page.getByText(/Zimmerbedarf \(vorläufig\) · 02\.03\.: 1 gesamt · 1 DZ · 0 EZ/).waitFor();
+ await page.getByText(/Zimmerbedarf \(vorläufig\) · 02\.03\.: 1 bekannt · 1 DZ · 0 EZ/).waitFor();
  assert.equal(await grouping.getByRole('button',{name:'Aus',exact:true}).getAttribute('aria-pressed'),'true');
  const initialRequests=[...requests];await grouping.getByRole('button',{name:'Ein',exact:true}).click();
  const card=page;
@@ -336,7 +336,8 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  const page=await browser.newPage({viewport:{width:1440,height:1050}});
  const event={id:'1',name:'Synthetic analytics',active:true};
  const stay={arrivalDate:'2027-03-02',departureDate:'2027-03-04',accommodationRequirement:'REQUIRED'};
- const people=[{...stay,id:'p',firstname:'One',lastname:'Person',nationCode:'POL',roomType:'Double'}];
+ const roomType={id:'dz',name:'DZ',maxPersons:2};
+ const people=[{...stay,id:'1',firstname:'One',lastname:'Person',nationCode:'POL',roomType:'Double'}];
  await page.route('**/api/**',async route=>{
   const path=new URL(route.request().url()).pathname.slice(4);
   const bodies:Record<string,unknown>={
@@ -344,9 +345,12 @@ test('analytics switches between event, saved Excel drafts, imported people and 
    '/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},
    '/hotels':[{id:'h',name:'Test',roomInventories:[{id:'i',roomType:{id:'dz',name:'DZ',maxPersons:2},roomCount:4,availableFrom:'2027-03-02',availableUntil:'2027-03-03'}]}],
    '/events':[{id:'plan',discipline:'Cross',startDate:'2027-03-02',endDate:'2027-03-03',personDemand:6}],
-   '/athletes':people,'/room-bookings/grouped':[],
+   '/athletes':people,'/room-bookings/grouped':[
+     {id:'A',hotel:{id:'h',name:'Test'},roomType,checkInDate:stay.arrivalDate,checkOutDate:stay.departureDate,occupants:[{athlete:people[0]}]},
+     {id:'B',hotel:{id:'h',name:'Test'},roomType,checkInDate:stay.arrivalDate,checkOutDate:stay.departureDate,occupants:[{athlete:{id:'b',nationCode:'CZE'}}]},
+   ],
    '/athletes/arrival-planning':{rows:[]},
-   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'}],rooms:[],excludedIds:[],provisional:false}],
+   '/analytics/import-demand':[{nation:'POL',people:[{...stay,matchKey:'x',roomType:'Single'},{...stay,matchKey:'p',existingAthleteId:1,roomType:'Double'},{...stay,matchKey:'unknown'}],rooms:[],excludedIds:[],provisional:false}],
   };
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{}});
  });
@@ -356,11 +360,15 @@ test('analytics switches between event, saved Excel drafts, imported people and 
  await page.getByRole('button',{name:'Excel',exact:true}).click();
  await daily.getByRole('row',{name:/Reserve EZ/}).waitFor();
  assert.match(await daily.getByRole('row',{name:/Reserve EZ/}).innerText(),/-1/);
- assert.match(await daily.getByRole('row',{name:/Reserve gesamt/}).innerText(),/\+3/);
+ assert.match(await daily.getByRole('row',{name:/Reserve zum bekannten Bedarf/}).innerText(),/\+1/);
+ assert.equal(await daily.getByRole('row',{name:'Bekannter Zimmerbedarf'}).locator('td').first().innerText(),'2');
+ assert.equal(await daily.getByRole('row',{name:'Kontingent für Excel'}).locator('td').first().innerText(),'3');
+ await page.getByText('Bekannter Zimmerpeak',{exact:true}).waitFor();
+ await page.getByText(/Personen pro Nacht ohne eindeutige Zimmerart/).waitFor();
  await page.getByText(/Vorläufige Excel-Prognose/).waitFor();
  await page.getByRole('button',{name:'Import',exact:true}).click();
  await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).waitFor();
- assert.match(await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).innerText(),/1/);
+ assert.match(await daily.getByRole('row',{name:/DZ-Bedarf \(Import\)/}).innerText(),/2/);
  await page.getByRole('button',{name:'Live',exact:true}).click();
  await daily.getByRole('row',{name:/DZ-Bedarf \(Live\)/}).waitFor();
  await page.getByRole('tab',{name:/Hotelrisiken/}).click();

@@ -27,6 +27,7 @@ export type CapacityDay = {
   bedSupply: number; assignedBeds: number; freeBeds: number; plannedBeds: number; demandBeds: number;
   ezSupply: number; assignedEz: number; freeEz: number; plannedEz: number; demandEz: number;
   dzSupply: number; assignedDz: number; freeDz: number; plannedDz: number; demandDz: number;
+  excelRoomSupply?: number; excelBedSupply?: number;
   eventRoomReserve: number; eventBedReserve: number; eventEzReserve: number; eventDzReserve: number;
   liveRoomReserve: number; liveBedReserve: number; liveEzReserve: number; liveDzReserve: number;
 };
@@ -109,7 +110,12 @@ export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; 
     const exact = projected.get(date);
     const actualEz = inventory.filter(item => item.roomType.maxPersons === 1).reduce((sum, item) => sum + item.roomCount, 0);
     const actualDz = inventory.filter(item => item.roomType.maxPersons === 2).reduce((sum, item) => sum + item.roomCount, 0);
-    const ezReserve = actualEz - (exact?.ez ?? 0), dzReserve = actualDz - (exact?.dz ?? 0);
+    const outside = exact?.outside;
+    const remainingRooms = outside ? Math.max(0, roomSupply - outside.rooms) : roomSupply;
+    const remainingBeds = outside ? Math.max(0, bedSupply - outside.beds) : bedSupply;
+    const remainingEz = outside ? Math.max(0, actualEz - outside.ez) : actualEz;
+    const remainingDz = outside ? Math.max(0, actualDz - outside.dz) : actualDz;
+    const ezReserve = remainingEz - (exact?.ez ?? 0), dzReserve = remainingDz - (exact?.dz ?? 0);
     const day = { date, label: new Date(`${date}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' }), roomSupply, bedSupply, ezSupply: assignedEz + freeEz, dzSupply: assignedDz + freeDz, plannedRooms, plannedBeds, plannedEz, plannedDz, demandRooms: livePlan.rooms, demandBeds: livePlan.beds, demandEz: livePlan.singleRooms, demandDz: livePlan.doubleRooms, assignedRooms, assignedBeds, assignedEz, assignedDz, freeRooms, freeBeds: actual.reduce((sum,row)=>sum+row.freeBeds,0), freeEz, freeDz, eventRoomReserve: roomSupply - plannedRooms, eventBedReserve: bedSupply - plannedBeds, eventEzReserve: supply.singleRooms - plannedEz, eventDzReserve: supply.doubleRooms - plannedDz, liveRoomReserve: roomSupply - livePlan.rooms, liveBedReserve: bedSupply - livePlan.beds, liveEzReserve: supply.singleRooms - livePlan.singleRooms, liveDzReserve: supply.doubleRooms - livePlan.doubleRooms };
     if (!concrete) return day;
     const bookedEz = activeBookings.filter(booking => booking.roomType?.maxPersons === 1).length;
@@ -117,7 +123,8 @@ export function buildCapacityTimeline(data: { hotels: Hotel[]; events: Event[]; 
     return { ...day, ezSupply: actualEz, dzSupply: actualDz, assignedEz: bookedEz, assignedDz: bookedDz,
       freeEz: Math.max(0, actualEz - bookedEz), freeDz: Math.max(0, actualDz - bookedDz),
       demandRooms: exact?.rooms ?? 0, demandBeds: exact?.beds ?? 0, demandEz: exact?.ez ?? 0, demandDz: exact?.dz ?? 0,
-      liveRoomReserve: roomSupply - (exact?.rooms ?? 0), liveBedReserve: bedSupply - (exact?.beds ?? 0) - (exact?.blocked ?? 0),
+      excelRoomSupply: remainingRooms, excelBedSupply: remainingBeds,
+      liveRoomReserve: remainingRooms - (exact?.rooms ?? 0), liveBedReserve: remainingBeds - (exact?.beds ?? 0) - (exact?.blocked ?? 0),
       liveEzReserve: ezReserve, liveDzReserve: dzReserve };
 
   });
@@ -223,9 +230,11 @@ export function importedDemandRecords(athletes: Athlete[], excludedIds: string[]
   });
 }
 
-export function concreteRoomDemand(records: DemandRecord[], bookings: RoomBooking[], bookingPersonIds?: Iterable<string>) {
+export function concreteRoomDemand(records: DemandRecord[], bookings: RoomBooking[], options: {
+  bookingPersonIds?: Iterable<string>; separateOutsideBookings?: boolean;
+} = {}) {
   const people = new Map(records.map(person => [person.key, person]));
-  const ids = bookingPersonIds ? new Set(bookingPersonIds) : null;
+  const ids = options.bookingPersonIds ? new Set(options.bookingPersonIds) : null;
   const relevant = [...new Map(bookings.map(booking => [booking.id, booking])).values()]
     .filter(booking => !ids || booking.occupants.some(o => ids.has(String(o.athlete.id))));
   const dates = [...records.flatMap(person => person.stays.filter(validStay).flatMap(period => [period.start, period.end])),
@@ -236,8 +245,14 @@ export function concreteRoomDemand(records: DemandRecord[], bookings: RoomBookin
     const active = relevant.filter(booking => onDay(booking.checkInDate, booking.checkOutDate, date));
     const covered = new Set(active.flatMap(booking => booking.occupants.map(o => String(o.athlete.id))));
     const standard = active.filter(booking => booking.hotel.accommodationType !== 'EXTERNAL');
-    const bookedPeople = new Set(standard.flatMap(booking => booking.occupants.map(o => String(o.athlete.id))));
-    const roomsWithSpace = new Map(standard.filter(booking => booking.roomType?.maxPersons === 2 &&
+    const sourceIds = options.separateOutsideBookings ? new Set([...people.values()].flatMap(person =>
+      person.id && person.stays.some(period => onDay(period.start, period.end, date)) ? [person.id] : [])) : null;
+    const belongsToSource = (id: string) => sourceIds === null || sourceIds.has(id);
+    const occupantIds = (booking: RoomBooking) => booking.occupants.map(o => String(o.athlete.id));
+    const sourceBookings = standard.filter(booking => sourceIds === null || occupantIds(booking).some(belongsToSource));
+    const outsideBookings = standard.filter(booking => sourceIds !== null && !occupantIds(booking).some(belongsToSource));
+    const bookedPeople = new Set(sourceBookings.flatMap(occupantIds).filter(belongsToSource));
+    const roomsWithSpace = new Map(sourceBookings.filter(booking => booking.roomType?.maxPersons === 2 &&
       booking.occupants.length === 1 && bookingFreeCapacity({ ...booking, capacity: 2 }) === 1).map(booking => [String(booking.occupants[0].athlete.id), booking.id]));
     const usedSpace = new Set<string>();
     const open = new Map([...people].filter(([, person]) => !person.id || !covered.has(person.id)).flatMap(([key, person]) => {
@@ -245,9 +260,9 @@ export function concreteRoomDemand(records: DemandRecord[], bookings: RoomBookin
       return periods.length ? [[key, periods] as const] : [];
     }));
     const consumed = new Set<string>();
-    let ez = standard.filter(booking => booking.roomType?.maxPersons === 1).length;
-    let dz = standard.filter(booking => booking.roomType?.maxPersons === 2).length;
-    const otherRooms = standard.length - ez - dz;
+    let ez = sourceBookings.filter(booking => booking.roomType?.maxPersons === 1).length;
+    let dz = sourceBookings.filter(booking => booking.roomType?.maxPersons === 2).length;
+    const otherRooms = sourceBookings.length - ez - dz;
     let unknown = 0;
     let unclear = false;
     for (const [key, periods] of open) {
@@ -271,10 +286,17 @@ export function concreteRoomDemand(records: DemandRecord[], bookings: RoomBookin
       }
       dz++;
     }
-    const blocked = standard.reduce((sum, booking) => sum + (booking.countsAsSingle ?
+    const blockedBeds = (rows: RoomBooking[]) => rows.reduce((sum, booking) => sum + (booking.countsAsSingle ?
       Math.max(0, (booking.roomType?.maxPersons ?? 0) - booking.occupants.length) : 0), 0);
+    const outside = sourceIds === null ? undefined : {
+      rooms: outsideBookings.length,
+      ez: outsideBookings.filter(booking => booking.roomType?.maxPersons === 1).length,
+      dz: outsideBookings.filter(booking => booking.roomType?.maxPersons === 2).length,
+      beds: new Set(standard.flatMap(occupantIds).filter(id => !belongsToSource(id))).size + blockedBeds(outsideBookings),
+    };
     return { date, ez, dz, rooms: ez + dz + otherRooms, otherRooms,
-      beds: bookedPeople.size + open.size, blocked, unknown, provisional: provisional || unclear || unknown > 0 || otherRooms > 0 };
+      beds: bookedPeople.size + open.size, blocked: blockedBeds(sourceBookings), outside,
+      unknown, provisional: provisional || unclear || unknown > 0 || otherRooms > 0 };
   });
   return { days, unknownDates, unknownRooms: days.reduce((max, day) => Math.max(max, day.unknown), 0), provisional: provisional || days.some(day => day.provisional) };
 }

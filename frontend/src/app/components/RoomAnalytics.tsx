@@ -59,7 +59,7 @@ function NationTooltip({ active, payload }: { active?: boolean; payload?: Array<
 }
 const CapacityTooltipRow = ({ label, value, color }: { label: string; value: number | string; color?: string }) => <div className="flex min-w-48 items-center justify-between gap-6 py-0.5"><span className="flex items-center gap-2 text-[var(--ops-text-muted)]">{color && <i className="h-2 w-2 rounded-sm" style={{ background: color }}/>} {label}</span><strong className="font-mono">{value}</strong></div>;
 
-function CapacityTooltip({ active, payload, metric, source }: { active?: boolean; payload?: Array<{ payload: CapacityDay }>; metric: 'beds' | 'rooms'; source: DemandSource }) {
+function CapacityTooltip({ active, payload, metric, source, knownOnly }: { active?: boolean; payload?: Array<{ payload: CapacityDay }>; metric: 'beds' | 'rooms'; source: DemandSource; knownOnly: boolean }) {
   const day = payload?.[0]?.payload;
   if (!active || !day) return null;
   const config = {
@@ -74,8 +74,8 @@ function CapacityTooltip({ active, payload, metric, source }: { active?: boolean
     <CapacityTooltipRow label="EZ frei" value={day.freeEz} color="var(--ops-success)"/><CapacityTooltipRow label="DZ frei" value={day.freeDz} color="var(--ops-tone-success-text)"/>
     <CapacityTooltipRow label={`EZ-Bedarf (${sourceLabels[source]})`} value={source === 'event' ? day.plannedEz : day.demandEz} color="var(--ops-warning)"/>
     <CapacityTooltipRow label={`DZ-Bedarf (${sourceLabels[source]})`} value={source === 'event' ? day.plannedDz : day.demandDz}/>
-    <CapacityTooltipRow label={`Gesamtbedarf (${sourceLabels[source]})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="var(--ops-error)"/>
-    <CapacityTooltipRow label="Reserve gesamt" value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
+    <CapacityTooltipRow label={`${knownOnly ? 'Bekannter Zimmerbedarf' : 'Gesamtbedarf'} (${sourceLabels[source]})`} value={source === 'event' ? day.plannedRooms : day.demandRooms} color="var(--ops-error)"/>
+    <CapacityTooltipRow label={knownOnly ? "Reserve zum bekannten Bedarf" : "Reserve gesamt"} value={`${reserve > 0 ? '+' : ''}${reserve}`} color={reserve < 0 ? 'var(--ops-error)' : 'var(--ops-success)'}/>
   </div>;
   return <div className="pointer-events-auto rounded-lg border border-[var(--ops-border-strong)] bg-[var(--ops-surface-elevated)] p-3 text-xs shadow-xl">
     <div className="mb-1.5 border-b border-[var(--ops-divider)] pb-1.5 text-sm font-extrabold">{day.label}</div>
@@ -91,9 +91,9 @@ type CapacityMetricConfig = {
   free: keyof CapacityDay; plan: keyof CapacityDay; reserve: keyof CapacityDay;
 };
 
-function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
+function CapacityChartTable({ timeline, config, metric, source, knownOnly, onDayClick }: {
   timeline: CapacityDay[]; config: CapacityMetricConfig;
-  metric: 'beds' | 'rooms'; source: DemandSource; onDayClick: (day: CapacityDay) => void;
+  metric: 'beds' | 'rooms'; source: DemandSource; knownOnly: boolean; onDayClick: (day: CapacityDay) => void;
 }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [hidden, setHidden] = useState<Set<string>>(() => new Set());
@@ -108,19 +108,22 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
   const contentWidth = xScale(timeline.length);
   const rows = metric === 'rooms' ? [
     { label: 'Kontingent', key: 'roomSupply' as keyof CapacityDay },
+    ...(source === 'excel' ? [{ label: 'Kontingent für Excel', key: 'excelRoomSupply' as const }] : []),
     { label: 'EZ disponiert', key: 'assignedEz' as keyof CapacityDay },
     { label: 'DZ disponiert', key: 'assignedDz' as keyof CapacityDay },
     { label: 'EZ frei', key: 'freeEz' as keyof CapacityDay },
     { label: 'DZ frei', key: 'freeDz' as keyof CapacityDay },
     { label: `EZ-Bedarf (${sourceLabels[source]})`, key: (source === 'event' ? 'plannedEz' : 'demandEz') as keyof CapacityDay },
     { label: `DZ-Bedarf (${sourceLabels[source]})`, key: (source === 'event' ? 'plannedDz' : 'demandDz') as keyof CapacityDay },
-    { label: 'Reserve gesamt', key: config.reserve },
+    ...(source === 'excel' ? [{ label: knownOnly ? 'Bekannter Zimmerbedarf' : 'Zimmerbedarf Excel', key: 'demandRooms' as const }] : []),
+    { label: knownOnly ? 'Reserve zum bekannten Bedarf' : 'Reserve gesamt', key: config.reserve },
     ...(isConcrete(source) ? [
       { label: 'Reserve EZ', key: 'liveEzReserve' as const },
       { label: 'Reserve DZ', key: 'liveDzReserve' as const },
     ] : []),
   ] : [
     { label: 'Kontingent', key: config.supply },
+    ...(source === 'excel' ? [{ label: 'Kontingent für Excel', key: 'excelBedSupply' as const }] : []),
     { label: 'Disponiert', key: config.assigned },
     { label: 'Frei', key: config.free },
     { label: `Bedarf (${sourceLabels[source]})`, key: source === 'event' ? config.plan : config.demand },
@@ -133,7 +136,7 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
     { key: 'freeEz', label: 'EZ frei', meaning: 'Noch verfügbare Einzelzimmer', color: 'var(--ops-success)', line: false },
     { key: 'freeDz', label: 'DZ frei', meaning: 'Noch verfügbare Doppelzimmer', color: 'var(--ops-tone-success-text)', line: false },
     { key: 'demandEz', label: 'EZ-Bedarf', meaning: 'Benötigte Einzelzimmer', color: 'var(--ops-warning)', line: true },
-    { key: 'demandTotal', label: 'Gesamtbedarf', meaning: 'Benötigte Zimmer insgesamt', color: 'var(--ops-error)', line: true },
+    { key: 'demandTotal', label: knownOnly ? 'Bekannter Zimmerbedarf' : 'Gesamtbedarf', meaning: knownOnly ? 'Zimmerbedarf aus eindeutig einordenbaren Angaben' : 'Benötigte Zimmer insgesamt', color: 'var(--ops-error)', line: true },
   ] : [
     { key: 'supply', label: 'Kontingent', meaning: 'Gesamte verfügbare Kapazität', color: 'var(--ops-text-muted)', line: false },
     { key: 'assigned', label: 'Disponiert', meaning: 'Bereits belegte Kapazität', color: 'var(--ops-primary)', line: false },
@@ -163,19 +166,19 @@ function CapacityChartTable({ timeline, config, metric, source, onDayClick }: {
             {!hidden.has('supply') && <Line type="step" dataKey={config.supply} name="Kontingent" stroke="var(--ops-text-muted)" strokeWidth={1.25} strokeDasharray="3 3" dot={false} opacity={opacity('supply', .72)}/>}
             {metric === 'rooms' ? <>
               {!hidden.has('demandEz') && <Line type="monotone" dataKey={source === 'event' ? 'plannedEz' : 'demandEz'} name="EZ-Bedarf" stroke="var(--ops-warning)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-warning)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandEz')}/>}
-              {!hidden.has('demandTotal') && <Line type="monotone" dataKey={source === 'event' ? 'plannedRooms' : 'demandRooms'} name="Gesamtbedarf (EZ + DZ)" stroke="var(--ops-error)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-error)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandTotal')}/>}
+              {!hidden.has('demandTotal') && <Line type="monotone" dataKey={source === 'event' ? 'plannedRooms' : 'demandRooms'} name={knownOnly ? "Bekannter Zimmerbedarf" : "Gesamtbedarf (EZ + DZ)"} stroke="var(--ops-error)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-error)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7 }} opacity={opacity('demandTotal')}/>}
             </> : !hidden.has('demand') && <Line type="monotone" dataKey={source === 'event' ? config.plan : config.demand} name="Bedarf" stroke="var(--ops-error)" strokeWidth={4} dot={{ r: 4, fill: 'var(--ops-error)', stroke: 'var(--ops-surface)', strokeWidth: 2 }} activeDot={{ r: 7, strokeWidth: 2 }} opacity={opacity('demand')}/>}
           </ComposedChart>
           </ResponsiveContainer>
         </div>
-        {activeIndex !== null && <div className="pointer-events-none absolute top-5 z-20 -translate-x-1/2" style={{ left: barCenters[activeIndex] }}><CapacityTooltip active payload={[{ payload: timeline[activeIndex] }]} metric={metric} source={source}/></div>}
+        {activeIndex !== null && <div className="pointer-events-none absolute top-5 z-20 -translate-x-1/2" style={{ left: barCenters[activeIndex] }}><CapacityTooltip active payload={[{ payload: timeline[activeIndex] }]} metric={metric} source={source} knownOnly={knownOnly}/></div>}
         <div className="grid border-y border-[var(--ops-divider)] text-xs" style={{ gridTemplateColumns: `${labelWidth}px repeat(${timeline.length}, ${columnWidth}px)` }} aria-label="X-Achse: Tage">
           <div className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 font-semibold text-[var(--ops-text-muted)]">Tag</div>
           {timeline.map((day, index) => <button type="button" key={day.date} onMouseEnter={() => setActiveIndex(index)} onFocus={() => setActiveIndex(index)} onBlur={() => setActiveIndex(null)} onClick={() => onDayClick(day)} className={clsx('py-2 text-center font-bold transition-colors', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)] text-[var(--ops-text)]')}>{day.label}</button>)}
         </div>
         <table className="table-fixed border-collapse text-xs" style={{ width: contentWidth }} aria-label="Tageswerte">
         <colgroup><col style={{ width: labelWidth }}/>{timeline.map(day => <col key={day.date} style={{ width: columnWidth }}/>)}</colgroup>
-        <tbody>{rows.map(row => <tr key={row.label} className="border-b border-[var(--ops-divider)]"><th className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 text-left font-semibold">{row.label}</th>{timeline.map((day, index) => { const value = Number(day[row.key]); const reserve = row.key === config.reserve || row.key === 'liveEzReserve' || row.key === 'liveDzReserve'; return <td key={day.date} onMouseEnter={() => setActiveIndex(index)} onClick={() => onDayClick(day)} className={clsx('cursor-pointer py-2 text-center font-mono tabular-nums transition-colors', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)]', reserve && (value < 0 ? 'font-bold text-[var(--ops-error)]' : 'font-bold text-[var(--ops-success)]'))}>{reserve && value > 0 ? '+' : ''}{value}</td>; })}</tr>)}</tbody>
+        <tbody>{rows.map(row => <tr key={row.label} className="border-b border-[var(--ops-divider)]"><th className="sticky left-0 z-10 bg-[var(--ops-surface-raised)] px-3 py-2 text-left font-semibold">{row.label}</th>{timeline.map((day, index) => { const value = Number(day[row.key]); const reserve = row.key === config.reserve || row.key === 'liveEzReserve' || row.key === 'liveDzReserve'; return <td key={day.date} onMouseEnter={() => setActiveIndex(index)} onClick={() => onDayClick(day)} className={clsx('cursor-pointer py-2 text-center font-mono tabular-nums transition-colors', activeIndex === index && 'bg-[var(--ops-tone-primary-surface)]', reserve && (value < 0 ? 'font-bold text-[var(--ops-error)]' : knownOnly ? 'font-bold text-[var(--ops-warning)]' : 'font-bold text-[var(--ops-success)]'))}>{reserve && value > 0 ? '+' : ''}{value}</td>; })}</tr>)}</tbody>
       </table>
       </div>
     </div>
@@ -223,7 +226,7 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   }, [detailed, source]);
   const concrete = useMemo(() => {
     if (source === 'excel' && excel) return concreteRoomDemand(excel.flatMap(nation =>
-      excelDemandRecords(nation.people, nation.rooms, nation.excludedIds, nation.nation + ':')), data.bookings);
+      excelDemandRecords(nation.people, nation.rooms, nation.excludedIds, nation.nation + ':')), data.bookings, { separateOutsideBookings: true });
     if (source === 'import' && imported) return concreteRoomDemand(importedDemandRecords(
       data.athletes, imported.rows.flatMap(row => row.replacedPersonIds)), data.bookings);
     return undefined;
@@ -248,14 +251,15 @@ function CapacityView({ data }: { data: AnalyticsData }) {
   const minimumReserve = minimum ? reserveFor(minimum) : 0;
   const incomplete = provisional || (source === 'excel');
   const unknown = concrete?.unknownRooms ?? 0;
+  const knownOnly = unknown > 0 || Boolean(concrete?.unknownDates);
   return <div className="min-w-0 space-y-4">
-    <Kpis><ClickMetric onClick={() => navigate(source === 'excel' ? '/import' : source === 'event' ? '/events' : '/athletes')} label="Bedarfspeak" value={timeline.length ? value(demandKey) : '—'} helper={peak?.label || '—'} trend={`${sourceLabels[source]} · ${metricConfig.label}`} tone="primary"/><ClickMetric onClick={() => firstRisk && navigate(`/hotels?date=${firstRisk.date}`)} label="Erster Risikotag" value={firstRisk ? firstRisk.label : '—'} helper={firstRisk ? 'Reserve wird negativ' : incomplete ? 'Prognose unvollständig' : 'Keine Unterdeckung'} trend={firstRisk || incomplete ? 'prüfen' : 'gedeckt'} tone={firstRisk ? 'error' : incomplete ? 'warning' : 'success'}/><ClickMetric onClick={() => minimum && navigate(`/hotels?date=${minimum.date}`)} label="Kleinste Reserve" value={minimum ? `${minimumReserve > 0 ? '+' : ''}${minimumReserve}` : '—'} helper={minimum?.label || '—'} trend={minimumReserve < 0 ? 'Unterdeckung' : incomplete ? 'vorläufig' : 'gedeckt'} tone={minimumReserve < 0 ? 'error' : incomplete ? 'warning' : 'success'}/><ClickMetric onClick={() => firstRisk && navigate(`/analytics?view=capacity&date=${firstRisk.date}`)} label="Tage mit Unterdeckung" value={riskDays.length} helper={`von ${timeline.length} betrachteten Tagen`} trend={riskDays.length ? 'Zeitraum analysieren' : 'keine'} tone={riskDays.length ? 'warning' : 'success'}/></Kpis>
+    <Kpis><ClickMetric onClick={() => navigate(source === 'excel' ? '/import' : source === 'event' ? '/events' : '/athletes')} label={metric === 'rooms' && knownOnly ? 'Bekannter Zimmerpeak' : 'Bedarfspeak'} value={timeline.length ? value(demandKey) : '—'} helper={peak?.label || '—'} trend={`${sourceLabels[source]} · ${metricConfig.label}`} tone="primary"/><ClickMetric onClick={() => firstRisk && navigate(`/hotels?date=${firstRisk.date}`)} label="Erster Risikotag" value={firstRisk ? firstRisk.label : '—'} helper={firstRisk ? 'Reserve wird negativ' : incomplete ? 'Prognose unvollständig' : 'Keine Unterdeckung'} trend={firstRisk || incomplete ? 'prüfen' : 'gedeckt'} tone={firstRisk ? 'error' : incomplete ? 'warning' : 'success'}/><ClickMetric onClick={() => minimum && navigate(`/hotels?date=${minimum.date}`)} label="Kleinste Reserve" value={minimum ? `${minimumReserve > 0 ? '+' : ''}${minimumReserve}` : '—'} helper={minimum?.label || '—'} trend={minimumReserve < 0 ? 'Unterdeckung' : incomplete ? 'vorläufig' : 'gedeckt'} tone={minimumReserve < 0 ? 'error' : incomplete ? 'warning' : 'success'}/><ClickMetric onClick={() => firstRisk && navigate(`/analytics?view=capacity&date=${firstRisk.date}`)} label="Tage mit Unterdeckung" value={riskDays.length} helper={`von ${timeline.length} betrachteten Tagen`} trend={riskDays.length ? 'Zeitraum analysieren' : incomplete ? 'vorläufig' : 'keine'} tone={riskDays.length || incomplete ? 'warning' : 'success'}/></Kpis>
     <DataPanel title={<ChartHeading title="Kontingentverlauf" subtitle="Entwicklung von Bedarf, Kontingent und verfügbarer Reserve." description="Balken zeigen Belegung und freie Kapazität; Linien zeigen Kontingent und Bedarf je Tag."/>} actions={<div className="flex flex-wrap items-end gap-3"><div><div className="mb-1 pl-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Darstellung</div><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(['rooms','beds'] as const).map(key => <button type="button" key={key} aria-pressed={metric === key} onClick={() => setMetric(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', metric === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{key === 'rooms' ? 'Zimmer · EZ & DZ' : 'Betten'}</button>)}</div></div><div><div className="mb-1 pl-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">Bedarfsquelle</div><div className="flex rounded-lg bg-[var(--ops-surface-elevated)] p-1">{(Object.keys(sourceLabels) as DemandSource[]).map(key => <button type="button" key={key} aria-pressed={source === key} onClick={() => setSource(key)} className={clsx('rounded-md px-3 py-1.5 text-xs font-bold', source === key ? 'bg-[var(--ops-primary)] text-white' : 'text-[var(--ops-text-muted)]')}>{sourceLabels[key]}</button>)}</div></div></div>}>
       {source === 'live' && <p className="mb-2 px-3 text-xs text-[var(--ops-text-muted)]">Live zeigt disponierte Buchungen und die bisherige Bedarfsprojektion aus Personendaten.</p>}
       {detailed && !concrete && <p role="status" className="px-3 text-sm">{forecastError ? 'Bedarfsdaten konnten nicht geladen werden.' : 'Bedarfsdaten werden geladen …'}</p>}
-      {source === 'excel' && excel && <p className="mb-2 px-3 text-xs text-[var(--ops-text-muted)]">Vorläufige Excel-Prognose · {excel.length} Nationen mit aktuellen Quellen{excel.some(nation => nation.conflict) ? ` · Quellenkonflikt: ${excel.filter(nation => nation.conflict).map(nation => nation.nation).join(', ')}` : ''}. Fehlende Uploads sind keine Nullmeldungen.</p>}
+      {source === 'excel' && excel && <p className="mb-2 px-3 text-xs text-[var(--ops-text-muted)]">Vorläufige Excel-Prognose · {excel.length} Nationen mit aktuellen Quellen{excel.some(nation => nation.conflict) ? ` · Quellenkonflikt: ${excel.filter(nation => nation.conflict).map(nation => nation.nation).join(', ')}` : ''}. Fehlende Uploads sind keine Nullmeldungen. Buchungen außerhalb des Excel-Bedarfs mindern das Kontingent für Excel.</p>}
       {detailed && provisional && <p className="mb-2 px-3 text-xs text-[var(--ops-warning)]">Vorläufig · offene Angaben{unknown > 0 ? ` · bis zu ${unknown} Personen pro Nacht ohne eindeutige Zimmerart` : ''}{concrete?.unknownDates ? ` · ${concrete.unknownDates} Personen ohne belastbare Aufenthaltsdaten` : ''}.</p>}
-      {(!detailed || concrete) && <CapacityChartTable key={source} timeline={timeline} config={metricConfig} metric={metric} source={source} onDayClick={day => navigate(`/hotels?date=${day.date}`)}/>}
+      {(!detailed || concrete) && <CapacityChartTable key={source} timeline={timeline} config={metricConfig} metric={metric} source={source} knownOnly={knownOnly} onDayClick={day => navigate(`/hotels?date=${day.date}`)}/>}
     </DataPanel>
   </div>;
 }
