@@ -74,7 +74,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
  });
  await page.goto(`${origin}/assignments`);
  const summary=page.locator('section[aria-label="Personen Soll/Ist"]');
- await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor();
+ await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor({timeout:30000});
  // Status and nation filters browse the same people without creating demands.
  const statusFilters=page.getByText('Status',{exact:true}).locator('..');
  await statusFilters.getByRole('button',{name:'Zugewiesen',exact:true}).click();
@@ -104,6 +104,9 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(await groups.nth(0).getAttribute('aria-expanded'),'true');
  assert.equal(await groups.nth(1).getAttribute('aria-expanded'),'false');
  const openCard=page.getByRole('group',{name:/^Offen ·/});
+ assert.match(await openCard.innerText(),/AUT · M · Athlete · (Snowboard Cross|Ski Cross)/);
+ const assignedCards=page.locator('.ops-occupant-card');
+ assert.ok((await assignedCards.allTextContents()).some(label=>/EST · M · Official · (Snowboard Cross|Ski Cross)/.test(label)));
  const join=openCard.getByRole('button',{name:'Person hier zuweisen',exact:true});
  await join.waitFor();
  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Person hier zuweisen'&&!b.disabled));
