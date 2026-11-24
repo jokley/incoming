@@ -15,7 +15,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
- let single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false;
+ let single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false;
  let releaseFamily:()=>void=()=>{};
  let familyGate=Promise.resolve();
  let mutationGate=Promise.resolve();let releaseMutation:()=>void=()=>{};
@@ -39,6 +39,13 @@ test('person overview drills into assigned people, refreshes after persistence, 
   const firstSlots=slots.map(slot=>({...slot,inventoryId:'1',dateCoverage:coverage(interval.checkInDate,interval.checkOutDate)}));
   const free={slotId:'h:r:free',slotIndex:9,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:'Zimmer 09',inventoryRoomCount:9,dateCoverage:coverage(interval.checkInDate,interval.checkOutDate),inventoryId:'1',bookings:[]};
   const later={...free,slotId:'h:r:later',slotIndex:1,roomNumber:'K2-1',inventoryRoomCount:1,dateCoverage:coverage('2027-03-23','2027-03-31'),inventoryId:'2'};
+  if (apartmentMode) {
+    const apartment = {...free, slotId:'apt:1',roomNumber:'K1-1',roomLabel:'Apartment 01',
+      roomTypeName:'APP: 2 DZ + DU', apartmentLayout:{bedrooms:[2,2],showers:1}};
+    return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},
+      units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},
+      hotels:[{hotelId:'h',hotelName:'Synthetic Hotel',slots:[apartment]}],validationByUnit:{}};
+  }
   return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},hotels:[{hotelId:'h',hotelName:'Synthetic Hotel',slots:[...firstSlots,free,later]}],validationByUnit:{}};
 
  };
@@ -57,7 +64,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
   if(path==='/import/sessions')return route.fulfill({json:[]});
   if(path==='/assignments/availability'){
    const needs=JSON.parse(req.postData()!).needs as Array<{key:string;athleteIds:string[]}>;
-   const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?[{slotId:'booking:booking-mismatch',status:'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
+   const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?apartmentMode?[{slotId:'apt:1:bedroom:2',status:'warning',messages:['Ausnahme erforderlich: DU'],apartmentRules:['DU']}]:[{slotId:'booking:booking-mismatch',status:'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
    return route.fulfill({json:{targets,hotels:{}}});
   }
   if(req.method()==='POST'&&path==='/assignments/segments')return route.fulfill({status:409,json:{message:'Synthetic stale target; no booking changed.'}});
@@ -199,6 +206,28 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(await page.getByRole('button',{name:'EZ-Entscheidung bearbeiten',exact:true}).count(),0);
  assert.equal(await page.getByLabel('Als EZ werten',{exact:true}).isDisabled(),true);
 
+ readOnly=false;apartmentMode=true;
+ await page.goto(`${origin}/assignments`);
+ await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor({timeout:30000});
+ await page.getByText('Synthetic Hotel',{exact:true}).first().click();
+ const apartment=page.getByRole('region',{name:'Apartment 9'});
+ assert.equal(await apartment.locator('[data-bedroom-index]').count(),2);
+ const transfer = await page.evaluateHandle(()=>new DataTransfer());
+ await page.getByRole('group',{name:/^Offen ·/}).dispatchEvent('dragstart',{dataTransfer:transfer});
+ const secondBedroom=apartment.locator('[data-bedroom-index="2"]');
+ await secondBedroom.getByText('Ausnahme erforderlich: DU').waitFor();
+ await secondBedroom.click();
+ const exception=page.getByRole('dialog').filter({hasText:'Apartmentausnahme bestätigen'});
+ const confirm=exception.getByRole('button',{name:'Ausnahme verbindlich zuweisen'});
+ assert.equal(await confirm.isDisabled(),true);
+ await exception.getByLabel('Begründung').fill('Bestätigt mit der Unterkunft');
+ const exceptionPost=page.waitForRequest(r=>r.method()==='POST' && r.url().endsWith('/assignments/segments'));
+ await confirm.click();
+ const override=(await exceptionPost).postDataJSON();
+ assert.equal(override.bedroomIndex,2);
+ assert.equal(override.confirmApartmentException,true);
+ assert.deepEqual(override.acceptedApartmentRules,['DU']);
+ assert.equal(override.apartmentExceptionReason,'Bestätigt mit der Unterkunft');
  assert.deepEqual(errors,[]);
 });
 

@@ -39,6 +39,7 @@ def snapshot_token(booking):
     for b in sorted(relevant.values(), key=lambda b: b.id):
         rows.append([b.id, b.hotel_id, b.room_type_id, b.room_number, b.check_in_date,
                      b.check_out_date, b.counts_as_single, b.created_by, b.created_at,
+                     b.bedroom_index, b.apartment_exception,
                      sorted((o.athlete_id, o.role, str(o.created_at)) for o in b.occupants)])
     inventories = event_query(HotelRoomInventory).filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all()
     state = [booking.id, rows, [[p.id, p.arrival_date, p.departure_date, p.updated_at,
@@ -60,18 +61,24 @@ def preview_token(booking, ids, split_date):
 def _copy(booking, identity, start, end):
     return SimpleNamespace(id=identity, hotel_id=booking.hotel_id, room_type_id=booking.room_type_id,
         hotel=booking.hotel, room_type=booking.room_type, room_number=booking.room_number,
-        check_in_date=start, check_out_date=end, counts_as_single=booking.counts_as_single)
+        check_in_date=start, check_out_date=end, counts_as_single=booking.counts_as_single,
+        bedroom_index=booking.bedroom_index)
 
 
 def validate_partition_source(booking):
     """Common physical-room safety for explicit split and external replacement."""
     require_event_object(booking)
     external = booking.hotel.accommodation_type == 'EXTERNAL'
-    require(external or (booking.room_type and len(booking.occupants) <= booking.room_type.max_persons), 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
+    room_type = booking.room_type
+    capacity = room_type.max_persons if room_type else 0
+    if booking.bedroom_index and room_type and room_type.apartment_layout:
+        capacity = room_type.apartment_layout['bedrooms'][booking.bedroom_index - 1]
+    require(external or len(booking.occupants) <= capacity, 'ACCOMMODATION_REVIEW_REQUIRED', 'Zimmerbelegung prüfen.')
     from app import _planned_room_key
     key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
     for other in event_query(RoomBooking).filter_by(hotel_id=booking.hotel_id, room_type_id=booking.room_type_id).all():
-        same_room = not external and key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
+        same_room = (not external and key and key == (_planned_room_key(other.room_number) or (other.room_number or '').strip())
+                     and (booking.bedroom_index is None or other.bedroom_index in (None, booking.bedroom_index)))
         require(not (other.id != booking.id and same_room and booking_intervals_overlap(
             booking.check_in_date, booking.check_out_date, other.check_in_date, other.check_out_date)),
             'ROOM_BOOKING_CONFLICT', 'Bestehende Zimmerbelegung prüfen.')
@@ -132,7 +139,9 @@ def partition_booking(booking, cut, remaining):
     if remaining:
         continuation = RoomBooking(event_id=booking.event_id, hotel_id=booking.hotel_id, room_type_id=booking.room_type_id,
             room_number=booking.room_number, check_in_date=cut, check_out_date=booking.check_out_date,
-            counts_as_single=booking.counts_as_single, created_by=booking.created_by, created_at=booking.created_at)
+            counts_as_single=(len(remaining) == 1 if booking.bedroom_index else booking.counts_as_single),
+            created_by=booking.created_by, created_at=booking.created_at,
+            bedroom_index=booking.bedroom_index, apartment_exception=booking.apartment_exception)
         continuation.occupants = [RoomBookingOccupant(athlete_id=o.athlete_id, role=o.role, created_at=o.created_at) for o in remaining]
         db.session.add(continuation)
     booking.check_out_date = cut

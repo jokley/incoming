@@ -4,6 +4,7 @@ from flask import Blueprint, jsonify, request
 
 from models import db, HotelRoomInventory, RoomType, RoomBooking, RoomAssignment, EventRoomDemand
 from accommodation_scope import accommodation_event_id
+from apartment_occupancy import valid_layout
 
 
 room_types = Blueprint('room_types', __name__)
@@ -25,9 +26,12 @@ def get_room_types():
 @room_types.route('/room-types/', methods=['POST'])
 def create_room_type():
     data = request.json
+    layout = data.get('apartmentLayout')
+    if layout is not None and not valid_layout(layout, data.get('maxPersons')):
+        return jsonify(error='INVALID_APARTMENT_LAYOUT', message='Schlafräume, DU und reguläre Kapazität prüfen.'), 400
     room_type = RoomType(
         name=data['name'],
-        max_persons=data['maxPersons']
+        apartment_layout=layout, max_persons=data['maxPersons']
     )
     db.session.add(room_type)
     db.session.commit()
@@ -43,6 +47,19 @@ def update_room_type(room_type_id):
     lock_accommodation_writes()
     room_type = RoomType.query.get_or_404(room_type_id)
     data = request.json
+
+    layout = data.get('apartmentLayout', room_type.apartment_layout)
+    maximum = data.get('maxPersons', room_type.max_persons)
+    if layout is not None and not valid_layout(layout, maximum):
+        return jsonify(error='INVALID_APARTMENT_LAYOUT', message='Schlafräume, DU und reguläre Kapazität prüfen.'), 400
+    if layout != room_type.apartment_layout or (layout and maximum != room_type.max_persons):
+        owner = accommodation_event_id()
+        if (HotelRoomInventory.query.filter(HotelRoomInventory.room_type_id == room_type_id,
+                HotelRoomInventory.event_id != owner).first()
+                or RoomBooking.query.filter_by(room_type_id=room_type_id).filter(
+                    (RoomBooking.event_id != owner) | RoomBooking.bedroom_index.is_not(None)).first()):
+            return jsonify(error='APARTMENT_LAYOUT_IN_USE', message='Der Apartmenttyp wird bereits für Schlafraumbuchungen oder ein anderes Event verwendet.'), 409
+        room_type.apartment_layout = layout
 
     if 'name' in data:
         room_type.name = data['name']

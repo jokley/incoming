@@ -70,7 +70,7 @@ def person_accommodation_coverage(arrival, departure, bookings, requirement='REQ
             'accommodationType': getattr(booking.hotel, 'accommodation_type', 'STANDARD'),
             'roomTypeId': str(booking.room_type_id) if booking.room_type_id else None,
             'roomTypeName': booking.room_type.name if booking.room_type else None,
-            'roomNumber': booking.room_number, **_interval(left, right),
+            'roomNumber': booking.room_number, 'bedroomIndex': getattr(booking, 'bedroom_index', None), **_interval(left, right),
             'countsAsSingle': bool(booking.counts_as_single), 'conflictCodes': codes,
         })
         if left and right and left < right:

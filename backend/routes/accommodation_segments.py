@@ -55,8 +55,11 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if request.method == 'DELETE':
             db.session.delete(membership)
             db.session.flush()
-            if not event_query(RoomBookingOccupant).filter_by(room_booking_id=existing.id).count():
+            remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=existing.id).count()
+            if not remaining:
                 db.session.delete(existing)
+            elif existing.bedroom_index is not None:
+                existing.counts_as_single = remaining == 1
             _acknowledge_import_changes([person.id])
             db.session.flush()
             result = {'success': True, 'bookingId': str(booking_id), 'personId': str(person.id),
@@ -99,6 +102,9 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             'roomTypeId': target.room_type_id if target else data.get('roomTypeId'),
             'roomNumber': target.room_number if target else data.get('roomNumber'),
             'inventoryId': data.get('inventoryId'),
+            'bedroomIndex': target.bedroom_index if target else data.get('bedroomIndex', existing.bedroom_index if existing else None),
+            'confirmApartmentException': data.get('confirmApartmentException'),
+            'apartmentExceptionReason': data.get('apartmentExceptionReason'),
             'checkInDate': data['checkInDate'], 'checkOutDate': data['checkOutDate'],
         }
         if existing or target:
@@ -112,6 +118,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if (shared and start == existing.check_in_date and end == existing.check_out_date
                 and str(payload_data['hotelId']) == str(existing.hotel_id)
                 and str(payload_data['roomTypeId']) == str(existing.room_type_id)
+                and payload_data['bedroomIndex'] == existing.bedroom_index
                 and (_planned_room_key(payload_data['roomNumber']) or payload_data['roomNumber'])
                 == (_planned_room_key(existing.room_number) or existing.room_number)):
             # Saving an unchanged shared segment must not force a new reservation.
@@ -122,6 +129,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             return jsonify(result)
         # A shared edit creates a separate room booking. Its old room still
         # consumes capacity for the other occupants, but is excluded for this person.
+        if target and target.bedroom_index is not None:
+            payload_data['athleteIds'].extend(str(o.athlete_id) for o in target.occupants)
         payload, _, error = _validate_booking_payload(payload_data,
             existing_booking=target or (existing if not shared else None),
             person_booking_exclusion_id=existing.id if existing else None, allow_single_join=assembling_pair)
@@ -133,7 +142,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         excluded = {b.id for b in (target, existing if not shared else None) if b}
         same_room = event_query(RoomBooking).filter_by(hotel_id=payload['hotel_id'], room_type_id=payload['room_type_id']).all()
         for other in ([] if external else same_room):
-            if other.id in excluded:
+            if other.id in excluded or (payload.get('bedroom_index') is not None
+                    and other.bedroom_index is not None and other.bedroom_index != payload['bedroom_index']):
                 continue
             same_number = (_planned_room_key(other.room_number) or other.room_number) == (
                 _planned_room_key(payload['room_number']) or payload['room_number'])
@@ -144,9 +154,16 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             db.session.add(RoomBookingOccupant(athlete_id=person.id, room_booking_id=target.id))
             _acknowledge_import_changes([person.id])
             booking = target
+            if target.bedroom_index is not None:
+                from apartment_occupancy import audit_exception
+                target.counts_as_single = payload['counts_as_single']
+                target.apartment_exception = payload.get('apartment_exception')
+                audit_exception(target)
         else:
             role = membership.role if membership else None
             if shared:
+                if existing.bedroom_index is not None:
+                    existing.counts_as_single = len(existing.occupants) == 2
                 db.session.delete(membership)
                 db.session.flush()
             booking = _save_booking_from_payload(payload, existing_booking=existing if not shared else None, commit=False)
@@ -211,6 +228,17 @@ def add_shared_segment():
             coverage = coverage_for(person)
             _require(coverage['coverageStatus'] != 'CONFLICT' and (external or interval in coverage['openIntervals']),
                      'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')
+        if data.get('bedroomIndex') is not None and not data.get('joinBookingId'):
+            from app import _validate_booking_payload, _save_booking_from_payload
+            validated, _, error = _validate_booking_payload({**data, 'athleteIds': ids})
+            if error:
+                db.session.rollback()
+                return error
+            booking = _save_booking_from_payload(validated, commit=False)
+            result = {'success': True, 'booking': booking.to_dict(),
+                      'people': [{'personId': str(person.id), 'accommodationCoverage': coverage_for(person)} for person in people]}
+            db.session.commit()
+            return jsonify(result), 201
         from app import _initialize_new_booking_counts_as_single
         default_flag = _initialize_new_booking_counts_as_single({**data, 'athleteIds': ids}, people=people)['countsAsSingle']
         join_id = data.get('joinBookingId')

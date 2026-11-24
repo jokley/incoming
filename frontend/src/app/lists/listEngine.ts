@@ -1,5 +1,5 @@
 import { requiresAccommodation } from '../services/accommodationRequirement.ts';
-import { buildHotelRiskRows } from '../services/planningCalculations.ts';
+import { bookingInventoryId, buildHotelRiskRows } from '../services/planningCalculations.ts';
 import {stayWindowDeviationText,stayWindowHotelNote} from '../services/stayWindow.ts';
 import { personAccommodation } from '../services/personAccommodation.ts';
 import { accommodationSurcharge } from '../services/accommodationSurcharge.ts';
@@ -119,6 +119,8 @@ export interface HotelContactRow {
   peakRooms: number | null;
   peakPersons: number | null;
   peakBlockedBeds: number | null;
+  peakBedrooms?: number | null;
+  apartmentExceptionDays?: number;
 }
 
 export function summarizeHotelContactRows(rows: ReadonlyArray<Pick<HotelContactRow, 'assignedBookings' | 'totalRooms' | 'totalBeds'>>) {
@@ -139,7 +141,7 @@ export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] 
     const inventories = hotel.accommodationType==='EXTERNAL'?[]:hotel.roomInventories || [];
     const assigned=[...new Map(bookings.filter(b=>b.hotel.id===hotel.id).map(b=>[b.id,b])).values()];
     const daily=risks.find(row=>row.hotel.id===hotel.id)?.daily || [];
-    const peak=(key:'occupiedRooms'|'occupiedBeds'|'blockedBeds')=>hotel.accommodationType==='EXTERNAL'?null
+    const peak=(key:'occupiedRooms'|'occupiedBeds'|'blockedBeds'|'occupiedBedrooms')=>hotel.accommodationType==='EXTERNAL'?null
       : daily.reduce((max,day)=>Math.max(max,day[key]),0);
     return { id: hotel.id, hotel: hotel.name, location: value(hotel.location), region: value(hotel.region), contactPerson: value(hotel.contactPerson), phone: value(hotel.phone), email: value(hotel.email), comment: value(hotel.comment), hasHalfBoard: inventories.some(inventory => inventory.hasHalfBoard), hasSR: inventories.some(inventory => inventory.hasSR), contingents: inventories.length,
       // Agreement sums describe inventory entries, never simultaneous room supply.
@@ -149,6 +151,7 @@ export function createHotelContactRows(hotels: Hotel[], bookings: RoomBooking[] 
         .map(i=>`${i.roomType.name}: ${iso(i.availableFrom)}–${iso(i.availableUntil)}`))].join(' · ') || '—',
       assignedBookings:assigned.length,assignedPersons:new Set(assigned.flatMap(b=>b.occupants.map(o=>o.athlete.id))).size,
       peakRooms:peak('occupiedRooms'),peakPersons:peak('occupiedBeds'),peakBlockedBeds:peak('blockedBeds'),
+      peakBedrooms:peak('occupiedBedrooms'),apartmentExceptionDays:daily.filter(day=>day.apartmentExceptions).length,
     };
   }).sort((a,b)=>a.hotel.localeCompare(b.hotel,'de'));
 }
@@ -176,7 +179,10 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
     const next = (counters.get(key) || 0) + 1;
     counters.set(key, next);
     const supplied = booking.roomNumber?.replace(/^(?:Zimmer|Slot)\s*/i, '').trim();
-    displayRoomByBooking.set(booking.id, `${code} ${supplied || String(next).padStart(2, '0')}`);
+    const bedroom = booking.bedroomIndex ? ` · Schlafraum ${booking.bedroomIndex}`
+      : booking.roomType?.apartmentLayout ? ' · Schlafraum ungeklärt' : '';
+    const exception = booking.apartmentException ? ` · Bestätigte Ausnahme (${booking.apartmentException.rules.join(', ')})` : '';
+    displayRoomByBooking.set(booking.id, `${code} ${supplied || String(next).padStart(2, '0')}${bedroom}${exception}`);
   });
   sortedBookings.forEach((booking) => booking.occupants.forEach((occupant) => {
     const roommate = booking.occupants
@@ -197,8 +203,12 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
         : reason ? (segmentSurcharge.surchargeReasons.includes(reason) ? 'Ja' : 'Nein')
           : segmentSurcharge.hasAccommodationSurcharge ? 'Ja' : 'Nein';
       const assessment=booking.occupants.find(o=>o.athlete.id===athlete.id)?.athlete.stayWindow;
+      const explicit = bookingInventoryId(booking);
       const inventory=inventoriesByHotelAndRoomType.get(`${booking.hotel.id}/${booking.roomType?.id}`)?.find(item =>
-        (!booking.checkInDate || item.availableUntil >= iso(booking.checkInDate)) && (!booking.checkOutDate || item.availableFrom <= iso(booking.checkOutDate)));
+        explicit ? item.id === explicit :
+          (!booking.checkInDate || item.availableUntil >= iso(booking.checkInDate))
+            && (!booking.checkOutDate || item.availableFrom <= iso(booking.checkOutDate)));
+
       return {bookingId:booking.id,hotelId:booking.hotel.id,hotel:value(booking.hotel.name),
         contingent:`${booking.hotel.name} → ${inventory?.roomType.name || (booking.hotel.accommodationType==='EXTERNAL'?'Extern':booking.roomType?.name)}${inventory ? ` · ${iso(inventory.availableFrom)}–${iso(inventory.availableUntil)}` : ''}`,
         room:displayRoomByBooking.get(booking.id) || roomLabel(booking.roomNumber),
