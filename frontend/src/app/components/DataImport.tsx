@@ -23,10 +23,10 @@ import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, F
 
 import { api } from '../services/api';
 import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
-import { archiveImportSessionChecked, importConfirmationMessage, reloadImportSession } from '../services/importConfirmation';
+import { archiveImportSessionChecked, importConfirmationMessage } from '../services/importConfirmation';
 import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel, sportAreaLabel } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange } from '../types';
-import { closedImportStatuses, IMPORT_SESSION_STATUS, type ImportSession, type NationClarification } from '../data/importSessions';
+import { closedImportStatuses, importQueueSession, IMPORT_SESSION_STATUS, type ImportQueueSession, type ImportSession, type NationClarification } from '../data/importSessions';
 import { ContentCard, EmptyState, EnterpriseDialog, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, type OperationsTask } from './OperationsDecisionDialog';
@@ -77,10 +77,9 @@ export function DataImport() {
   const importAllowed = permissions.canManageImports;
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<ImportSession | null>(null);
-  const [closingSession,setClosingSession]=useState<ImportSession|null>(null);
+  const [closingSession,setClosingSession]=useState<ImportQueueSession|null>(null);
   const [closeError,setCloseError]=useState<string|null>(null);
-  const [closeRefreshWarning,setCloseRefreshWarning]=useState<string|null>(null);
-  const [sessions, setSessions] = useState<ImportSession[]>([]);
+  const [sessions, setSessions] = useState<ImportQueueSession[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [fullReplacement,setFullReplacement]=useState(false);
   const [preview, setPreview] = useState<FisImportPreview | null>(null);
@@ -105,19 +104,43 @@ export function DataImport() {
   const { eventId, selectedEvent } = useActiveEvent();
   useActiveEventBlocker(Boolean(selected || preview || files.length || loading || confirming || savingTask), 'Bitte den laufenden Import-Review zuerst abschließen oder verlassen.');
 
-  const refreshSessions = async () => setSessions(await api.getImportSessions());
-  useEffect(() => { setShownDecisionId(searchParams.get('decisionId')); }, [searchParams]);
-  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : searchParams.get('nation') ? loaded.find(session=>session.nation===searchParams.get('nation')&&!['CANCELLED','REPLACED'].includes(session.status)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
-  const selectSession = async (session: ImportSession) => {
+  const updateQueue = (updated: ImportSession) => {
+    const summary = importQueueSession(updated);
+    setSessions(rows => rows.some(row => row.id === summary.id)
+      ? rows.map(row => row.id === summary.id ? summary : row) : [summary, ...rows]);
+  };
+  useEffect(() => { setSessions([]); }, [eventId]);
+  const requested = searchParams.get('sessionId');
+  const requestedDecision = searchParams.get('decisionId');
+  const requestedNation = searchParams.get('nation');
+  useEffect(() => { setShownDecisionId(requestedDecision); }, [requestedDecision]);
+  useEffect(() => {
+    if (!eventId) return;
+    let current = true;
+    void api.getImportQueue(requested ? null : requestedDecision).then(async loaded => {
+      if (!current) return;
+      setSessions(loaded);
+      const match = requested ? loaded.find(session => session.id === requested)
+        : requestedDecision ? loaded.find(session => session.matchesDecision)
+        : requestedNation ? loaded.find(session => session.nation === requestedNation && !['CANCELLED','REPLACED'].includes(session.status))
+        : undefined;
+      if (match) await selectSession(match);
+    }).catch(e => {
+      if (current) setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden');
+    });
+    return () => { current = false; };
+  }, [eventId, requested, requestedDecision, requestedNation]);
+
+  const selectSession = async (session: Pick<ImportQueueSession, 'id'>) => {
     setLoading(true);
     try {
       const full = await api.getImportSession(session.id);
       if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
-      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);setCloseRefreshWarning(null);
+      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);
       const selection = importAllowed && full.status!=='IMPORTED' ? nationReviewSelection(full) : undefined;
       const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
       setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
-      if (selection) await refreshSessions();
+      updateQueue(draft);
     } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) reportImportError(e,'Importsession konnte nicht geladen werden.'); }
     finally { setLoading(false); }
   };
@@ -130,26 +153,24 @@ export function DataImport() {
     if(input)input.value=''; // The same file pair may be selected again for a reimport.
   };
   const cancel = () => { setFiles([]); setPreview(selected?.preview ?? null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null);setCloseRefreshWarning(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
       const selection = fullReplacement ? undefined : nationReviewSelection(uploaded);
       const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : uploaded;
-      setSelected(draft); setPreview(draft.preview ?? null); await refreshSessions(); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+      setSelected(draft); setPreview(draft.preview ?? null); updateQueue(draft); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const closeSession = async () => {
-    if(!closingSession)return;setConfirming(true);setCloseError(null);setCloseRefreshWarning(null);
+    if(!closingSession)return;setConfirming(true);setCloseError(null);
     let archived: ImportSession;
     try {archived=await archiveImportSessionChecked(closingSession,api);}
     catch(e){setCloseError(e instanceof Error?e.message:'Importsession konnte nicht geschlossen werden.');setConfirming(false);return;}
-    setSessions(rows=>rows.map(row=>row.id===archived.id?archived:row));
+    updateQueue(archived);
     if(selected?.id===archived.id){setSelected(null);setPreview(null);setFiles([]);setDetail(null);setActiveTask(null);setQuestion(null);setError(null);setSuccess(null);}
     setClosingSession(null);
-    try {await refreshSessions();}
-    catch {setCloseRefreshWarning(`${archived.nation}: Importsession ist geschlossen. Die Warteschlange konnte nicht neu geladen werden. Bitte die Seite zur Aktualisierung erneut laden.`);}
-    finally{setConfirming(false);}
+    setConfirming(false);
   };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
-      if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);} setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
-  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const [updated, loaded] = await reloadImportSession(selected.id, api); setSelected(updated); setPreview(updated.preview ?? null); setSessions(loaded);  } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+      if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);updateQueue(draft);} else updateQueue(restored); setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
+  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); if (updated.selected) updateQueue(updated.selected); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const updated = await api.getImportSession(selected.id); setSelected(updated); setPreview(updated.preview ?? null); updateQueue(updated);  } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const recheck = async () => {
     if(!selected)return;
     setConfirming(true);setError(null);
@@ -160,7 +181,7 @@ export function DataImport() {
       const source=family?current.submissions?.find(part=>part.family===family):undefined;
       const selection=source?{sourceVersionId:source.versionId}:nationReviewSelection(current,true);
       const updated=await api.recheckImportSession(selected.id,selection);
-      setSelected(updated);setPreview(updated.preview??null);await refreshSessions();
+      setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);
     } catch(e){reportImportError(e,'Erneute Prüfung fehlgeschlagen');}
     finally{setConfirming(false);}
   };
@@ -168,7 +189,7 @@ export function DataImport() {
   const prepareSubmissions = async (sourceVersionId?:string) => {
     if(!selected)return;
     setConfirming(true);setError(null);setSuccess(null);
-    try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);await refreshSessions();}
+    try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);updateQueue(updated);}
     catch(e){reportImportError(e,'Teilmeldungen konnten nicht geprüft werden.');}
     finally{setConfirming(false);}
   };
@@ -181,7 +202,7 @@ export function DataImport() {
       const nextApproval = updated.approvals.find(approval => approval.decision === 'PENDING');
       setActiveTask(nextApproval ? buildOperationsTask(updated, nextApproval) : null);
       setSuccess(nextApproval ? 'Nächster Schritt geöffnet.' : 'Entscheidung gespeichert.');
-      await refreshSessions();
+      updateQueue(updated);
     }
     catch (e) { setError(e instanceof Error ? e.message : 'Entscheidung konnte nicht gespeichert werden'); }
     finally { setSavingTask(false); }
@@ -194,7 +215,7 @@ export function DataImport() {
       const updated = await api.stageAccommodationRequirement(selected.id, personKey, accommodationRequirement);
       setSelected(updated);
       setPreview(updated.preview ?? null);
-      setSessions(rows => rows.map(row => row.id === updated.id ? updated : row));
+      updateQueue(updated);
     }
     catch(e){setError(e instanceof Error ? `Unterkunftsbedarf konnte nicht gespeichert werden. ${e.message}` : 'Unterkunftsbedarf konnte nicht gespeichert werden.');}
     finally {setSavingTask(false);}
@@ -202,7 +223,7 @@ export function DataImport() {
   const setPreviewRate = async (personKey:string, category:'STANDARD'|'SPECIAL') => {
     if(!selected)return;
     setSavingTask(true);setError(null);
-    try {const updated=await api.stageAccommodationRate(selected.id,personKey,category);setSelected(updated);setPreview(updated.preview??null);await refreshSessions();}
+    try {const updated=await api.stageAccommodationRate(selected.id,personKey,category);setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);}
     catch(e){setError(e instanceof Error ? e.message : 'Tarif konnte nicht gespeichert werden.');}
     finally {setSavingTask(false);}
   };
@@ -220,7 +241,7 @@ export function DataImport() {
         setActiveTask(pending ? buildOperationsTask(updated, pending) : null);
         if (!pending) setSuccess('Quote nach Sonderstatus erfüllt. Keine Genehmigung mehr erforderlich.');
       }
-      await refreshSessions();
+      updateQueue(updated);
     }
     catch (error) { setError(error instanceof Error ? error.message : 'EZ-Sonderstatus konnte nicht gespeichert werden.'); }
     finally { setSavingTask(false); }
@@ -297,7 +318,6 @@ export function DataImport() {
     <input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple disabled={!importAllowed||loading||confirming||savingTask} className="hidden" onChange={e=>handleFiles(e.target.files)}/>
     <SplitPageLayout className="flex min-h-full flex-col gap-5 space-y-0 xl:h-full xl:min-h-0">
       <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="Nationen prüfen, freigeben und kontrolliert importieren." meta={selected ? <><StatusChip tone={!preview||preview.planStale||preview.quotaRulesChanged ? 'warning' : selected.errors ? 'error' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'success'}>{closedImportStatuses.has(selected.status)?IMPORT_SESSION_STATUS[selected.status]:!preview||preview.planStale||preview.quotaRulesChanged?'Prüfung erforderlich':IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">{selected.nation} · {importScopeLabel(preview) || 'Nationsentwurf'}</span></> : <StatusChip tone="primary">Dateien hinzufügen</StatusChip>} />
-      {closeRefreshWarning&&<InfoPanel tone="warning" title="Aktualisierung ausstehend">{closeRefreshWarning}</InfoPanel>}
     {files.length>0&&<details className="mx-5 mb-3 text-sm"><summary className="cursor-pointer">Sonderaktion: vollständige Nation ersetzen</summary><label className="mt-2 flex gap-2"><input type="checkbox" checked={fullReplacement} onChange={e=>setFullReplacement(e.target.checked)} disabled={loading||confirming}/>Diese Dateien bilden die vollständige Nation. Fehlende Personen können nach Prüfung und Bestätigung entfernt werden.</label></details>}
       <div className="flex flex-col gap-5 xl:min-h-0 xl:flex-1 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} onSelect={selectSession} onClose={importAllowed?session=>{setCloseError(null);setClosingSession(session);}:undefined} busy={loading||confirming||savingTask||questionBusy} />
@@ -359,12 +379,12 @@ export function DataImport() {
     {question&&selected&&<NationClarificationDialog session={selected} action={question.action} item={question.item}
       onClose={()=>setQuestion(null)} onBusy={setQuestionBusy} onSave={async data=>{
         const saved=await api.documentImportClarification(selected.id,data);
-        setSelected(saved);setPreview(saved.preview??null);setSessions(rows=>rows.map(row=>row.id===saved.id?saved:row));
+        setSelected(saved);setPreview(saved.preview??null);updateQueue(saved);
       }}/>}
     {officialProposal&&permissions.canManageImports&&<OfficialLinkDialog key={officialProposal.token} proposal={officialProposal} onClose={()=>setOfficialProposal(null)} onConfirm={async keys=>{
       await api.documentImportClarification(officialProposal.sessionId,{officialLinkAction:'CONFIRM',token:officialProposal.token,candidateKeys:keys,confirmed:true});
       const sessionId=officialProposal.sessionId;setOfficialProposal(null);
-      if(files.length>=2)await runPreview();else await selectSession(await api.getImportSession(sessionId));
+      if(files.length>=2)await runPreview();else await selectSession({id: sessionId});
     }}/>}
     <OperationsDecisionDialog canWrite={importAllowed} task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />

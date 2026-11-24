@@ -2411,6 +2411,9 @@ def confirm_previewed_fis_import():
 @app.route('/api/import/sessions', methods=['GET'])
 def list_import_sessions():
     configured_event_id()  # Operational history cannot select an event without deployment configuration.
+    if has_request_context() and request.args.get('view') == 'queue':
+        from imports.workflow import import_queue_rows
+        return jsonify(import_queue_rows(import_event_id(), request.args.get('decisionId', type=int)))
     from sqlalchemy.orm import selectinload
     sessions = ImportSession.query.filter_by(event_id=import_event_id()).options(
         selectinload(ImportSession.current_version), selectinload(ImportSession.versions),

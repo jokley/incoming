@@ -166,10 +166,23 @@ test('automatic person selection is shared by athlete and Officials quota views 
   planning.operationalQuota={conflict:false,reasons:[],people:Array.from({length:3},(_,i)=>({matchKey:'staff'+i,nationCode:'FIN',singleRoomAllocation:{identity:'staff'+i,status:i<context.singleRoomsAllowed?'COVERED':'PENDING',context:['FIN',row.discipline,'M']}})),rows:[context],overview:{...preview.quotaOverview,nations:[{...preview.quotaOverview.nations[0],groups:[{name:row.discipline,officials:10,athletes:9,contexts:[context],totals:context}]}]}};
  };project(4);
  let listRequests=0;
+ const detailRequests:string[]=[];
  let rejectRequirement=true;
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
-  if(req.method()==='GET' && path==='/import/sessions')listRequests++;
+  if(req.method()==='GET' && path==='/import/sessions'){
+   const params=new URL(req.url()).searchParams;
+   assert.equal(params.get('view'),'queue');
+   listRequests++;
+   const summary={id:'1',nation:'FIN',status:session.status,version:1,currentVersionId:'30',
+     uploadedAt:'2026-11-22T00:00:00Z',uploadedBy:'tester',errors:0,warnings:0,pendingDecisions:0,hasOpenSubmissions:false};
+   return route.fulfill({json:[{...summary,matchesDecision:params.get('decisionId')==='42'},
+     {...summary,id:'2',nation:'ITA',status:'ARCHIVED'}]});
+  }
+  if(req.method()==='GET' && /^\/import\/sessions\/\d+$/.test(path))detailRequests.push(path);
+  if(path==='/import/approvals/42')return route.fulfill({json:{id:'42',nation:'FIN',decision:'APPROVED',
+    importSession:{id:'1',nation:'FIN'},people:[],description:'Historical decision'}});
+  if(path==='/import/sessions/2')return route.fulfill({json:{...session,id:'2',nation:'ITA',status:'ARCHIVED',preview:null}});
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
   if(path==='/import/sessions/1/accommodation-requirements/p2' && req.method()==='PATCH'){
@@ -288,6 +301,20 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
  assert.doesNotMatch((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
  assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),'/athletes/3']);
+ detailRequests.length=0;
+ await page.goto(`${origin}/import`);
+ await page.getByText('Geschlossene Importsessions (1)',{exact:true}).waitFor();
+ assert.deepEqual(detailRequests,[]);
+ await page.getByText('Geschlossene Importsessions (1)',{exact:true}).click();
+ await page.getByRole('button',{name:/^ITA /}).click();
+ await page.getByText('Importsession geschlossen',{exact:true}).waitFor();
+ assert.deepEqual(detailRequests,['/import/sessions/2']);
+
+ detailRequests.length=0;
+ await page.goto(`${origin}/import?decisionId=42`);
+ await page.getByText('Historical decision',{exact:true}).waitFor();
+ await page.getByText(/FIN –/).waitFor({state:'attached'});
+ assert.deepEqual(detailRequests,['/import/sessions/1']);
  assert.deepEqual(errors,[]);
 });
 

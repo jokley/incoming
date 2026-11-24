@@ -33,15 +33,6 @@ export function importConfirmationMessage(body: unknown): string {
   return `Import erfolgreich: ${result.summary.peopleCreated} neu, ${result.summary.peopleUpdated} aktualisiert, ${result.summary.peopleRemoved ?? 0} entfernt. ${result.summary.dispositionsChanged ?? 0} Dispositionen geändert.`;
 }
 
-/** Independent canonical reads after a successful confirmation; one call each. */
-export async function reloadImportSession<T>(
-  sessionId: string,
-  source: { getImportSession: (id: string) => Promise<T>; getImportSessions: () => Promise<T[]> },
-): Promise<[T, T[]]> {
-  return Promise.all([source.getImportSession(sessionId), source.getImportSessions()]);
-}
-
-
 /** Read before retrying; a lost HTTP response is not proof that the write failed. */
 export async function archiveImportSessionChecked(
   session: Pick<ImportSession,'id'|'currentVersionId'>,
