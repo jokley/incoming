@@ -36,6 +36,46 @@ def complete_reviewed_test_ownership(engine, environment):
 
 
 class PostgresMigrationTest(unittest.TestCase):
+    def test_verified_apartment_layouts_leave_legacy_booking_untouched(self):
+        url = postgres_test_url()
+        engine = create_engine(url)
+        self.addCleanup(engine.dispose)
+        environment = {**os.environ, 'DATABASE_URL': url}
+
+        def migrate(command, revision):
+            result = subprocess.run([sys.executable, '-m', 'alembic', command, revision],
+                                    cwd=BACKEND, env=environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+        with engine.begin() as conn:
+            self.assertEqual(tuple(conn.execute(text('SELECT current_database(), current_user')).one()),
+                             ('incoming_test', 'incoming_test'))
+            conn.execute(text('DROP SCHEMA public CASCADE'))
+            conn.execute(text('CREATE SCHEMA public'))
+        migrate('upgrade', '20261016_02')
+        complete_reviewed_test_ownership(engine, environment)
+        migrate('downgrade', '20261122_01')
+        types = [('APP: 1 DZ + DU',2), ('APP: 2 DZ + DU',2), ('APP: 2 DZ + 2 DU',4),
+                 ('APP: 3 DZ + DU',2), ('APP: 3 DZ + 2 DU',4), ('APP: 3 DZ + 3 DU',6),
+                 ('APP: 1 DZ + 1 EZ + DU',2)]
+        with engine.begin() as conn:
+            for name, maximum in types:
+                conn.execute(text('INSERT INTO room_type(name,max_persons) VALUES (:name,:maximum)'),
+                             dict(name=name,maximum=maximum))
+            conn.execute(text("INSERT INTO hotel(id,name) VALUES (910,'Apartment fixture')"))
+            conn.execute(text("""INSERT INTO room_booking(hotel_id,event_id,room_type_id,room_number)
+                SELECT 910,(SELECT min(id) FROM championship_event),id,'Legacy 001'
+                FROM room_type WHERE name='APP: 2 DZ + DU'"""))
+        migrate('upgrade','head')
+        with engine.connect() as conn:
+            layouts = {row.name: (row.max_persons,row.apartment_layout) for row in
+                       conn.execute(text("SELECT name,max_persons,apartment_layout FROM room_type WHERE name LIKE 'APP:%'"))}
+            for (name, maximum), (rooms, showers) in zip(types, [(1,1),(2,1),(2,2),(3,1),(3,2),(3,3)]):
+                self.assertEqual(layouts[name], (maximum,{'bedrooms':[2]*rooms,'showers':showers}))
+            self.assertEqual(layouts[types[-1][0]], (2,None))
+            self.assertEqual(tuple(conn.execute(text('SELECT room_number,bedroom_index,apartment_exception FROM room_booking')).one()),
+                             ('Legacy 001',None,None))
+
     def test_rendered_sql_matches_online_empty_and_legacy_catalogues(self):
         url = postgres_test_url()
         engine = create_engine(url)

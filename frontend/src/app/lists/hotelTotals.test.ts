@@ -178,3 +178,20 @@ test('external hotel assignments remain visible without internal capacity peaks'
  assert.equal(row.peakRooms,null);assert.equal(row.peakPersons,null);assert.equal(row.peakBlockedBeds,null);
  assert.deepEqual(createContingentRows([hotel]),[]);
 });
+
+test('apartment bedrooms share one physical unit in hotels, lists and live analytics', () => {
+  const type = {id:'apt',name:'APP: 2 DZ + DU',maxPersons:2,apartmentLayout:{bedrooms:[2,2],showers:1}};
+  const hotel = {...capacityHotel,roomInventories:[{...capacityHotel.roomInventories![0],id:'1',roomType:type}]};
+  const rows = [1,2].map(bedroomIndex=>({...reservation(String(bedroomIndex),String(bedroomIndex),
+    '2027-03-11','2027-03-16',true,hotel), roomNumber:'K1-1',bedroomIndex,roomType:type}));
+  const day = hotelCapacityOnDay(hotel,rows,'2027-03-14',hotel.roomInventories[0]);
+  assert.deepEqual([day.occupiedRooms,day.occupiedBedrooms,day.occupiedBeds,day.apartmentExceptions,day.freeBeds],[1,2,2,1,0]);
+  assert.equal(hotelCapacityOnDay(hotel,[rows[0]],'2027-03-14').freeBeds,0);
+  const [list] = createHotelContactRows([hotel],rows);
+  assert.equal(list.peakRooms,1);
+  assert.equal(list.peakBedrooms,2);
+  assert.equal(list.apartmentExceptionDays,5);
+  const live = buildCapacityTimeline({hotels:[hotel],events:[],athletes:[],bookings:rows},undefined,'live')
+    .find(row=>row.date==='2027-03-14')!;
+  assert.deepEqual([live.assignedRooms,live.assignedBeds,live.occupiedBedrooms,live.apartmentExceptions],[1,2,2,1]);
+});

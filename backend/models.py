@@ -315,13 +315,15 @@ class RoomType(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)  # z.B. "DZ / DU"
     max_persons = db.Column(db.Integer, nullable=False)  # z.B. 2
+    apartment_layout = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):
         return {
             'id': str(self.id),
             'name': self.name,
-            'maxPersons': self.max_persons
+            'maxPersons': self.max_persons,
+            'apartmentLayout': self.apartment_layout
         }
 
 
@@ -941,6 +943,8 @@ class RoomBooking(db.Model):
     check_in_date = db.Column(db.Date)
     check_out_date = db.Column(db.Date)
     counts_as_single = db.Column(db.Boolean, default=False)
+    bedroom_index = db.Column(db.Integer)
+    apartment_exception = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     hotel = db.relationship('Hotel', backref='room_bookings')
@@ -955,6 +959,8 @@ class RoomBooking(db.Model):
             'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name, 'accommodationType': self.hotel.accommodation_type},
             'roomType': self.room_type.to_dict() if self.room_type else None,
             'roomNumber': self.room_number,
+            'bedroomIndex': self.bedroom_index,
+            'apartmentException': self.apartment_exception,
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
             'countsAsSingle': bool(self.counts_as_single),

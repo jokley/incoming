@@ -266,3 +266,41 @@ def test_pair_external_confirmation_rejects_one_ineligible_person_without_partia
     with app.app_context():
         assert RoomBooking.query.count()==1
         assert RoomBookingOccupant.query.filter_by(athlete_id=state[0][1]).count()==0
+
+
+def test_apartment_exception_is_affirmative_and_audited_atomically(state):
+    from app import _inventory_room_number
+    first, second = state[0]
+    with app.app_context():
+        inventory = HotelRoomInventory.query.one()
+        inventory.room_count = 1
+        inventory.room_type.apartment_layout = {'bedrooms': [2, 2], 'showers': 1}
+        inventory.room_type.max_persons = 1
+        identity = inventory.id
+        db.session.commit()
+
+    client = app.test_client()
+    base = {**payload(state, 14, 27, _inventory_room_number(identity, 1)), 'inventoryId': str(identity)}
+    def add(person, bedroom, **extra):
+        return client.post('/api/assignments/segments', headers=headers,
+            json={**base, 'athleteIds': [str(person)], 'bedroomIndex': bedroom, **extra})
+
+    assert add(first, 1).status_code == 201
+    assert add(second, 2, confirmApartmentException=True).json['reasonCode'] == 'APARTMENT_EXCEPTION_REQUIRED'
+    assert add(second, 1, confirmApartmentException=True,
+               apartmentExceptionReason='Test').json['reasonCode'] == 'APARTMENT_PHYSICAL_LIMIT'
+    with patch('apartment_occupancy.audit_exception', side_effect=RuntimeError('Audit unavailable')), pytest.raises(RuntimeError):
+        add(second, 2, confirmApartmentException=True, apartmentExceptionReason='Test')
+    with app.app_context():
+        assert RoomBooking.query.count() == 1
+    result = add(second, 2, confirmApartmentException=True, apartmentExceptionReason='Test')
+    assert result.status_code == 201, result.json
+    evidence = result.json['booking']['apartmentException']
+    assert evidence['rules'] == ['DU','MAX_PERSONS']
+    assert evidence['bedroomIndex'] == 2 and evidence['inventoryId'] == str(identity)
+    assert result.json['booking']['countsAsSingle']
+    with app.app_context():
+        audit = AuditEvent.query.filter_by(activity='Apartmentausnahme bestätigt').one()
+        assert audit.username == evidence['username']
+        assert json.loads(audit.changes_json) == evidence
+        assert RoomBooking.query.count() == 2

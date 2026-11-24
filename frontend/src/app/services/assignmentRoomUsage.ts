@@ -1,4 +1,4 @@
-import type { AssignmentSlot } from '../types.ts';
+import type { ApartmentLayout, AssignmentSlot } from '../types.ts';
 /** Whole-timeline summary only: repeated segments never duplicate a room occupant.
  * Actual availability is still decided by the backend for the selected dates. */
 export function slotPersonCount(slot:AssignmentSlot):number {
@@ -9,7 +9,25 @@ export function slotPersonCount(slot:AssignmentSlot):number {
 export function bookingFreeCapacity(booking:{capacity?:number;countsAsSingle?:boolean;occupants:unknown[]}):number {
   return booking.countsAsSingle ? 0 : Math.max(0,(booking.capacity ?? 0)-booking.occupants.length);
 }
+export function apartmentAvailability(layout: ApartmentLayout, maximum: number,
+  bookings: Array<{bedroomIndex?: number | null; countsAsSingle?: boolean; occupants: unknown[]}>) {
+  const bedrooms = new Set(bookings.flatMap(booking => booking.bedroomIndex ? [booking.bedroomIndex] : []));
+  const people = bookings.reduce((sum,booking)=>sum+booking.occupants.length,0);
+  if (bookings.some(booking=>!booking.bedroomIndex)) {
+    return {freeBeds:0, occupiedBedrooms:bedrooms.size, exceptional:false};
+  }
+  const spare = bookings.reduce((sum,booking)=>sum+bookingFreeCapacity({
+    ...booking, capacity:layout.bedrooms[booking.bedroomIndex!-1],
+  }),0);
+  const freeRooms = layout.bedrooms.filter((_,index)=>!bedrooms.has(index+1)).sort((a,b)=>b-a);
+  const available = spare + freeRooms.slice(0,Math.max(0,layout.showers-bedrooms.size)).reduce((sum,beds)=>sum+beds,0);
+  const exceptional = people > maximum || bedrooms.size > layout.showers;
+  return {freeBeds:exceptional ? 0 : Math.max(0,Math.min(maximum-people,available)),
+    occupiedBedrooms:bedrooms.size, exceptional};
+}
+
 export function slotOperationalUsed(slot:AssignmentSlot):number {
+  if (slot.apartmentLayout) return slot.capacity-apartmentAvailability(slot.apartmentLayout,slot.capacity,slot.bookings).freeBeds;
   return slot.bookings.some(b=>b.countsAsSingle) ? slot.capacity : Math.min(slot.capacity,slotPersonCount(slot));
 }
 

@@ -18,10 +18,14 @@ def physical_room_usage(bookings):
     """
     from app import _planned_room_key
     groups = {}
+    apartments = set()
     for booking in bookings:
         key = _planned_room_key(booking.room_number) or (booking.room_number or '').strip()
-        groups.setdefault(key or ('booking', booking.id), []).append(booking)
-    count = 0
+        if key and getattr(booking, 'bedroom_index', None) is not None:
+            apartments.add(key)
+        else:
+            groups.setdefault(key or ('booking', booking.id), []).append(booking)
+    count = len(apartments)
     for rows in groups.values():
         ends = []
         for row in sorted(rows, key=lambda b: (b.check_in_date, b.check_out_date, b.id)):

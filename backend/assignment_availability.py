@@ -76,6 +76,7 @@ def load_context():
 
 def project(planning, needs, population_ids, loaded=None):
     from app import _room_type_label, _planned_room_key, _inventory_room_coordinates
+    from apartment_occupancy import evaluate
     from models import HotelRoomInventory, RoomBooking, db
     inventories, bookings = loaded if loaded is not None else (
         event_query(HotelRoomInventory).all(),
@@ -176,6 +177,26 @@ def project(planning, needs, population_ids, loaded=None):
             return 'Zimmer im benötigten Zeitraum nicht verfügbar.'
         return None
 
+    def apartment_targets(hotel, slot, ids, start, end, valid, extra=()):
+        layout = slot.get('apartmentLayout')
+        if not layout:
+            return []
+        key = (hotel['hotelId'], slot['roomTypeId'])
+        rows = [*booking_index.get(key, []), *extra]
+        apartment = [row for row in rows if belongs_to_slot(row, slot)]
+        failure = cached_guard(key, slot, [row for row in rows if row not in apartment], start, end,
+                               excluded=slot['slotId'], extra=extra)
+        targets = []
+        for bedroom in range(1, len(layout['bedrooms']) + 1):
+            reason, rules = evaluate(layout, slot['capacity'], bedroom, len(ids), apartment, start, end)
+            message = ('Offenen Unterkunftsbedarf prüfen.' if not valid else failure[1] if failure else reason)
+            targets.append({'slotId': f"{slot['slotId']}:bedroom:{bedroom}",
+                            'status': 'blocked' if message else 'warning' if rules else 'valid',
+                            'apartmentRules': rules if not message else [], 'bedroomIndex': bedroom,
+                            'messages': [message] if message else
+                                ['Ausnahme erforderlich: ' + ', '.join(rules)] if rules else []})
+        return targets
+
     targets, fits = {}, {}
     for hotel in planning['hotels']:
         if hotel.get('accommodationType') == 'EXTERNAL':
@@ -185,12 +206,20 @@ def project(planning, needs, population_ids, loaded=None):
             options = []
             results = targets.setdefault(key, [])
             for slot in hotel['slots']:
+                if slot.get('apartmentLayout'):
+                    bedrooms = apartment_targets(hotel, slot, ids, start, end, valid)
+                    results.extend(bedrooms)
+                    options.extend({**slot, 'bedroomIndex': row['bedroomIndex']}
+                                   for row in bedrooms if row['status'] == 'valid')
+                    continue
                 reason = eligibility(hotel, slot, ids, start, end, valid, [])
                 results.append({'slotId': slot['slotId'], 'status': 'blocked' if reason else 'valid', 'messages': [reason] if reason else []})
                 if not reason:
                     options.append(slot)
             join_options=[]
             for slot in hotel['slots']:
+                if slot.get('apartmentLayout'):
+                    continue
                 for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
                     if not belongs_to_slot(booking, slot):
                         continue
@@ -204,6 +233,9 @@ def project(planning, needs, population_ids, loaded=None):
             for identity in ids:
                 results=targets.setdefault(f'{key}:athlete:{identity}', [])
                 for slot in hotel['slots']:
+                    if slot.get('apartmentLayout'):
+                        results.extend(apartment_targets(hotel, slot, [identity], start, end, valid))
+                        continue
                     reason=eligibility(hotel,slot,[identity],start,end,valid,[])
                     results.append({'slotId':slot['slotId'],'status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
                     for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
@@ -245,6 +277,17 @@ def project(planning, needs, population_ids, loaded=None):
                 continue
             for slot in sorted(options, key=lambda s: (s['capacity'], s['slotId'])):
                 extra = extra_by_type.setdefault(slot['roomTypeId'], [])
+                bedroom = slot.get('bedroomIndex')
+                if bedroom:
+                    target = apartment_targets(hotel, slot, ids, start, end, valid, extra)[bedroom - 1]
+                    if target['status'] == 'valid':
+                        extra.append(SimpleNamespace(id=-len(extra)-1, room_number=slot['roomNumber'],
+                            check_in_date=start, check_out_date=end, bedroom_index=bedroom,
+                            occupants=list(ids), occupant_count=len(ids), counts_as_single=len(ids)==1,
+                            capacity=slot['apartmentLayout']['bedrooms'][bedroom-1]))
+                        accommodated.update((identity, key) for identity in ids)
+                        break
+                    continue
                 if eligibility(hotel, slot, ids, start, end, valid, extra) is None:
                     single_use = default_counts_as_single(slot['capacity'], len(ids),
                         single_request=any(_room_type_label(people[i].get('roomType')) == 'single' for i in ids),
