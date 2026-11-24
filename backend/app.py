@@ -2520,7 +2520,9 @@ def get_import_session(session_id):
 @app.route('/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>', methods=['PATCH'])
 def stage_accommodation_requirement(session_id, person_key):
     from copy import deepcopy
-    from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
+    from imports.identity import _find_existing_athlete
+    from imports.read_context import ImportReadContext
+    from imports.workflow import review_approvals
     lock_accommodation_writes()
     session = ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
     if session.status in {'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'} or not session.current_version:
@@ -2530,25 +2532,25 @@ def stage_accommodation_requirement(session_id, person_key):
         return jsonify(error=INVALID_REQUIREMENT), 400
     preview = json.loads(session.current_version.preview_json or '{}')
     validate_session_event(session, preview)
-    _import_session_raw_preview(session)
+    raw = _import_session_raw_preview(session)
     target = next((p for p in preview.get('people', []) if p.get('matchKey') == person_key), None)
     if target is None:
         return jsonify(error='Person is not part of the current import version'), 404
-    existing = _find_existing_athlete(target, _build_existing_athlete_maps(event_id=session.event_id))
+    read_context = ImportReadContext(session.event_id)
+    existing = _find_existing_athlete(target, read_context.athlete_maps)
     old = {key: target.get(key) for key in ('accommodationRequirement', 'accommodationRequirementSource')}
     preview.setdefault('accommodationRequirementOverrides', {})[person_key] = {
         'requirement': data['accommodationRequirement'], 'base': requirement_projection(existing)}
     preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
-    raw = _import_session_raw_preview(session)
     staged_raw = deepcopy(raw) if raw else None
     try:
-        recalculate_fis_import_preview(preview)
+        recalculate_fis_import_preview(preview, read_context=read_context)
         if any(e.get('code') == 'ACCOMMODATION_REQUIREMENT_BOOKINGS' and e.get('details', {}).get('personKey') == person_key for e in preview.get('errors', [])):
             raise RequirementConflict(f"{target['accommodationRequirement']}_HAS_BOOKINGS", BOOKING_MESSAGE)
         if staged_raw:
             staged_raw['accommodationRequirementOverrides'] = preview['accommodationRequirementOverrides']
             staged_raw['_currentApprovalIds'] = preview['_currentApprovalIds']
-            recalculate_fis_import_preview(staged_raw)
+            recalculate_fis_import_preview(staged_raw, read_context=read_context)
     except ImportValidationError as exc:
         db.session.rollback()
         return jsonify(exc.to_dict()), 409
@@ -2570,12 +2572,15 @@ def stage_accommodation_requirement(session_id, person_key):
             db.session.add(ImportApproval(session_id=session.id, version_id=session.current_version_id,
                 nation=session.nation, approval_type=issue['code'], description=issue['message'],
                 quota_details_json=json.dumps(details, ensure_ascii=False), decision='PENDING', username=current_user().username))
-    session.current_version.preview_json = json.dumps(preview, ensure_ascii=False)
     db.session.flush()
     db.session.expire(session, ['approvals'])
     session.status = ('DRAFT' if preview.get('errors') else 'WAITING_FOR_NATION'
         if any(a.decision == 'PENDING' for a in session.current_approvals) else 'PROFESSIONALLY_REVIEWED')
-    refresh_plan(session)
+    # Rebuilding pending tasks can change the candidate set. Recalculate when
+    # it does. The roster and booking snapshot is shared under the write lock.
+    approval_ids = {a.id for a in review_approvals(session, preview)}
+    refresh_plan(session, preview, read_context=read_context,
+                 recalculate=approval_ids != set(preview['_currentApprovalIds']))
     db.session.commit()
     if staged_raw:
         PREVIEW_STORE[session.current_version.preview_token] = staged_raw
