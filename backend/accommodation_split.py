@@ -139,7 +139,7 @@ def partition_booking(booking, cut, remaining):
     if remaining:
         continuation = RoomBooking(event_id=booking.event_id, hotel_id=booking.hotel_id, room_type_id=booking.room_type_id,
             room_number=booking.room_number, check_in_date=cut, check_out_date=booking.check_out_date,
-            counts_as_single=(len(remaining) == 1 if booking.bedroom_index else booking.counts_as_single),
+            counts_as_single=booking.counts_as_single,
             created_by=booking.created_by, created_at=booking.created_at,
             bedroom_index=booking.bedroom_index, apartment_exception=booking.apartment_exception)
         continuation.occupants = [RoomBookingOccupant(athlete_id=o.athlete_id, role=o.role, created_at=o.created_at) for o in remaining]

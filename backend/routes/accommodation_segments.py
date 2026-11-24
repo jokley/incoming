@@ -58,8 +58,6 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=existing.id).count()
             if not remaining:
                 db.session.delete(existing)
-            elif existing.bedroom_index is not None:
-                existing.counts_as_single = remaining == 1
             _acknowledge_import_changes([person.id])
             db.session.flush()
             result = {'success': True, 'bookingId': str(booking_id), 'personId': str(person.id),
@@ -162,8 +160,6 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         else:
             role = membership.role if membership else None
             if shared:
-                if existing.bedroom_index is not None:
-                    existing.counts_as_single = len(existing.occupants) == 2
                 db.session.delete(membership)
                 db.session.flush()
             booking = _save_booking_from_payload(payload, existing_booking=existing if not shared else None, commit=False)
@@ -228,9 +224,11 @@ def add_shared_segment():
             coverage = coverage_for(person)
             _require(coverage['coverageStatus'] != 'CONFLICT' and (external or interval in coverage['openIntervals']),
                      'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')
+        from app import _initialize_new_booking_counts_as_single
+        initialized = _initialize_new_booking_counts_as_single({**data, 'athleteIds': ids}, people=people)
         if data.get('bedroomIndex') is not None and not data.get('joinBookingId'):
             from app import _validate_booking_payload, _save_booking_from_payload
-            validated, _, error = _validate_booking_payload({**data, 'athleteIds': ids})
+            validated, _, error = _validate_booking_payload(initialized)
             if error:
                 db.session.rollback()
                 return error
@@ -239,8 +237,7 @@ def add_shared_segment():
                       'people': [{'personId': str(person.id), 'accommodationCoverage': coverage_for(person)} for person in people]}
             db.session.commit()
             return jsonify(result), 201
-        from app import _initialize_new_booking_counts_as_single
-        default_flag = _initialize_new_booking_counts_as_single({**data, 'athleteIds': ids}, people=people)['countsAsSingle']
+        default_flag = initialized['countsAsSingle']
         join_id = data.get('joinBookingId')
         for person in people:
             response = _mutate_segment(person.id, data_override={**data, 'joinBookingId': join_id}, commit=False, new_booking_default=default_flag, assembling_pair=not data.get('joinBookingId'))
