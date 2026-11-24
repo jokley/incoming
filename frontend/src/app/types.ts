@@ -396,7 +396,7 @@ export interface AssignmentGridBooking {
   checkOutDate?: string | null;
   countsAsSingle?: boolean;
   capacity?: number;
-  occupants: Array<{
+  occupants: Array<AccommodationRequirementFields & {
     athleteId: string;
     name: string;
     nationCode: string;

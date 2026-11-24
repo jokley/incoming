@@ -2056,7 +2056,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                 and (not gender or row['personalGender']==normalize_gender(gender) or not row['editable'])
                 and (not personal_gender or row['personalGender']==normalize_gender(personal_gender))]
             planning=operative_projection(forecast)
-            summary=summarize_person_disposition(people,planning['replacedPersonIds'])
+            summary=summarize_person_disposition(people)
             summary.update(virtualPlaces=0,virtualGroups=0,planningConflicts=planning['conflicts'],
                 operationalAccommodationDemand=summary['accommodationPeopleRequired']+planning['virtualPlaces'])
             result.update(personPlanning=planning,personStatuses=people, personSummary=summary,
@@ -3525,7 +3525,7 @@ def _update_athlete_operations(athlete, data):
             return jsonify(error=INVALID_REQUIREMENT), 400
         requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
             {'requirement': value, 'base': requirement_projection(athlete)})
-        if requirement_change['accommodationRequirement'] in NO_ACCOMMODATION:
+        if requirement_change['accommodationRequirement'] == 'NO_ROOM':
             from accommodation_requirements import ensure_no_bookings
             ensure_no_bookings(athlete, requirement_change['accommodationRequirement'])
     previous_exempt_reason = athlete.single_room_quota_exempt_reason
