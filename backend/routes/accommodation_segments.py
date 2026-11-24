@@ -324,3 +324,59 @@ def preview_external_segment():
         return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), error.status
     finally:
         db.session.rollback()
+
+
+@accommodation_segments.post('/api/assignments/bookings/<int:booking_id>/bedroom')
+def resolve_legacy_bedroom(booking_id):
+    """Bind the current apartment booking in place, without replacing occupants."""
+    from app import _build_virtual_slots, _validate_booking_payload
+    from apartment_occupancy import audit_apartment_change
+    from models import HotelRoomInventory
+
+    try:
+        lock_accommodation_writes()
+        booking = event_get(RoomBooking, booking_id, required=True)
+        data = request.get_json(silent=True) or {}
+        _require(isinstance(data, dict), 'INVALID_BEDROOM', 'Ungültige Schlafraumzuordnung.')
+        _require(booking.hotel.accommodation_type != 'EXTERNAL' and booking.bedroom_index is None
+                 and booking.room_type and booking.room_type.apartment_layout,
+                 'LEGACY_APARTMENT_REQUIRED', 'Die Buchung hat keinen offenen Schlafraumbezug.')
+        people = sorted(str(row.athlete_id) for row in booking.occupants)
+        before = booking.to_dict()
+        expected = {key: before[key] for key in ('checkInDate', 'checkOutDate', 'roomNumber', 'countsAsSingle')}
+        expected['athleteIds'] = people
+        _require(data.get('expected') == expected, 'STALE_LEGACY_BOOKING',
+                 'Die Buchung wurde geändert. Bitte Ansicht aktualisieren und die Personen erneut prüfen.')
+        _require(not booking.counts_as_single or len(people) == 1,
+                 'LEGACY_SINGLE_USE_CONFLICT', 'Mehrere Personen mit hinterlegter EZ-Nutzung. Bitte Belegung fachlich klären.')
+        scope = {'hotel_id': booking.hotel_id, 'room_type_id': booking.room_type_id}
+        inventories = event_query(HotelRoomInventory).filter_by(**scope).all()
+        bookings = event_query(RoomBooking).filter_by(**scope).options(db.joinedload(RoomBooking.occupants)).all()
+        slots = _build_virtual_slots(booking.hotel, booking.room_type, inventories, bookings)
+        slot = next((row for row in slots if row['inventoryId'] and booking in row['bookings']), None)
+        _require(slot and data.get('inventoryId') == slot['inventoryId'] and data.get('roomNumber') == slot['roomNumber'],
+                 'STALE_APARTMENT_SLOT', 'Das bestätigte Apartment ist nicht mehr eindeutig verfügbar. Bitte Ansicht aktualisieren.')
+        payload, _, error = _validate_booking_payload({
+            **expected, 'hotelId': booking.hotel_id, 'roomTypeId': booking.room_type_id,
+            'roomNumber': slot['roomNumber'], 'inventoryId': slot['inventoryId'],
+            'bedroomIndex': data.get('bedroomIndex'),
+        }, existing_booking=booking, legacy_apartment_slots=slots)
+        if error:
+            db.session.rollback()
+            return error
+        booking.room_number = payload['room_number']
+        booking.bedroom_index = payload['bedroom_index']
+        audit_apartment_change(booking, 'Schlafraum zugeordnet', {
+            **expected, 'previousRoomNumber': expected['roomNumber'], 'roomNumber': booking.room_number,
+            'inventoryId': slot['inventoryId'], 'bedroomIndex': booking.bedroom_index,
+        })
+        result = booking.to_dict()
+        db.session.commit()
+        g.atomic_apartment_audit = True
+        return jsonify(result)
+    except InvalidSegment as error:
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), 400
+    except Exception:
+        db.session.rollback()
+        raise

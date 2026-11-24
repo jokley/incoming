@@ -304,3 +304,63 @@ def test_apartment_exception_is_affirmative_and_audited_atomically(state):
         assert audit.username == evidence['username']
         assert json.loads(audit.changes_json) == evidence
         assert RoomBooking.query.count() == 2
+
+
+@pytest.mark.parametrize('shared', [False, True])
+def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom(state, shared):
+    from app import _inventory_room_number
+    people, _, _ = state
+    with app.app_context():
+        inv = HotelRoomInventory.query.one()
+        inv.room_count = 1
+        inv.room_type.apartment_layout = {'bedrooms':[2,2], 'showers':2}
+        inv.room_type.max_persons = 4
+        extra = Athlete(firstname='Future', lastname='Guest', nation_code='AUT',
+                        arrival_date=date(2027,3,14), departure_date=date(2027,3,27))
+        db.session.add(extra)
+        db.session.flush()
+        legacy = RoomBooking(event_id=inv.event_id, hotel_id=inv.hotel_id, room_type_id=inv.room_type_id,
+            room_number='Slot 01', check_in_date=date(2027,3,14), check_out_date=date(2027,3,27),
+            counts_as_single=not shared)
+        legacy.occupants = [RoomBookingOccupant(athlete_id=person,role='legacy') for person in people[:2 if shared else 1]]
+        db.session.add(legacy)
+        db.session.commit()
+        booking_id, inventory_id, extra_id = legacy.id, inv.id, extra.id
+        memberships = [(o.id,o.athlete_id,o.role) for o in legacy.occupants]
+
+    client = app.test_client()
+    new_room = _inventory_room_number(inventory_id, 1)
+    other = {**payload(state,14,27,new_room),'inventoryId':str(inventory_id),
+             'athleteIds':[str(extra_id)],'bedroomIndex':2}
+    assert client.post('/api/assignments/segments',json=other,headers=headers).json['reasonCode'] == 'APARTMENT_PHYSICAL_LIMIT'
+    url = f'/api/assignments/bookings/{booking_id}/bedroom'
+    data = {'inventoryId':str(inventory_id), 'roomNumber':new_room, 'bedroomIndex':1,
+            'expected':{'athleteIds':sorted(str(m[1]) for m in memberships), 'roomNumber':'Slot 01',
+                        'checkInDate':'2027-03-14','checkOutDate':'2027-03-27','countsAsSingle':not shared}}
+    changed = {**data, 'expected':{**data['expected'], 'checkOutDate':'2027-03-26'}}
+    assert client.post(url,json=changed,headers=headers).json['reasonCode'] == 'STALE_LEGACY_BOOKING'
+    assert client.post(url,json={**data,'inventoryId':'999'},headers=headers).json['reasonCode'] == 'STALE_APARTMENT_SLOT'
+    assert client.post(url,json={**data,'bedroomIndex':3},headers=headers).status_code == 400
+    with patch('apartment_occupancy.audit_apartment_change',side_effect=RuntimeError('Audit unavailable')), pytest.raises(RuntimeError):
+        client.post(url,json=data,headers=headers)
+    with app.app_context():
+        assert db.session.get(RoomBooking,booking_id).bedroom_index is None
+    resolved = client.post(url,json=data,headers=headers)
+    assert resolved.status_code == 200, resolved.json
+    assert resolved.json['id'] == str(booking_id) and resolved.json['countsAsSingle'] == (not shared)
+    assert resolved.json['bedroomIndex'] == 1
+    assert client.post(url,json=data,headers=headers).status_code == 400
+    assert client.post('/api/assignments/segments',json={**other,'bedroomIndex':1},headers=headers).json[
+        'reasonCode'] == 'APARTMENT_PHYSICAL_LIMIT'
+    added = client.post('/api/assignments/segments',json=other,headers=headers)
+    assert added.status_code == 201, added.json
+    assert added.json['booking']['bedroomIndex'] == 2
+    with app.app_context():
+        booking = db.session.get(RoomBooking,booking_id)
+        assert [(o.id,o.athlete_id,o.role) for o in booking.occupants] == memberships
+        assert (booking.check_in_date, booking.check_out_date) == (date(2027,3,14),date(2027,3,27))
+        audit = AuditEvent.query.filter_by(activity='Schlafraum zugeordnet').one()
+        assert json.loads(audit.changes_json)['previousRoomNumber'] == 'Slot 01'
+        assert RoomBooking.query.count() == 2
+    plan = client.get('/api/assignments/planning-view?includeValidations=false',headers=headers).json
+    assert sorted(b['bedroomIndex'] for b in plan['hotels'][0]['slots'][0]['bookings']) == [1,2]

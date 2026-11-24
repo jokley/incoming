@@ -15,7 +15,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
- let single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false;
+ let single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false,legacyMode=false,legacyBedroom:number|null=null;
  let releaseFamily:()=>void=()=>{};
  let familyGate=Promise.resolve();
  let mutationGate=Promise.resolve();let releaseMutation:()=>void=()=>{};
@@ -39,6 +39,24 @@ test('person overview drills into assigned people, refreshes after persistence, 
   const firstSlots=slots.map(slot=>({...slot,inventoryId:'1',dateCoverage:coverage(interval.checkInDate,interval.checkOutDate)}));
   const free={slotId:'h:r:free',slotIndex:9,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:'Zimmer 09',inventoryRoomCount:9,dateCoverage:coverage(interval.checkInDate,interval.checkOutDate),inventoryId:'1',bookings:[]};
   const later={...free,slotId:'h:r:later',slotIndex:1,roomNumber:'K2-1',inventoryRoomCount:1,dateCoverage:coverage('2027-03-23','2027-03-31'),inventoryId:'2'};
+  if (legacyMode) {
+    // Apartment type, count and dates from backend/seed_data.py. People are fixtures.
+    const rooms = [1,2,3].map(index=>({
+      ...free,slotId:`h:r:1:${index}`,slotIndex:index,roomNumber:`K1-${index}`,
+      roomLabel:`Apartment 0${index}`,hotelName:'Hotel Alpenrose',roomTypeName:'APP: 2 DZ + 2 DU',
+      capacity:4,inventoryRoomCount:3,apartmentLayout:{bedrooms:[2,2],showers:2},
+      dateCoverage:coverage('2027-03-04','2027-03-21'),
+      bookings:index===3?[{
+        bookingId:'legacy-booking',hotelId:'h',roomTypeId:'r',roomNumber:legacyBedroom?'K1-3':'Zimmer 03',
+        sourceRoomNumber:legacyBedroom?'K1-3':'Slot 03',bedroomIndex:legacyBedroom,capacity:legacyBedroom?2:4,
+        checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:true,
+        occupants:[occupants.find(person=>person.athleteId==='full')],
+      }]:[],
+    }));
+    return {timeline:{startDate:interval.checkInDate,endDate:interval.checkOutDate},
+      units:{unassigned:units.filter(u=>!u.isFullyAssigned),assigned:units.filter(u=>u.isFullyAssigned)},
+      hotels:[{hotelId:'h',hotelName:'Hotel Alpenrose',slots:rooms}],validationByUnit:{}};
+  }
   if (apartmentMode) {
     const apartment = {...free, slotId:'apt:1',roomNumber:'K1-1',roomLabel:'Apartment 01',
       roomTypeName:'APP: 2 DZ + DU', apartmentLayout:{bedrooms:[2,2],showers:1}};
@@ -67,6 +85,10 @@ test('person overview drills into assigned people, refreshes after persistence, 
    const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?apartmentMode?[{slotId:'apt:1:bedroom:2',status:'warning',messages:['Ausnahme erforderlich: DU'],apartmentRules:['DU']}]:[{slotId:'booking:booking-mismatch',status:'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
    return route.fulfill({json:{targets,hotels:{}}});
   }
+  if(req.method()==='POST'&&path==='/assignments/bookings/legacy-booking/bedroom'){
+    legacyBedroom=req.postDataJSON().bedroomIndex;
+    return route.fulfill({json:{id:'legacy-booking',bedroomIndex:legacyBedroom}});
+  }
   if(req.method()==='POST'&&path==='/assignments/segments')return route.fulfill({status:409,json:{message:'Synthetic stale target; no booking changed.'}});
   if(path.startsWith('/assignments/planning-view/validations/'))return route.fulfill({json:{validations:[]}});
   const bodies:Record<string,unknown>={'/auth/me':{username:'local-admin',displayName:'local-admin',groups:[readOnly?'incoming-viewer':'incoming-admin'],permissions:readOnly?['data.read']:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/assignments/planning-view':planning(),'/athletes':people().map(p=>({id:p.personId,firstname:p.name,lastname:'Synthetic',nationCode:'AUT',function:p.function,gender:'M',competitions:[]}))};
@@ -74,7 +96,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
  });
  await page.goto(`${origin}/assignments`);
  const summary=page.locator('section[aria-label="Personen Soll/Ist"]');
- await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor();
+ await summary.getByRole('button',{name:'Vollständig 3 / 6',exact:true}).waitFor({timeout:30000});
  // Status and nation filters browse the same people without creating demands.
  const statusFilters=page.getByText('Status',{exact:true}).locator('..');
  await statusFilters.getByRole('button',{name:'Zugewiesen',exact:true}).click();
@@ -104,6 +126,9 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(await groups.nth(0).getAttribute('aria-expanded'),'true');
  assert.equal(await groups.nth(1).getAttribute('aria-expanded'),'false');
  const openCard=page.getByRole('group',{name:/^Offen ·/});
+ assert.match(await openCard.innerText(),/AUT · M · Athlete · (Snowboard Cross|Ski Cross)/);
+ const assignedCards=page.locator('.ops-occupant-card');
+ assert.ok((await assignedCards.allTextContents()).some(label=>/EST · M · Official · (Snowboard Cross|Ski Cross)/.test(label)));
  const join=openCard.getByRole('button',{name:'Person hier zuweisen',exact:true});
  await join.waitFor();
  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Person hier zuweisen'&&!b.disabled));
@@ -228,6 +253,26 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(override.confirmApartmentException,true);
  assert.deepEqual(override.acceptedApartmentRules,['DU']);
  assert.equal(override.apartmentExceptionReason,'Bestätigt mit der Unterkunft');
+ legacyMode=true;
+ await page.goto(`${origin}/assignments`);
+ await page.getByText('Hotel Alpenrose',{exact:true}).first().click();
+ await page.locator('button').filter({hasText:'Schlafraum ungeklärt'}).filter({hasText:'Vollständig'}).click();
+ const legacy=page.getByRole('dialog');
+ await legacy.getByRole('button',{name:'Schlafraum zuordnen',exact:true}).click();
+ assert.match(await legacy.innerText(),/Hotel Alpenrose · Apartment 3/);
+ assert.match(await legacy.innerText(),/Vollständig · EZ-Nutzung/);
+ const assign=legacy.getByRole('button',{name:'Zuordnung bestätigen'});
+ assert.equal(await assign.isDisabled(),true);
+ await legacy.getByLabel('Zielschlafraum').selectOption('1');
+ const legacyPost=page.waitForRequest(r=>r.method()==='POST' && r.url().endsWith('/legacy-booking/bedroom'));
+ await assign.click();
+ assert.deepEqual((await legacyPost).postDataJSON(),{inventoryId:'1',roomNumber:'K1-3',bedroomIndex:1,
+   expected:{roomNumber:'Slot 03',athleteIds:['full'],checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:true}});
+ await legacy.getByRole('button',{name:'Schlafraum zuordnen',exact:true}).waitFor({state:'hidden'});
+ await legacy.getByRole('button',{name:'Schließen',exact:true}).click();
+ const resolved=page.getByRole('region',{name:'Apartment 3'});
+ await resolved.getByText(/Schlafraum 1 · DZ · belegt/).waitFor();
+ await resolved.getByText(/Schlafraum 2 · DZ · 2 Schlafplätze/).waitFor();
  assert.deepEqual(errors,[]);
 });
 

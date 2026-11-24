@@ -935,6 +935,7 @@ export function Assignments() {
               singleRoomEvaluations={singleRoomEvaluations}
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
+              onBedroomAssigned={refreshOperationalState}
               quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.slot.capacity,
                 allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext.booking.occupants.some(p=>p.athleteId===person.athleteId)),manualQuotaValues[selectedBookingContext.booking.bookingId]) : undefined}
               selectedAssignedUnit={selectedAssignedUnit}
@@ -1988,8 +1989,6 @@ function HotelDetailView({
                                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                                 fallbackArrival={entry.booking.checkInDate}
                                 fallbackDeparture={entry.booking.checkOutDate}
-                                hideNation
-                                hideDiscipline
                                 footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={entry.booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
@@ -2440,6 +2439,69 @@ function DetailSection({ icon, title, children }: { icon: ReactNode; title: stri
   return <section className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface)] p-3"><h3 className="mb-2 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-[var(--ops-primary)]">{icon}{title}</h3>{children}</section>;
 }
 
+function LegacyBedroomAssignment({booking, slot, onAssigned}: {
+  booking: AssignmentGridBooking;
+  slot: AssignmentSlot;
+  onAssigned: () => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [bedroom, setBedroom] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState('');
+  const layout = slot.apartmentLayout;
+  if (!layout || !slot.inventoryId || !slot.roomNumber) return null;
+  const capacity = layout.bedrooms[Number(bedroom) - 1];
+  const canShare = !booking.countsAsSingle || booking.occupants.length === 1;
+
+  async function save() {
+    if (!slot.inventoryId || !slot.roomNumber || !canShare || !capacity || capacity < booking.occupants.length) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.resolveLegacyBedroom(booking.bookingId, {
+        inventoryId: slot.inventoryId, roomNumber: slot.roomNumber, bedroomIndex: Number(bedroom),
+        expected: {
+          checkInDate: booking.checkInDate ?? null, checkOutDate: booking.checkOutDate ?? null,
+          roomNumber: booking.sourceRoomNumber === undefined ? booking.roomNumber ?? null : booking.sourceRoomNumber,
+          countsAsSingle: Boolean(booking.countsAsSingle),
+          athleteIds: booking.occupants.map(person=>person.athleteId).sort(),
+        },
+      });
+      setSaved(true);
+      try { await onAssigned(); }
+      catch { setError('Schlafraum gespeichert. Bitte Ansicht neu laden.'); }
+    } catch (error) {
+      setError(extractErrorMessage(error, 'Der Schlafraum konnte nicht zugeordnet werden.'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!open) return <OpsButton onClick={()=>setOpen(true)}>Schlafraum zuordnen</OpsButton>;
+  return <div className="my-2 space-y-2 rounded border border-[var(--ops-border)] p-3 text-sm">
+    <p className="font-semibold">{slot.hotelName} · Apartment {slot.slotIndex} · {intervalLabel({
+      checkInDate:booking.checkInDate ?? null, checkOutDate:booking.checkOutDate ?? null,
+    })}</p>
+    <p>{booking.occupants.map(person=>person.name).join(' / ')} · {booking.countsAsSingle ? 'EZ-Nutzung' : 'Ohne EZ-Nutzung'}</p>
+    <label className="block">Zielschlafraum
+      <select className="ml-2 rounded border p-1" value={bedroom} onChange={event=>setBedroom(event.target.value)} disabled={saving || saved}>
+        <option value="">Schlafraum wählen</option>
+        {layout.bedrooms.map((beds,index)=><option value={index+1} key={index}>
+          Schlafraum {index+1} · {beds} {beds===1 ? 'Schlafplatz' : 'Schlafplätze'}
+        </option>)}
+      </select>
+    </label>
+    {!canShare ? <p role="status">Mehrere Personen mit hinterlegter EZ-Nutzung. Bitte Belegung fachlich klären.</p>
+      : (capacity && capacity < booking.occupants.length || Math.max(...layout.bedrooms) < booking.occupants.length)
+        ? <p role="status">Dieser Schlafraum reicht für die Personen nicht aus. Die Bestandsbuchung muss separat geprüft werden.</p> : null}
+    {error && <p role="alert" className="text-[var(--ops-error)]">{error}</p>}
+    <OpsButton onClick={()=>void save()} disabled={saving || saved || !bedroom || !booking.occupants.length
+      || !canShare || capacity < booking.occupants.length}>Zuordnung bestätigen</OpsButton>
+    <OpsButton onClick={()=>setOpen(false)} disabled={saving}>Abbrechen</OpsButton>
+  </div>;
+}
+
 function DetailPanel({
   singleRoomEvaluations,
   quotaReason,
@@ -2450,6 +2512,7 @@ function DetailPanel({
   onUnassignBooking,
   onUnassignOccupant,
   onMarkBookingAsSingle,
+  onBedroomAssigned,
   pendingAction,
   onAcknowledgeImportChanges,
   onShowDecision,
@@ -2462,6 +2525,7 @@ function DetailPanel({
   hotels: AssignmentGridHotel[];
   onUnassignBooking: (bookingId: string) => void;
   onUnassignOccupant: (bookingId: string, athleteId: string) => void;
+  onBedroomAssigned: () => Promise<void>;
   onMarkBookingAsSingle: (bookingId: string, countsAsSingle: boolean) => void;
   pendingAction: PendingAssignmentAction | null;
   onAcknowledgeImportChanges: (unit: { occupants: AssignmentChangeSubject[] }) => void;
@@ -2501,8 +2565,6 @@ function DetailPanel({
                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                 fallbackArrival={booking.checkInDate}
                 fallbackDeparture={booking.checkOutDate}
-                hideNation
-                hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
                   <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} /><SingleRoomDecisionCard nation={occupant.nationCode} status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
@@ -2544,6 +2606,9 @@ function DetailPanel({
             onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>
         </DetailSection>
         <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
+          {permissions.canManageAssignments && !booking.bedroomIndex && slot.apartmentLayout &&
+            <LegacyBedroomAssignment key={booking.bookingId} booking={booking} slot={slot} onAssigned={onBedroomAssigned}/>}
+
           <button
             disabled={pendingAction?.bookingId === booking.bookingId}
             onClick={() => onUnassignBooking(booking.bookingId)}
@@ -2612,9 +2677,6 @@ function DetailPanel({
               status={occupant.hasPendingReview || occupant.accommodationCoverage?.coverageStatus==='CONFLICT' ? 'review' : occupant.accommodationCoverage ? occupant.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' ? 'assigned' : 'open' : occupant.isAssigned ? 'assigned' : 'open'}
               fallbackArrival={selectedUnit.checkInDate}
               fallbackDeparture={selectedUnit.checkOutDate}
-              hideNation
-              hideDiscipline
-              hideRole={!occupant.function || occupant.function === 'Athlet'}
               footer={<><SingleRoomDecisionCard nation={occupant.nationCode} status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
             />
           ))}

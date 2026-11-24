@@ -45,21 +45,23 @@ def exception_evidence(rules, reason, user, inventory_id, room_number, bedroom, 
     }
 
 
-def audit_exception(booking):
+def audit_apartment_change(booking, activity, evidence):
     from flask import g, request
     from auth import current_user
     from accommodation_scope import event_audit_refs
     from models import AuditEvent, db
     import json
 
-    if not booking.apartment_exception:
-        return
     user = current_user()
     db.session.add(AuditEvent(
         username=user.username, display_name=user.display_name, email=user.email,
         groups_json=json.dumps(list(user.groups)), action='assign', entity_type='assignments',
         entity_id=str(booking.id), request_id=g.request_id, method=request.method, path=request.path,
-        activity='Apartmentausnahme bestätigt', category='Disposition',
-        changes_json=json.dumps(booking.apartment_exception, ensure_ascii=False),
+        activity=activity, category='Disposition',
+        changes_json=json.dumps(evidence, ensure_ascii=False),
         entity_refs_json=event_audit_refs({'bookingId': str(booking.id)}, booking.event_id),
     ))
+
+def audit_exception(booking):
+    if booking.apartment_exception:
+        audit_apartment_change(booking, 'Apartmentausnahme bestätigt', booking.apartment_exception)

@@ -777,7 +777,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 
 @app.after_request
 def audit_successful_mutation(response):
-    if getattr(g,'atomic_import_audit',False):
+    if getattr(g,'atomic_import_audit',False) or getattr(g,'atomic_apartment_audit',False):
         response.headers['X-Request-ID']=getattr(g,'request_id','')
         return response
     user = current_user()
@@ -1512,6 +1512,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                         {
                             'bookingId': str(booking.id),
                             'bedroomIndex': booking.bedroom_index, 'apartmentException': booking.apartment_exception,
+                            'sourceRoomNumber': booking.room_number,
                             'roomNumber': _planned_room_key(booking.room_number) or booking.room_number,
                             'hotelId': str(booking.hotel_id),
                             'roomTypeId': str(booking.room_type_id),
@@ -1602,7 +1603,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     }
 
 
-def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None, allow_single_join=False):
+def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None, allow_single_join=False, legacy_apartment_slots=None):
     if existing_booking is not None:
         require_event_object(existing_booking)
     athlete_ids = data.get('athleteIds', [])
@@ -1642,8 +1643,9 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
 
     from accommodation_split import SplitError
     try:
-        for person in athletes:
-            require_assignable(person)
+        if legacy_apartment_slots is None:
+            for person in athletes:
+                require_assignable(person)
     except SplitError as error:
         return None, None, _booking_error(error.code, error.message)
     if external:
@@ -1700,9 +1702,12 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
             if selected is None:
                 return None, None, _booking_error('APARTMENT_SLOT_REQUIRED', 'Bitte ein konkretes Apartmentkontingent und einen Schlafraum wählen.')
             from apartment_occupancy import evaluate, exception_evidence
-            same_apartment = next((slot['bookings'] for slot in
-                _build_virtual_slots(hotel, room_type, inventories, other_bookings)
-                if slot['roomNumber'] == data.get('roomNumber') and slot['inventoryId'] == str(selected.id)), [])
+            slots = (legacy_apartment_slots if legacy_apartment_slots is not None else
+                     _build_virtual_slots(hotel, room_type, inventories, other_bookings))
+            same_apartment = next(([row for row in slot['bookings']
+                                    if not existing_booking or row.id != existing_booking.id]
+                for slot in slots if slot['roomNumber'] == data.get('roomNumber')
+                and slot['inventoryId'] == str(selected.id)), [])
             hard_failure, rules = evaluate(layout, room_type.max_persons, bedroom, len(unique_athlete_ids),
                                            same_apartment, check_in_date, check_out_date)
             if hard_failure:
@@ -1723,8 +1728,14 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         capacity_bookings = [row for row in other_bookings if row not in same_apartment]
         failure = inventory_guard(inventories, capacity_bookings, check_in_date, check_out_date)
         if not failure:
-            failure = inventory_slot_guard(hotel, room_type, inventories, capacity_bookings, check_in_date, check_out_date,
-                                           selected=selected, room_number=data.get('roomNumber'))
+            if legacy_apartment_slots is not None:
+                selected_rows = [row for slot in legacy_apartment_slots
+                                 if slot['inventoryId'] in (None, str(selected.id))
+                                 for row in slot['bookings'] if row in capacity_bookings]
+                failure = inventory_guard([selected], selected_rows, check_in_date, check_out_date)
+            else:
+                failure = inventory_slot_guard(hotel, room_type, inventories, capacity_bookings, check_in_date, check_out_date,
+                                               selected=selected, room_number=data.get('roomNumber'))
         if failure:
             return None, None, _booking_error(*failure)
         if not layout and data.get('roomNumber') and any(

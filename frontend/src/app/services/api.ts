@@ -742,6 +742,14 @@ class ApiService {
     return this.request('/assignments/segments',{method:'POST',body:JSON.stringify(plan)});
   }
 
+  async resolveLegacyBedroom(bookingId: string, data: {
+    inventoryId: string; roomNumber: string; bedroomIndex: number;
+    expected: {checkInDate: string | null; checkOutDate: string | null; roomNumber: string | null;
+      countsAsSingle: boolean; athleteIds: string[]};
+  }) {
+    return this.request<RoomBooking>(`/assignments/bookings/${bookingId}/bedroom`, {method:'POST',body:JSON.stringify(data)});
+  }
+
   async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;inventoryId?:string;roomNumber?:string;bedroomIndex?:number;confirmApartmentException?:boolean;apartmentExceptionReason?:string;acceptedApartmentRules?:string[];checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
     return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
   }
