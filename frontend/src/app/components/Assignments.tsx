@@ -1937,8 +1937,6 @@ function HotelDetailView({
                                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                                 fallbackArrival={entry.booking.checkInDate}
                                 fallbackDeparture={entry.booking.checkOutDate}
-                                hideNation
-                                hideDiscipline
                                 footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={entry.booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
@@ -2450,8 +2448,6 @@ function DetailPanel({
                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                 fallbackArrival={booking.checkInDate}
                 fallbackDeparture={booking.checkOutDate}
-                hideNation
-                hideDiscipline
                 footer={<><div className="flex items-start justify-between gap-2">
                   <div><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} /><SingleRoomDecisionCard nation={occupant.nationCode} status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} /></div>
                   {booking.occupants.length > 1 && (
@@ -2561,9 +2557,6 @@ function DetailPanel({
               status={occupant.hasPendingReview || occupant.accommodationCoverage?.coverageStatus==='CONFLICT' ? 'review' : occupant.accommodationCoverage ? occupant.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED' ? 'assigned' : 'open' : occupant.isAssigned ? 'assigned' : 'open'}
               fallbackArrival={selectedUnit.checkInDate}
               fallbackDeparture={selectedUnit.checkOutDate}
-              hideNation
-              hideDiscipline
-              hideRole={!occupant.function || occupant.function === 'Athlet'}
               footer={<><SingleRoomDecisionCard nation={occupant.nationCode} status={occupant.single_room_status} decisionId={occupant.single_room_decision_id} onShowDecision={onShowDecision} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact className="mt-1.5" />}</>}
             />
           ))}
