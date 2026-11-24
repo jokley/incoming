@@ -385,6 +385,7 @@ export interface AssignmentValidationResult {
 }
 
 export interface AssignmentGridBooking {
+  sourceRoomNumber?: string | null;
   bedroomIndex?: number | null;
   apartmentException?: ApartmentException | null;
   bookingId: string;
