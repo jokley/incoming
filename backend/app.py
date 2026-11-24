@@ -1393,7 +1393,7 @@ def _build_room_booking_units():
                 'assignedHotelName': athlete_booking.hotel.name if athlete_booking and athlete_booking.hotel else None,
                 'assignedRoomTypeId': str(athlete_booking.room_type_id) if athlete_booking else None,
                 'assignedRoomNumber': athlete_booking.room_number if athlete_booking else None,
-                'countsAsSingle': bool(athlete_booking.counts_as_single) if athlete_booking else False,
+                'countsAsSingle': athlete_booking.effective_counts_as_single if athlete_booking else False,
             })
 
         warnings = _derive_assignment_warnings(unit_athletes, room_type)
@@ -1518,7 +1518,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                             'roomTypeId': str(booking.room_type_id),
                             'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
                             'checkOutDate': booking.check_out_date.isoformat() if booking.check_out_date else None,
-                            'countsAsSingle': bool(booking.counts_as_single),
+                            'countsAsSingle': booking.effective_counts_as_single,
                             'capacity': (slot['apartmentLayout']['bedrooms'][booking.bedroom_index - 1]
                                          if booking.bedroom_index and slot.get('apartmentLayout') else slot['capacity']),
                             'occupants': [
@@ -1728,8 +1728,10 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         capacity_bookings = [row for row in other_bookings if row not in same_apartment]
         failure = inventory_guard(inventories, capacity_bookings, check_in_date, check_out_date)
         if not failure:
-            if legacy_apartment_slots is not None:
-                selected_rows = [row for slot in legacy_apartment_slots
+            if layout:
+                # Reuse the projection with the occupied apartment still present. Removing
+                # it before projecting would move an unrelated legacy booking into the target.
+                selected_rows = [row for slot in slots
                                  if slot['inventoryId'] in (None, str(selected.id))
                                  for row in slot['bookings'] if row in capacity_bookings]
                 failure = inventory_guard([selected], selected_rows, check_in_date, check_out_date)
@@ -1865,16 +1867,14 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                'function': a.function, 'matchKey': a.fis_code or a.competitor_id or next(iter(sorted(person_keys(a))), str(a.id)),
                'singleRoomQuotaExemptReason': a.single_room_quota_exempt_reason} for a in athletes]
 
-    # Aggregate every booking membership once. A person with any persisted
-    # counts_as_single booking consumes one physical single at most; additional
-    # bookings never multiply the person or alter the flags themselves.
+    # Aggregate physical single use once per person across all their stays.
     booking_by_athlete = {}
     athlete_ids = [athlete.id for athlete in athletes]
     membership_rows = []
     if athlete_ids:
         membership_rows = db.session.query(
             RoomBookingOccupant.athlete_id,
-            RoomBooking.counts_as_single,
+            RoomBooking.effective_counts_as_single,
         ).filter(ownership_clause(RoomBooking, accommodation_event_id())).filter(ownership_clause(RoomBookingOccupant, accommodation_event_id())).join(
             RoomBooking,
             RoomBooking.id == RoomBookingOccupant.room_booking_id,
@@ -1884,8 +1884,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     for athlete_id, counts_as_single in membership_rows:
         booking_by_athlete[athlete_id] = booking_by_athlete.get(athlete_id, False) or bool(counts_as_single)
 
-    # The persisted assignment flag is the sole source of truth for operational
-    # quota usage. The physical room type and import entitlement stay unchanged.
+    # Bedroom occupancy supplies physical usage. The quota engine still resolves entitlement.
     assigned = []
     person_approvals = {}
     for athlete, person in zip(athletes, roster):
@@ -3567,7 +3566,7 @@ def _update_athlete_operations(athlete, data):
             athlete.single_room_decision_id = None
         elif previous_exempt_reason:
             membership = event_query(RoomBookingOccupant).filter_by(athlete_id=athlete.id).first()
-            if membership and membership.room_booking and membership.room_booking.counts_as_single:
+            if membership and membership.room_booking and membership.room_booking.effective_counts_as_single:
                 rows = _build_official_quota_usage_rows(nation_code=athlete.nation_code)
                 allocation = next((item for row in rows for item in row['singleRoomAllocations']
                     if item['personId'] == athlete.id), None)

@@ -721,6 +721,7 @@ export function Assignments() {
   return (
     <>
     <PersonDispositionContext.Provider value={personStatusContext}><DispositionDragContext.Provider value={{
+      onBedroomAssigned:refreshOperationalState,
       onAssignSlot:slot=>{
         if(!permissions.canManageAssignments || !focusedNeed)return;
         const validations=validationByUnit[getValidationKey(focusedNeed.unitId,focusedNeed.athleteIds)];
@@ -936,7 +937,7 @@ export function Assignments() {
               selectedUnit={selectedUnit}
               selectedBookingContext={selectedBookingContext}
               onBedroomAssigned={refreshOperationalState}
-              quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.slot.capacity,
+              quotaReason={selectedBookingContext ? ezQuotaReason(Boolean(selectedBookingContext.booking.countsAsSingle),selectedBookingContext.booking.capacity ?? selectedBookingContext.slot.capacity,
                 allUnitsCombined.flatMap(unit=>unit.occupants).filter(person=>selectedBookingContext.booking.occupants.some(p=>p.athleteId===person.athleteId)),manualQuotaValues[selectedBookingContext.booking.bookingId]) : undefined}
               selectedAssignedUnit={selectedAssignedUnit}
               hotels={allHotels}
@@ -1801,7 +1802,8 @@ function HotelDetailView({
   onSelectBooking: (bookingId: string) => void;
   pendingAction: PendingAssignmentAction | null;
 }) {
-  const {validations,interval,occupantCount,onAssignSlot}=useContext(DispositionDragContext);
+  const {validations,interval,occupantCount,onAssignSlot,onBedroomAssigned}=useContext(DispositionDragContext);
+  const permissions = usePermissions();
   const grouped = useMemo(() => {
     const map = new Map<string, AssignmentSlot[]>();
     for (const slot of hotel.slots) {
@@ -1901,29 +1903,11 @@ function HotelDetailView({
                       const slotValidation=validations?.find(v=>v.slotId===slot.slotId);
                       const canDrop=!!draggingUnitId && slotValidation?.status!=='blocked' && !!slotValidation;
                       const roomTargetKey=slot.slotId;
-                      return <div key={slot.slotId} data-room-slot={slot.slotId} data-room-number={slot.roomNumber || slot.slotId} className="flex min-h-40 min-w-0 flex-col gap-2">
-                    {slot.apartmentLayout && <section className="space-y-1 rounded border border-[var(--ops-border)] p-2" aria-label={`Apartment ${slot.slotIndex}`}>
-                      <strong className="text-sm">Apartment {slot.slotIndex} · {slot.apartmentLayout.showers} DU · {slot.capacity} Personen regulär</strong>
-                      {slot.apartmentLayout.bedrooms.map((capacity, index) => {
-                        const bedroomIndex = index + 1;
-                        const id = `${slot.slotId}:bedroom:${bedroomIndex}`;
-                        const validation = validations?.find(row => row.slotId === id);
-                        const occupied = slot.bookings.some(booking => booking.bedroomIndex === bedroomIndex
-                          && (!interval || (booking.checkInDate && booking.checkOutDate &&
-                            booking.checkInDate < interval.checkOutDate && interval.checkInDate < booking.checkOutDate)));
-                        const assignable = Boolean(draggingUnitId && validation && validation.status !== 'blocked');
-                        const target = {...slot, slotId:id, bedroomIndex};
-                        return <button type="button" key={id} data-bedroom-index={bedroomIndex} disabled={!assignable}
-                          className="block w-full rounded border border-[var(--ops-border)] p-2 text-left text-xs"
-                          onClick={() => onAssignSlot?.(target)}
-                          onDragOver={event => { if (assignable) event.preventDefault(); }}
-                          onDrop={event => { if (assignable) { event.preventDefault(); markAssignmentDrop(); onAssignSlot?.(target); } }}>
-                          Schlafraum {bedroomIndex} · {capacity === 1 ? 'EZ' : 'DZ'} · {occupied ? 'belegt' : `${capacity} Schlafplätze`}
-                          {validation?.messages.length ? <span className="block text-[var(--ops-warning)]">{validation.messages.join(' ')}</span> : null}
-                        </button>;
-                      })}
-                    </section>}
-                    {slot.bookings.map(booking => {
+                      const inPeriod = (booking: AssignmentGridBooking) => !interval
+                        || Boolean(booking.checkInDate && booking.checkOutDate
+                          && booking.checkInDate < interval.checkOutDate && interval.checkInDate < booking.checkOutDate);
+                      const unresolved = slot.bookings.some(booking=>!booking.bedroomIndex && inPeriod(booking));
+                      const renderBooking = (booking: AssignmentGridBooking, nested = false) => {
                       const entry={slot,booking};
                         const canAddPartner =
                           !!draggingUnitId && validations?.some(v=>v.slotId===`booking:${entry.booking.bookingId}` && v.status!=='blocked') && !entry.booking.countsAsSingle &&
@@ -1962,16 +1946,16 @@ function HotelDetailView({
                       >
                         {pendingAction?.bookingId === entry.booking.bookingId && <span className="absolute inset-0 z-10 flex items-center justify-center gap-2 rounded-xl bg-[var(--ops-surface)]/75 text-xs font-semibold text-blue-100" role="status" aria-live="polite"><RefreshCw className="h-4 w-4 animate-spin" /> Loading</span>}
                         <div className="flex min-w-0 flex-1 items-start gap-3">
-                          <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
+                          {!nested && <span className="mt-0.5 flex h-6 min-w-8 flex-shrink-0 items-center justify-center rounded-md bg-[var(--ops-surface-overlay)] px-1.5 text-[9px] font-medium text-[var(--ops-text-muted)]">
                             {entry.slot.roomLabel || entry.slot.roomNumber || `#${index + 1}`}
-                          </span>
+                          </span>}
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-[10px] font-medium text-[var(--ops-text-muted)]">
-                              {entry.slot.roomLabel || entry.slot.roomNumber || `${group.roomTypeName} · Zimmer ${String(entry.slot.slotIndex).padStart(2, '0')}`} · {entry.booking.bedroomIndex ? `Schlafraum ${entry.booking.bedroomIndex} ·` : slot.apartmentLayout ? 'Schlafraum ungeklärt ·' : ''} {intervalLabel({checkInDate:entry.booking.checkInDate ?? null,checkOutDate:entry.booking.checkOutDate ?? null})}
+                              {!nested && `${entry.slot.roomLabel || entry.slot.roomNumber || group.roomTypeName} · ${entry.booking.bedroomIndex ? `Schlafraum ${entry.booking.bedroomIndex} · ` : slot.apartmentLayout ? 'Schlafraum ungeklärt · ' : ''}`} {intervalLabel({checkInDate:entry.booking.checkInDate ?? null,checkOutDate:entry.booking.checkOutDate ?? null})}
                             </div>
                             <div className="mt-1 flex items-center gap-2 text-[10px]">
                               <><span className={`rounded-md px-1.5 py-0.5 font-bold ${bookingFreeCapacity(entry.booking)>0 ? 'border border-[var(--ops-tone-success-border)] bg-[var(--ops-tone-success-surface)] text-[var(--ops-tone-success-text)]' : 'bg-[var(--ops-tone-neutral-surface)] text-[var(--ops-tone-neutral-text)]'}`}>
-                                {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt{entry.booking.countsAsSingle ? ' · EZ-Nutzung' : ''}
+                                {entry.booking.occupants.length} / {entry.booking.capacity || 0} belegt{entry.booking.countsAsSingle ? nested ? ' · Einzelbelegung (EZ-Nutzung)' : ' · EZ-Nutzung' : ''}
                               </span>{bookingFreeCapacity(entry.booking)>0 && <span className="font-bold text-[var(--ops-success)]">{bookingFreeCapacity(entry.booking)} frei</span>}</>
                               {entry.booking.countsAsSingle && <span className="text-[var(--ops-text-muted)]">0 frei</span>}
                               {canAddPartner && (
@@ -1996,7 +1980,38 @@ function HotelDetailView({
                         </div>
                       </button>
                         );
-                    })}
+                      };
+                      return <div key={slot.slotId} data-room-slot={slot.slotId} data-room-number={slot.roomNumber || slot.slotId} className="flex min-h-40 min-w-0 flex-col gap-2">
+                    {slot.apartmentLayout && <section className="space-y-1 rounded border border-[var(--ops-border)] p-2" aria-label={`Apartment ${slot.slotIndex}`}>
+                      <strong className="text-sm">Apartment {slot.slotIndex} · {slot.apartmentLayout.showers} DU · {slot.capacity} Personen regulär</strong>
+                      {slot.apartmentLayout.bedrooms.map((capacity, index) => {
+                        const bedroomIndex = index + 1;
+                        const id = `${slot.slotId}:bedroom:${bedroomIndex}`;
+                        const validation = validations?.find(row => row.slotId === id);
+                        const bedroomBookings = slot.bookings.filter(booking => booking.bedroomIndex === bedroomIndex);
+                        const occupied = bedroomBookings.some(inPeriod);
+                        const assignable = Boolean(draggingUnitId && validation && validation.status !== 'blocked');
+                        const target = {...slot, slotId:id, bedroomIndex};
+                        return <div key={id} className="space-y-1" data-apartment-bedroom={bedroomIndex}>
+                          <button type="button" data-bedroom-index={bedroomIndex} disabled={!assignable}
+                          className="block w-full rounded border border-[var(--ops-border)] p-2 text-left text-xs"
+                          onClick={() => onAssignSlot?.(target)}
+                          onDragOver={event => { if (assignable) event.preventDefault(); }}
+                          onDrop={event => { if (assignable) { event.preventDefault(); markAssignmentDrop(); onAssignSlot?.(target); } }}>
+                          Schlafraum {bedroomIndex} · {capacity === 1 ? 'EZ' : 'DZ'} · {occupied ? 'belegt' : unresolved ? 'Klärung offen' : `frei · 0 / ${capacity} belegt`}
+                          {validation?.messages.length ? <span className="block text-[var(--ops-warning)]">{validation.messages.join(' ')}</span> : null}
+                          </button>
+                          {bedroomBookings.map(booking=>renderBooking(booking,true))}
+                        </div>;
+                      })}
+                      {slot.bookings.filter(booking=>!booking.bedroomIndex).map(booking=>
+                        <div key={booking.bookingId} className="rounded border border-[var(--ops-warning)] p-2">
+                          {renderBooking(booking)}
+                          {permissions.canManageAssignments && onBedroomAssigned &&
+                            <LegacyBedroomAssignment booking={booking} slot={slot} onAssigned={onBedroomAssigned}/>}
+                        </div>)}
+                    </section>}
+                    {!slot.apartmentLayout && slot.bookings.map(booking=>renderBooking(booking))}
 
                     {!slot.apartmentLayout && (slot.bookings.length===0 || canDrop) ? (
                       <div
@@ -2602,8 +2617,12 @@ function DetailPanel({
           </div>
         </DetailSection>
         <DetailSection icon={<Bed className="h-4 w-4" />} title="Quotenbewertung">
-          <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={!!booking.bedroomIndex || !permissions.canManageAssignments || pendingAction?.bookingId===booking.bookingId}
-            onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>
+          {booking.bedroomIndex ? <div className="rounded border border-[var(--ops-border)] p-3 text-sm">
+            <strong>{booking.occupants.length === 1 ? 'Physische Einzelbelegung · als EZ-Nutzung gewertet' : 'Physische Doppelbelegung'}</strong>
+            <p>Die Schlafzimmerbelegung bestimmt die EZ-Nutzung. Die FIS-Berechtigung wird separat über die vorhandene EZ-Entscheidung geprüft.</p>
+            {quotaReason && <p className="text-xs text-[var(--ops-text-muted)]">{quotaReason}</p>}
+          </div> : <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={!permissions.canManageAssignments || pendingAction?.bookingId===booking.bookingId}
+            onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>}
         </DetailSection>
         <DetailSection icon={<Trash2 className="h-4 w-4" />} title="Aktionen">
           {permissions.canManageAssignments && !booking.bedroomIndex && slot.apartmentLayout &&
