@@ -312,7 +312,7 @@ export function Assignments() {
       if(requestId!==quotaRequest.current)return;
       if(!overview.personSummary || !overview.personStatuses || !overview.personFilters
         || overview.personSummary.peopleTotal!==new Set(overview.personStatuses.map(p=>p.personId)).size
-        || personTaskCategories.some(category=>personTaskPeople(overview.personStatuses!,category.key,overview.personPlanning?.replacedPersonIds).length!==overview.personSummary![category.key]))
+        || personTaskCategories.some(category=>personTaskPeople(overview.personStatuses!,category.key).length!==overview.personSummary![category.key]))
         throw new Error('Die Personenbewertung ist unvollständig oder widersprüchlich.');
       setQuotaOverview(overview);setPersonStatusError(null);
     } catch (err) {
@@ -334,8 +334,7 @@ export function Assignments() {
   const allHotels = useMemo(() => planning?.hotels ?? [], [planning]);
   const currentQuotaUsage = useMemo(() => evaluateCurrentQuotaUsage(quotaUsage, quotaAssignmentsFromPlanning(allHotels)), [allHotels, quotaUsage]);
   const singleRoomEvaluations = useMemo(() => new Map(evaluateAllQuotaGroups(quotaUsage, quotaAssignmentsFromPlanning(allHotels)).flatMap(group => group.people.map(person => [person.personId, person] as const))), [allHotels, quotaUsage]);
-  const replacedQueuePeople=useMemo(()=>new Set(planning?.athletePlanning?.replacedPersonIds??[]),[planning]);
-  const openItems=useMemo(()=>dispositionItems(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>!replacedQueuePeople.has(person.athleteId))})),allHotels,true),[allUnitsCombined,allHotels,replacedQueuePeople]);
+  const openItems=useMemo(()=>dispositionItems(allUnitsCombined,allHotels,true),[allUnitsCombined,allHotels]);
   const unitById = useMemo(() => {
     const map = new Map<string, RoomBookingUnit>();
     for (const unit of [...allUnitsCombined,...openItems]) map.set(unit.unitId, unit);
@@ -418,7 +417,7 @@ export function Assignments() {
   );
 
   // Matching assigned people remain part of the context for "Bereits genutzt".
-  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>!replacedQueuePeople.has(person.athleteId)&&matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType,replacedQueuePeople]);
+  const syncPopulation=useMemo(()=>filterQueuePersonType(allUnitsCombined.map(unit=>({...unit,occupants:unit.occupants.filter(person=>matchesAssignmentFilters({...unit,nationCode:person.nationCode,occupants:[person]},{...assignmentFilters,status:'all'}))})).filter(unit=>unit.occupants.length>0) as DispositionItem[],filterPersonType),[allUnitsCombined,assignmentFilters,filterPersonType]);
   useEffect(()=>{
     if(filterMode!=='synchronized' && !activeHotelId) {setHotelFits({});setQueueTargets({});return;}
     let current=true;
@@ -463,7 +462,7 @@ export function Assignments() {
     percent:personStatusReady&&quotaOverview.personSummary!.accommodationPeopleRequired?Math.round(100*quotaOverview.personSummary!.fullyAssigned/quotaOverview.personSummary!.accommodationPeopleRequired):0};
   const personStatusContext=useMemo(()=>({people:personStatusMap,ready:personStatusReady,onOpen:setStatusPersonId}),[personStatusMap,personStatusReady]);
   const selectedStatusPerson=statusPersonId?personStatusMap.get(statusPersonId):undefined;
-  const taskPeople=personCategory&&personStatusReady?personTaskPeople(quotaOverview.personStatuses!,personCategory,quotaOverview.personPlanning?.replacedPersonIds):[];
+  const taskPeople=personCategory&&personStatusReady?personTaskPeople(quotaOverview.personStatuses!,personCategory):[];
   const openPersonDetails=(id:string,bookingId?:string)=>{
     setStatusPersonId(null);setPersonCategory(null);
     const segment=personStatusMap.get(id)?.accommodation.segments.find(segment=>!bookingId||segment.bookingId===bookingId);
@@ -1290,7 +1289,7 @@ function QueueSidebar({
         <div className="mb-2 flex items-center justify-between">
           <div>
             <div className="text-sm font-bold uppercase tracking-wide text-[var(--ops-assignment-text-strong)]">Dispo-Warteschlange</div>
-            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} {filterStatus==='pending'?'namentliche Aufgaben':'Einträge'} · {planningClarifications.length} Planungsklärungen</div>
+            <div className="text-xs text-[var(--ops-assignment-text-muted)]">{units.length} {filterStatus==='pending'?'namentliche Aufgaben':'Einträge'} · {planningClarifications.filter(group => group.conflict).length} Planungsklärungen{planningClarifications.some(group => !group.conflict) ? ' · Planungshinweise' : ''}</div>
           </div>
         </div>
 
@@ -2005,7 +2004,7 @@ function HotelDetailView({
                                 status={occupant.hasPendingReview ? 'review' : 'assigned'}
                                 fallbackArrival={entry.booking.checkInDate}
                                 fallbackDeparture={entry.booking.checkOutDate}
-                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={entry.booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} />{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
+                                footer={<><SingleRoomAssignmentBadges status={occupant.single_room_status} countsAsSingle={entry.booking.countsAsSingle} exemptReason={occupant.singleRoomQuotaExemptReason} activeSurcharge={entry.booking.countsAsSingle && Boolean(singleRoomEvaluations.get(occupant.athleteId)?.additionalCost)} allocationStatus={singleRoomEvaluations.get(occupant.athleteId)?.allocationStatus} approvalApplicable={occupant.approvedQuotaContexts !== undefined ? occupant.approvedQuotaContexts.length > 0 : undefined} />{occupant.accommodationRequirement === 'NO_DISPO' && <span className="text-xs text-[var(--ops-warning)]">Nicht einplanen · Buchung bleibt erhalten</span>}{occupant.hasPendingReview && <PendingChanges changes={occupant.importChangeDetails} compact />}</>}
                               />)}
                             </div>
                           </div>

@@ -513,7 +513,7 @@ def test_provisional_selection_uses_confirmed_entry_order_and_protects_bookings(
     assert row['selectionWarnings'] and row['reasons']
     assert not ({str(people[codes[0]].id),str(people[codes[1]].id)} & set(row['replacedPersonIds']))
     plan=operative_projection(project('JPN'))
-    assert plan['virtualPlaces']==0 and plan['conflicts']==1
+    assert plan['virtualPlaces']==0 and plan['conflicts']==0
     assert RoomBookingOccupant.query.count()==2
 
 
@@ -779,19 +779,55 @@ def test_no_dispo_is_staged_persisted_and_releases_the_next_regular_place(events
     assert person.accommodation_requirement == 'NO_DISPO'
 
 
-def test_no_dispo_cannot_replace_an_existing_booking(events):
+def test_no_dispo_preserves_booking_and_recalculates_recommendation(events):
+    from arrival_planning import project
+    from models import HotelRoomInventory
+
     event = events[0]
-    pending = upload(event)
+    codes = tuple(str(9400300 + index) for index in range(6))
+    # Use the existing five-person quota for this fixture's planning area.
+    from test_event_quota_rules import housing_revision
+    housing_revision(event, {'Snowboard Alpine': 5})
+    pending = upload(event, codes)
     run(pending, event)
-    person = Athlete.query.filter_by(fis_code='9300953').one()
-    booking([person])
-    corrected = upload(event, ('9300954', '9300953'), session_id=pending['session']['id'])
-    response = app.test_client().patch(
-        f"/api/import/sessions/{corrected['session']['id']}/accommodation-requirements/9300953",
-        json={'accommodationRequirement': 'NO_DISPO'})
-    assert response.status_code == 409, response.json
-    assert RoomBookingOccupant.query.filter_by(athlete_id=person.id).count() == 1
-    assert person.accommodation_requirement != 'NO_DISPO'
+    people = [Athlete.query.filter_by(fis_code=code).one() for code in codes]
+    person = people[1]
+    existing = booking([person])
+    booking_id = existing.id
+    db.session.add(HotelRoomInventory(hotel_id=existing.hotel_id, room_type_id=existing.room_type_id,
+        available_from=existing.check_in_date, available_until=existing.check_out_date, room_count=10))
+    db.session.commit()
+    client = app.test_client()
+    assert str(people[5].id) not in project('JPN')['rows'][0]['selectedPersonIds']
+    change = client.patch(f'/api/athletes/{person.id}', json={'accommodationRequirement': 'NO_DISPO'})
+    assert change.status_code == 200, change.json
+    assert change.json['accommodationCoverage']['openIntervals'] == []
+    assert change.json['accommodationCoverage']['conflicts'][0]['code'] == 'NO_DISPO_HAS_BOOKINGS'
+    row = project('JPN')['rows'][0]
+    assert str(people[5].id) in row['selectedPersonIds']
+    assert str(person.id) not in row['selectedPersonIds']
+    assert any('Buchung bleibt erhalten' in warning for warning in row['selectionWarnings'])
+    corrected = upload(event, codes, session_id=pending['session']['id'])
+    assert next(row for row in corrected['people'] if row['fisCode'] == person.fis_code)['accommodationRequirement'] == 'NO_DISPO'
+    run(corrected, event)
+    assert RoomBookingOccupant.query.filter_by(athlete_id=person.id).one().room_booking_id == booking_id
+    assert client.patch(f'/api/athletes/{person.id}', json={'accommodationRequirement': 'REQUIRED'}).status_code == 200
+    assert str(people[5].id) not in project('JPN')['rows'][0]['selectedPersonIds']
+    plan = client.get('/api/assignments/planning-view?includeValidations=false').json
+    assert str(people[5].id) in {p['athleteId'] for u in plan['units']['unassigned'] for p in u['occupants']}
+    assert not plan['athletePlanning']['replacedPersonIds']
+    for number, extra in enumerate([people[5], people[0], *people[2:5]], 2):
+        assigned = client.post(f'/api/assignments/persons/{extra.id}/segments', json={
+            'hotelId': str(existing.hotel_id), 'roomTypeId': str(existing.room_type_id), 'roomNumber': f'Zimmer {number:02}',
+            'checkInDate': '2027-03-03', 'checkOutDate': '2027-03-09',
+        })
+        assert assigned.status_code == 201, assigned.json
+    overview = client.get('/api/fis/official-quotas?nationCode=JPN&includePeople=true').json
+    assert overview['personSummary']['fullyAssigned'] == 6
+    assert overview['personSummary']['planningConflicts'] == 0
+    assert any('Mehr reguläre Athleten untergebracht' in reason
+               for group in overview['personPlanning']['groups'] for reason in group['reasons'])
+
 
 
 @pytest.mark.parametrize('legacy_approved', [False, True])

@@ -145,7 +145,7 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
         person.update(effective)
         person['importAccommodationRequirement'] = proposed
         person['accommodationRequirementReviewRequired'] = review
-        if person['accommodationRequirement'] in NO_ACCOMMODATION and (
+        if person['accommodationRequirement'] == 'NO_ROOM' and (
                 bool(existing.room_booking_memberships) if read_context is not None and existing else has_bookings(existing)):
             issues.append({'code': 'ACCOMMODATION_REQUIREMENT_BOOKINGS', 'message': BOOKING_MESSAGE,
                            'details': {'personKey': person.get('matchKey')}})
@@ -164,7 +164,7 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
 def set_requirement(person, value, source):
     if value not in REQUIREMENTS or source not in {'DEFAULT', 'IMPORT', 'MANUAL'}:
         raise ValueError('Invalid accommodation requirement/source')
-    if value in NO_ACCOMMODATION:
+    if value == 'NO_ROOM':
         ensure_no_bookings(person, value)
     person.accommodation_requirement = value
     person.accommodation_requirement_source = source
