@@ -63,6 +63,10 @@ def test_first_import_reimport_durable_and_two_events(events):
             repeated=run(again,event)
             assert repeated['summary']['peopleCreated']==0 and repeated['summary']['peopleUpdated']==0
             assert [p.id for p in Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id)]==ids
+            queue = app.test_client().get('/api/import/sessions?view=queue').json
+            assert [(row['id'], row['version'], row['status'], row['pendingDecisions']) for row in queue] == [
+                (again['session']['id'], 2, 'IMPORTED', 0),
+            ]
     assert Athlete.query.count()==4
 
 
@@ -1006,3 +1010,65 @@ def test_excel_analytics_distinguishes_sui_room_evidence(events, room_type, conf
         assert any(error['code']=='ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT' for error in preview['errors'])
         assert review(preview, event).status_code == 409
     assert Athlete.query.count() == 0
+
+
+def test_compact_import_queue_scopes_metadata_and_preserves_workflow(events):
+    from test_import_performance import sql_count
+
+    owner, other_event = events
+    target_id = None
+    for i in range(24):
+        status = ('IMPORTED', 'DRAFT', 'ARCHIVED', 'CANCELLED')[i % 4]
+        session = ImportSession(event_id=owner.id, nation=f'N{i:02}', status=status)
+        db.session.add(session)
+        db.session.flush()
+        for revision in range(1, 7):
+            preview = {
+                'eventId': owner.id, 'replacementScope': {'kind': 'SPORT_FAMILY',
+                    'family': 'Snowboard' if revision % 2 else 'Freestyle'},
+                '_workflow': {'state': 'IMPORTED' if revision < 6 else 'REVIEW'},
+                'errors': [{}] if revision == 6 else [], 'warnings': [{}, {}],
+                'people': [{'matchKey': str(person), 'function': 'Athlete'} for person in range(30)],
+            }
+            version = ImportSessionVersion(session_id=session.id, version=revision,
+                uploaded_by='queue tester', preview_json=json.dumps(preview))
+            db.session.add(version)
+            db.session.flush()
+            approval = ImportApproval(session_id=session.id, version_id=version.id, nation=session.nation,
+                approval_type='QUOTA_SINGLE_ROOMS_EXCEEDED', description='Single Rooms',
+                decision='PENDING', username='queue tester', quota_details_json='{"candidate":"PRIVATE_MARKER"}')
+            db.session.add(approval)
+            db.session.flush()
+            if i == 0 and revision == 1:
+                target_id = approval.id
+            db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='NOTE',
+                title='History entry', description='PRIVATE_MARKER' * 100, username='queue tester'))
+        session.current_version = version
+    hidden = ImportSession(event_id=other_event.id, nation='OTHER', status='DRAFT')
+    db.session.add(hidden)
+    db.session.flush()
+    hidden_approval = ImportApproval(session_id=hidden.id, nation=hidden.nation, approval_type='NATION_APPROVED',
+        description='Other event', decision='APPROVED', username='queue tester')
+    db.session.add(hidden_approval)
+    db.session.commit()
+    hidden_id = hidden_approval.id
+
+    client = app.test_client()
+    with sql_count() as statements, patch('app.recalculate_fis_import_preview', side_effect=AssertionError('preview recalculated')):
+        response = client.get(f'/api/import/sessions?view=queue&decisionId={target_id}')
+    assert response.status_code == 200, response.json
+    assert len(statements) <= 9
+    assert b'PRIVATE_MARKER' not in response.data
+    assert len(response.data) < 10000
+    rows = response.json
+    assert len(rows) == 24 and {row['status'] for row in rows} == {'IMPORTED', 'ARCHIVED', 'DRAFT', 'CANCELLED'}
+    assert not any({'versions', 'history', 'preview', 'approvals'} & row.keys() for row in rows)
+    assert [row['nation'] for row in rows if row.get('matchesDecision')] == ['N00']
+    assert not any(row.get('matchesDecision') for row in client.get(f'/api/import/sessions?view=queue&decisionId={hidden_id}').json)
+    previous = {row['id']: row for row in client.get('/api/import/sessions').json}
+    for row in rows:
+        old = previous[row['id']]
+        assert (row['version'], row['errors'], row['warnings']) == (old['version'], old['errors'], old['warnings'])
+        assert row['pendingDecisions'] == sum(a['decision'] == 'PENDING' for a in old['approvals'])
+        assert row['hasOpenSubmissions'] == (old['status'] not in {'ARCHIVED', 'CANCELLED'}
+                                             and any(item['status'] != 'IMPORTED' for item in old['submissions']))

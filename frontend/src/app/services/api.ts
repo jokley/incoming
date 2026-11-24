@@ -991,6 +991,11 @@ class ApiService {
   }
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
+  async getImportQueue(decisionId?: string | null): Promise<import('../data/importSessions').ImportQueueSession[]> {
+    const query = new URLSearchParams({view: 'queue'});
+    if (decisionId) query.set('decisionId', decisionId);
+    return this.request(`/import/sessions?${query}`);
+  }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
   async stageAccommodationRequirement(sessionId: string, personKey: string, accommodationRequirement: AccommodationRequirement | null): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/accommodation-requirements/${encodeURIComponent(personKey)}`, {method:'PATCH',body:JSON.stringify({accommodationRequirement})});

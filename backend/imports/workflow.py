@@ -18,7 +18,7 @@ def versions_after_archive(session):
     return [v for v in session.versions if v.version > boundary]
 
 
-def submission_heads(session):
+def submission_heads(session, preview_for=lambda version: json.loads(version.preview_json or "{}")):
     """Latest accepted source per mapped family, including invalid corrections.
 
     Review copies of a single submission remain that submission's current draft.
@@ -29,7 +29,7 @@ def submission_heads(session):
     if session.status == 'ARCHIVED':
         return heads
     for version in sorted(versions_after_archive(session), key=lambda v: v.version):
-        preview = json.loads(version.preview_json or '{}')
+        preview = preview_for(version)
         state = (preview.get('_workflow') or {}).get('state')
         if state == 'CANCELLED' or preview.get('submissionSources'):
             continue
@@ -41,10 +41,10 @@ def submission_heads(session):
     return heads
 
 
-def imported_submission_ids(session):
+def imported_submission_ids(session, preview_for=lambda version: json.loads(version.preview_json or "{}")):
     imported = {h.version_id for h in session.history if h.event_type=='IMPORTED'}
     for version in session.versions:
-        preview = json.loads(version.preview_json or '{}')
+        preview = preview_for(version)
         if (preview.get('_workflow') or {}).get('state') == 'IMPORTED':
             imported.add(version.id)
             imported.update((preview.get('submissionSources') or {}).values())
@@ -64,6 +64,77 @@ def submission_summary(session):
         result.append(dict(family=family, versionId=str(version.id), version=version.version,
             people=len(people), athletes=sum((p.get('function') or '').lower() == 'athlete' for p in people),
             status=status, errors=len(preview.get('errors', []))))
+    return result
+
+
+def import_queue_rows(event_id, decision_id=None):
+    """Return stored workflow facts for the queue, without loading preview bodies."""
+    from collections import defaultdict
+    from types import SimpleNamespace
+    from sqlalchemy import case, cast, column, func, JSON, true
+    from models import ImportApproval, ImportSession, ImportSessionEvent
+
+    session, version, history, approval = ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
+    sessions = (db.session.query(session.id, session.nation, session.status, session.discipline,
+                                 session.created_at, session.current_version_id)
+                .filter(session.event_id == event_id).order_by(session.created_at.desc()).all())
+    if not sessions:
+        return []
+
+    preview = func.json_to_record(cast(func.nullif(version.preview_json, ''), JSON)).table_valued(
+        column('replacementScope', JSON), column('submissionSources', JSON),
+        column('_workflow', JSON), column('errors', JSON), column('warnings', JSON),
+    ).render_derived(with_types=True).lateral()
+    current = version.id == session.current_version_id
+    versions = defaultdict(list)
+    for row in db.session.query(
+        version.id, version.session_id, version.version, version.uploaded_by, version.created_at,
+        func.json_build_object('replacementScope', preview.c.replacementScope,
+            'submissionSources', preview.c.submissionSources,
+            '_workflow', func.json_build_object('state', preview.c._workflow['state'])).label('facts'),
+        case((current, func.json_array_length(preview.c.errors))).label('errors'),
+        case((current, func.json_array_length(preview.c.warnings))).label('warnings'),
+    ).select_from(version).join(session, session.id == version.session_id).outerjoin(preview, true()).filter(session.event_id == event_id):
+        versions[row.session_id].append(row)
+
+    history_by_session, superseded = defaultdict(list), set()
+    for row in db.session.query(history.session_id, history.version_id, history.approval_id, history.event_type).join(
+            session, session.id == history.session_id).filter(session.event_id == event_id,
+            history.event_type.in_(('ARCHIVED', 'IMPORTED', 'QUOTA_DECISION_REVISED_FROM'))):
+        if row.event_type == 'QUOTA_DECISION_REVISED_FROM':
+            superseded.add((row.session_id, row.approval_id))
+        else:
+            history_by_session[row.session_id].append(row)
+
+    pending = defaultdict(int)
+    for row in db.session.query(approval.session_id, approval.id).join(session, session.id == approval.session_id).filter(
+            session.event_id == event_id, approval.version_id == session.current_version_id,
+            approval.decision == 'PENDING', approval.approval_type != 'QUOTA_OFFICIALS_EXCEEDED',
+            ~approval.description.startswith('Officials überschritten')):
+        if (row.session_id, row.id) not in superseded:
+            pending[row.session_id] += 1
+
+    decision_session_id = None
+    if decision_id:
+        decision_session_id = db.session.query(approval.session_id).join(session, session.id == approval.session_id).filter(
+            session.event_id == event_id, approval.id == decision_id).scalar()
+
+    result = []
+    for row in sessions:
+        items = versions[row.id]
+        current_version = next((item for item in items if item.id == row.current_version_id), None)
+        state = SimpleNamespace(versions=items, history=history_by_session[row.id], status=row.status)
+        heads = submission_heads(state, lambda item: item.facts) if row.status != 'CANCELLED' else {}
+        imported = imported_submission_ids(state, lambda item: item.facts) if heads else set()
+        result.append(dict(id=str(row.id), nation=row.nation, status=row.status, discipline=row.discipline,
+            currentVersionId=str(row.current_version_id) if row.current_version_id is not None else None,
+            version=current_version.version if current_version else 0,
+            uploadedAt=(current_version.created_at if current_version else row.created_at).isoformat() + 'Z',
+            uploadedBy=current_version.uploaded_by if current_version else '',
+            errors=(current_version.errors or 0) if current_version else 0,
+            warnings=(current_version.warnings or 0) if current_version else 0,
+            pendingDecisions=pending[row.id], hasOpenSubmissions=any(item.id not in imported for item in heads.values()),
+            **({'matchesDecision': True} if row.id == decision_session_id else {})))
     return result
 
 
