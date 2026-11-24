@@ -268,7 +268,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  assert.match((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
  await personRow.click();
  const personDialog=page.getByRole('dialog');
- await personDialog.getByRole('combobox',{name:'Unterkunftsbedarf',exact:true}).click();
+ await personDialog.getByRole('combobox').filter({hasText:'Nicht einplanen'}).click();
  await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
  await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
