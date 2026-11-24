@@ -241,7 +241,8 @@ def save(area, data, username, *, commit=True):
 def operative_projection(overview):
     """Expose recommendation and warnings alongside the unrestricted work queue."""
     rows=overview['rows']
-    return dict(replacedPersonIds=[],
+    # Forecast consumers still use these exclusions for the recommended demand.
+    return dict(replacedPersonIds=sorted({i for row in rows for i in row['replacedPersonIds']}),
         provisionalPersonIds=sorted({i for row in rows for i in row['provisionalPersonIds']}),
         worldChampionPersonIds=sorted({i for row in rows for i in row['selectedWorldChampionIds']}),
         groups=[row for row in rows if row['reasons']], controlledAreas=len(rows),

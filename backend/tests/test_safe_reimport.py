@@ -631,7 +631,7 @@ def test_operational_selection_preview_matches_live_and_uses_existing_ez_tiers(e
     for field in ('expectedAthletes','officialQuota','singleRoomOfficialBasis','singleRoomsAllowed'):
         assert live[field]==context[field]
     usage=client.get('/api/fis/official-quotas?includePeople=true').json
-    assert usage['personSummary']['accommodationPeopleRequired']==4+official_count  # Four athletes plus the distinct named Officials.
+    assert usage['personSummary']['accommodationPeopleRequired']==8+official_count  # All real people with an open accommodation requirement.
     assert usage['personSummary']['unassigned']==4+official_count
     assert len(project('JPN')['rows'][0]['replacedPersonIds'])==4
 
@@ -815,7 +815,7 @@ def test_no_dispo_preserves_booking_and_recalculates_recommendation(events):
     assert str(people[5].id) not in project('JPN')['rows'][0]['selectedPersonIds']
     plan = client.get('/api/assignments/planning-view?includeValidations=false').json
     assert str(people[5].id) in {p['athleteId'] for u in plan['units']['unassigned'] for p in u['occupants']}
-    assert not plan['athletePlanning']['replacedPersonIds']
+    assert str(people[5].id) in plan['athletePlanning']['replacedPersonIds']  # Forecast only.
     for number, extra in enumerate([people[5], people[0], *people[2:5]], 2):
         assigned = client.post(f'/api/assignments/persons/{extra.id}/segments', json={
             'hotelId': str(existing.hotel_id), 'roomTypeId': str(existing.room_type_id), 'roomNumber': f'Zimmer {number:02}',
