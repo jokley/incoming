@@ -779,6 +779,68 @@ def test_no_dispo_is_staged_persisted_and_releases_the_next_regular_place(events
     assert person.accommodation_requirement == 'NO_DISPO'
 
 
+@pytest.mark.parametrize('warm_cache', [False, True])
+def test_requirement_patch_reuses_calculated_preview_and_rolls_back_failed_plan(events, monkeypatch, warm_cache):
+    import app as routes
+    import excel_import as imports
+    from imports.event_context import ImportValidationError
+
+    event = events[0]
+    first = upload(event)
+    run(first, event)
+    draft = upload(event, session_id=first['session']['id'])
+    token = draft['previewToken']
+    if not warm_cache:
+        PREVIEW_STORE.pop(token, None)
+    client = app.test_client()
+    sid = draft['session']['id']
+    endpoint = f'/api/import/sessions/{sid}/accommodation-requirements/9300953'
+    recalculate = imports.recalculate_fis_import_preview
+    with patch.object(imports, 'recalculate_fis_import_preview', wraps=recalculate) as plan_calculation, \
+         patch.object(routes, 'recalculate_fis_import_preview', wraps=recalculate) as route_calculation:
+        for requirement in ('NO_DISPO', 'REQUIRED'):
+            result = client.patch(endpoint, json={'accommodationRequirement': requirement})
+            assert result.status_code == 200, result.json
+            target = next(p for p in result.json['preview']['people'] if p['fisCode'] == '9300953')
+            assert target['accommodationRequirement'] == requirement
+        assert plan_calculation.call_count == 0
+        assert route_calculation.call_count == (6 if warm_cache else 4)
+
+    session = db.session.get(ImportSession, int(sid))
+    pending = ImportApproval(session_id=session.id, version_id=session.current_version_id,
+        nation='JPN', approval_type='QUOTA_SINGLE_ROOMS_EXCEEDED', description='Single Rooms',
+        decision='PENDING', username='test')
+    db.session.add(pending)
+    db.session.commit()
+    with patch.object(imports, 'recalculate_fis_import_preview', wraps=recalculate) as plan_calculation:
+        result = client.patch(endpoint, json={'accommodationRequirement': 'REQUIRED'})
+        assert result.status_code == 200, result.json
+        assert plan_calculation.call_count == 1
+    assert result.json['approvals'] == []
+    saved = session.current_version.preview_json
+    raw_before = PREVIEW_STORE.get(token)
+    history_count = ImportSessionEvent.query.filter_by(session_id=session.id).count()
+    refresh = routes.refresh_plan
+
+    def reject_plan(*args, **kwargs):
+        refresh(*args, **kwargs)
+        raise ImportValidationError('STALE_PREVIEW', 'Änderungsplan erneut prüfen.')
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(routes, 'refresh_plan', reject_plan)
+        rejected = client.patch(endpoint, json={'accommodationRequirement': 'NO_DISPO'})
+    assert rejected.status_code == 409 and rejected.json['error'] == 'STALE_PREVIEW'
+    assert session.current_version.preview_json == saved
+    assert ImportSessionEvent.query.filter_by(session_id=session.id).count() == history_count
+    assert PREVIEW_STORE.get(token) is raw_before
+
+    booked = booking([Athlete.query.filter_by(fis_code='9300953').one()])
+    rejected = client.patch(endpoint, json={'accommodationRequirement': 'NO_ROOM'})
+    assert rejected.status_code == 409 and rejected.json['reasonCode'] == 'NO_ROOM_HAS_BOOKINGS'
+    assert db.session.get(RoomBooking, booked.id) is not None
+    assert session.current_version.preview_json == saved
+
+
 def test_no_dispo_preserves_booking_and_recalculates_recommendation(events):
     from arrival_planning import project
     from models import HotelRoomInventory

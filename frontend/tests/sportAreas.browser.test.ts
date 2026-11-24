@@ -165,12 +165,19 @@ test('automatic person selection is shared by athlete and Officials quota views 
   const context={gender:'M',athletes:count,athletesEntered:9,expectedAthletes:count,officialQuota:count===4?6:7,registeredOfficials:10,officialsDeviation:count===4?4:3,singleRoomOfficialBasis:count===4?6:7,singleRoomsAllowed:count===4?2:3,singleRoomsRequested:3,singleRoomsPending:count===4?1:0,singleRoomsApproved:0,quotaExemptSingleRooms:0};
   planning.operationalQuota={conflict:false,reasons:[],people:Array.from({length:3},(_,i)=>({matchKey:'staff'+i,nationCode:'FIN',singleRoomAllocation:{identity:'staff'+i,status:i<context.singleRoomsAllowed?'COVERED':'PENDING',context:['FIN',row.discipline,'M']}})),rows:[context],overview:{...preview.quotaOverview,nations:[{...preview.quotaOverview.nations[0],groups:[{name:row.discipline,officials:10,athletes:9,contexts:[context],totals:context}]}]}};
  };project(4);
+ let listRequests=0;
+ let rejectRequirement=true;
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
+  if(req.method()==='GET' && path==='/import/sessions')listRequests++;
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
   if(path==='/import/sessions/1/accommodation-requirements/p2' && req.method()==='PATCH'){
    assert.deepEqual(req.postDataJSON(),{accommodationRequirement:'NO_DISPO'});
+   if(rejectRequirement){
+    rejectRequirement=false;
+    return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
+   }
    people[2].accommodationRequirement='NO_DISPO';
    return route.fulfill({json:session});
   }
@@ -256,12 +263,19 @@ test('automatic person selection is shared by athlete and Officials quota views 
  list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
  await list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'}).click();
  assert.deepEqual(await page.getByRole('option').allTextContents(),['Unterkunft benötigt','Kein Zimmer benötigt','Nicht einplanen']);
+ const beforeSaveListRequests=listRequests;
+ await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ await list.getByRole('alert').filter({hasText:'Änderungsplan erneut prüfen.'}).waitFor();
+ const requirement = list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'});
+ assert.equal(await requirement.innerText(),'Unterkunft benötigt');
+ await requirement.click();
  await page.getByRole('option',{name:'Nicht einplanen'}).click();
  const skipped=list.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
  await skipped.getByText('Nicht einplanen',{exact:true}).first().waitFor();
  assert.equal(await skipped.getAttribute('data-provisional-planning'),'deferred');
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
- assert.deepEqual(writes,['/import/sessions/1/accommodation-requirements/p2']);
+ assert.equal(listRequests,beforeSaveListRequests);
+ assert.deepEqual(writes,Array(2).fill('/import/sessions/1/accommodation-requirements/p2'));
  await page.goto(`${origin}/athletes`);
  const personRow=page.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
  await personRow.getByText('Nicht einplanen',{exact:true}).first().waitFor();
@@ -273,7 +287,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
  assert.doesNotMatch((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
- assert.deepEqual(writes,['/import/sessions/1/accommodation-requirements/p2','/athletes/3']);
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),'/athletes/3']);
  assert.deepEqual(errors,[]);
 });
 
