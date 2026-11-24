@@ -1,7 +1,6 @@
 import {PersonStatusIcons} from './PersonDispositionStatus';
-import { queueFunctionLabel } from '../../services/queuePersonType';
+import { assignmentPersonContext } from '../../services/assignmentPresentation';
 import type { ReactNode } from 'react';
-import { competitionDisplayName } from '../../services/competitionPresentation';
 
 import { AssignmentStatusChip, type AssignmentStatus } from './AssignmentInfo';
 
@@ -11,7 +10,8 @@ export type OccupantCardPerson = {
   firstname?: string;
   lastname?: string;
   nationCode?: string | null;
-  discipline?: string | null;
+  gender?: string | null;
+  quotaDisciplines?: string[];
   function?: string | null;
   arrivalDate?: string | null;
   departureDate?: string | null;
@@ -22,7 +22,7 @@ const shortDate = (value?: string | null) => value
   ? new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' })
   : '—';
 
-export function OccupantCard({ person, status, fallbackArrival, fallbackDeparture, footer, className = '', hideNation = false, hideDiscipline = false, hideRole = false, layout = 'responsive', statusActions = true }: {
+export function OccupantCard({ person, status, fallbackArrival, fallbackDeparture, footer, className = '', layout = 'responsive', statusActions = true }: {
   person: OccupantCardPerson;
   statusActions?: boolean;
   status: AssignmentStatus;
@@ -30,19 +30,11 @@ export function OccupantCard({ person, status, fallbackArrival, fallbackDepartur
   fallbackDeparture?: string | null;
   footer?: ReactNode;
   className?: string;
-  hideNation?: boolean;
-  hideDiscipline?: boolean;
-  hideRole?: boolean;
   /** Responsive keeps the name readable by stacking compact cards; horizontal is for known-wide hosts. */
   layout?: 'responsive' | 'horizontal';
 }) {
   const name = person.name || `${person.firstname || ''} ${person.lastname || ''}`.trim() || '—';
-  const context = [
-    !hideNation && (person.nationCode || '—'),
-    !hideDiscipline && (competitionDisplayName(person.discipline) || '—'),
-    !hideRole && queueFunctionLabel(person),
-  ].filter((value): value is string => Boolean(value));
-  const contextLabel = context.join(' · ');
+  const context = assignmentPersonContext(person);
   const arrival = person.arrivalDate || fallbackArrival;
   const departure = person.departureDate || fallbackDeparture;
 
@@ -50,7 +42,7 @@ export function OccupantCard({ person, status, fallbackArrival, fallbackDepartur
     <div className={`ops-occupant-card__content ${layout === 'horizontal' ? 'ops-occupant-card__content--horizontal' : ''}`}>
       <strong className="ops-occupant-card__name text-xs text-[var(--ops-text)]">{name} <PersonStatusIcons personId={person.athleteId} interactive={statusActions}/></strong>
       <span className="ops-occupant-card__details">
-        {context.length > 0 && <span className="ops-occupant-card__context text-[10px] font-medium text-[var(--ops-text-muted)]" title={contextLabel}>{contextLabel}</span>}
+        <span className="ops-occupant-card__context break-words text-[10px] font-medium text-[var(--ops-text-muted)]">{context}</span>
         <span className="ops-occupant-card__stay whitespace-nowrap font-mono text-[10px] font-semibold text-[var(--ops-text-subtle)]">{shortDate(arrival)} → {shortDate(departure)}</span>
       </span>
       <span className="ops-occupant-card__status"><AssignmentStatusChip status={status} /></span>
