@@ -750,7 +750,7 @@ class ApiService {
     return this.request<RoomBooking>(`/assignments/bookings/${bookingId}/bedroom`, {method:'POST',body:JSON.stringify(data)});
   }
 
-  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;inventoryId?:string;roomNumber?:string;bedroomIndex?:number;confirmApartmentException?:boolean;apartmentExceptionReason?:string;acceptedApartmentRules?:string[];checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
+  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;inventoryId?:string;roomNumber?:string;bedroomIndex?:number;confirmApartmentException?:boolean;apartmentExceptionReason?:string;acceptedApartmentRules?:string[];checkInDate:string;checkOutDate:string;joinBookingId?:string;confirmReleaseSingleUse?:true}) {
     return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
   }
 

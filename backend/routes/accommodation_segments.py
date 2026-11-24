@@ -83,9 +83,14 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
 
         target = event_get(RoomBooking, int(data['joinBookingId']), required=True) if data.get('joinBookingId') else None
         _require(not target or not existing, 'INVALID_JOIN', 'Beitreten ist nur beim Hinzufügen möglich.')
+        release_single_use = data.get('confirmReleaseSingleUse') is True
+        if release_single_use:
+            _require(target and target.is_double_room and len(target.occupants) == 1 and target.effective_counts_as_single,
+                     'SINGLE_USE_CHANGED', 'Die EZ-Nutzung oder Zimmerbelegung hat sich geändert. Bitte erneut prüfen.')
         if target:
-            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair or not target.effective_counts_as_single,
-                     'ROOM_SINGLE_USE', 'Zimmer ist durch EZ-Nutzung gesperrt.')
+            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair
+                     or release_single_use or not target.effective_counts_as_single,
+                     'ROOM_SINGLE_USE', 'Bitte das Aufheben der EZ-Nutzung bestätigen.')
             _require(not any(o.athlete_id == person.id for o in target.occupants),
                      'ALREADY_ATTACHED', 'Person ist diesem Zimmer bereits zugewiesen.')
             _require(target.check_in_date == start and target.check_out_date == end,
@@ -106,7 +111,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             'checkInDate': data['checkInDate'], 'checkOutDate': data['checkOutDate'],
         }
         if existing or target:
-            payload_data['countsAsSingle'] = (existing or target).counts_as_single
+            payload_data['countsAsSingle'] = False if release_single_use else (existing or target).counts_as_single
         else:
             if new_booking_default is not None:
                 payload_data['countsAsSingle'] = new_booking_default
@@ -152,11 +157,14 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             db.session.add(RoomBookingOccupant(athlete_id=person.id, room_booking_id=target.id))
             _acknowledge_import_changes([person.id])
             booking = target
-            if target.bedroom_index is not None:
+            if target.is_double_room or target.bedroom_index is not None:
+                target.counts_as_single = False
+            if target.bedroom_index is not None and payload.get('apartment_exception'):
                 from apartment_occupancy import audit_exception
-                target.counts_as_single = payload['counts_as_single']
-                target.apartment_exception = payload.get('apartment_exception')
+                target.apartment_exception = payload['apartment_exception']
                 audit_exception(target)
+            if release_single_use:
+                g.released_single_use = True
         else:
             role = membership.role if membership else None
             if shared:
@@ -198,6 +206,8 @@ def add_shared_segment():
                  'INVALID_PEOPLE', 'Eine Person oder zwei Zimmerpartner auswählen.')
         ids = [int(value) for value in ids]
         _require(len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Personen müssen unterschiedlich sein.')
+        if data.get('confirmReleaseSingleUse') is True:
+            _require(len(ids) == 1, 'INVALID_PEOPLE', 'Genau eine zweite Person auswählen.')
         from external_accommodation import external_plan, release_standard_period
         hotel = event_get(Hotel, int(data.get('hotelId', 0)))
         external = bool(hotel and hotel.accommodation_type == 'EXTERNAL')

@@ -960,6 +960,14 @@ class RoomBooking(db.Model):
     def bedroom_capacity(self):
         return self.room_type.bedroom_capacity(self.bedroom_index) if self.room_type else None
 
+    @property
+    def is_double_room(self):
+        if not self.room_type or self.hotel.accommodation_type == 'EXTERNAL':
+            return False
+        if self.room_type.apartment_layout:
+            return self.bedroom_capacity == 2
+        return self.room_type.max_persons == 2
+
     @hybrid_property
     def effective_counts_as_single(self):
         if self.bedroom_index is not None:

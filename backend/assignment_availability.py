@@ -163,7 +163,8 @@ def project(planning, needs, population_ids, loaded=None):
     def join_reason(hotel, slot, booking, ids, start, end, valid, extra):
         if not valid:
             return 'Offenen Unterkunftsbedarf prüfen.'
-        if getattr(booking, 'effective_counts_as_single', booking.counts_as_single):
+        if (booking.effective_counts_as_single
+                and not (booking.is_double_room and len(booking.occupants) == len(ids) == 1)):
             return 'Zimmer durch EZ-Nutzung gesperrt.'
         if booking.check_in_date != start or booking.check_out_date != end:
             return 'Aufenthaltsdaten stimmen nicht überein.'
@@ -188,6 +189,12 @@ def project(planning, needs, population_ids, loaded=None):
         if any((_planned_room_key(b.room_number) or b.room_number)==(_planned_room_key(booking.room_number) or booking.room_number) and booking_intervals_overlap(b.check_in_date,b.check_out_date,start,end) for b in rows):
             return 'Zimmer im benötigten Zeitraum nicht verfügbar.'
         return None
+
+    def join_target(booking, reason):
+        release = not reason and booking.effective_counts_as_single
+        return {'slotId': f'booking:{booking.id}',
+                'status': 'blocked' if reason else 'warning' if release else 'valid',
+                'messages': [reason or 'EZ-Nutzung vor der gemeinsamen Belegung aufheben.'] if reason or release else []}
 
     def apartment_targets(hotel, slot, ids, start, end, valid, extra=()):
         layout = slot.get('apartmentLayout')
@@ -234,10 +241,10 @@ def project(planning, needs, population_ids, loaded=None):
                     if not belongs_to_slot(booking, slot):
                         continue
                     reason=join_reason(hotel,slot,booking,ids,start,end,valid,[])
-                    results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
+                    results.append(join_target(booking, reason))
                     # Apartment joins are available interactively. The aggregate witness
                     # does not track added occupants in existing apartment bookings.
-                    if not reason and not slot.get('apartmentLayout'):
+                    if not reason and not booking.effective_counts_as_single and not slot.get('apartmentLayout'):
                         join_options.append((slot,booking))
             candidates.append((len(options)+len(join_options), key, ids, start, end, valid, options,join_options))
         # Individual buttons share this snapshot; no per-person HTTP requests.
@@ -253,7 +260,7 @@ def project(planning, needs, population_ids, loaded=None):
                     for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
                         if belongs_to_slot(booking, slot):
                             reason=join_reason(hotel,slot,booking,[identity],start,end,valid,[])
-                            results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
+                            results.append(join_target(booking, reason))
         # A constructive feasibility witness, not an allocation or optimizer.
         # Constrained needs first. A partial result is explicitly a lower bound.
         extra_by_type, accommodated = {}, set()
