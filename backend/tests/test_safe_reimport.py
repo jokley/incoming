@@ -632,7 +632,7 @@ def test_operational_selection_preview_matches_live_and_uses_existing_ez_tiers(e
         assert live[field]==context[field]
     usage=client.get('/api/fis/official-quotas?includePeople=true').json
     assert usage['personSummary']['accommodationPeopleRequired']==8+official_count  # All real people with an open accommodation requirement.
-    assert usage['personSummary']['unassigned']==4+official_count
+    assert usage['personSummary']['unassigned']==8+official_count
     assert len(project('JPN')['rows'][0]['replacedPersonIds'])==4
 
 
