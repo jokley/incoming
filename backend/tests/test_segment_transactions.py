@@ -390,19 +390,29 @@ def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom
     assert legacy_status['roomPreference']['segments'][0]['capacity'] == 2
 
 
-def test_double_bedroom_single_use_is_mutable_and_controls_partner_assignment(state):
+@pytest.mark.parametrize('apartment', [False, True])
+@pytest.mark.parametrize('direct', [False, True])
+def test_double_room_single_use_release_and_partner_assignment(state, apartment, direct):
     from app import _inventory_room_number
+    from models import ImportApproval, ImportSession
+    from routes.accommodation_segments import coverage_for
 
     first, second = state[0]
     with app.app_context():
         inventory = HotelRoomInventory.query.one()
-        inventory.room_type.apartment_layout = {'bedrooms': [2, 2], 'showers': 2}
-        inventory.room_type.max_persons = 4
+        if apartment:
+            inventory.room_type.apartment_layout = {'bedrooms': [2, 2], 'showers': 2}
+            inventory.room_type.max_persons = 4
+        session = ImportSession(nation='AUT', event_id=inventory.event_id)
+        approval = ImportApproval(session=session, nation='AUT', approval_type='SINGLE_ROOM',
+                                  description='Historical approval', decision='APPROVED', username='test')
+        db.session.get(Athlete, first).single_room_decision = approval
+        db.session.add(approval)
         third = Athlete(firstname='C', lastname='Person', nation_code='AUT',
                         arrival_date=date(2027, 3, 14), departure_date=date(2027, 3, 27))
         db.session.add(third)
         db.session.commit()
-        identity, third_id = inventory.id, third.id
+        identity, third_id, decision_id = inventory.id, third.id, approval.id
 
     client = app.test_client()
     base = {**payload(state, 14, 27, _inventory_room_number(identity, 1)), 'inventoryId': str(identity)}
@@ -411,12 +421,13 @@ def test_double_bedroom_single_use_is_mutable_and_controls_partner_assignment(st
         return client.post('/api/assignments/segments', headers=headers,
                            json={**base, 'athleteIds': [str(person)], **target})
 
-    created = add(first, bedroomIndex=1)
+    created = add(first, **({'bedroomIndex': 1} if apartment else {}))
     assert created.status_code == 201, created.json
     assert created.json['booking']['countsAsSingle'] is False
     booking_id = created.json['booking']['id']
-    other = add(third_id, bedroomIndex=2, countsAsSingle=True)
-    assert other.status_code == 201 and other.json['booking']['countsAsSingle'] is True
+    if apartment and not direct:
+        other = add(third_id, bedroomIndex=2, countsAsSingle=True)
+        assert other.status_code == 201 and other.json['booking']['countsAsSingle'] is True
     with app.app_context():
         membership_id = RoomBookingOccupant.query.filter_by(athlete_id=first).one().id
 
@@ -438,17 +449,60 @@ def test_double_bedroom_single_use_is_mutable_and_controls_partner_assignment(st
     quota = client.get('/api/fis/official-quotas?includePeople=true', headers=headers).json
     first_quota = next(row['singleRoom'] for row in quota['personStatuses'] if row['personId'] == str(first))
     assert first_quota['hasSingleUse'] and not first_quota['approvalApplicable']
-    assert join_status() == 'blocked'
+    assert join_status() == 'warning'
     assert add(second, joinBookingId=booking_id).json['reasonCode'] == 'ROOM_SINGLE_USE'
-    assert toggle(False).json['countsAsSingle'] is False
-    with app.app_context():
-        assert RoomBookingOccupant.query.filter_by(athlete_id=first).one().id == membership_id
-        assert db.session.get(RoomBooking, int(other.json['booking']['id'])).effective_counts_as_single
+    if direct:
+        incompatible = client.post(url(second), headers=headers, json={
+            **base, 'checkInDate': '2027-03-15', 'joinBookingId': booking_id, 'confirmReleaseSingleUse': True,
+        })
+        assert incompatible.json['reasonCode'] == 'SHARED_DATES_DIFFER'
 
-    joined = add(second, joinBookingId=booking_id)
+        def fail_after_join(person):
+            if not db.session.get(RoomBooking, int(booking_id)).counts_as_single:
+                raise RuntimeError('injected failure after release and attachment')
+            return coverage_for(person)
+
+        with patch('routes.accommodation_segments.coverage_for', side_effect=fail_after_join), pytest.raises(RuntimeError):
+            add(second, joinBookingId=booking_id, confirmReleaseSingleUse=True)
+        with app.app_context():
+            booking = db.session.get(RoomBooking, int(booking_id))
+            assert booking.counts_as_single and len(booking.occupants) == 1
+        barrier = Barrier(2)
+
+        def attempt(person):
+            barrier.wait(timeout=5)
+            return add(person, joinBookingId=booking_id, confirmReleaseSingleUse=True)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            responses = list(pool.map(attempt, [second, third_id]))
+        assert sorted(response.status_code for response in responses) == [201, 400]
+        joined = next(response for response in responses if response.status_code == 201)
+        second = next(int(row['athlete']['id']) for row in joined.json['booking']['occupants']
+                      if int(row['athlete']['id']) != first)
+    else:
+        assert toggle(False).json['countsAsSingle'] is False
+        assert join_status() == 'valid'
+        if apartment:
+            with app.app_context():
+                assert db.session.get(RoomBooking, int(other.json['booking']['id'])).effective_counts_as_single
+        joined = add(second, joinBookingId=booking_id)
     assert joined.status_code == 201, joined.json
     assert len(joined.json['booking']['occupants']) == 2
     assert joined.json['booking']['countsAsSingle'] is False
+    assert joined.json['booking']['id'] == booking_id
+    assert joined.json['booking']['checkInDate'] == base['checkInDate']
+    assert joined.json['booking']['checkOutDate'] == base['checkOutDate']
+    plan = client.get('/api/assignments/planning-view?includeValidations=false', headers=headers).json
+    displayed = next(booking for hotel in plan['hotels'] for slot in hotel['slots']
+                     for booking in slot['bookings'] if booking['bookingId'] == booking_id)
+    assert displayed['countsAsSingle'] is False and len(displayed['occupants']) == 2
+    quota = client.get('/api/fis/official-quotas?includePeople=true', headers=headers).json
+    assert not next(row['singleRoom'] for row in quota['personStatuses'] if row['personId'] == str(first))['hasSingleUse']
+    with app.app_context():
+        assert RoomBookingOccupant.query.filter_by(athlete_id=first).one().id == membership_id
+        assert db.session.get(Athlete, first).single_room_decision_id == decision_id
+        activity = 'EZ-Nutzung aufgehoben und Zimmerpartner hinzugefügt' if direct else 'Quotenbewertung auf DZ gesetzt'
+        assert AuditEvent.query.filter_by(activity=activity).count() == 1
     assert toggle(True).json['reasonCode'] == 'INVALID_SINGLE_USE'
     removed = client.delete(f'{url(second)}/{booking_id}', headers=headers)
     assert removed.status_code == 200, removed.json

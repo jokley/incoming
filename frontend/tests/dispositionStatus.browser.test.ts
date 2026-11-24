@@ -15,13 +15,13 @@ test('person overview drills into assigned people, refreshes after persistence, 
  const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);page.setDefaultNavigationTimeout(30000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
- let legacySingle=true,single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false,legacyMode=false,legacyBedroom:number|null=null,newBedroom:number|null=null;
+ let legacyJoined=false,legacySingle=true,single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false,legacyMode=false,legacyBedroom:number|null=null,newBedroom:number|null=null;
  let releaseFamily:()=>void=()=>{};
  let familyGate=Promise.resolve();
  let mutationGate=Promise.resolve();let releaseMutation:()=>void=()=>{};
  const seed=[['full','Vollständig','FULLY_ASSIGNED','MATCH','NO_SINGLE_USE','Snowboard'],['partial','Teilweise','PARTIALLY_ASSIGNED','UNKNOWN','NO_SINGLE_USE','Freestyle'],['open','Offen','UNASSIGNED','UNASSIGNED','NO_SINGLE_USE','Snowboard'],['conflict','Konflikt','CONFLICT','UNKNOWN','NO_SINGLE_USE','Snowboard'],['mismatch','Wunschabweichung','FULLY_ASSIGNED','MISMATCH','APPROVED_EXTRA','Freestyle'],['orphan','Kontextlos','FULLY_ASSIGNED','MATCH','PENDING','Snowboard']];
  const people=()=>seed.map(([id,name,coverage,wish,ez,family])=>{
-  const segments=coverage==='UNASSIGNED'?[]:[{...interval,bookingId:`booking-${id}`,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',roomNumber:id,countsAsSingle:id==='orphan'?single:false,conflictCodes:coverage==='CONFLICT'?['BOOKING_OVERLAP']:[],capacity:2,occupantCount:1,physicalUsage:'SOLE_DOUBLE',comparison:wish}];
+  const segments=coverage==='UNASSIGNED'?[]:[{...interval,bookingId:`booking-${id}`,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',roomNumber:id,countsAsSingle:id==='orphan'?single:id==='mismatch'&&singleWish,conflictCodes:coverage==='CONFLICT'?['BOOKING_OVERLAP']:[],capacity:2,occupantCount:1,physicalUsage:'SOLE_DOUBLE',comparison:wish}];
   if(id==='full')segments.splice(0,1,{...segments[0],checkOutDate:'2027-03-16'},{...segments[0],bookingId:'booking-full-2',checkInDate:'2027-03-16'});
   const ac={overallInterval:interval,coverageStatus:coverage,segments,coveredIntervals:coverage==='UNASSIGNED'?[]:[interval],openIntervals:['UNASSIGNED','PARTIALLY_ASSIGNED'].includes(coverage)?[interval]:[],conflicts:coverage==='CONFLICT'?[{code:'BOOKING_OVERLAP',bookingIds:[`booking-${id}`]}]:[]};
   return {personId:id,eventId:'1',name,nationCode:id==='full'?'EST':'AUT',personalGender:id==='orphan'?'W':'M',personType:id==='open'?'ATHLETE':'OFFICIAL',function:id==='open'?'Athlete':'Official',accommodationRequirement:'REQUIRED',sportFamilies:[family],quotaDisciplines:[family==='Snowboard'?'Snowboard Cross':'Ski Cross'],quotaContexts:[],matchesContextFilters:true,accommodation:ac,roomPreference:{reportedValue:'Double shared',reportedKind:'DOUBLE',status:wish,hasMismatch:wish==='MISMATCH',segments},singleRoom:{hasSingleUse:id==='orphan'?single:ez==='APPROVED_EXTRA',status:id==='orphan'&&!single?'NO_SINGLE_USE':ez,context:null,eligibleContexts:[],bookingIds:segments.filter(s=>s.countsAsSingle).map(s=>s.bookingId),storedApprovalId:id==='mismatch'?'99':null,applicableApprovalId:id==='mismatch'?'99':null,approvalApplicable:id==='mismatch',approvedContexts:[],exemptionReason:null,reason:id==='orphan'&&single?'Kein gültiger Quotenkontext zuordenbar':null}};
@@ -50,7 +50,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
         bookingId:'legacy-booking',hotelId:'h',roomTypeId:'r',roomNumber:legacyBedroom?'K1-3':'Zimmer 03',
         sourceRoomNumber:legacyBedroom?'K1-3':'Slot 03',bedroomIndex:legacyBedroom,capacity:legacyBedroom?2:4,
         checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:legacySingle,
-        occupants:[occupants.find(person=>person.athleteId==='full')],
+        occupants:[occupants.find(person=>person.athleteId==='full'), ...(legacyJoined ? [occupants.find(person=>person.athleteId==='open')] : [])],
       }, ...newBedroom?[{
         bookingId:'new-bedroom', bedroomIndex:newBedroom, hotelId:'h',roomTypeId:'r',roomNumber:'K1-3',
         capacity:2,checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:true,
@@ -88,12 +88,13 @@ test('person overview drills into assigned people, refreshes after persistence, 
    const needs=JSON.parse(req.postData()!).needs as Array<{key:string;athleteIds:string[]}>;
    if (legacyMode) {
      const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,[
+       ...(legacyBedroom ? [{slotId:'booking:legacy-booking',status:legacySingle?'warning':'valid',messages:[]}] : []),
        {slotId:'h:r:1:3:bedroom:2',bedroomIndex:2,status:legacyBedroom?'valid':'blocked',
         messages:legacyBedroom?[]:['Bestandsbuchung klären: zuerst einen Schlafraum zuordnen.']},
      ]])));
      return route.fulfill({json:{targets,hotels:{}}});
    }
-   const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?apartmentMode?[{slotId:'apt:1:bedroom:2',status:'warning',messages:['Ausnahme erforderlich: DU'],apartmentRules:['DU']}]:[{slotId:'booking:booking-mismatch',status:'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
+   const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?apartmentMode?[{slotId:'apt:1:bedroom:2',status:'warning',messages:['Ausnahme erforderlich: DU'],apartmentRules:['DU']}]:[{slotId:'booking:booking-mismatch',status:singleWish?'warning':'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
    return route.fulfill({json:{targets,hotels:{}}});
   }
   if(req.method()==='PUT'&&path==='/assignments/bookings/legacy-booking'){
@@ -105,7 +106,13 @@ test('person overview drills into assigned people, refreshes after persistence, 
     return route.fulfill({json:{id:'legacy-booking',bedroomIndex:legacyBedroom}});
   }
   if(req.method()==='POST'&&path==='/assignments/segments'&&legacyMode){
-    newBedroom=req.postDataJSON().bedroomIndex;
+    const target=req.postDataJSON();
+    if (target.joinBookingId==='legacy-booking') {
+      legacySingle=false;
+      legacyJoined=true;
+      return route.fulfill({status:201,json:{success:true,booking:{id:'legacy-booking',countsAsSingle:false},people:[]}});
+    }
+    newBedroom=target.bedroomIndex;
     return route.fulfill({status:201,json:{success:true,booking:{id:'new-bedroom',bedroomIndex:newBedroom},people:[]}});
   }
   if(req.method()==='POST'&&path==='/assignments/segments')return route.fulfill({status:409,json:{message:'Synthetic stale target; no booking changed.'}});
@@ -167,7 +174,10 @@ test('person overview drills into assigned people, refreshes after persistence, 
  const existingRoom=page.locator('button').filter({has:page.locator('.ops-occupant-card').filter({hasText:'Wunschabweichung'})});
  const dropRequest=page.waitForRequest(r=>r.method()==='POST'&&new URL(r.url()).pathname==='/api/assignments/segments');
  await openCard.dragTo(existingRoom);
- assert.deepEqual((await dropRequest).postDataJSON(),joinPayload);
+ const directRelease=page.getByRole('dialog',{name:'EZ-Nutzung aufheben',exact:true});
+ await directRelease.getByRole('button',{name:'Aufheben und zuweisen',exact:true}).click();
+ assert.deepEqual((await dropRequest).postDataJSON(),{...joinPayload,confirmReleaseSingleUse:true});
+ singleWish=false;
 
  for(const [label,count] of [['Vollständig 3 / 6',3],['Nicht zugewiesen 1',1],['Teilweise 1',1],['Konflikte 1',1],['Wunschabweichungen 1',1],['EZ ungeklärt 1',1]] as const){
   await summary.getByRole('button',{name:label,exact:true}).click();
@@ -188,6 +198,11 @@ test('person overview drills into assigned people, refreshes after persistence, 
  mutationGate=new Promise<void>(resolve=>{releaseMutation=resolve;});
  const beforeSave=requests.filter(r=>r==='GET /fis/official-quotas').length;
  await bookingDialog.getByLabel('Als EZ werten',{exact:true}).click();
+ const releaseDialog=page.getByRole('dialog',{name:'EZ-Nutzung aufheben',exact:true});
+ await releaseDialog.getByRole('button',{name:'Abbrechen',exact:true}).click();
+ assert.deepEqual(writes,[]);
+ await bookingDialog.getByLabel('Als EZ werten',{exact:true}).click();
+ await releaseDialog.getByRole('button',{name:'EZ-Nutzung aufheben',exact:true}).click();
  await summary.locator('button').filter({hasText:'Vollständig —'}).waitFor();
  assert.equal(await summary.locator('button').filter({hasText:'Vollständig —'}).isDisabled(),true);
  assert.equal(requests.filter(r=>r==='GET /fis/official-quotas').length,beforeSave);
@@ -307,6 +322,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(await checkbox.isChecked(),true);
  const quotaUpdate=page.waitForRequest(r=>r.method()==='PUT' && r.url().endsWith('/legacy-booking'));
  await checkbox.click();
+ await releaseDialog.getByRole('button',{name:'EZ-Nutzung aufheben',exact:true}).click();
  assert.deepEqual((await quotaUpdate).postDataJSON(),{countsAsSingle:false});
  await detailsDialog.getByRole('button',{name:'Schließen',exact:true}).click();
  await firstBedroom.getByText(/DZ · 1\/2 · Teilweise belegt/).waitFor();
@@ -332,6 +348,22 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.equal(newBooking.roomNumber,'K1-3');
  assert.equal(newBooking.inventoryId,'1');
  await legacy.locator('[data-apartment-bedroom="2"]').locator('.ops-occupant-card').waitFor();
+
+ legacySingle=true;
+ newBedroom=null;
+ await page.reload();
+ await page.getByText('Hotel Alpenrose',{exact:true}).first().click();
+ const joinTransfer=await page.evaluateHandle(()=>new DataTransfer());
+ await person.dispatchEvent('dragstart',{dataTransfer:joinTransfer});
+ const roomOne=legacy.locator('[data-bedroom-index="1"]');
+ await roomOne.getByText('EZ-Nutzung aufheben und Partner hinzufügen',{exact:true}).waitFor();
+ await roomOne.click();
+ const apartmentJoin=page.waitForRequest(r=>r.method()==='POST' && r.url().endsWith('/assignments/segments'));
+ await releaseDialog.getByRole('button',{name:'Aufheben und zuweisen',exact:true}).click();
+ const joinedPayload=(await apartmentJoin).postDataJSON();
+ assert.equal(joinedPayload.joinBookingId,'legacy-booking');
+ assert.equal(joinedPayload.confirmReleaseSingleUse,true);
+ await roomOne.getByText(/DZ · 2\/2 · Voll/).waitFor();
  assert.deepEqual(errors,[]);
 });
 

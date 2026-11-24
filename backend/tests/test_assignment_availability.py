@@ -39,7 +39,7 @@ def test_existing_double_join_and_single_use_guard(state,single,expected,room):
     fit=result['hotels'][str(state[2].id)]
     assert fit['state']==expected and fit['alreadyUsed']
     joins=[v for v in result['targets']['1'] if v['slotId']==f"booking:{booking['id']}"]
-    assert len(joins)==1 and joins[0]['status']==('blocked' if single else 'valid')
+    assert len(joins)==1 and joins[0]['status']==('warning' if single else 'valid')
     response=state[0].post(path(state[1][1]),json=data(state,14,27,joinBookingId=booking['id']))
     assert response.status_code==(400 if single else 201)
 

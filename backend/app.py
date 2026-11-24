@@ -656,6 +656,8 @@ def _business_activity(entity_type, entity_id, action, payload, response):
             title = 'Zimmer zugewiesen'
         if segment_operation:
             title = 'Unterkunftszuweisung entfernt' if request.method == 'DELETE' else 'Unterkunftszuweisung bearbeitet' if request.method == 'PUT' else 'Unterkunftszuweisung hinzugefügt'
+        if segment_operation and getattr(g, 'released_single_use', False):
+            title = 'EZ-Nutzung aufgehoben und Zimmerpartner hinzugefügt'
         if request.path.endswith('/split'):
             title = 'Zuweisung geteilt'
             details.append(f"Teilungsdatum: {response.get('splitDate', '')}; Personen: {', '.join(str(value) for value in payload.get('athleteIds', []))}")
@@ -1749,6 +1751,8 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     counts_as_single = bool(data.get('countsAsSingle', existing_booking.counts_as_single if existing_booking else False))
     if layout:
         counts_as_single = len(unique_athlete_ids) == 1 and (room_type.bedroom_capacity(bedroom) == 1 or counts_as_single)
+    elif not external and room_type.max_persons == 2 and len(unique_athlete_ids) == 2:
+        counts_as_single = False
     return {
         'hotel_id': hotel_id,
         'room_type_id': room_type_id,
@@ -3750,11 +3754,11 @@ def create_room_booking():
 def update_assigned_unit(booking_id):
     booking = event_get(RoomBooking, booking_id, required=True)
     data = request.json or {}
-    if booking.bedroom_index is not None and data.keys() == {'countsAsSingle'}:
-        # A quota valuation does not change occupancy or reopen an apartment exception.
-        if (booking.bedroom_capacity != 2 or len(booking.occupants) != 1
+    if data.keys() == {'countsAsSingle'} and (booking.is_double_room or booking.bedroom_index is not None):
+        # Update the valuation in place, preserving memberships and exception evidence.
+        if (not booking.is_double_room or len(booking.occupants) != 1
                 or type(data['countsAsSingle']) is not bool):
-            return _booking_error('INVALID_SINGLE_USE', 'Die EZ-Wertung kann bei einem DZ-Schlafraum mit genau einer Person geändert werden.')
+            return _booking_error('INVALID_SINGLE_USE', 'Die EZ-Wertung kann bei einem DZ mit genau einer Person geändert werden.')
         booking.counts_as_single = data['countsAsSingle']
         db.session.commit()
         return _assignment_jsonify(booking.to_dict())

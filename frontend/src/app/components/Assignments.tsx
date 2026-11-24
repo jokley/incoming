@@ -114,6 +114,7 @@ export function Assignments() {
   const [apartmentOverride, setApartmentOverride] = useState<{
     unitId: string; athleteIds: string[]; slot: AssignmentSlot; warning: string; reason: string; rules: string[];
   } | null>(null);
+  const [singleUseRelease, setSingleUseRelease] = useState<{joining: boolean; confirm: () => void} | null>(null);
   const permissions = usePermissions();
   const location = useLocation();
   const navigate = useNavigate();
@@ -544,12 +545,15 @@ export function Assignments() {
     }
     if(targetGeneration!==validationGenerationRef.current) return;
     const validSlot = findFirstValidSlot(validations, allHotels, hotelId);
-    const joins=allHotels.find(hotel=>hotel.hotelId===hotelId)?.slots.flatMap(slot=>slot.bookings).filter(booking=>validations.some(v=>v.slotId===`booking:${booking.bookingId}` && v.status!=='blocked')) ?? [];
+    const bookings = allHotels.find(hotel => hotel.hotelId === hotelId)?.slots.flatMap(slot => slot.bookings) ?? [];
+    const joins = bookings.filter(booking => validations.some(v => v.slotId === `booking:${booking.bookingId}` && v.status === 'valid'));
     const unit=unitById.get(unitId);
     const sharedRequest=unit?.occupants.filter(person=>!athleteIds?.length || athleteIds.includes(person.athleteId)).every(person=>queueRoomRequest(person,unit)==='DZ');
     // Fill a unique shared-room target instead of creating another booking.
     // Otherwise keep the existing free-room / join fallback; explicit drops remain unrestricted by wishes.
-    const join=(!validSlot || (sharedRequest && joins.length===1)) ? joins[0] : undefined;
+    const join = !validSlot
+      ? (joins[0] ?? bookings.find(booking => validations.some(v => v.slotId === `booking:${booking.bookingId}` && v.status === 'warning')))
+      : sharedRequest && joins.length === 1 ? joins[0] : undefined;
     if(join){await handleAssignToExistingBooking(unitId,join,athleteIds);return;}
     if (!validSlot) {
       setError(validations.find(v=>v.slotId.startsWith(`${hotelId}:`))?.messages[0] ?? 'Für dieses Hotel gibt es kein gültiges Zimmer für die ausgewählte Einheit.');
@@ -630,9 +634,13 @@ export function Assignments() {
     }
   };
 
-  const handleMarkBookingAsSingle = async (bookingId: string, countsAsSingle: boolean) => {
+  const handleMarkBookingAsSingle = async (bookingId: string, countsAsSingle: boolean, confirmed = false) => {
     if (!permissions.canManageAssignments) {
       setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
+      return;
+    }
+    if (!countsAsSingle && !confirmed && bookingContextById.get(bookingId)?.booking.capacity === 2) {
+      setSingleUseRelease({joining: false, confirm: () => void handleMarkBookingAsSingle(bookingId, false, true)});
       return;
     }
     try {
@@ -654,6 +662,7 @@ export function Assignments() {
     unitId: string,
     booking: AssignmentGridBooking,
     athleteIds?: string[],
+    confirmed = false,
   ) => {
     if (!permissions.canManageAssignments) {
       setError('Nur für Benutzer mit Bearbeitungsrechten verfügbar.');
@@ -667,6 +676,13 @@ export function Assignments() {
       setError('Zum Beitreten müssen die angezeigten Aufenthaltsdaten übereinstimmen.');return;
     }
 
+    if (booking.countsAsSingle && !confirmed) {
+      if (booking.capacity !== 2 || booking.occupants.length !== 1 || incomingAthleteIds.length !== 1) return;
+      setSingleUseRelease({joining: true, confirm: () =>
+        void handleAssignToExistingBooking(unitId, booking, incomingAthleteIds, true)});
+      return;
+    }
+
     try {
       setPendingAction({ kind: 'assign', unitId, athleteIds: incomingAthleteIds, hotelId: booking.hotelId, bookingId: booking.bookingId });
       setSaving(true);
@@ -674,7 +690,9 @@ export function Assignments() {
       await api.addAccommodationSegments({athleteIds:incomingAthleteIds,
         hotelId:booking.hotelId,roomTypeId:booking.roomTypeId,roomNumber:booking.roomNumber ?? undefined,
         checkInDate:booking.checkInDate!,checkOutDate:booking.checkOutDate!,joinBookingId:booking.bookingId,
+        ...(confirmed ? {confirmReleaseSingleUse: true} : {}),
       });
+      setManualQuotaValues(values => ({...values, [booking.bookingId]: false}));
       setDragging(null);
       setDragOverHotelId(null);
       setDragOverRoomTypeKey(null);
@@ -897,6 +915,20 @@ export function Assignments() {
 
         </div>
 
+        {singleUseRelease && <AssignmentDialog title="EZ-Nutzung aufheben" onClose={() => setSingleUseRelease(null)}
+          footer={<>
+            <OpsButton onClick={() => setSingleUseRelease(null)}>Abbrechen</OpsButton>
+            <OpsButton disabled={saving} onClick={() => {
+              const {confirm} = singleUseRelease;
+              setSingleUseRelease(null);
+              confirm();
+            }}>{singleUseRelease.joining ? 'Aufheben und zuweisen' : 'EZ-Nutzung aufheben'}</OpsButton>
+          </>}>
+          <p className="p-4 text-sm">{singleUseRelease.joining
+            ? 'Dieses Zimmer wird aktuell als Einzelzimmer genutzt. Möchtest du die EZ-Nutzung aufheben und die zweite Person gemeinsam unterbringen?'
+            : 'Die tatsächliche EZ-Nutzung endet. Der zweite Schlafplatz wird wieder für eine Zuweisung verfügbar.'}</p>
+        </AssignmentDialog>}
+
         {apartmentOverride && <AssignmentDialog title="Apartmentausnahme bestätigen" subtitle={apartmentOverride.warning}
           onClose={() => setApartmentOverride(null)}>
           <div className="space-y-3 p-4">
@@ -1103,14 +1135,14 @@ function LiveQuotaStrip({ rows, onOpen, refreshing }: { rows: OfficialQuotaUsage
   );
 }
 
-function AssignmentDialog({ children, title, subtitle, onClose }: { children: ReactNode; title: string; subtitle?: string; onClose: () => void }) {
+function AssignmentDialog({ children, title, subtitle, footer, onClose }: { children: ReactNode; title: string; subtitle?: string; footer?: ReactNode; onClose: () => void }) {
   const titleId = useId();
   return <Dialog open aria-labelledby={titleId} onClose={onClose} fullWidth maxWidth="md">
     <div className="flex max-h-[calc(100vh-64px)] flex-col bg-[var(--ops-surface)] text-[var(--ops-text)]">
       <div id={titleId}><DialogHeader title={title} /></div>
       {subtitle && <p className="px-4 pb-2 text-sm text-[var(--ops-text-muted)]">{subtitle}</p>}
       <DialogContent dividers className="min-h-0 p-0">{children}</DialogContent>
-      <DialogFooter><OpsButton onClick={onClose}>Schließen</OpsButton></DialogFooter>
+      <DialogFooter>{footer ?? <OpsButton onClick={onClose}>Schließen</OpsButton>}</DialogFooter>
     </div>
   </Dialog>;
 }
@@ -1910,7 +1942,7 @@ function HotelDetailView({
                       const renderBooking = (booking: AssignmentGridBooking, nested = false) => {
                       const entry={slot,booking};
                         const canAddPartner =
-                          !!draggingUnitId && validations?.some(v=>v.slotId===`booking:${entry.booking.bookingId}` && v.status!=='blocked') && !entry.booking.countsAsSingle &&
+                          !!draggingUnitId && validations?.some(v=>v.slotId===`booking:${entry.booking.bookingId}` && v.status!=='blocked') &&
                           (entry.booking.capacity || 0) >= entry.booking.occupants.length + (occupantCount ?? 1) &&
                           (!interval || (entry.booking.checkInDate===interval.checkInDate && entry.booking.checkOutDate===interval.checkOutDate)) &&
                           entry.booking.occupants.length >= 1;
@@ -1919,7 +1951,7 @@ function HotelDetailView({
                       <button
                         key={entry.booking.bookingId}
                         title={draggingUnitId && !canAddPartner ? validations?.find(v=>v.slotId===`booking:${entry.booking.bookingId}`)?.messages[0] ?? 'Zimmer im benötigten Zeitraum nicht verfügbar.' : undefined}
-                        onClick={() => onSelectBooking(entry.booking.bookingId)}
+                        onClick={() => canAddPartner ? onDropBooking(entry.booking) : onSelectBooking(entry.booking.bookingId)}
                         onDrop={(event) => {
                           if (!canAddPartner) return;
                           event.preventDefault();
@@ -1960,7 +1992,7 @@ function HotelDetailView({
                               {entry.booking.countsAsSingle && <span className="text-[var(--ops-text-muted)]">0 frei</span>}
                               {canAddPartner && (
                                 <span className={`${isBookingDropTarget ? 'text-[var(--ops-assignment-text-accent)]' : 'text-[var(--ops-assignment-text-muted)]'}`}>
-                                  Partner hinzufügen
+                                  {entry.booking.countsAsSingle ? 'EZ-Nutzung aufheben und Partner hinzufügen' : 'Partner hinzufügen'}
                                 </span>
                               )}
                             </div>
@@ -1993,7 +2025,7 @@ function HotelDetailView({
                         const occupancy = Math.max(0, ...activeBookings.map(booking => booking.occupants.length));
                         const singleUse = activeBookings.some(booking => booking.countsAsSingle);
                         const joinBooking = activeBookings.find(booking => validations?.some(
-                          row => row.slotId === `booking:${booking.bookingId}` && row.status === 'valid'
+                          row => row.slotId === `booking:${booking.bookingId}` && row.status !== 'blocked'
                         ));
                         const assignable = Boolean(draggingUnitId && (joinBooking || (validation && validation.status !== 'blocked')));
                         const over = dragOverRoomTypeKey === id;
@@ -2023,7 +2055,7 @@ function HotelDetailView({
                               <strong className="text-sm">Schlafraum {bedroomIndex}</strong>
                               <span className="block">{capacity === 1 ? 'EZ' : 'DZ'} · {occupancy}/{capacity} · {status}</span>
                               {assignable && <span className="block font-semibold text-[var(--ops-assignment-text-accent)]">
-                                {over ? 'Loslassen zum Zuweisen' : joinBooking ? 'Partner hinzufügen' : 'Hier ablegen oder zum Zuweisen klicken'}
+                                {over ? 'Loslassen zum Zuweisen' : joinBooking ? (joinBooking.countsAsSingle ? 'EZ-Nutzung aufheben und Partner hinzufügen' : 'Partner hinzufügen') : 'Hier ablegen oder zum Zuweisen klicken'}
                               </span>}
                               {draggingUnitId && !assignable && <span className="block text-[var(--ops-warning)]">
                                 {reason ?? 'Verfügbarkeit wird geprüft …'}
@@ -2652,7 +2684,7 @@ function DetailPanel({
             {booking.occupants.length === 1 ? 'Physische Einzelbelegung' : 'Physische Doppelbelegung'}.
             Die FIS-EZ-Berechtigung wird separat geprüft.
           </p>}
-          {(!booking.bedroomIndex || (booking.capacity === 2 && booking.occupants.length === 1)) ?
+          {(booking.capacity === 2 && booking.occupants.length === 1) ?
             <EzQuotaControl checked={Boolean(booking.countsAsSingle)} disabled={!permissions.canManageAssignments || pendingAction?.bookingId===booking.bookingId}
               onChange={checked=>onMarkBookingAsSingle(booking.bookingId,checked)} reason={quotaReason}/>
             : <p className="text-sm">{booking.countsAsSingle ? 'Als EZ gewertet' : 'Keine EZ-Wertung'}{quotaReason && ` · ${quotaReason}`}</p>}
