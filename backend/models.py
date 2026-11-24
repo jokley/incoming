@@ -319,6 +319,10 @@ class RoomType(db.Model):
     apartment_layout = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    def bedroom_capacity(self, index):
+        bedrooms = (self.apartment_layout or {}).get('bedrooms', [])
+        return bedrooms[index - 1] if type(index) is int and 1 <= index <= len(bedrooms) else None
+
     def to_dict(self):
         return {
             'id': str(self.id),
@@ -952,10 +956,14 @@ class RoomBooking(db.Model):
     room_type = db.relationship('RoomType', backref='room_bookings')
     occupants = db.relationship('RoomBookingOccupant', backref='room_booking', lazy=True, cascade='all, delete-orphan')
 
+    @property
+    def bedroom_capacity(self):
+        return self.room_type.bedroom_capacity(self.bedroom_index) if self.room_type else None
+
     @hybrid_property
     def effective_counts_as_single(self):
         if self.bedroom_index is not None:
-            return len(self.occupants) == 1
+            return len(self.occupants) == 1 and (self.bedroom_capacity == 1 or bool(self.counts_as_single))
         return bool(self.counts_as_single)
 
     @effective_counts_as_single.expression
@@ -963,7 +971,12 @@ class RoomBooking(db.Model):
         members = RoomBookingOccupant.__table__.alias()
         count = (select(func.count()).select_from(members)
                  .where(members.c.room_booking_id == cls.id).correlate(cls).scalar_subquery())
-        return case((cls.bedroom_index.is_not(None), count == 1), else_=cls.counts_as_single)
+        room_types = RoomType.__table__.alias()
+        capacity = (select(room_types.c.apartment_layout['bedrooms'][cls.bedroom_index - 1].as_integer())
+                    .where(room_types.c.id == cls.room_type_id).correlate(cls).scalar_subquery())
+        return case((cls.bedroom_index.is_not(None),
+                     (count == 1) & (func.coalesce(capacity == 1, False) | cls.counts_as_single.is_(True))),
+                    else_=cls.counts_as_single)
 
     def to_dict(self):
         from accommodation_scope import validate_serialized_ownership

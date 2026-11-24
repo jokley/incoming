@@ -163,13 +163,25 @@ def project(planning, needs, population_ids, loaded=None):
     def join_reason(hotel, slot, booking, ids, start, end, valid, extra):
         if not valid:
             return 'Offenen Unterkunftsbedarf prüfen.'
-        if booking.counts_as_single:
+        if getattr(booking, 'effective_counts_as_single', booking.counts_as_single):
             return 'Zimmer durch EZ-Nutzung gesperrt.'
         if booking.check_in_date != start or booking.check_out_date != end:
             return 'Aufenthaltsdaten stimmen nicht überein.'
-        if len(booking.occupants) + len(ids) > slot['capacity']:
-            return f"Nur {max(0,slot['capacity']-len(booking.occupants))} Platz verfügbar."
-        rows = [b for b in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]) if b.id != booking.id] + extra
+        key = (hotel['hotelId'], slot['roomTypeId'])
+        rows = [b for b in booking_index.get(key, []) if b.id != booking.id] + extra
+        count = len(booking.occupants) + len(ids)
+        if slot.get('apartmentLayout'):
+            if booking.bedroom_index is None:
+                return 'Bestandsbuchung klären: zuerst einen Schlafraum zuordnen.'
+            apartment = [b for b in rows if belongs_to_slot(b, slot)]
+            reason, rules = evaluate(slot['apartmentLayout'], slot['capacity'], booking.bedroom_index,
+                                     count, apartment, start, end)
+            failure = cached_guard(key, slot, [b for b in rows if b not in apartment], start, end,
+                                   excluded=slot['slotId'], extra=extra)
+            return reason or (failure[1] if failure else None) or (
+                'Ausnahme erforderlich: ' + ', '.join(rules) if rules else None)
+        if count > slot['capacity']:
+            return f"Nur {max(0, slot['capacity'] - len(booking.occupants))} Platz verfügbar."
         failure = cached_guard((hotel['hotelId'],slot['roomTypeId']),slot,rows,start,end,excluded=booking.id,extra=extra)
         if failure:
             return failure[1]
@@ -218,14 +230,14 @@ def project(planning, needs, population_ids, loaded=None):
                     options.append(slot)
             join_options=[]
             for slot in hotel['slots']:
-                if slot.get('apartmentLayout'):
-                    continue
                 for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
                     if not belongs_to_slot(booking, slot):
                         continue
                     reason=join_reason(hotel,slot,booking,ids,start,end,valid,[])
                     results.append({'slotId':f'booking:{booking.id}','status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
-                    if not reason:
+                    # Apartment joins are available interactively. The aggregate witness
+                    # does not track added occupants in existing apartment bookings.
+                    if not reason and not slot.get('apartmentLayout'):
                         join_options.append((slot,booking))
             candidates.append((len(options)+len(join_options), key, ids, start, end, valid, options,join_options))
         # Individual buttons share this snapshot; no per-person HTTP requests.
@@ -235,9 +247,9 @@ def project(planning, needs, population_ids, loaded=None):
                 for slot in hotel['slots']:
                     if slot.get('apartmentLayout'):
                         results.extend(apartment_targets(hotel, slot, [identity], start, end, valid))
-                        continue
-                    reason=eligibility(hotel,slot,[identity],start,end,valid,[])
-                    results.append({'slotId':slot['slotId'],'status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
+                    else:
+                        reason=eligibility(hotel,slot,[identity],start,end,valid,[])
+                        results.append({'slotId':slot['slotId'],'status':'blocked' if reason else 'valid','messages':[reason] if reason else []})
                     for booking in booking_index.get((hotel['hotelId'],slot['roomTypeId']),[]):
                         if belongs_to_slot(booking, slot):
                             reason=join_reason(hotel,slot,booking,[identity],start,end,valid,[])

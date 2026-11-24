@@ -1746,6 +1746,9 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
             for b in other_bookings):
             return None, None, _booking_error('ROOM_BOOKING_OVERLAP', 'Zimmer ist im benötigten Zeitraum nicht verfügbar.')
 
+    counts_as_single = bool(data.get('countsAsSingle', existing_booking.counts_as_single if existing_booking else False))
+    if layout:
+        counts_as_single = len(unique_athlete_ids) == 1 and (room_type.bedroom_capacity(bedroom) == 1 or counts_as_single)
     return {
         'hotel_id': hotel_id,
         'room_type_id': room_type_id,
@@ -1755,8 +1758,7 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         'check_in_date': check_in_date,
         'check_out_date': check_out_date,
         'athlete_ids': unique_athlete_ids,
-        'counts_as_single': (len(unique_athlete_ids) == 1 if layout else bool(data.get(
-            'countsAsSingle', existing_booking.counts_as_single if existing_booking else False))),
+        'counts_as_single': counts_as_single,
     }, room_type, None
 
 
@@ -1771,6 +1773,8 @@ def _initialize_new_booking_counts_as_single(data, *, people=None):
     hotel = event_get(Hotel, int(data['hotelId'])) if data.get('hotelId') else None
     room_type = db.session.get(RoomType, int(data['roomTypeId'])) if data.get('roomTypeId') else None
     capacity = room_type.max_persons if room_type and not (hotel and hotel.accommodation_type == 'EXTERNAL') else None
+    if room_type and data.get('bedroomIndex') is not None:
+        capacity = room_type.bedroom_capacity(data['bedroomIndex'])
     initialized = dict(data)
     initialized['countsAsSingle'] = default_counts_as_single(capacity, len(athlete_ids),
         single_request=any(_room_type_label(person.room_type) == 'single' for person in people),
@@ -1835,8 +1839,6 @@ def _detach_athletes_from_existing_bookings(athlete_ids, exclude_booking_id=None
             remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id).count()
             if remaining == 0:
                 db.session.delete(booking)
-            elif booking.bedroom_index is not None:
-                booking.counts_as_single = remaining == 1
     # The caller saves and commits the entire replacement operation atomically.
     db.session.flush()
 
@@ -3748,6 +3750,14 @@ def create_room_booking():
 def update_assigned_unit(booking_id):
     booking = event_get(RoomBooking, booking_id, required=True)
     data = request.json or {}
+    if booking.bedroom_index is not None and data.keys() == {'countsAsSingle'}:
+        # A quota valuation does not change occupancy or reopen an apartment exception.
+        if (booking.bedroom_capacity != 2 or len(booking.occupants) != 1
+                or type(data['countsAsSingle']) is not bool):
+            return _booking_error('INVALID_SINGLE_USE', 'Die EZ-Wertung kann bei einem DZ-Schlafraum mit genau einer Person geändert werden.')
+        booking.counts_as_single = data['countsAsSingle']
+        db.session.commit()
+        return _assignment_jsonify(booking.to_dict())
     payload_data = {
         'athleteIds': [str(occ.athlete_id) for occ in (booking.occupants or []) if occ.athlete_id],
         'hotelId': data.get('hotelId') or str(booking.hotel_id),
@@ -3794,8 +3804,6 @@ def unassign_room_booking_occupant(booking_id, athlete_id):
     remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=booking.id).count()
     if remaining == 0:
         db.session.delete(booking)
-    elif booking.bedroom_index is not None:
-        booking.counts_as_single = remaining == 1
     db.session.commit()
     return _assignment_jsonify({'success': True, 'bookingId': str(booking_id), 'athleteId': str(athlete_id)})
 

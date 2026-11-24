@@ -298,7 +298,7 @@ def test_apartment_exception_is_affirmative_and_audited_atomically(state):
     evidence = result.json['booking']['apartmentException']
     assert evidence['rules'] == ['DU','MAX_PERSONS']
     assert evidence['bedroomIndex'] == 2 and evidence['inventoryId'] == str(identity)
-    assert result.json['booking']['countsAsSingle']
+    assert not result.json['booking']['countsAsSingle']
     with app.app_context():
         audit = AuditEvent.query.filter_by(activity='Apartmentausnahme bestätigt').one()
         assert audit.username == evidence['username']
@@ -360,7 +360,7 @@ def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom
         assert db.session.get(RoomBooking,booking_id).bedroom_index is None
     resolved = client.post(url,json=data,headers=headers)
     assert resolved.status_code == 200, resolved.json
-    assert resolved.json['id'] == str(booking_id) and resolved.json['countsAsSingle'] == (not shared)
+    assert resolved.json['id'] == str(booking_id) and resolved.json['countsAsSingle'] == stored_single
     assert resolved.json['bedroomIndex'] == 1
     assert bedroom_status() == 'valid'
     assert client.post(url,json=data,headers=headers).status_code == 400
@@ -377,14 +377,80 @@ def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom
         audit = AuditEvent.query.filter_by(activity='Schlafraum zugeordnet').one()
         assert json.loads(audit.changes_json)['previousRoomNumber'] == 'Slot 01'
         assert booking.counts_as_single == stored_single
-        assert booking.effective_counts_as_single == (not shared)
-        assert db.session.query(RoomBooking.effective_counts_as_single).filter(RoomBooking.id == booking_id).scalar() == (not shared)
+        assert booking.effective_counts_as_single == stored_single
+        assert db.session.query(RoomBooking.effective_counts_as_single).filter(RoomBooking.id == booking_id).scalar() == stored_single
         assert all(db.session.get(Athlete, identity).single_room_decision_id is None for _,identity,_ in memberships)
         assert RoomBooking.query.count() == 3
     plan = client.get('/api/assignments/planning-view?includeValidations=false',headers=headers).json
     assert sorted(b['bedroomIndex'] for b in plan['hotels'][0]['slots'][0]['bookings']) == [1,2]
     statuses = client.get('/api/fis/official-quotas?includePeople=true',headers=headers).json['personStatuses']
     legacy_status = next(row for row in statuses if row['personId']==str(memberships[0][1]))
-    assert legacy_status['singleRoom']['hasSingleUse'] == (not shared)
+    assert legacy_status['singleRoom']['hasSingleUse'] == stored_single
     assert not legacy_status['singleRoom']['approvalApplicable']
     assert legacy_status['roomPreference']['segments'][0]['capacity'] == 2
+
+
+def test_double_bedroom_single_use_is_mutable_and_controls_partner_assignment(state):
+    from app import _inventory_room_number
+
+    first, second = state[0]
+    with app.app_context():
+        inventory = HotelRoomInventory.query.one()
+        inventory.room_type.apartment_layout = {'bedrooms': [2, 2], 'showers': 2}
+        inventory.room_type.max_persons = 4
+        third = Athlete(firstname='C', lastname='Person', nation_code='AUT',
+                        arrival_date=date(2027, 3, 14), departure_date=date(2027, 3, 27))
+        db.session.add(third)
+        db.session.commit()
+        identity, third_id = inventory.id, third.id
+
+    client = app.test_client()
+    base = {**payload(state, 14, 27, _inventory_room_number(identity, 1)), 'inventoryId': str(identity)}
+
+    def add(person, **target):
+        return client.post('/api/assignments/segments', headers=headers,
+                           json={**base, 'athleteIds': [str(person)], **target})
+
+    created = add(first, bedroomIndex=1)
+    assert created.status_code == 201, created.json
+    assert created.json['booking']['countsAsSingle'] is False
+    booking_id = created.json['booking']['id']
+    other = add(third_id, bedroomIndex=2, countsAsSingle=True)
+    assert other.status_code == 201 and other.json['booking']['countsAsSingle'] is True
+    with app.app_context():
+        membership_id = RoomBookingOccupant.query.filter_by(athlete_id=first).one().id
+
+    def toggle(value):
+        return client.put(f'/api/assignments/bookings/{booking_id}', headers=headers, json={'countsAsSingle': value})
+
+    def join_status():
+        response = client.post('/api/assignments/availability', headers=headers, json={'needs': [{
+            'key': 'need', 'athleteIds': [str(second)],
+            'checkInDate': base['checkInDate'], 'checkOutDate': base['checkOutDate'],
+        }]})
+        assert response.status_code == 200, response.json
+        return next(row['status'] for row in response.json['targets']['need']
+                    if row['slotId'] == f'booking:{booking_id}')
+
+    assert join_status() == 'valid'
+    marked = toggle(True)
+    assert marked.status_code == 200 and marked.json['countsAsSingle'] is True
+    quota = client.get('/api/fis/official-quotas?includePeople=true', headers=headers).json
+    first_quota = next(row['singleRoom'] for row in quota['personStatuses'] if row['personId'] == str(first))
+    assert first_quota['hasSingleUse'] and not first_quota['approvalApplicable']
+    assert join_status() == 'blocked'
+    assert add(second, joinBookingId=booking_id).json['reasonCode'] == 'ROOM_SINGLE_USE'
+    assert toggle(False).json['countsAsSingle'] is False
+    with app.app_context():
+        assert RoomBookingOccupant.query.filter_by(athlete_id=first).one().id == membership_id
+        assert db.session.get(RoomBooking, int(other.json['booking']['id'])).effective_counts_as_single
+
+    joined = add(second, joinBookingId=booking_id)
+    assert joined.status_code == 201, joined.json
+    assert len(joined.json['booking']['occupants']) == 2
+    assert joined.json['booking']['countsAsSingle'] is False
+    assert toggle(True).json['reasonCode'] == 'INVALID_SINGLE_USE'
+    removed = client.delete(f'{url(second)}/{booking_id}', headers=headers)
+    assert removed.status_code == 200, removed.json
+    with app.app_context():
+        assert not db.session.get(RoomBooking, int(booking_id)).effective_counts_as_single

@@ -12,10 +12,10 @@ test('person overview drills into assigned people, refreshes after persistence, 
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-status-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
- const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
+ const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);page.setDefaultNavigationTimeout(30000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const interval={checkInDate:'2027-03-11',checkOutDate:'2027-03-23'};
- let single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false,legacyMode=false,legacyBedroom:number|null=null,newBedroom:number|null=null;
+ let legacySingle=true,single=true,fail=false,delayFamily=false,readOnly=false,singleWish=false,apartmentMode=false,legacyMode=false,legacyBedroom:number|null=null,newBedroom:number|null=null;
  let releaseFamily:()=>void=()=>{};
  let familyGate=Promise.resolve();
  let mutationGate=Promise.resolve();let releaseMutation:()=>void=()=>{};
@@ -49,7 +49,7 @@ test('person overview drills into assigned people, refreshes after persistence, 
       bookings:index===3?[{
         bookingId:'legacy-booking',hotelId:'h',roomTypeId:'r',roomNumber:legacyBedroom?'K1-3':'Zimmer 03',
         sourceRoomNumber:legacyBedroom?'K1-3':'Slot 03',bedroomIndex:legacyBedroom,capacity:legacyBedroom?2:4,
-        checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:true,
+        checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:legacySingle,
         occupants:[occupants.find(person=>person.athleteId==='full')],
       }, ...newBedroom?[{
         bookingId:'new-bedroom', bedroomIndex:newBedroom, hotelId:'h',roomTypeId:'r',roomNumber:'K1-3',
@@ -95,6 +95,10 @@ test('person overview drills into assigned people, refreshes after persistence, 
    }
    const targets=Object.fromEntries(needs.flatMap(need=>[need.key,...need.athleteIds.map(id=>`${need.key}:athlete:${id}`)].map(key=>[key,need.athleteIds.includes('open')?apartmentMode?[{slotId:'apt:1:bedroom:2',status:'warning',messages:['Ausnahme erforderlich: DU'],apartmentRules:['DU']}]:[{slotId:'booking:booking-mismatch',status:'valid',messages:[]},{slotId:'h:r:free',status:'valid',messages:[]}]:[]])));
    return route.fulfill({json:{targets,hotels:{}}});
+  }
+  if(req.method()==='PUT'&&path==='/assignments/bookings/legacy-booking'){
+    legacySingle=req.postDataJSON().countsAsSingle;
+    return route.fulfill({json:{id:'legacy-booking',countsAsSingle:legacySingle}});
   }
   if(req.method()==='POST'&&path==='/assignments/bookings/legacy-booking/bedroom'){
     legacyBedroom=req.postDataJSON().bedroomIndex;
@@ -256,7 +260,10 @@ test('person overview drills into assigned people, refreshes after persistence, 
  await page.getByRole('group',{name:/^Offen ·/}).dispatchEvent('dragstart',{dataTransfer:transfer});
  const secondBedroom=apartment.locator('[data-bedroom-index="2"]');
  await secondBedroom.getByText('Ausnahme erforderlich: DU').waitFor();
- await secondBedroom.click();
+ assert.match(await secondBedroom.innerText(),/DZ · 0\/2 · Frei/);
+ await secondBedroom.dispatchEvent('dragover',{dataTransfer:transfer});
+ await secondBedroom.getByText('Loslassen zum Zuweisen').waitFor();
+ await secondBedroom.dispatchEvent('drop',{dataTransfer:transfer});
  const exception=page.getByRole('dialog').filter({hasText:'Apartmentausnahme bestätigen'});
  const confirm=exception.getByRole('button',{name:'Ausnahme verbindlich zuweisen'});
  assert.equal(await confirm.isDisabled(),true);
@@ -292,16 +299,32 @@ test('person overview drills into assigned people, refreshes after persistence, 
    expected:{roomNumber:'Slot 03',athleteIds:['full'],checkInDate:'2027-03-11',checkOutDate:'2027-03-20',countsAsSingle:true}});
  const firstBedroom=legacy.locator('[data-apartment-bedroom="1"]');
  await firstBedroom.getByText('Vollständig', {exact:false}).first().waitFor();
- await firstBedroom.getByRole('button').filter({hasText:'Einzelbelegung'}).click();
+ await firstBedroom.getByText(/DZ · 1\/2 · Einzelbelegung/).waitFor();
+ await firstBedroom.locator('.ops-occupant-card').click();
  const detailsDialog=page.getByRole('dialog');
- await detailsDialog.getByText('Physische Einzelbelegung · als EZ-Nutzung gewertet',{exact:true}).waitFor();
- assert.equal(await detailsDialog.getByLabel('Als EZ werten',{exact:true}).count(),0);
+ await detailsDialog.getByText(/Physische Einzelbelegung/).waitFor();
+ const checkbox=detailsDialog.getByLabel('Als EZ werten',{exact:true});
+ assert.equal(await checkbox.isChecked(),true);
+ const quotaUpdate=page.waitForRequest(r=>r.method()==='PUT' && r.url().endsWith('/legacy-booking'));
+ await checkbox.click();
+ assert.deepEqual((await quotaUpdate).postDataJSON(),{countsAsSingle:false});
  await detailsDialog.getByRole('button',{name:'Schließen',exact:true}).click();
+ await firstBedroom.getByText(/DZ · 1\/2 · Teilweise belegt/).waitFor();
  const roomTwo=legacy.locator('[data-bedroom-index="2"]');
  const person=page.getByRole('group',{name:/^Offen ·/});
  const nextTransfer=await page.evaluateHandle(()=>new DataTransfer());
  await person.dispatchEvent('dragstart',{dataTransfer:nextTransfer});
  await page.waitForFunction(()=>!document.querySelector('[aria-label="Apartment 3"] [data-bedroom-index="2"]')?.hasAttribute('disabled'));
+ const lightBedroomColors=await roomTwo.evaluate(node=>({
+   foreground:getComputedStyle(node).color,
+   background:getComputedStyle(node.closest('[data-apartment-bedroom]')!).backgroundColor,
+ }));
+ await page.getByRole('button',{name:'Dunkles Theme verwenden',exact:true}).click();
+ const darkBedroomColors=await roomTwo.evaluate(node=>({
+   foreground:getComputedStyle(node).color,
+   background:getComputedStyle(node.closest('[data-apartment-bedroom]')!).backgroundColor,
+ }));
+ assert.notDeepEqual(darkBedroomColors,lightBedroomColors);
  const newPost=page.waitForRequest(r=>r.method()==='POST' && r.url().endsWith('/assignments/segments'));
  await roomTwo.click();
  const newBooking=(await newPost).postDataJSON();
