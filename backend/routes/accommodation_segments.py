@@ -86,7 +86,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         target = event_get(RoomBooking, int(data['joinBookingId']), required=True) if data.get('joinBookingId') else None
         _require(not target or not existing, 'INVALID_JOIN', 'Beitreten ist nur beim Hinzufügen möglich.')
         if target:
-            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair or not target.counts_as_single,
+            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair or not target.effective_counts_as_single,
                      'ROOM_SINGLE_USE', 'Zimmer ist durch EZ-Nutzung gesperrt.')
             _require(not any(o.athlete_id == person.id for o in target.occupants),
                      'ALREADY_ATTACHED', 'Person ist diesem Zimmer bereits zugewiesen.')

@@ -306,37 +306,50 @@ def test_apartment_exception_is_affirmative_and_audited_atomically(state):
         assert RoomBooking.query.count() == 2
 
 
-@pytest.mark.parametrize('shared', [False, True])
-def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom(state, shared):
+@pytest.mark.parametrize('shared,stored_single', [(False,True),(True,False),(False,False)])
+def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom(state, shared, stored_single):
     from app import _inventory_room_number
     people, _, _ = state
     with app.app_context():
         inv = HotelRoomInventory.query.one()
-        inv.room_count = 1
+        inv.room_count = 2
         inv.room_type.apartment_layout = {'bedrooms':[2,2], 'showers':2}
         inv.room_type.max_persons = 4
         extra = Athlete(firstname='Future', lastname='Guest', nation_code='AUT',
                         arrival_date=date(2027,3,14), departure_date=date(2027,3,27))
-        db.session.add(extra)
+        extra2 = Athlete(firstname='Future two',lastname='Guest',nation_code='AUT',
+                         arrival_date=date(2027,3,14),departure_date=date(2027,3,27))
+        db.session.add_all([extra,extra2])
         db.session.flush()
         legacy = RoomBooking(event_id=inv.event_id, hotel_id=inv.hotel_id, room_type_id=inv.room_type_id,
             room_number='Slot 01', check_in_date=date(2027,3,14), check_out_date=date(2027,3,27),
-            counts_as_single=not shared)
+            counts_as_single=stored_single)
         legacy.occupants = [RoomBookingOccupant(athlete_id=person,role='legacy') for person in people[:2 if shared else 1]]
-        db.session.add(legacy)
+        other_legacy = RoomBooking(event_id=inv.event_id, hotel_id=inv.hotel_id, room_type_id=inv.room_type_id,
+            room_number='Other legacy', check_in_date=date(2027,3,14), check_out_date=date(2027,3,27))
+        db.session.add_all([legacy, other_legacy])
         db.session.commit()
         booking_id, inventory_id, extra_id = legacy.id, inv.id, extra.id
+        new_people = [str(extra_id),str(extra2.id)] if shared else [str(extra_id)]
         memberships = [(o.id,o.athlete_id,o.role) for o in legacy.occupants]
 
     client = app.test_client()
     new_room = _inventory_room_number(inventory_id, 1)
     other = {**payload(state,14,27,new_room),'inventoryId':str(inventory_id),
-             'athleteIds':[str(extra_id)],'bedroomIndex':2}
+             'athleteIds':new_people,'bedroomIndex':2}
+    def bedroom_status():
+        response = client.post('/api/assignments/availability',json={'needs':[{'key':'need',
+            'athleteIds':new_people, 'checkInDate':'2027-03-14', 'checkOutDate':'2027-03-27'}]},headers=headers)
+        assert response.status_code == 200, response.json
+        key = f'{state[1]}:{state[2]}:{inventory_id}:1:bedroom:2'
+        return next(row['status'] for row in response.json['targets']['need'] if row['slotId']==key)
+
+    assert bedroom_status() == 'blocked'
     assert client.post('/api/assignments/segments',json=other,headers=headers).json['reasonCode'] == 'APARTMENT_PHYSICAL_LIMIT'
     url = f'/api/assignments/bookings/{booking_id}/bedroom'
     data = {'inventoryId':str(inventory_id), 'roomNumber':new_room, 'bedroomIndex':1,
             'expected':{'athleteIds':sorted(str(m[1]) for m in memberships), 'roomNumber':'Slot 01',
-                        'checkInDate':'2027-03-14','checkOutDate':'2027-03-27','countsAsSingle':not shared}}
+                        'checkInDate':'2027-03-14','checkOutDate':'2027-03-27','countsAsSingle':stored_single}}
     changed = {**data, 'expected':{**data['expected'], 'checkOutDate':'2027-03-26'}}
     assert client.post(url,json=changed,headers=headers).json['reasonCode'] == 'STALE_LEGACY_BOOKING'
     assert client.post(url,json={**data,'inventoryId':'999'},headers=headers).json['reasonCode'] == 'STALE_APARTMENT_SLOT'
@@ -349,18 +362,29 @@ def test_legacy_apartment_resolution_preserves_booking_and_unlocks_other_bedroom
     assert resolved.status_code == 200, resolved.json
     assert resolved.json['id'] == str(booking_id) and resolved.json['countsAsSingle'] == (not shared)
     assert resolved.json['bedroomIndex'] == 1
+    assert bedroom_status() == 'valid'
     assert client.post(url,json=data,headers=headers).status_code == 400
     assert client.post('/api/assignments/segments',json={**other,'bedroomIndex':1},headers=headers).json[
         'reasonCode'] == 'APARTMENT_PHYSICAL_LIMIT'
     added = client.post('/api/assignments/segments',json=other,headers=headers)
     assert added.status_code == 201, added.json
     assert added.json['booking']['bedroomIndex'] == 2
+    assert len(added.json['booking']['occupants']) == len(new_people)
     with app.app_context():
         booking = db.session.get(RoomBooking,booking_id)
         assert [(o.id,o.athlete_id,o.role) for o in booking.occupants] == memberships
         assert (booking.check_in_date, booking.check_out_date) == (date(2027,3,14),date(2027,3,27))
         audit = AuditEvent.query.filter_by(activity='Schlafraum zugeordnet').one()
         assert json.loads(audit.changes_json)['previousRoomNumber'] == 'Slot 01'
-        assert RoomBooking.query.count() == 2
+        assert booking.counts_as_single == stored_single
+        assert booking.effective_counts_as_single == (not shared)
+        assert db.session.query(RoomBooking.effective_counts_as_single).filter(RoomBooking.id == booking_id).scalar() == (not shared)
+        assert all(db.session.get(Athlete, identity).single_room_decision_id is None for _,identity,_ in memberships)
+        assert RoomBooking.query.count() == 3
     plan = client.get('/api/assignments/planning-view?includeValidations=false',headers=headers).json
     assert sorted(b['bedroomIndex'] for b in plan['hotels'][0]['slots'][0]['bookings']) == [1,2]
+    statuses = client.get('/api/fis/official-quotas?includePeople=true',headers=headers).json['personStatuses']
+    legacy_status = next(row for row in statuses if row['personId']==str(memberships[0][1]))
+    assert legacy_status['singleRoom']['hasSingleUse'] == (not shared)
+    assert not legacy_status['singleRoom']['approvalApplicable']
+    assert legacy_status['roomPreference']['segments'][0]['capacity'] == 2

@@ -38,6 +38,7 @@ def get_athletes():
         db.joinedload(RoomBookingOccupant.athlete),
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.hotel),
         db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.room_type),
+        db.joinedload(RoomBookingOccupant.room_booking).joinedload(RoomBooking.occupants),
     ).all()
     assignment_map = {}
     bookings_by_person = {}
@@ -57,7 +58,7 @@ def get_athletes():
             'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
             'checkOutDate': booking.check_out_date.isoformat() if booking.check_out_date else None,
             'bookingId': str(booking.id),
-            'countsAsSingle': bool(booking.counts_as_single),
+            'countsAsSingle': booking.effective_counts_as_single,
         }
         if current is None:
             assignment_map[athlete.id] = summary

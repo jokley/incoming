@@ -287,7 +287,7 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
                 gender=person.gender,quotaDisciplines=quota_disciplines(person.competitions),accommodationRequirement=person.accommodation_requirement,singleRoomQuotaExemptReason=person.single_room_quota_exempt_reason)
             roster.append(record)
             groups=projected_approval_groups(person.single_room_decision,person,roster=context.athletes)
-            demands.append(dict(record,countsAsSingle=any(m.room_booking.counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_ACCOMMODATION and str(person.room_type or '').strip().lower()=='single'),
+            demands.append(dict(record,countsAsSingle=any(m.room_booking.effective_counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_ACCOMMODATION and str(person.room_type or '').strip().lower()=='single'),
                 singleRoomStatus=person.single_room_status,approvedQuotaContexts=[dict(nationCode=n,discipline=d,gender=g) for n,d,g in groups]))
     else:
         allocations={item['personKey']:item for check in preview.get('quotaChecks',[]) for item in check.get('singleRoomAllocations',[])}

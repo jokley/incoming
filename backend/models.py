@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, case, func, select
+from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime
 import json
 from accommodation_rates import rate_projection
@@ -951,6 +952,19 @@ class RoomBooking(db.Model):
     room_type = db.relationship('RoomType', backref='room_bookings')
     occupants = db.relationship('RoomBookingOccupant', backref='room_booking', lazy=True, cascade='all, delete-orphan')
 
+    @hybrid_property
+    def effective_counts_as_single(self):
+        if self.bedroom_index is not None:
+            return len(self.occupants) == 1
+        return bool(self.counts_as_single)
+
+    @effective_counts_as_single.expression
+    def effective_counts_as_single(cls):
+        members = RoomBookingOccupant.__table__.alias()
+        count = (select(func.count()).select_from(members)
+                 .where(members.c.room_booking_id == cls.id).correlate(cls).scalar_subquery())
+        return case((cls.bedroom_index.is_not(None), count == 1), else_=cls.counts_as_single)
+
     def to_dict(self):
         from accommodation_scope import validate_serialized_ownership
         validate_serialized_ownership(self)
@@ -963,7 +977,7 @@ class RoomBooking(db.Model):
             'apartmentException': self.apartment_exception,
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
-            'countsAsSingle': bool(self.counts_as_single),
+            'countsAsSingle': self.effective_counts_as_single,
             'occupants': [occupant.to_dict() for occupant in self.occupants]
         }
 

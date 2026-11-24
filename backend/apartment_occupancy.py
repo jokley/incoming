@@ -19,8 +19,10 @@ def evaluate(layout, maximum, bedroom, count, bookings, start, end):
         return 'Der Schlafraum hat zu wenige physische Schlafplätze.', []
     relevant = [row for row in bookings if row.check_in_date is None or row.check_out_date is None
                 or row.check_in_date < end and start < row.check_out_date]
-    if any(row.bedroom_index is None or row.bedroom_index == bedroom for row in relevant):
-        return 'Schlafraum belegt oder bestehende Apartmentbuchung ohne eindeutigen Schlafraum.', []
+    if any(row.bedroom_index is None for row in relevant):
+        return 'Bestandsbuchung klären: zuerst einen Schlafraum zuordnen.', []
+    if any(row.bedroom_index == bedroom for row in relevant):
+        return 'Schlafraum im gewählten Zeitraum belegt.', []
     nights = sorted({start, *(row.check_in_date for row in relevant if row.check_in_date
                               and start <= row.check_in_date < end)})
     rules = set()

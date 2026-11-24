@@ -939,7 +939,7 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
         if not person:
             continue
         booking = membership.room_booking
-        projected.append({**person, 'countsAsSingle': bool(booking and booking.counts_as_single)})
+        projected.append({**person, 'countsAsSingle': bool(booking and booking.effective_counts_as_single)})
 
     preserved = preserved_single_room_approvals(people, rooms, read_context=read_context)
     for records in (requested, projected):
@@ -1112,7 +1112,7 @@ def preserved_single_room_approvals(people, rooms, *, read_context=None):
     preserved = {}
     retained_ids = {row[0] for row in db.session.query(RoomBookingOccupant.athlete_id).join(
         RoomBooking, RoomBooking.id == RoomBookingOccupant.room_booking_id).filter(
-        RoomBooking.counts_as_single.is_(True),
+        RoomBooking.effective_counts_as_single.is_(True),
         RoomBooking.event_id == (read_context.event_id if read_context else import_event_id())).distinct()}
     current_roster = [preview_approval_person(p, competitions_by_id=read_context.competitions_by_id if read_context is not None else None) for p in people]
     for person in people:
