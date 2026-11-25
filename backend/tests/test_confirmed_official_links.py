@@ -74,10 +74,9 @@ def test_explicit_no_room_conflict_is_not_treated_as_missing(owner,first,second)
     _,b,_=paired(owner,first,second,left=data[first],right=data[second])
     combined=compose(b,owner);assert combined.status_code==200
     preview=combined.json['preview']
-    assert len(preview['people'])==1 and not preview['isValid']
-    assert any(e['code']=='IMPORT_SHARED_ACCOMMODATION_CONFLICT' for e in preview['errors'])
-    assert review({'session':combined.json},owner).status_code==409
-    assert Athlete.query.count()==0
+    assert len(preview['people'])==1 and preview['isValid']
+    assert any(e['code']=='IMPORT_SHARED_ACCOMMODATION_UNRESOLVED' for e in preview['warnings'])
+    assert preview['people'][0]['accommodationRequirement'] == 'UNRESOLVED'
 
 
 def test_disjoint_stays_are_flagged_not_stretched_into_a_contiguous_need(owner):
@@ -256,8 +255,7 @@ def test_missing_room_information_does_not_hide_known_disjoint_source_periods(ow
 
 
 @pytest.mark.parametrize('already_booked', [False, True])
-def test_italy_official_with_conflicting_room_requirements_needs_an_operational_state(owner, already_booked):
-    """Characterize the safety boundary until an open accommodation state exists."""
+def test_italy_official_with_conflicting_room_requirements_imports_without_assignment(owner, already_booked):
     from models import ImportSessionVersion, RoomBooking, RoomBookingOccupant
     from test_safe_reimport import booking
 
@@ -279,18 +277,43 @@ def test_italy_official_with_conflicting_room_requirements_needs_an_operational_
     person, = preview['people']
     assert len(person['competitionIds']) == 2
     assert {int(row['versionId']) for row in person['sourceRows']} == set(source_ids)
-    conflict = next(e for e in preview['errors'] if e['code'] == 'IMPORT_SHARED_ACCOMMODATION_CONFLICT')
-    assert set(conflict['details']['requirements']) == {'REQUIRED', 'NO_ROOM'}
-    assert review({'session': joint.json}, owner).status_code == 409
-    denied = app.test_client().post(f"/api/import/sessions/{joint.json['id']}/import",
-                                   json={'versionId': joint.json['currentVersionId']})
-    assert denied.status_code == 409
-    assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
-            for source_id in source_ids} == source_json
-    assert Athlete.query.count() == int(already_booked)
     if existing:
+        conflict = next(e for e in preview['errors'] if e['code'] == 'IMPORT_SHARED_ACCOMMODATION_CONFLICT')
+        assert set(conflict['details']['requirements']) == {'REQUIRED', 'NO_ROOM'}
+        assert review({'session': joint.json}, owner).status_code == 409
         assert existing.accommodation_requirement == 'REQUIRED'
         assert RoomBooking.query.one().id == retained.id
         assert RoomBookingOccupant.query.one().athlete_id == existing.id
     else:
-        assert RoomBooking.query.count() == 0
+        conflict = next(e for e in preview['warnings'] if e['code'] == 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED')
+        assert set(conflict['details']['requirements']) == {'REQUIRED', 'NO_ROOM'}
+        assert person['accommodationRequirement'] == 'UNRESOLVED'
+        run({'session': joint.json}, owner)
+        saved = Athlete.query.one()
+        assert saved.accommodation_requirement == 'UNRESOLVED'
+        assert saved.accommodation_requirement_import_value is None
+        assert saved.room_type is None and saved.shared_with_name is None
+        assert len(saved.competitions) == 2 and RoomBooking.query.count() == 0
+        client = app.test_client()
+        detail = client.get(f'/api/athletes/{saved.id}').json
+        assert detail['accommodationCoverage']['openIntervals'] == []
+        assert detail['workflowStatus'] == 'CONFLICT'
+        from app import _build_room_booking_units
+        units, _ = _build_room_booking_units()
+        assert str(saved.id) not in {p['athleteId'] for u in units for p in u['occupants']}
+        from accommodation_requirements import require_assignable
+        from accommodation_split import SplitError
+        with pytest.raises(SplitError, match='Unterkunftsbedarf offen'):
+            require_assignable(saved)
+        rejected = client.post(f'/api/assignments/persons/{saved.id}/segments', json={
+            'checkInDate': '2027-03-04', 'checkOutDate': '2027-03-22',
+        })
+        assert rejected.status_code == 400
+        assert rejected.json['reasonCode'] == 'UNRESOLVED_ASSIGNMENT_FORBIDDEN'
+        unchanged = client.patch(f'/api/athletes/{saved.id}', json={'accommodationRequirement': None})
+        assert unchanged.status_code == 200 and unchanged.json['accommodationRequirement'] == 'UNRESOLVED'
+        change = client.patch(f'/api/athletes/{saved.id}', json={'accommodationRequirement': 'REQUIRED'})
+        assert change.status_code == 200, change.json
+        assert change.json['accommodationCoverage']['openIntervals']
+    assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+            for source_id in source_ids} == source_json

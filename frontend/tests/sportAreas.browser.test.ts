@@ -317,6 +317,16 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await page.getByText('Historical decision',{exact:true}).waitFor();
  await page.getByText(/FIN –/).waitFor({state:'attached'});
  assert.deepEqual(detailRequests,['/import/sessions/1']);
+ people[2].accommodationRequirement='UNRESOLVED';
+ await page.goto(`${origin}/athletes`);
+ await personRow.getByText('Unterkunftsbedarf offen',{exact:true}).first().waitFor();
+ await personRow.click();
+ const unresolved = personDialog.getByRole('combobox').filter({hasText:'Unterkunftsbedarf offen'});
+ await unresolved.click();
+ assert.equal(await page.getByRole('option',{name:'Unterkunftsbedarf offen',exact:true}).getAttribute('aria-disabled'),'true');
+ await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
+ await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
+ await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
  assert.deepEqual(errors,[]);
 });
 

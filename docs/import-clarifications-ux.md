@@ -74,7 +74,7 @@ grenzen diesen Schnitt von anderen Fällen ab.
 | Code | Ursache | Heutige Wirkung | Ziel | Risiko |
 |---|---|---|---|---|
 | `ROOM_PARTNER_NOT_FOUND`, `SHARED_PARTNER_NOT_LINKED`, `SHARED_PARTNER_NOT_EVIDENCED` | Partner fehlt oder ist nicht eindeutig | Warnung bzw. Klärung | Import weiterhin möglich. Wunsch offen lassen. | Falscher Zimmerpartner |
-| `IMPORT_SHARED_ACCOMMODATION_CONFLICT` | Widersprüchlicher Unterkunftswunsch, Partner oder Zimmer | Sperrt Freigabe, bei gekoppelten Quellen auch Teilimport | Zuerst ausschließlich Double shared gegen No room bei sicherer Identität und gleichen Daten übernehmen. Partner- und Zimmerkonflikte gesondert prüfen. | Falscher operativer Bedarf |
+| `IMPORT_SHARED_ACCOMMODATION_CONFLICT` | Widersprüchlicher Unterkunftswunsch, Partner oder Zimmer | Sperrt weiterhin Partner- und Zimmerkonflikte. Double shared gegen No room wird bei Neuanlage mit sicherer Identität und gleichen Daten als offener Bedarf übernommen. | Operativ im Athletendetail entscheiden. | Falscher operativer Bedarf |
 | `ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT` | Entry List und Room List widersprechen sich | Sperrt bis zur Korrektur oder einem passenden expliziten Override | Fachlich offen übernehmbar, sobald der offene Bedarf sicher darstellbar ist. | Falscher Bedarf |
 | `ACCOMMODATION_REQUIREMENT_SEPARATE_STAYS`, `IMPORT_SHARED_STAY_SECTIONS`, `ACCOMMODATION_REQUIREMENT_PARTNER_STAY` | Aufenthalte passen nicht in ein sicheres Zeitfenster | Blockiert | Vorläufig blockierend lassen. | Aufenthalt verlängert oder Partnerzeit verändert |
 | `QUOTA_SINGLE_ROOMS_EXCEEDED` → `QUOTA_REQUIREMENT_UNREVIEWED`, `ATHLETE_QUOTA_UNREVIEWED` | EZ- oder Athletenquote ohne anwendbare Entscheidung | Warnung in Vorschau, Sperre bei Freigabe/Confirm | Eigener späterer Schnitt. Entscheidung und Audit weiterführen. | Fehlende Genehmigung kann sonst als Deckung oder Mehrpreis gelten |
@@ -106,9 +106,11 @@ explizit gewählt. Der erste Schnitt gilt für Neuanlagen ohne Buchung. Bei best
 bleibt der heutige Konfliktschutz aktiv, damit wirksamer Bedarf, Aufenthalt und
 erteilte Genehmigung erhalten bleiben.
 
-Der PR hält bis zur Freigabe dieses Modellschritts die Schutzgrenze fest.
+Die Migration erweitert ausschließlich den Constraint des operativen Felds.
 Der synthetische ITA-Regressionstest verwendet die bestehende bestätigte
-Quellverknüpfung und prüft beide Memberships in der Vorschau, die unveränderten
-Quellversionen und die Ablehnung ohne Änderungen an vorhandenen Buchungen.
-Sichere unabhängige Teilmeldungen bleiben über den bestehenden Teilimport
-verfügbar. Dieser PR ändert keinen Laufzeitpfad und enthält keine Migration.
+Quellverknüpfung und prüft beide Memberships und unveränderte Quellversionen.
+Er prüft auch, dass die Buchungs-API bei offenem Bedarf sperrt und eine
+anschließende explizite Entscheidung die Person wieder disponierbar macht.
+Bei bereits vorhandener Buchung bleibt die bisherige Importblockade bestehen.
+Sichere unabhängige Teilmeldungen sind weiterhin über den bestehenden
+Teilimport verfügbar.

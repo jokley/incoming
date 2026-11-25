@@ -1,6 +1,6 @@
 from quota_rules import rules_for_event, accommodation_rule_event
 from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object, event_audit_refs
-from accommodation_requirements import BOOKING_MESSAGE, NO_ACCOMMODATION, REQUIREMENTS, INVALID_REQUIREMENT, requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
+from accommodation_requirements import BOOKING_MESSAGE, NO_BOOKABLE_DEMAND, REQUIREMENTS, INVALID_REQUIREMENT, requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
@@ -1316,9 +1316,9 @@ def _build_room_booking_units():
         candidates = [candidate for candidate in candidates if candidate.id != athlete.id]
         return candidates[0] if len(candidates) == 1 else None
 
-    athletes = [a for a in athletes if a.accommodation_requirement not in NO_ACCOMMODATION]
-    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name_and_nation.items()}
-    athletes_by_name = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name.items()}
+    athletes = [a for a in athletes if a.accommodation_requirement not in NO_BOOKABLE_DEMAND]
+    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement not in NO_BOOKABLE_DEMAND] for k, values in athletes_by_name_and_nation.items()}
+    athletes_by_name = {k: [a for a in values if a.accommodation_requirement not in NO_BOOKABLE_DEMAND] for k, values in athletes_by_name.items()}
     consumed_ids = set()
     projected_groups = []
     for athlete in athletes:
@@ -1540,7 +1540,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
-                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement in NO_ACCOMMODATION,
+                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement in NO_BOOKABLE_DEMAND,
                                     'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
                                     'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
@@ -2445,6 +2445,8 @@ def _current_session_preview(session, *, read_context=None):
             # person state rather than replaying an obsolete manual override.
             preview.pop('accommodationRateOverrides', None)
             preview.pop('accommodationRequirementOverrides', None)
+            for person in preview.get('people', []):
+                person.pop('unresolvedSourceAccommodation', None)
             preview['carriedSingleRoomQuotaExemptKeys'] = list(preview.get('singleRoomQuotaExemptOverrides', {}))
         try:
             if preview.get('eventId') is None and (any(str(column).upper().startswith('WSC_')

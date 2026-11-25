@@ -1,9 +1,9 @@
 """Import explanations and append-only nation contacts; quota decisions stay separate."""
-from accommodation_requirements import NO_ACCOMMODATION
+from accommodation_requirements import NO_BOOKABLE_DEMAND
 from collections import defaultdict
 from quota_service import quota_keys, is_athlete, athlete_quota_contexts
 
-CLARIFY = {'ROOM_PARTNER_NOT_FOUND','ROOM_PERSON_NOT_FOUND','ROOM_DUPLICATE_SINGLE','ROOM_CONFLICTING_STAY',
+CLARIFY = {'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED', 'ROOM_PARTNER_NOT_FOUND','ROOM_PERSON_NOT_FOUND','ROOM_DUPLICATE_SINGLE','ROOM_CONFLICTING_STAY',
            'ROOM_NO_DAY_OVERLAP','ENTRY_QUOTA_MEMBERSHIP_UNRESOLVED','ATHLETE_TARIFF_UNRESOLVED',
            'QUOTA_SINGLE_ROOMS_EXCEEDED','QUOTA_ATHLETE_EXCEEDED'}
 
@@ -74,7 +74,7 @@ def build_import_control(preview, context):
         if len(memberships)>1:add('info','MULTIPLE_MEMBERSHIPS','Mehrere Competition-Zuordnungen. Athleten zählen je Quotenfamilie nur einmal; Staff-Zuordnungen sind keine sportlichen Starts.',[key],'Entry List',p.get('rowNumber'))
         if str((p.get('entryAccommodationSource') or p).get('roomType') or '').strip().casefold()=='no room':add('info','EXPLICIT_ENTRY_NO_ROOM','Entry List meldet ausdrücklich No room. Der effektive Unterkunftsbedarf wird separat angezeigt.',[key],'Entry List',p.get('rowNumber'))
         relevant=person_rooms[key]
-        if p.get('accommodationRequirement') not in NO_ACCOMMODATION:
+        if p.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND:
             shared=[r for r in relevant if str(r.get('roomType') or '').strip().casefold()=='double shared']
             for room in shared:
                 if not room.get('person2Key') and not any(i['code']=='ROOM_PARTNER_NOT_FOUND' and i['row']==room.get('rowNumber') for i in issues):
@@ -505,7 +505,7 @@ def selection_people(session, saved, view):
 def selection_reference(session, ref, saved, view):
     """Positive correction predicates only; disappearing warnings alone are insufficient."""
     people = selection_people(session, saved, view)
-    if people is None or not view['valid']:
+    if people is None or not view['valid'] or any(p.get('accommodationRequirement') == 'UNRESOLVED' for p in people):
         return False, None
     keys = {str(p['matchKey']) for p in people}
     related = [s for s in view['subjects'] if set(s['personKeys']) & keys and
@@ -518,7 +518,7 @@ def selection_reference(session, ref, saved, view):
         fixed = len(assessments) == len(people) and bool(assessments) and all(not a.get('outsideNights') and (not a.get('reason') or a['reason'] == 'NO_ROOM') for a in assessments)
     elif ref['code'] in {'SHARED_PARTNER_NOT_LINKED', 'SHARED_PARTNER_NOT_EVIDENCED', 'ROOM_PARTNER_NOT_FOUND'}:
         def evidenced(p):
-            if p.get('accommodationRequirement') in NO_ACCOMMODATION:
+            if p.get('accommodationRequirement') in NO_BOOKABLE_DEMAND:
                 return True
             rooms = [r for r in view['preview'].get('rooms', []) if str(p['matchKey']) in {str(r.get('person1Key')), str(r.get('person2Key'))}]
             return bool(rooms) and all(r.get('person1Key') and r.get('person2Key') and

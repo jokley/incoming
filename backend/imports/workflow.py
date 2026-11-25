@@ -138,7 +138,7 @@ def import_queue_rows(event_id, decision_id=None):
     return result
 
 
-def merge_submission_previews(versions, *, consistency_only=False, read_context=None, read_only=False):
+def merge_submission_previews(versions, *, consistency_only=False, read_context=None, read_only=False, allow_unresolved=None):
     """Compose parsed sources; reuse the existing exact identity matcher.
 
     No live writes, quota decisions or date/room guessing happen here. Source
@@ -146,7 +146,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     """
     from types import SimpleNamespace
     from .identity import _build_existing_athlete_maps, _find_existing_athlete
-    from .normalization import normalize_string
+    from .normalization import normalize_string, parse_date
     from quota_service import normalize_gender
     from .change_plan import digest
     if not versions:
@@ -166,6 +166,8 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
             issue_proposal(version.session,candidates)
     sources=[(v,source_view(s,(s.get('replacementScope') or {}).get('family'),context)) for v,s in sources]
     shared_issues=[]
+    unresolved_warnings=[]
+    allow_unresolved = not consistency_only if allow_unresolved is None else allow_unresolved
     imported=imported_submission_ids(versions[0].session)
     def project_source(people,version,source):
         if version.id in imported:
@@ -206,13 +208,40 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                 if left and right and left!=right and 'accommodationRequirement' not in conflicts:conflicts.append('accommodationRequirement')
                 linked=target.get('confirmedOfficialLinkId') or incoming.get('confirmedOfficialLinkId')
                 housing={'roomType','accommodationRequirement','arrivalDate','departureDate'}
-                if conflicts and linked and set(conflicts)<=housing:
+                can_defer = False
+                if (allow_unresolved and conflicts and set(conflicts) <= {'roomType', 'accommodationRequirement'}
+                        and {left, right} == {'REQUIRED', 'NO_ROOM'}
+                        and {comparable(p, 'roomType') for p in (target, incoming)} == {'double shared', 'no room'}):
+                    strong_identity = linked or any(target.get(key) and target[key] == incoming.get(key)
+                                                    for key in ('fisCode', 'competitorId'))
+                    agreed_start, agreed_end = parse_date(target.get('arrivalDate')), parse_date(target.get('departureDate'))
+                    can_defer = (strong_identity and agreed_start and agreed_end and agreed_start < agreed_end
+                        and not any(p.get('sharedWithName') for p in (target, incoming))
+                        and all(_find_existing_athlete(p, context.athlete_maps) is None for p in (target, incoming))
+                        and all(p['matchKey'] not in facts.get('accommodationRequirementOverrides', {})
+                                and all(not room.get('person2Key') and not room.get('sharedWithRawName')
+                                        and parse_date(room.get('checkInDate')) == agreed_start
+                                        and parse_date(room.get('checkOutDate')) == agreed_end
+                                        for room in facts.get('rooms', [])
+                                        if p['matchKey'] in {room.get('person1Key'), room.get('person2Key')})
+                                for p, facts in ((target, prior_source), (incoming, source))))
+                if can_defer:
+                    warning = issue(target, incoming, conflicts, left, right)
+                    warning['code'] = 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED'
+                    warning['message'] = 'Widersprüchlicher Unterkunftsbedarf bleibt offen. Entscheidung im Athletendetail erforderlich.'
+                    unresolved_warnings.append(warning)
+                    target.update(
+                        unresolvedSourceAccommodation=True, accommodationRequirement="UNRESOLVED",
+                        roomType=None, sharedWithName=None,
+                    )
+                elif conflicts and linked and set(conflicts)<=housing:
                     shared_issues.append(issue(target,incoming,conflicts,left,right))
                 elif conflicts:
                     raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Widersprüchliche Personen-, Aufenthalts- oder Zimmerangaben in den Teilmeldungen.',
                         details={'fields':conflicts,'sourceRows':target['sourceRows']+incoming['sourceRows']})
                 for field in ('fisCode','competitorId','roomType','sharedWithName'):
-                    if not target.get(field):target[field]=incoming.get(field)
+                    if not target.get(field) and not (can_defer and field in {'roomType', 'sharedWithName'}):
+                        target[field]=incoming.get(field)
                 for field in ('competitionIds','competitionImportCodes','affirmativeWscColumns'):
                     target[field]=sorted(set(target.get(field,[]))|set(incoming.get(field,[])),key=str)
                 target['sourceRows'] += incoming['sourceRows']
@@ -281,6 +310,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     result.update(people=people,rooms=rooms,roomListHasNoData=all(p.get('roomListHasNoData') for p in people))
     for field in ('errors','warnings'):
         result[field]=[{**item,'sourceVersionId':v.id} for v,s in sources for item in s.get(field,[]) if not (field=='errors' and len(sources)>1 and (item.get('details') or {}).get('singleScopeReview'))]
+    result['warnings'] += unresolved_warnings
     result['errors'] += shared_issues
     if shared_issues:result['isValid']=False
     for field in ('entriesColumns','roomColumns','dayColumns'):
@@ -315,7 +345,8 @@ def require_submission_sources(session, preview):
 
 def require_submission_consistency(session, preview):
     if (preview.get('replacementScope') or {}).get('kind')=='SPORT_FAMILY':
-        merged=merge_submission_previews(list(submission_heads(session).values()),consistency_only=True)
+        merged=merge_submission_previews(list(submission_heads(session).values()), consistency_only=True,
+            allow_unresolved=bool(preview.get('submissionSources')))
         conflicts=[e for e in merged.get('errors',[]) if e.get('code') in {'IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'}]
         if conflicts:raise ImportValidationError(conflicts[0]['code'],conflicts[0]['message'],details={'issues':conflicts})
 

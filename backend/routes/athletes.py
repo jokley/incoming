@@ -1,5 +1,5 @@
 """Person HTTP routes; updates, authentication and mutation auditing remain in app."""
-from accommodation_requirements import NO_ACCOMMODATION
+from accommodation_requirements import NO_BOOKABLE_DEMAND
 from accommodation_scope import event_query, event_get
 
 from datetime import datetime
@@ -151,8 +151,8 @@ def get_athletes():
         # not master-data integrity failures. CONFLICT is intentionally reserved
         # for explicit integrity validation and must never be inferred from them.
         data['workflowStatus'] = (
-            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement in NO_ACCOMMODATION else
-            'NO_ROOM' if a.accommodation_requirement in NO_ACCOMMODATION else
+            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement in NO_BOOKABLE_DEMAND else
+            'NO_ROOM' if a.accommodation_requirement in NO_BOOKABLE_DEMAND else
             'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
             'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
             'OPEN_ASSIGNMENT' if not data['assignment']['hasAssignment'] else
@@ -178,8 +178,8 @@ def get_athlete(athlete_id):
     data['accommodationCoverage'] = person_accommodation_coverage(
         athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
     coverage = data['accommodationCoverage']['coverageStatus']
-    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_ACCOMMODATION and coverage == 'CONFLICT' else
-        'NO_ROOM' if athlete.accommodation_requirement in NO_ACCOMMODATION else
+    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND and coverage == 'CONFLICT' else
+        'NO_ROOM' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND else
         'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
     return jsonify(data)
 

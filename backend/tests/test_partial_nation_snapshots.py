@@ -285,8 +285,14 @@ def test_composed_shared_person_is_one_person_with_both_memberships(owner,female
 def test_shared_draft_conflicts_cannot_be_bypassed_by_individual_import(owner,field,value):
     upload(owner,'SB');fs=shared_fs();fs[0][field]=value
     b=upload(owner,'FS',fs)
-    assert compose(b,owner).status_code==409
     assert review(b,owner).status_code==409
+    combined=compose(b,owner)
+    if field=='Room_type':
+        assert combined.status_code==200,combined.json
+        shared=next(p for p in combined.json['preview']['people'] if p['fisCode']==fs[0]['Fiscode'])
+        assert shared['accommodationRequirement']=='UNRESOLVED'
+    else:
+        assert combined.status_code==409
     assert Athlete.query.count()==0
 
 

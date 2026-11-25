@@ -290,9 +290,9 @@ def evaluate_quota_usage(people, assigned_people=(), rules=None, *, include_unal
         keys.add(key)
         if (person.get('function') or '').strip().lower() == 'athlete':
             athletes[key] = athletes.get(key, 0) + 1
-            if person.get('accommodationRequirement') != 'NO_DISPO':
+            if person.get('accommodationRequirement') not in {'NO_DISPO', 'UNRESOLVED'}:
                 operative_athletes[key] = operative_athletes.get(key, 0) + 1
-        elif operational_athletes is None or person.get('accommodationRequirement') != 'NO_DISPO':
+        elif operational_athletes is None or person.get('accommodationRequirement') not in {'NO_DISPO', 'UNRESOLVED'}:
             officials[key] = officials.get(key, 0) + 1
     for person, key in _distinct_memberships(assigned_people, people):
         keys.add(key)

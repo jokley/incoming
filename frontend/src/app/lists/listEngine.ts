@@ -238,7 +238,7 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       contingent: firstSegment?.contingent || '—',
       accommodationRequirement: athlete.accommodationRequirement || 'REQUIRED',
       accommodationStatus: personAccommodation(athlete).label,
-      room: firstSegment?.room || (athlete.accommodationRequirement==='NO_DISPO'?'Nicht einplanen':athlete.accommodationRequirement==='NO_ROOM'?'No room':'—'),
+      room: firstSegment?.room || (athlete.accommodationRequirement==='UNRESOLVED'?'Unterkunftsbedarf offen':athlete.accommodationRequirement==='NO_DISPO'?'Nicht einplanen':athlete.accommodationRequirement==='NO_ROOM'?'No room':'—'),
       roomType: firstSegment?.roomType || value(athlete.roomType),
       name: `${athlete.lastname}, ${athlete.firstname}`,
       nation: value(athlete.nationCode),
