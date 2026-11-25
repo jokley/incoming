@@ -2469,11 +2469,11 @@ def _current_session_preview(session, *, read_context=None):
     return preview
 
 
-def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True):
+def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True, share_detail_context=False):
     if include_preview and resolve_preview and session.status not in {'REPLACED','ARCHIVED','CANCELLED'}:
         from imports.read_context import ImportReadContext
         read_context=read_context or ImportReadContext(session.event_id)
-    payload = session.to_dict(include_preview=include_preview)
+    payload = session.to_dict(include_preview=include_preview, read_context=read_context if share_detail_context else None)
     if resolve_preview and session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
         preview = _current_session_preview(session, read_context=read_context)
         payload['errors'] = len(preview.get('errors', []))
@@ -2501,7 +2501,9 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
         from import_control import build_import_control
         payload['importControl'] = build_import_control(payload['preview'],read_context)
         from import_control import nation_clarifications
-        payload['nationClarifications'] = nation_clarifications(session, payload['preview'], payload['importControl'])
+        payload['nationClarifications'] = nation_clarifications(
+            session, payload['preview'], payload['importControl'],
+            read_context=read_context if share_detail_context else None)
         from arrival_planning import import_projection
         payload['nnPlanning']=import_projection(session,payload['preview'],payload['importControl'],live=session.status in {'IMPORTED','ARCHIVED'},read_context=read_context)
     if include_preview and session.status=='ARCHIVED':
@@ -2517,7 +2519,7 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
 @app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
 def get_import_session(session_id):
     configured_event_id()
-    return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True))
+    return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True, share_detail_context=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>', methods=['PATCH'])

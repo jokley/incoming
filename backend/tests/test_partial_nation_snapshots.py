@@ -529,3 +529,32 @@ def test_excel_analytics_combines_current_family_heads_only(owner):
     assert {p['matchKey'] for p in nation['people']} == expected
     assert len(nation['people']) == len(expected)
     assert Athlete.query.count() == 0
+
+
+def test_detail_reuses_same_read_context_without_changing_review(owner, monkeypatch):
+    from imports.read_context import ImportReadContext
+
+    first = upload(owner, 'SB')
+    run(first, owner)
+    retained = booking(Athlete.query.filter_by(function='Athlete').all()[:1])
+    second = upload(owner, 'FS')
+    composed = compose(second, owner)
+    assert composed.status_code == 200, composed.json
+    session_id = composed.json['id']
+    session = db.session.get(ImportSession, int(session_id))
+    saved = session.current_version.preview_json
+    contexts = []
+    initialize = ImportReadContext.__init__
+
+    def count_context(context, event_id=None):
+        contexts.append(event_id)
+        initialize(context, event_id)
+
+    monkeypatch.setattr(ImportReadContext, '__init__', count_context)
+    response = app.test_client().get(f'/api/import/sessions/{session_id}')
+    assert response.status_code == 200, response.json
+    assert len(contexts) == 1
+    for key in ('preview', 'submissionTotal', 'importControl', 'nationClarifications', 'nnPlanning'):
+        assert response.json[key] == composed.json[key]
+    assert session.current_version.preview_json == saved
+    assert db.session.get(type(retained), retained.id) is not None
