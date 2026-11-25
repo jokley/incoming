@@ -360,6 +360,19 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await page.getByRole('option',{name:'Kein Zimmer benötigt',exact:true}).click();
  await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
  await page.getByRole('status').filter({hasText:'alle Unterkunftsklärungen abgeschlossen'}).waitFor();
+ Object.assign(people[2], {accommodationRequirement:'NO_DISPO', accommodationDecisionLabel:'Nicht disponieren',
+   hasFisAccommodationDeviation:true, assignment:{hasAssignment:true}});
+ Object.assign(people[3], {accommodationDecisionLabel:'Abweichung FIS', hasFisAccommodationDeviation:true, nationCode:'ITA'});
+ Object.assign(people[4], {accommodationRequirement:'NO_DISPO', accommodationDecisionLabel:'Nicht disponieren',
+   hasFisAccommodationDeviation:false});
+ await page.goto(`${origin}/athletes?nation=FIN&status=fis-deviation`);
+ await page.getByRole('button',{name:'Abweichung FIS 1',exact:true}).waitFor();
+ assert.equal(await page.locator('tbody tr').count(),1);
+ await personRow.getByText('Nicht disponieren',{exact:true}).waitFor();
+ await personRow.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
+ await personRow.click();
+ await personDialog.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
+
  assert.deepEqual(errors,[]);
 });
 

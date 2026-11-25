@@ -439,7 +439,6 @@ export function Athletes() {
       { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
       { value: 'accommodation-clarification', label: 'Unterkunft klären', count: athletes.filter(a => a.accommodationRequirement === 'UNRESOLVED').length },
-      { value: 'fis-deviation', label: 'Abweichung FIS', count: athletes.filter(a => a.accommodationDecisionLabel === 'Abweichung FIS').length },
       { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
     ],
     notes: [{ value: 'present', label: 'Mit Hinweisen', count: athletes.filter(athlete => Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim())).length }],
@@ -448,10 +447,8 @@ export function Athletes() {
   const areaCandidates = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
-    const category = athleteWorkCategory(athlete);
-    const statusMatches = !filters.status || (filters.status === 'open' ? requiresAccommodation(athlete) && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === 'fis-deviation' ? athlete.accommodationDecisionLabel === 'Abweichung FIS' : filters.status === category);
     const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || requiresAccommodation(athlete)));
-    const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
+    const reviewMatches = requestedReview !== 'invalid' || athleteWorkCategory(athlete) === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
@@ -461,14 +458,19 @@ export function Athletes() {
       && (!filters.rate || (athlete.accommodationRateCategory || 'STANDARD')===filters.rate)
       && matchesPersonFunction(athlete, filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
-      && statusMatches
       && singleRoomMatches
       && reviewMatches
       && movementMatches;
   }), [athletes, filters, requestedDate, requestedMovement, requestedReview, requestedSingleRoomStatus, search]);
 
-  const areaOptions = useMemo(() => sportAreaOptions(areaCandidates, filters.competitions), [areaCandidates, filters.competitions]);
-  const filtered = useMemo(() => areaCandidates.filter(athlete => matchesCompetitionSelection(athlete, filters.competitions, filters.sport)), [areaCandidates, filters.competitions, filters.sport]);
+  const statusCandidates = areaCandidates.filter(athlete => !filters.status ||
+    (filters.status === 'open' ? requiresAccommodation(athlete) && personAccommodation(athlete).status !== 'FULLY_ASSIGNED'
+      : filters.status === 'fis-deviation' ? athlete.hasFisAccommodationDeviation
+      : filters.status === athleteWorkCategory(athlete)));
+  const areaOptions = sportAreaOptions(statusCandidates, filters.competitions);
+  const matchesSport = (athlete: Athlete) => matchesCompetitionSelection(athlete, filters.competitions, filters.sport);
+  const filtered = statusCandidates.filter(matchesSport);
+  const fisDeviationCount = areaCandidates.filter(athlete => athlete.hasFisAccommodationDeviation && matchesSport(athlete)).length;
   const pendingClarifications = filtered.filter(person => person.nationCode === selectedAthlete?.nationCode && person.accommodationRequirement === 'UNRESOLVED');
   const isGuided = selectedAthlete?.accommodationRequirement === 'UNRESOLVED' || guidedDone > 0;
   const openPerson = (person: Athlete) => {
@@ -500,7 +502,7 @@ export function Athletes() {
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Unterkunftstarif" filterKey="rate" items={[{value:"STANDARD",label:"Standard",count:athletes.filter(p=>p.accommodationRateCategory!=="SPECIAL").length},{value:"SPECIAL",label:"Sondertarif",count:athletes.filter(p=>p.accommodationRateCategory==="SPECIAL").length}]} selected={filters.rate} onSelect={setFilter}/>
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
-          <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
+          <FilterGroup title="Status" filterKey="status" items={[...groups.status, {value:'fis-deviation', label:'Abweichung FIS', count:fisDeviationCount}]} selected={filters.status} onSelect={setFilter} />
           <FilterGroup title="Hinweise" filterKey="notes" items={groups.notes} selected={filters.notes} onSelect={setFilter} />
         </nav>
       </ContentCard>
@@ -532,9 +534,9 @@ export function Athletes() {
                 <Cell><span title={personAccommodation(athlete).details}><InlineActionLink className="ops-table-wrap text-xs" onClick={event=>{event.stopPropagation();navigate(assignmentWorkspaceHref({personId:athlete.id}));}}>{roomTypeLabel(athlete)}</InlineActionLink></span></Cell>
                 <Cell><div className="flex flex-col items-start gap-1"><span className="ops-table-wrap text-xs text-[var(--ops-warning)]" title={stayWindowDetails(athlete.stayWindow)}>{stayWindowText(athlete.stayWindow)}</span><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={openPerson}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={openPerson}/></div></Cell>
                 <Cell><span className="ops-table-wrap"><StatusChip tone={personAccommodation(athlete).tone}>{assignmentLabel(athlete)}</StatusChip></span>
-                  {athlete.accommodationDecisionLabel && athlete.accommodationRequirement !== 'NO_DISPO' &&
-                    <span className="mt-1 block text-xs">{athlete.accommodationDecisionLabel}</span>}{athlete.accommodationRequirement === 'NO_DISPO' && personAccommodation(athlete).status === 'CONFLICT' &&
-                  <span className="mt-1 block text-xs text-[var(--ops-warning)]">Nicht einplanen · Buchung bleibt erhalten</span>}</Cell>
+                  {athlete.accommodationDecisionLabel && (athlete.accommodationRequirement !== 'NO_DISPO' || athlete.accommodationDecisionLabel !== assignmentLabel(athlete)) &&
+                    <span className="mt-1 block text-xs">{athlete.accommodationDecisionLabel}</span>}{athlete.accommodationRequirement === 'NO_DISPO' && Boolean(athlete.accommodationCoverage?.segments.length || athlete.assignment?.hasAssignment) &&
+                  <span className="mt-1 block text-xs text-[var(--ops-warning)]">Bestehende Buchung bleibt erhalten.</span>}</Cell>
                 <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>
               </tr>)}
             </tbody>

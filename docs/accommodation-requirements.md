@@ -60,7 +60,9 @@ erforderlich, wenn kein vorheriger Entwurf vorliegt.
 
 „Speichern & weiter“ öffnet nach erfolgreicher Speicherung die nächste offene
 Person derselben Nation in der sichtbaren Auswahl. „Unterkunft klären“ und
-„Abweichung FIS“ sind Filter in der Athletenliste.
+„Abweichung FIS“ sind Filter in der Athletenliste. Ein manuelles NO_DISPO
+zählt bei einer vergleichbaren FIS-Unterkunftsmeldung als Abweichung. Die
+sichtbare Kennzeichnung bleibt „Nicht disponieren“.
 
 ## Legacy review
 

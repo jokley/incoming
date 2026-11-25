@@ -172,8 +172,8 @@ def get_athletes():
         )
 
         if a.accommodation_requirement_source == 'MANUAL':
-            data['accommodationDecisionLabel'] = accommodation_decision_label(
-                a, reported_accommodation_requests(a, reviews_by_nation.get(a.nation_code, []), source_cache))
+            requests = reported_accommodation_requests(a, reviews_by_nation.get(a.nation_code, []), source_cache)
+            add_accommodation_decision(data, a, requests)
         result.append(data)
 
     return jsonify(result)
@@ -233,23 +233,30 @@ def reported_accommodation_requests(athlete, reviews=None, cache=None):
     return []
 
 
-def accommodation_decision_label(athlete, requests):
+def add_accommodation_decision(data, athlete, requests):
     from accommodation_requirements import source_requirement, accommodation_wish
+
     requirement = athlete.accommodation_requirement
-    if requirement == 'UNRESOLVED':
-        return 'Unterkunft klären'
-    if requirement == 'NO_DISPO':
-        return 'Nicht disponieren'
-    if not requests:
-        return 'Manuell festgelegt' if athlete.accommodation_requirement_source == 'MANUAL' else None
-    if athlete.accommodation_requirement_source != 'MANUAL':
-        return 'FIS-Meldung'
+    manual = athlete.accommodation_requirement_source == 'MANUAL'
     current = accommodation_wish(requirement, athlete.room_type, athlete.shared_with_name)
-    comparable = [accommodation_wish(source_requirement([r['roomType']])[0], r['roomType'], r['partner'])
-                  for r in requests if source_requirement([r['roomType']])[0]]
-    if not comparable:
-        return 'Manuell festgelegt'
-    return 'FIS-Meldung bestätigt' if all(current == reported for reported in comparable) else 'Abweichung FIS'
+    matches = []
+    if manual and requirement != 'UNRESOLVED':
+        for reported in requests:
+            source = source_requirement([reported['roomType']])[0]
+            if source:
+                matches.append(current == accommodation_wish(source, reported['roomType'], reported['partner']))
+                reported['matchesDecision'] = matches[-1]
+
+    deviation = False in matches
+    if requirement == 'UNRESOLVED':
+        label = 'Unterkunft klären'
+    elif requirement == 'NO_DISPO':
+        label = 'Nicht disponieren'
+    elif manual:
+        label = 'Abweichung FIS' if deviation else 'FIS-Meldung bestätigt' if matches else 'Manuell festgelegt'
+    else:
+        label = 'FIS-Meldung' if requests else None
+    data.update(accommodationDecisionLabel=label, hasFisAccommodationDeviation=deviation)
 
 
 @athletes.route('/api/athletes/<int:athlete_id>', methods=['GET'])
@@ -270,14 +277,7 @@ def get_athlete(athlete_id):
         'NO_ROOM' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND else
         'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
     data['reportedAccommodationRequests'] = reported_accommodation_requests(athlete)
-    data['accommodationDecisionLabel'] = accommodation_decision_label(athlete, data['reportedAccommodationRequests'])
-    if athlete.accommodation_requirement_source == 'MANUAL':
-        from accommodation_requirements import accommodation_wish, source_requirement
-        current = accommodation_wish(athlete.accommodation_requirement, athlete.room_type, athlete.shared_with_name)
-        for reported in data['reportedAccommodationRequests']:
-            requirement = source_requirement([reported['roomType']])[0]
-            if requirement:
-                reported['matchesDecision'] = current == accommodation_wish(requirement, reported['roomType'], reported['partner'])
+    add_accommodation_decision(data, athlete, data['reportedAccommodationRequests'])
     return jsonify(data)
 
 
