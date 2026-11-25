@@ -579,9 +579,7 @@ function DetailDialog({error,deferredRows,hasDeferredPeople,nn,grouped=false,gro
   const uncheckable=preview?.people.filter(person=>personMatchesImportFilter(person,'stayUnclear',preview,control))??[];
   const unavailableLabel=uncheckable.every(person=>control?.people.find(row=>row.personKey===person.matchKey)?.stayWindow?.reason==='EVENT_DATES_UNCLEAR')?stayWindowText(control?.people.find(row=>row.personKey===uncheckable[0]?.matchKey)?.stayWindow):'Event-/Aufenthaltsdaten unklar';
   return (
-    <Dialog open={Boolean(detail)} onClose={onClose} fullWidth maxWidth={wide ? false : "lg"} sx={wide ? {'& .MuiDialog-paper': {width: {xs: 'calc(100vw - 32px)', sm: '90vw'}, maxWidth: '1600px', maxHeight: 'calc(100dvh - 64px)'}} : undefined}>
-      <DialogTitle>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></DialogTitle>
-      <DialogContent dividers sx={{overflowY: 'auto'}}>
+    <EnterpriseDialog open={Boolean(detail)} onClose={onClose} size={wide?'table':'large'} title={<>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></>}>
         {detail?.title==='Personen der Importvorschau' && error && <div role="alert" className="mb-3">
           <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>
         </div>}
