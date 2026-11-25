@@ -4,7 +4,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from test_import_event_identity import events
-from test_partial_nation_snapshots import owner,upload,rows,compose
+from test_partial_nation_snapshots import owner,upload,rows,compose,shared_fs
 from test_safe_reimport import run,review
 from app import app
 from models import db,Athlete,ImportSessionEvent,ImportSession,EventAccess,ImportApproval
@@ -25,14 +25,14 @@ def confirm(proposal,keys=None):
         'officialLinkAction':'CONFIRM','token':details['token'],'candidateKeys':keys if keys is not None else [p['key'] for p in details['candidates']],'confirmed':True})
 
 
-def paired(owner,first='SB',second='FS',left=None,right=None,import_first=False):
-    a=upload(owner,first,data=left or staff(first))
+def paired(owner,first='SB',second='FS',left=None,right=None,import_first=False,workbooks=None):
+    a=upload(owner,first,data=left or staff(first),workbooks=workbooks)
     if import_first:run(a,owner)
-    proposal=upload(owner,second,data=right or staff(second),expected=422)
+    proposal=upload(owner,second,data=right or staff(second),expected=422,workbooks=workbooks)
     assert proposal['error']=='OFFICIAL_IDENTITY_REVIEW_REQUIRED'
     assert len(proposal['details']['candidates'])==1
     accepted=confirm(proposal);assert accepted.status_code==201,accepted.json
-    return a,upload(owner,second,data=right or staff(second)),proposal
+    return a,upload(owner,second,data=right or staff(second),workbooks=workbooks),proposal
 
 
 @pytest.mark.parametrize('first,second',[('SB','FS'),('FS','SB')])
@@ -317,3 +317,75 @@ def test_italy_official_with_conflicting_room_requirements_imports_without_assig
         assert change.json['accommodationCoverage']['openIntervals']
     assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
             for source_id in source_ids} == source_json
+
+
+def test_unresolved_athlete_remains_reported_without_operational_demand(owner):
+    snowboard = rows('SB')[:1]
+    freestyle = shared_fs()[:1]
+    snowboard[0]['Room_type'] = 'No room'
+    upload(owner, 'FS', freestyle)
+    draft = upload(owner, 'SB', snowboard)
+    joint = compose(draft, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert preview['people'][0]['accommodationRequirement'] == 'UNRESOLVED'
+    assert {r['topLevelDiscipline']: r['athleteQuotaUsed'] for r in preview['athleteQuotaChecks']} == {
+        'Freestyle': 1, 'Snowboard': 1,
+    }
+    run({'session': joint.json}, owner)
+    athlete = Athlete.query.one()
+    client = app.test_client()
+    planning = client.get('/api/athletes/arrival-planning').json
+    assert planning['reportedCount'] == 1
+    area, = planning['rows']
+    assert [p['personId'] for p in area['people']] == [str(athlete.id)]
+    assert area['selectedPersonIds'] == []
+    quotas = client.get('/api/official-quotas?nationCode=ARG&includeOperational=true').json
+    assert quotas['rows'] and all(r['athletesEntered'] == 1 for r in quotas['rows'])
+    assert quotas['operationalQuota']['rows']
+    for row in quotas['operationalQuota']['rows']:
+        assert row['expectedAthletes'] == 0
+        assert row['singleRoomsRequested'] == row['singleRoomsUsed'] == 0
+    assert client.get(f'/api/athletes/{athlete.id}').json['accommodationCoverage']['openIntervals'] == []
+
+
+def test_identical_shared_reimport_preserves_explicit_accommodation_decision(owner):
+    freestyle = staff('FS', 'Double shared')
+    snowboard = staff('SB', 'No room')
+    workbooks = {}
+    _, draft, _ = paired(owner, 'FS', 'SB', left=freestyle, right=snowboard, workbooks=workbooks)
+    joint = compose(draft, owner)
+    run({'session': joint.json}, owner)
+    athlete = Athlete.query.one()
+    assert athlete.accommodation_requirement == 'UNRESOLVED'
+    changed = app.test_client().patch(f'/api/athletes/{athlete.id}', json={'accommodationRequirement': 'REQUIRED'})
+    assert changed.status_code == 200, changed.json
+    assert changed.json['accommodationRequirementSource'] == 'MANUAL'
+    original_id = athlete.id
+
+    same = upload(owner, 'SB', snowboard, workbooks=workbooks)
+    assert same['knownFiles']
+    joint = compose(same, owner)
+    assert joint.status_code == 200, joint.json
+    run({'session': joint.json}, owner)
+    retained = Athlete.query.one()
+    assert retained.id == original_id
+    assert retained.accommodation_requirement == 'REQUIRED'
+    assert retained.accommodation_requirement_source == 'MANUAL'
+    assert len(retained.competitions) == 2
+
+    # Another export, and a person with an intervening booking, still go
+    # through the original conflict safeguards.
+    changed_source = upload(owner, 'SB', [{**snowboard[0], 'Lastupdate': '02.11.2026 12:00'}])
+    changed_joint = compose(changed_source, owner)
+    assert review({'session': changed_joint.json}, owner).status_code == 409
+
+    from models import RoomBooking, RoomBookingOccupant
+    from test_safe_reimport import booking
+    booking_id = booking([retained]).id
+    same_again = upload(owner, 'SB', snowboard, workbooks=workbooks)
+    booked_joint = compose(same_again, owner)
+    assert review({'session': booked_joint.json}, owner).status_code == 409
+    assert RoomBooking.query.one().id == booking_id
+    assert RoomBookingOccupant.query.one().athlete_id == original_id
+    assert Athlete.query.one().accommodation_requirement == 'REQUIRED'

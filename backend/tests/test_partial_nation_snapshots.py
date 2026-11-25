@@ -21,11 +21,17 @@ def rows(part):
         Arrival_date='04.03.2027',Departure_date='22.03.2027') for i in range(count)]
 
 
-def upload(owner,part,data=None,scope=None,expected=200,session_id=None,room_data=None):
+def upload(owner,part,data=None,scope=None,expected=200,session_id=None,room_data=None,workbooks=None):
     records=rows(part) if data is None else data
-    a,b=io.BytesIO(),io.BytesIO()
-    pd.DataFrame(records,columns=list(records[0]) if records else list(rows(part)[0])).to_excel(a,index=False,sheet_name='Data')
-    (pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
+    if workbooks is not None and part in workbooks:
+        a,b=map(io.BytesIO, workbooks[part])
+    else:
+        a,b=io.BytesIO(),io.BytesIO()
+        pd.DataFrame(records,columns=list(records[0]) if records else list(rows(part)[0])).to_excel(a,index=False,sheet_name='Data')
+        (pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data')
+        if workbooks is not None:
+            workbooks[part] = (a.getvalue(), b.getvalue())
+        a.seek(0);b.seek(0)
     payload=dict(eventId=str(owner.id),files=[(a,'same-uninformative-name.xlsx'),(b,'rooms.xlsx')])
     payload.update({'sessionId':str(session_id)} if session_id else {'createSession':'true'})
     if scope:payload['snapshotScope']=scope
