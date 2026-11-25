@@ -253,3 +253,44 @@ def test_missing_room_information_does_not_hide_known_disjoint_source_periods(ow
     joint=compose(b,owner);assert joint.status_code==200
     assert any(e['code']=='IMPORT_SHARED_STAY_SECTIONS' for e in joint.json['preview']['errors'])
     assert review({'session':joint.json},owner).status_code==409
+
+
+@pytest.mark.parametrize('already_booked', [False, True])
+def test_italy_official_with_conflicting_room_requirements_needs_an_operational_state(owner, already_booked):
+    """Characterize the safety boundary until an open accommodation state exists."""
+    from models import ImportSessionVersion, RoomBooking, RoomBookingOccupant
+    from test_safe_reimport import booking
+
+    freestyle = staff('FS', 'Double shared')
+    snowboard = staff('SB', 'No room')
+    for entry in freestyle + snowboard:
+        entry['Nationcode'] = 'ITA'
+    _, draft, _ = paired(owner, 'FS', 'SB', left=freestyle, right=snowboard,
+                         import_first=already_booked)
+    existing = Athlete.query.one() if already_booked else None
+    retained = booking([existing]) if existing else None
+    source_ids = [int(row['versionId']) for row in draft['session']['submissions']]
+    source_json = {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+                   for source_id in source_ids}
+
+    joint = compose(draft, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    person, = preview['people']
+    assert len(person['competitionIds']) == 2
+    assert {int(row['versionId']) for row in person['sourceRows']} == set(source_ids)
+    conflict = next(e for e in preview['errors'] if e['code'] == 'IMPORT_SHARED_ACCOMMODATION_CONFLICT')
+    assert set(conflict['details']['requirements']) == {'REQUIRED', 'NO_ROOM'}
+    assert review({'session': joint.json}, owner).status_code == 409
+    denied = app.test_client().post(f"/api/import/sessions/{joint.json['id']}/import",
+                                   json={'versionId': joint.json['currentVersionId']})
+    assert denied.status_code == 409
+    assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+            for source_id in source_ids} == source_json
+    assert Athlete.query.count() == int(already_booked)
+    if existing:
+        assert existing.accommodation_requirement == 'REQUIRED'
+        assert RoomBooking.query.one().id == retained.id
+        assert RoomBookingOccupant.query.one().athlete_id == existing.id
+    else:
+        assert RoomBooking.query.count() == 0
