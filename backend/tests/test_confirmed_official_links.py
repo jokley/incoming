@@ -349,31 +349,50 @@ def test_unresolved_athlete_remains_reported_without_operational_demand(owner):
     assert client.get(f'/api/athletes/{athlete.id}').json['accommodationCoverage']['openIntervals'] == []
 
 
-def test_identical_shared_reimport_preserves_explicit_accommodation_decision(owner):
+@pytest.mark.parametrize('manual_requirement', ['REQUIRED', 'NO_ROOM', 'NO_DISPO', None])
+def test_identical_shared_reimport_preserves_explicit_accommodation_decision(owner, manual_requirement):
+    from models import ImportSessionVersion
+
     freestyle = staff('FS', 'Double shared')
     snowboard = staff('SB', 'No room')
     workbooks = {}
     _, draft, _ = paired(owner, 'FS', 'SB', left=freestyle, right=snowboard, workbooks=workbooks)
+    source_ids = [int(row['versionId']) for row in draft['session']['submissions']]
+    source_json = {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+                   for source_id in source_ids}
     joint = compose(draft, owner)
     run({'session': joint.json}, owner)
     athlete = Athlete.query.one()
     assert athlete.accommodation_requirement == 'UNRESOLVED'
-    changed = app.test_client().patch(f'/api/athletes/{athlete.id}', json={'accommodationRequirement': 'REQUIRED'})
-    assert changed.status_code == 200, changed.json
-    assert changed.json['accommodationRequirementSource'] == 'MANUAL'
     original_id = athlete.id
+    memberships = {comp.id for comp in athlete.competitions}
+    if manual_requirement is not None:
+        changed = app.test_client().patch(
+            f'/api/athletes/{original_id}', json={'accommodationRequirement': manual_requirement})
+        assert changed.status_code == 200, changed.json
+        assert changed.json['accommodationRequirement'] == manual_requirement
+        assert changed.json['accommodationRequirementSource'] == 'MANUAL'
 
     same = upload(owner, 'SB', snowboard, workbooks=workbooks)
     assert same['knownFiles']
     joint = compose(same, owner)
     assert joint.status_code == 200, joint.json
+    person, = joint.json['preview']['people']
+    assert person['accommodationRequirement'] == (manual_requirement or 'UNRESOLVED')
+    if manual_requirement is None:
+        assert person['accommodationRequirementReviewRequired']
+        assert person['roomType'] is None
     run({'session': joint.json}, owner)
     retained = Athlete.query.one()
     assert retained.id == original_id
-    assert retained.accommodation_requirement == 'REQUIRED'
-    assert retained.accommodation_requirement_source == 'MANUAL'
-    assert len(retained.competitions) == 2
+    assert retained.accommodation_requirement == (manual_requirement or 'UNRESOLVED')
+    assert retained.accommodation_requirement_source == ('MANUAL' if manual_requirement else 'IMPORT')
+    assert {comp.id for comp in retained.competitions} == memberships
+    assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+            for source_id in source_ids} == source_json
 
+    if manual_requirement != 'REQUIRED':
+        return
     # Another export, and a person with an intervening booking, still go
     # through the original conflict safeguards.
     changed_source = upload(owner, 'SB', [{**snowboard[0], 'Lastupdate': '02.11.2026 12:00'}])

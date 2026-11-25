@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 from datetime import date, datetime
 from models import db, ImportSessionVersion
+from accommodation_requirements import REQUIREMENTS
 from .event_context import ImportValidationError, validate_session_event
 from .read_context import ImportReadContext
 from .change_plan import build_plan, verify_plan, encoded
@@ -253,7 +254,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                         can_defer = existing is None and other is None
                         if (existing is not None and other is not None and existing.id == other.id
                                 and existing.accommodation_requirement_source == 'MANUAL'
-                                and existing.accommodation_requirement == 'REQUIRED'
+                                and existing.accommodation_requirement in REQUIREMENTS
                                 and not existing.room_booking_memberships):
                             if prior_unresolved_keys is None:
                                 prior_unresolved_keys = unchanged_unresolved_keys()
