@@ -170,6 +170,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  let listRequests=0;
  const detailRequests:string[]=[];
  let rejectRequirement=true;
+ let guidedRetry=false;
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
   if(req.method()==='GET' && path==='/import/sessions'){
@@ -198,9 +199,18 @@ test('automatic person selection is shared by athlete and Officials quota views 
   }
   if(path==='/athletes/3' && req.method()==='GET') return route.fulfill({json:people[2]});
   if(path==='/athletes/3' && req.method()==='PATCH'){
-   assert.equal(req.postDataJSON().accommodationRequirement,'REQUIRED');
-   people[2].accommodationRequirement='REQUIRED';
+   const payload=req.postDataJSON();
+   assert.equal(payload.accommodationRequirement,'REQUIRED');
+   if(payload.roomType==='Double shared' && !guidedRetry){
+    guidedRetry=true;
+    return route.fulfill({status:409,json:{message:'Speichern fehlgeschlagen – erneut versuchen.'}});
+   }
+   Object.assign(people[2], payload);
    return route.fulfill({json:people[2]});
+  }
+  if(path==='/athletes/4' && req.method()==='PATCH'){
+   Object.assign(people[3], req.postDataJSON());
+   return route.fulfill({json:people[3]});
   }
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
@@ -298,7 +308,8 @@ test('automatic person selection is shared by athlete and Officials quota views 
  assert.match((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
  await personRow.click();
  const personDialog=page.getByRole('dialog');
- await personDialog.getByRole('combobox').filter({hasText:'Nicht einplanen'}).click();
+ await personDialog.getByRole('checkbox',{name:'Nicht disponieren (No Dispo)'}).uncheck();
+ await personDialog.locator('#athlete-accommodation-requirement').click();
  await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
  await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
@@ -324,18 +335,44 @@ test('automatic person selection is shared by athlete and Officials quota views 
     partner:'Beispiel Partner',arrivalDate:'2027-03-13',departureDate:'2027-03-22',roomRows:[12]},
   {family:'Snowboard',version:2,entryRow:39,roomType:'No room',roomRows:[]}],
  });
+ people[3].accommodationRequirement='UNRESOLVED';
  await page.goto(`${origin}/athletes`);
  await personRow.getByText('Unterkunftsbedarf offen',{exact:true}).first().waitFor();
  await personRow.click();
  await personDialog.getByText(/Double shared · Beispiel Partner/).waitFor();
- await personDialog.getByText(/Snowboard · No room/).waitFor();
+ await personDialog.getByText('Snowboard',{exact:true}).waitFor();
  await personDialog.getByText(/Room List Zeile 12/).waitFor();
- const unresolved = personDialog.getByRole('combobox').filter({hasText:'Unterkunftsbedarf offen'});
- await unresolved.click();
- assert.equal(await page.getByRole('option',{name:'Unterkunftsbedarf offen',exact:true}).getAttribute('aria-disabled'),'true');
- await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
- await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
- await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
+ await page.screenshot({path:'/workspace/artifacts/unterkunft-entscheidung-desktop.png',animations:'disabled'});
+ await page.setViewportSize({width:780,height:740});
+ await page.screenshot({path:'/workspace/artifacts/unterkunft-entscheidung-kompakt.png',animations:'disabled'});
+ const noDispo = personDialog.getByRole('checkbox',{name:'Nicht disponieren (No Dispo)'});
+ await noDispo.check();
+ assert.equal(await personDialog.locator('#athlete-accommodation-room-type').getAttribute('aria-disabled'),'true');
+ await noDispo.uncheck();
+ await personDialog.getByRole('button',{name:'Zimmerwunsch übernehmen'}).first().click();
+ assert.equal(await personDialog.getByRole('textbox',{name:'Gewünschter Zimmerpartner'}).inputValue(),'Beispiel Partner');
+ await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
+ await personDialog.getByText('Speichern fehlgeschlagen – erneut versuchen.').waitFor();
+ assert.equal(await personDialog.getByRole('textbox',{name:'Gewünschter Zimmerpartner'}).inputValue(),'Beispiel Partner');
+ await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
+ await personDialog.getByText(/Athlete3 Synthetic/).waitFor();
+ await personDialog.locator('#athlete-accommodation-requirement').click();
+ await page.getByRole('option',{name:'Kein Zimmer benötigt',exact:true}).click();
+ await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
+ await page.getByRole('status').filter({hasText:'alle Unterkunftsklärungen abgeschlossen'}).waitFor();
+ Object.assign(people[2], {accommodationRequirement:'NO_DISPO', accommodationDecisionLabel:'Nicht disponieren',
+   hasFisAccommodationDeviation:true, assignment:{hasAssignment:true}});
+ Object.assign(people[3], {accommodationDecisionLabel:'Abweichung FIS', hasFisAccommodationDeviation:true, nationCode:'ITA'});
+ Object.assign(people[4], {accommodationRequirement:'NO_DISPO', accommodationDecisionLabel:'Nicht disponieren',
+   hasFisAccommodationDeviation:false});
+ await page.goto(`${origin}/athletes?nation=FIN&status=fis-deviation`);
+ await page.getByRole('button',{name:'Abweichung FIS 1',exact:true}).waitFor();
+ assert.equal(await page.locator('tbody tr').count(),1);
+ await personRow.getByText('Nicht disponieren',{exact:true}).waitFor();
+ await personRow.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
+ await personRow.click();
+ await personDialog.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
+
  assert.deepEqual(errors,[]);
 });
 

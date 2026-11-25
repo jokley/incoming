@@ -485,6 +485,37 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
         units, _ = _build_room_booking_units()
         assert not any({str(pala.id), str(klotz.id)} <= {p['athleteId'] for p in u['occupants']} for u in units)
 
+    patch_url = f'/api/athletes/{pala.id}'
+    departure = pala.departure_date
+    selected = client.patch(patch_url, json={
+        'accommodationRequirement': 'REQUIRED', 'roomType': 'Double shared', 'sharedWithName': 'KLOTZ, Siegmar',
+    })
+    assert selected.status_code == 200, selected.json
+    assert selected.json['accommodationDecisionLabel'] == 'Abweichung FIS'
+    assert pala.departure_date == departure
+    assert client.patch(patch_url, json={'returnToFis': True}).status_code == 409
+    repeat_original()
+    assert (pala.accommodation_requirement, pala.room_type, pala.shared_with_name) == ('REQUIRED', 'Double shared', 'KLOTZ, Siegmar')
+    assert next(row for row in client.get('/api/athletes').json if row['id'] == str(pala.id))['accommodationDecisionLabel'] == 'Abweichung FIS'
+    no_dispo = client.patch(patch_url, json={'accommodationRequirement': 'NO_DISPO'})
+    assert no_dispo.status_code == 200
+    assert no_dispo.json['accommodationDecisionLabel'] == 'Nicht disponieren'
+    assert no_dispo.json['hasFisAccommodationDeviation'] is True
+    listed = next(row for row in client.get('/api/athletes').json if row['id'] == str(pala.id))
+    assert listed['accommodationDecisionLabel'] == 'Nicht disponieren'
+    assert listed['hasFisAccommodationDeviation'] is True
+    assert client.patch(patch_url, json={'accommodationRequirement': 'REQUIRED'}).status_code == 200
+    assert pala.shared_with_name == 'KLOTZ, Siegmar'
+
+    regular_url = f'/api/athletes/{klotz.id}'
+    confirmed_wish = client.patch(regular_url, json={
+        'accommodationRequirement': 'REQUIRED', 'roomType': 'Double shared', 'sharedWithName': 'PALA, Bartolomeo',
+    })
+    assert confirmed_wish.status_code == 200, confirmed_wish.json
+    assert confirmed_wish.json['accommodationDecisionLabel'] == 'FIS-Meldung bestätigt'
+    assert confirmed_wish.json['hasFisAccommodationDeviation'] is False
+    assert client.patch(regular_url, json={'returnToFis': True}).json['accommodationDecisionLabel'] == 'FIS-Meldung'
+
     # A changed partner date in the Room List cannot inherit clearance from the prior snapshot.
     changed_rooms = io.BytesIO()
     source = pd.read_excel(files['SB'][1])
@@ -503,8 +534,26 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
 
     from test_safe_reimport import booking
     booking_id = booking([klotz]).id
+    assert client.patch(regular_url, json={'roomType': 'Single'}).status_code == 409
+    assert klotz.room_type == 'Double shared'
     same = aut_upload(owner, files['SB'])
     restored = compose(same.json, owner)
     assert review({'session': restored.json}, owner).status_code == 409
     assert RoomBooking.query.one().id == booking_id
+    booked_no_dispo = client.patch(regular_url, json={'accommodationRequirement': 'NO_DISPO'})
+    assert booked_no_dispo.status_code == 200
+    assert booked_no_dispo.json['accommodationCoverage']['segments']
+    assert RoomBooking.query.one().id == booking_id
+
     assert {i: db.session.get(ImportSessionVersion, i).preview_json for i in source_ids} == sources_before
+
+def test_no_dispo_without_comparable_fis_source_is_not_a_deviation():
+    from types import SimpleNamespace
+    from routes.athletes import add_accommodation_decision
+
+    athlete = SimpleNamespace(accommodation_requirement='NO_DISPO', accommodation_requirement_source='MANUAL',
+                              room_type=None, shared_with_name=None)
+    for requests in ([], [{'roomType': 'keine Angabe', 'partner': None}]):
+        result = {}
+        add_accommodation_decision(result, athlete, requests)
+        assert result == {'accommodationDecisionLabel': 'Nicht disponieren', 'hasFisAccommodationDeviation': False}

@@ -73,6 +73,17 @@ def get_athletes():
         identity = ('fis', athlete.fis_code.strip().upper()) if athlete.fis_code else ('legacy', athlete.id)
         people.setdefault(identity, []).append(athlete)
 
+    manual_nations = {a.nation_code for a in athletes if a.accommodation_requirement_source == 'MANUAL'}
+    reviews_by_nation = {}
+    if manual_nations:
+        for nation, review in (db.session.query(ImportSession.nation, ImportSessionVersion)
+                .join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
+                .join(ImportSessionEvent, ImportSessionEvent.version_id == ImportSessionVersion.id)
+                .filter(ImportSession.event_id == accommodation_event_id(), ImportSession.nation.in_(manual_nations),
+                        ImportSessionEvent.event_type == 'IMPORTED').order_by(ImportSessionEvent.id.desc())):
+            reviews_by_nation.setdefault(nation, []).append(review)
+
+    source_cache = {}
     result = []
     for identity, records in people.items():
         a = max(records, key=lambda row: (row.updated_at or row.created_at or datetime.min, row.id))
@@ -160,9 +171,92 @@ def get_athletes():
             'CURRENT'
         )
 
+        if a.accommodation_requirement_source == 'MANUAL':
+            requests = reported_accommodation_requests(a, reviews_by_nation.get(a.nation_code, []), source_cache)
+            add_accommodation_decision(data, a, requests)
         result.append(data)
 
     return jsonify(result)
+
+
+def reported_accommodation_requests(athlete, reviews=None, cache=None):
+    cache = {} if cache is None else cache
+    identity = athlete.fis_code or athlete.competitor_id
+    if identity:
+        if reviews is None:
+            reviews = (ImportSessionVersion.query.join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
+            .join(ImportSessionEvent, ImportSessionEvent.version_id == ImportSessionVersion.id)
+            .filter(ImportSession.event_id == athlete.event_id, ImportSession.nation == athlete.nation_code,
+                    ImportSessionEvent.event_type == 'IMPORTED')
+            .order_by(ImportSessionEvent.id.desc()))
+        for review in reviews:
+            if review.id not in cache:
+                cache[review.id] = (review, json.loads(review.preview_json or '{}'))
+            _, preview = cache[review.id]
+            person = next((p for p in preview.get('people', []) if p.get('matchKey') == identity), None)
+            if not person:
+                continue
+            if person.get('sourceRows') and preview.get('submissionSources'):
+                requests = []
+                families = {version_id: family for family, version_id in preview.get('submissionSources', {}).items()}
+                for row in person.get('sourceRows', []):
+                    source_id = row['versionId']
+                    if source_id not in cache:
+                        source = db.session.get(ImportSessionVersion, source_id)
+                        cache[source_id] = (source, json.loads(source.preview_json or '{}') if source else {})
+                    source, source_preview = cache[source_id]
+                    if not source or source.session_id != review.session_id:
+                        continue
+                    original = next((p for p in source_preview.get('people', [])
+                                     if p.get('sourceRowNumber', p.get('rowNumber')) == row.get('row')), None)
+                    if original is None:
+                        continue
+                    evidence = original.get('entryAccommodationSource') or original
+                    rooms = [(room, ref.get('row')) for room in preview.get('rooms', [])
+                             if identity in (room.get('person1Key'), room.get('person2Key'))
+                             for ref in room.get('sourceRows', []) if ref.get('versionId') == source.id]
+                    partner = evidence.get('sharedWithName')
+                    if not partner and len(rooms) == 1:
+                        room = rooms[0][0]
+                        partner = room.get('person2Name') if identity == room.get('person1Key') else room.get('person1Name')
+                    requests.append(dict(family=families.get(source.id), version=source.version, entryRow=row.get('row'),
+                        roomType=evidence.get('roomType'), partner=partner,
+                        arrivalDate=evidence.get('arrivalDate') or original.get('arrivalDate'),
+                        departureDate=evidence.get('departureDate') or original.get('departureDate'),
+                        roomRows=[number for _, number in rooms if number is not None]))
+                return requests
+            evidence = person.get('entryAccommodationSource') or person
+            return [dict(family=(preview.get('replacementScope') or {}).get('family'), version=review.version,
+                entryRow=evidence.get('row', person.get('rowNumber')), roomType=evidence.get('roomType'),
+                partner=evidence.get('sharedWithName'), arrivalDate=person.get('arrivalDate'),
+                departureDate=person.get('departureDate'), roomRows=[])]
+    return []
+
+
+def add_accommodation_decision(data, athlete, requests):
+    from accommodation_requirements import source_requirement, accommodation_wish
+
+    requirement = athlete.accommodation_requirement
+    manual = athlete.accommodation_requirement_source == 'MANUAL'
+    current = accommodation_wish(requirement, athlete.room_type, athlete.shared_with_name)
+    matches = []
+    if manual and requirement != 'UNRESOLVED':
+        for reported in requests:
+            source = source_requirement([reported['roomType']])[0]
+            if source:
+                matches.append(current == accommodation_wish(source, reported['roomType'], reported['partner']))
+                reported['matchesDecision'] = matches[-1]
+
+    deviation = False in matches
+    if requirement == 'UNRESOLVED':
+        label = 'Unterkunft klären'
+    elif requirement == 'NO_DISPO':
+        label = 'Nicht disponieren'
+    elif manual:
+        label = 'Abweichung FIS' if deviation else 'FIS-Meldung bestätigt' if matches else 'Manuell festgelegt'
+    else:
+        label = 'FIS-Meldung' if requests else None
+    data.update(accommodationDecisionLabel=label, hasFisAccommodationDeviation=deviation)
 
 
 @athletes.route('/api/athletes/<int:athlete_id>', methods=['GET'])
@@ -182,44 +276,8 @@ def get_athlete(athlete_id):
     data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND and coverage == 'CONFLICT' else
         'NO_ROOM' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND else
         'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
-    identity = athlete.fis_code or athlete.competitor_id
-    if identity:
-        reviews = (ImportSessionVersion.query.join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
-            .join(ImportSessionEvent, ImportSessionEvent.version_id == ImportSessionVersion.id)
-            .filter(ImportSession.event_id == athlete.event_id, ImportSession.nation == athlete.nation_code,
-                    ImportSessionEvent.event_type == 'IMPORTED')
-            .order_by(ImportSessionEvent.id.desc()))
-        for review in reviews.yield_per(10):
-            preview = json.loads(review.preview_json or '{}')
-            person = next((p for p in preview.get('people', []) if p.get('matchKey') == identity), None)
-            if not person:
-                continue
-            if person.get('sourceOnlyPartner'):
-                requests = []
-                families = {version_id: family for family, version_id in preview.get('submissionSources', {}).items()}
-                for row in person.get('sourceRows', []):
-                    source = db.session.get(ImportSessionVersion, row['versionId'])
-                    if not source or source.session_id != review.session_id:
-                        continue
-                    original = next((p for p in json.loads(source.preview_json or '{}').get('people', [])
-                                     if p.get('sourceRowNumber', p.get('rowNumber')) == row.get('row')), None)
-                    if original is None:
-                        continue
-                    evidence = original.get('entryAccommodationSource') or original
-                    rooms = [(room, ref.get('row')) for room in preview.get('rooms', [])
-                             if identity in (room.get('person1Key'), room.get('person2Key'))
-                             for ref in room.get('sourceRows', []) if ref.get('versionId') == source.id]
-                    partner = evidence.get('sharedWithName')
-                    if not partner and len(rooms) == 1:
-                        room = rooms[0][0]
-                        partner = room.get('person2Name') if identity == room.get('person1Key') else room.get('person1Name')
-                    requests.append(dict(family=families.get(source.id), version=source.version, entryRow=row.get('row'),
-                        roomType=evidence.get('roomType'), partner=partner,
-                        arrivalDate=evidence.get('arrivalDate') or original.get('arrivalDate'),
-                        departureDate=evidence.get('departureDate') or original.get('departureDate'),
-                        roomRows=[number for _, number in rooms if number is not None]))
-                data['reportedAccommodationRequests'] = requests
-            break
+    data['reportedAccommodationRequests'] = reported_accommodation_requests(athlete)
+    add_accommodation_decision(data, athlete, data['reportedAccommodationRequests'])
     return jsonify(data)
 
 

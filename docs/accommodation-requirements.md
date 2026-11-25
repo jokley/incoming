@@ -1,6 +1,6 @@
 # Person accommodation requirement
 
-`Athlete.accommodation_requirement` is REQUIRED or NO_ROOM, with provenance
+`Athlete.accommodation_requirement` accepts REQUIRED, NO_ROOM, NO_DISPO and UNRESOLVED, with provenance
 DEFAULT, IMPORT or MANUAL. Defaults are REQUIRED/DEFAULT. A nullable
 `accommodation_requirement_import_value` retains the last explicit source decision
 independently of a manual override, so releasing a manual override can resume the
@@ -14,7 +14,11 @@ Entries/Room List values block confirmation unless explicitly reviewed through a
 manual override. Raw Function is unrelated.
 
 Manual changes use the existing person PATCH API. Send `accommodationRequirement`
-as REQUIRED/NO_ROOM to establish a manual decision, or null to release it. Import
+as REQUIRED, NO_ROOM or NO_DISPO to establish a manual decision. The
+guided dialog sends returnToFis only when all available imported source wishes
+agree on a recognizable requirement, room type and partner. The server rechecks
+that condition before changing the operative fields. The historical null payload
+remains available for older callers. Import
 review uses the session's `/accommodation-requirements/<person-key>` PATCH path,
 with the same payload. Review changes remain staged until import confirmation.
 An override records the live base state and stale changes block confirmation.
@@ -37,6 +41,28 @@ and the required-person denominator; zero demand reads Kein Unterkunftsbedarf.
 NO_ROOM does not clear SPECIAL or historical EZ approvals. It creates no new EZ
 request; pending-demand surfaces exclude it. Overview Mehrpreis is not applicable
 (—), while tariff metadata remains available.
+
+## Geführte Unterkunftsklärung
+
+Die importierten Wünsche bleiben in ihren Quellrevisionen. „Zimmerwunsch
+übernehmen“ kopiert Bedarf, Zimmertyp und Wunschpartner in den Entwurf des
+Athletendialogs. Aufenthalt und Buchung bleiben separat. Auch eine ausdrücklich
+übernommene Paarung kann erst gebucht werden, wenn beide Personen disponierbar
+sind. Die Buchungsschutzprüfung gilt serverseitig.
+
+Der bestehende Herkunftswert MANUAL schützt den gesamten operativen Wunsch
+beim Reimport. Der gespeicherte Originalwunsch bleibt die Vergleichsbasis für
+„FIS-Meldung bestätigt“ und „Abweichung FIS“. Bei Konflikten zeigt der Dialog
+die Übereinstimmung je Quelle. NO_DISPO erhält vorhandene Buchungen. Beim
+Abwählen der Checkbox im selben Entwurf wird die vorherige Entscheidung
+wiederhergestellt. Nach erneutem Öffnen ist eine ausdrückliche Entscheidung
+erforderlich, wenn kein vorheriger Entwurf vorliegt.
+
+„Speichern & weiter“ öffnet nach erfolgreicher Speicherung die nächste offene
+Person derselben Nation in der sichtbaren Auswahl. „Unterkunft klären“ und
+„Abweichung FIS“ sind Filter in der Athletenliste. Ein manuelles NO_DISPO
+zählt bei einer vergleichbaren FIS-Unterkunftsmeldung als Abweichung. Die
+sichtbare Kennzeichnung bleibt „Nicht disponieren“.
 
 ## Legacy review
 

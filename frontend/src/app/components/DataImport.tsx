@@ -19,7 +19,7 @@ import { AccommodationRequirementField } from './AccommodationRequirementField';
 import { AccommodationRateField } from './AccommodationRate';
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
+import { Link, useSearchParams } from 'react-router';
 import { Tooltip, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, FileCheck2, FileText, Loader2, RefreshCcw, Upload, XCircle } from 'lucide-react';
 
@@ -350,6 +350,13 @@ export function DataImport() {
               {success && selected.status!=='IMPORTED' && <InfoPanel tone="info" title="Prüfstand">{success}</InfoPanel>}
               {preview?.quotaRulesChanged&&<InfoPanel tone="warning" title="Quotenregeln wurden geändert – bitte erneut prüfen">Die ursprüngliche Review-Version bleibt erhalten. Vor der Freigabe erneut prüfen.</InfoPanel>}
               <NextAction session={selected} preview={preview} success={success}/>
+              {preview?.people.some(person => person.accommodationRequirement === 'UNRESOLVED') &&
+                <InfoPanel tone="info" title="Unterkunft nach dem Import klären">
+                  Personen mit offenem Unterkunftsbedarf bleiben bis zur Entscheidung von der Disposition ausgeschlossen.
+                  {selected.status === 'IMPORTED' ? <> <Link className="underline font-semibold" to={`/athletes?nation=${encodeURIComponent(selected.nation)}&status=accommodation-clarification`}>Unterkunft klären</Link></>
+                    : <> Der offene Bedarf verhindert die Übernahme dieser Personen nicht.</>}
+                </InfoPanel>}
+
               <CompletedDecisions grouped={grouped} session={selected} onOpen={setActiveTask}/>
               {preview?.cancelledPeople?.length? <details className="rounded-xl border border-[var(--ops-border)] p-3 text-sm"><summary>{preview.cancelledPeople.length} stornierte Meldung(en) · im betroffenen Sportbereich inaktiv</summary><p className="mt-2 text-xs">Bestehende Personen und Competition-Zuordnungen werden ausschließlich über den geprüften Änderungsplan entfernt. Andere Sportbereiche bleiben geschützt.</p><ul className="mt-2 space-y-1">{preview.cancelledPeople.map((p,index)=><li key={index}>{p.firstname} {p.lastname} · {p.sourceFamily?sportAreaLabel(p.sourceFamily):'Nationsmeldung'} · Present = CANCELLED · Entry-Zeile {p.rowNumber}</li>)}</ul></details>:null}
               {preview&&<ImportClarifications preview={preview} session={selected} findings={findings} canWrite={canEditPreview&&!questionBusy} onPerson={showPerson} onPeople={showPeople} onQuestion={askAbout} onDecision={id=>{const a=selected.approvals.find(a=>a.id===id);if(a)setActiveTask(buildOperationsTask(selected,a));}} onExistingQuestion={id=>{document.getElementById(`clarification-${id}`)?.scrollIntoView({block:'center'});}}/>}

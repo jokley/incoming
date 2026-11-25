@@ -1,6 +1,5 @@
 import { requiresAccommodation } from '../services/accommodationRequirement.ts';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
-import { AccommodationRequirementField } from './AccommodationRequirementField';
 import type { AccommodationRequirement } from '../types';
 import { AccommodationRateChip, AccommodationRateField } from './AccommodationRate';
 import type { AccommodationRateCategory } from '../types';
@@ -12,6 +11,9 @@ import {
   Box,
   Button,
   CircularProgress,
+  Checkbox,
+  FormControlLabel,
+  MenuItem,
   Dialog,
   DialogActions,
   DialogContent,
@@ -121,10 +123,14 @@ function AthleteNoteBadge({ label, note, athlete, onOpen }: { label: 'Intern' | 
   return <Tooltip><TooltipTrigger asChild><button type="button" onClick={event => { event.stopPropagation(); onOpen(athlete); }} className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-[10px] font-bold whitespace-nowrap ${semanticToneClasses.info}`}><MessageSquareText className="h-3 w-3" aria-hidden="true" />{label}</button></TooltipTrigger><TooltipContent side="top" sideOffset={5} className="max-w-80 whitespace-pre-wrap break-words bg-[var(--ops-text)] text-left text-xs leading-relaxed text-[var(--ops-surface)]">{note}</TooltipContent></Tooltip>;
 }
 
-function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { onUpdate: (athlete: Athlete) => void; athlete: Athlete | null; open: boolean; onClose: () => void; onShowDecision: (id: string) => void }) {
+function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate, onNext, position, people }: {
+  onUpdate: (athlete: Athlete) => void; onNext: (athlete: Athlete) => void; athlete: Athlete | null;
+  open: boolean; onClose: () => void; onShowDecision: (id: string) => void;
+  position?: string; people: Athlete[];
+}) {
   const permissions = usePermissions();
   const navigate = useNavigate();
-  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false });
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false, roomType:'', partner:'', beforeNoDispo:undefined as AccommodationRequirement | undefined });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -136,6 +142,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
       requirement: athlete?.accommodationRequirement || 'REQUIRED', requirementTouched:false, releaseRequirement:false,
       rate: athlete?.accommodationRateCategory || 'STANDARD',
       exemptReason: athlete?.singleRoomQuotaExemptReason || '',
+      roomType: athlete?.roomType?.toLowerCase() === 'no room' ? '' : athlete?.roomType || '', partner: athlete?.sharedWithName || '', beforeNoDispo: undefined,
     });
     setSaveError(null);
   }, [athlete]);
@@ -152,23 +159,52 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
     return () => { active = false; };
   }, [open, athleteId]);
 
-  const save = async () => {
-    if (!athlete) return;
-    setSaving(true); setSaveError(null);
+  const booked = Boolean(athlete?.accommodationCoverage?.segments.length || athlete?.assignment?.hasAssignment);
+  const roomTypeOptions = [...new Set(['Single', 'Double', 'Double shared', 'Double single', 'Apartment', stay.roomType].filter(Boolean))];
+  const editableWish = permissions.canEdit && !saving && !booked && stay.requirement === 'REQUIRED' && !stay.releaseRequirement;
+  const shared = /shared/i.test(stay.roomType);
+  const roomChanged = stay.roomType !== (athlete?.roomType?.toLowerCase() === 'no room' ? '' : athlete?.roomType || '') || stay.partner !== (athlete?.sharedWithName || '');
+  const dirty = stay.requirementTouched || roomChanged || stay.arrivalDate !== (athlete?.arrivalDate || '')
+    || stay.departureDate !== (athlete?.departureDate || '') || stay.note !== (athlete?.internalNote || '')
+    || stay.rate !== (athlete?.accommodationRateCategory || 'STANDARD');
+  const close = () => { if (!saving && (!dirty || window.confirm('Ungespeicherte Änderungen verwerfen?'))) onClose(); };
+  const wishKey = (request: NonNullable<Athlete['reportedAccommodationRequests']>[number]) =>
+    [request.roomType?.trim().toLowerCase() || '', request.partner?.trim().toLowerCase() || ''].join('|');
+  const canReturnToFis = !!reportedRequests?.length && reportedRequests.every(request => request.roomType)
+    && new Set(reportedRequests.map(wishKey)).size === 1;
+  const personName = (value: string) => value.toLocaleLowerCase('de').replace(/[,\s]+/g, ' ').trim();
+  const partnerCandidates = people.filter(p => p.id !== athlete?.id && p.nationCode === athlete?.nationCode
+    && [personName(p.firstname + ' ' + p.lastname), personName(p.lastname + ' ' + p.firstname)].includes(personName(stay.partner)));
+  const partnerOpen = partnerCandidates.length === 1 && partnerCandidates[0].accommodationRequirement === 'UNRESOLVED';
+  const save = async (advance = false) => {
+    if (!athlete || (stay.requirementTouched && stay.requirement === 'UNRESOLVED' && !stay.releaseRequirement)) return;
+    setSaving(true);
+    setSaveError(null);
     try {
-      const updated = await api.updateAthlete(athlete.id, { arrivalDate: stay.arrivalDate || null, departureDate: stay.departureDate || null, internalNote: stay.note || null, ...(stay.requirementTouched ? {accommodationRequirement:stay.releaseRequirement ? null : stay.requirement} : {}), ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}) });
+      const updated = await api.updateAthlete(athlete.id, {
+        ...(stay.arrivalDate !== (athlete.arrivalDate || '') ? {arrivalDate: stay.arrivalDate || null} : {}),
+        ...(stay.departureDate !== (athlete.departureDate || '') ? {departureDate: stay.departureDate || null} : {}),
+        ...(stay.note !== (athlete.internalNote || '') ? {internalNote: stay.note || null} : {}),
+        ...(stay.releaseRequirement ? {returnToFis: true} : stay.requirementTouched || roomChanged ? {accommodationRequirement: stay.requirement} : {}),
+        ...(!stay.releaseRequirement && editableWish && roomChanged ? {roomType: stay.roomType || null, sharedWithName: shared ? stay.partner || null : null} : {}),
+        ...(stay.rate !== (athlete.accommodationRateCategory || 'STANDARD') ? {accommodationRateCategory: stay.rate} : {}),
+      });
       onUpdate(updated);
-      onClose();
+      if (advance) onNext(updated);
+      else onClose();
     } catch (error) {
       setSaveError(error instanceof Error ? error.message : 'Änderungen konnten nicht gespeichert werden.');
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
   const assignmentStatus = athlete ? assignmentLabel(athlete) : '—';
 
   return <Dialog
     open={open}
-    onClose={onClose}
+    aria-labelledby="athlete-dialog-title"
+    onClose={close}
     fullWidth
     maxWidth="md"
     slotProps={{ paper: { sx: { maxHeight: '92vh' } } }}
@@ -177,9 +213,9 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
       <Stack direction="row" alignItems="center" justifyContent="space-between" gap={2}>
         <Box>
           <Typography variant="overline" color="text.secondary" sx={{ fontWeight: 800, letterSpacing: '0.14em' }}>Athletenverwaltung</Typography>
-          <Typography variant="h3" component="h2" sx={{ mt: -0.25 }}>Athlet bearbeiten</Typography>
+          <Typography id="athlete-dialog-title" variant="h3" component="h2" sx={{ mt: -0.25 }}>Athlet bearbeiten</Typography>
           <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-            {athlete ? `${athlete.firstname} ${athlete.lastname} · ${athlete.nationCode}` : 'Athletendetails'}
+            {athlete ? `${athlete.firstname} ${athlete.lastname} · ${athlete.nationCode}` : 'Athletendetails'}{position && ` · ${position}`}
           </Typography>
         </Box>
         <Box sx={{ display: { xs: 'none', sm: 'flex' }, alignItems: 'center', gap: 1, color: 'text.secondary', fontSize: 12, fontWeight: 700 }}>
@@ -189,6 +225,101 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
     </DialogTitle>
     <DialogContent dividers sx={{ p: { xs: 2, sm: 3 }, bgcolor: 'background.default' }}>
       <Stack spacing={2.5}>
+        <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Zimmerzuweisungen werden in der Disposition bearbeitet.">
+          {reportedRequests?.length ? <Box sx={{ mb: 2 }}>
+            <Typography variant="subtitle2">FIS-Unterkunftsmeldungen</Typography>
+            <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(2, minmax(0, 1fr))' }, gap: 1.5, mt: 1 }}>
+              {reportedRequests.map(request => {
+                const noRoom = request.roomType?.trim().toLowerCase() === 'no room';
+                return <Box key={`${request.version}-${request.entryRow}`} sx={{ border: 1, borderColor: 'divider', borderRadius: 1, p: 1.5 }}>
+                  <Typography variant="subtitle2">{request.family === 'Freestyle' ? 'Freestyle / Freeski' : request.family === 'Snowboard' ? 'Snowboard' : 'Meldung'}</Typography>
+                  <Typography variant="body2">{request.roomType || 'Kein Zimmerwunsch gemeldet'}{request.partner && ` · ${request.partner}`}</Typography>
+                  <Typography variant="body2" color="text.secondary">{date(request.arrivalDate)} – {date(request.departureDate)}</Typography>
+                  {request.matchesDecision !== undefined && <Typography variant="caption" color={request.matchesDecision ? 'text.secondary' : 'warning.main'} display="block">
+                    {request.matchesDecision ? 'Entspricht der gespeicherten Entscheidung' : 'Weicht von der gespeicherten Entscheidung ab'}
+                  </Typography>}
+                  <Typography variant="caption" color="text.secondary" display="block">
+                    Version {request.version}, Entry List Zeile {request.entryRow ?? '—'}
+                    {request.roomRows.length > 0 && ` · Room List Zeile ${request.roomRows.join(', ')}`}
+                  </Typography>
+                  {permissions.canEdit && <Button variant="outlined" size="small" sx={{ mt: 1 }} disabled={saving || booked || !request.roomType}
+                    onClick={() => setStay(current => ({...current, requirement: noRoom ? 'NO_ROOM' : 'REQUIRED',
+                      roomType: noRoom ? '' : request.roomType || '', partner: noRoom ? '' : request.partner || '',
+                      requirementTouched: true, releaseRequirement: false}))}>Zimmerwunsch übernehmen</Button>}
+                </Box>;
+              })}
+            </Box>
+          </Box> : null}
+          <Typography variant="subtitle2">Operative Entscheidung</Typography>
+          {athlete?.accommodationDecisionLabel && <StatusChip tone={athlete.accommodationDecisionLabel === 'Abweichung FIS' || athlete.accommodationRequirement === 'UNRESOLVED' ? 'warning' : 'neutral'}>{athlete.accommodationDecisionLabel}</StatusChip>}
+          {stay.requirement === 'UNRESOLVED' && <Alert severity="warning" sx={{ my: 1 }}>Unterkunftsbedarf offen. Bitte eine Entscheidung treffen. Bis dahin bleibt die Person von der Disposition ausgeschlossen.</Alert>}
+          <FormControlLabel label="Nicht disponieren (No Dispo)" control={<Checkbox checked={stay.requirement === 'NO_DISPO'} disabled={!permissions.canEdit || saving}
+            onChange={event => setStay(current => ({...current, requirementTouched: true, releaseRequirement: false,
+              beforeNoDispo: event.target.checked ? current.requirement : undefined,
+              requirement: event.target.checked ? 'NO_DISPO' : current.beforeNoDispo || 'UNRESOLVED'}))} />} />
+          {stay.requirement === 'NO_DISPO' && booked && <Typography variant="body2" color="warning.main">Bestehende Buchung bleibt erhalten.</Typography>}
+          <FieldGrid>
+            <TextField id="athlete-accommodation-requirement" select size="small" label="Unterkunftsbedarf" slotProps={{select: {SelectDisplayProps: {'aria-label': 'Unterkunftsbedarf'}}}} value={stay.requirement === 'NO_DISPO' ? 'NO_DISPO' : stay.requirement}
+              disabled={!permissions.canEdit || saving || stay.requirement === 'NO_DISPO' || stay.releaseRequirement}
+              onChange={event => setStay(current => ({...current, requirement: event.target.value as AccommodationRequirement, requirementTouched: true, releaseRequirement: false}))}>
+              <MenuItem value="UNRESOLVED" disabled>Unterkunftsbedarf offen</MenuItem>
+              {stay.requirement === 'NO_DISPO' && <MenuItem value="NO_DISPO">Nicht disponieren</MenuItem>}
+              <MenuItem value="REQUIRED">Unterkunft benötigt</MenuItem>
+              <MenuItem value="NO_ROOM" disabled={booked}>Kein Zimmer benötigt</MenuItem>
+            </TextField>
+            <TextField id="athlete-accommodation-room-type" select size="small" label="Gewünschter Zimmertyp" slotProps={{select: {SelectDisplayProps: {'aria-label': 'Gewünschter Zimmertyp'}}}} value={stay.requirement === 'REQUIRED' ? stay.roomType : ''} disabled={!editableWish}
+              onChange={event => setStay(current => ({...current, roomType: event.target.value,
+                partner: /shared/i.test(event.target.value) ? current.partner : '', requirementTouched: true}))}>
+              <MenuItem value="">Keine Angabe</MenuItem>
+              {roomTypeOptions.map(value => <MenuItem key={value} value={value}>{value}</MenuItem>)}
+            </TextField>
+            <TextField size="small" label="Gewünschter Zimmerpartner" value={stay.requirement === 'REQUIRED' && shared ? stay.partner : ''} disabled={!editableWish || !shared}
+              onChange={event => setStay(current => ({...current, partner: event.target.value, requirementTouched: true}))}
+              helperText={stay.requirement === 'REQUIRED' && shared && partnerOpen ? 'Unterkunftsbedarf dieser Person ist noch offen. Eine gemeinsame Buchung ist derzeit gesperrt.' : undefined}
+              slotProps={{htmlInput: {maxLength: 200}}} />
+            {stay.requirement === 'REQUIRED' && <AccommodationRateField compact value={stay.rate} disabled={!permissions.canEdit || saving}
+              onChange={rate=>setStay(current=>({...current,rate}))}/>}
+          </FieldGrid>
+          {permissions.canEdit && athlete?.accommodationRequirementSource === 'MANUAL' && canReturnToFis &&
+            <Button variant="outlined" size="small" sx={{ mt: 1 }} disabled={saving || booked || stay.releaseRequirement}
+              onClick={() => setStay(current => ({...current, requirementTouched: true, releaseRequirement: true}))}>Zur FIS-Meldung zurückkehren</Button>}
+          {stay.releaseRequirement && <Typography variant="body2" sx={{ mt: 1 }}>Die eindeutige FIS-Meldung wird beim Speichern übernommen.</Typography>}
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="subtitle2" sx={{ mb: 1 }}>Tatsächliche Buchung</Typography>
+          <FieldGrid>
+            <ReadonlyField label="Hotel" value={athlete ? personAccommodation(athlete).hotelLabel : undefined} />
+            <ReadonlyField label="Buchungsstatus" value={booked ? assignmentStatus : 'Keine Buchung'} />
+            {booked && <ReadonlyField label="Gebuchter Zimmertyp" value={athlete ? personAccommodation(athlete).roomLabel : undefined} />}
+            <ReadonlyField label="Mehrpreis" value={accommodationSurcharge(athlete).applicable
+              ? (accommodationSurcharge(athlete).hasAccommodationSurcharge ? 'Ja' : 'Nein') : undefined} />
+          </FieldGrid>
+          {athlete?.assignment?.hasAssignment && <Box sx={{ mt: 1.25 }}>
+            <Button
+              size="small"
+              variant="text"
+              onClick={() => {
+                if (saving || (dirty && !window.confirm('Ungespeicherte Änderungen verwerfen?'))) return;
+                onClose();
+                navigate(assignmentWorkspaceHref({
+                  bookingId: athlete.assignment?.bookingId,
+                  hotelId: athlete.assignment?.hotelId,
+                  personId: athlete.id,
+                }));
+              }}
+            >
+              Zuweisung öffnen →
+            </Button>
+          </Box>}
+          <Box sx={{ mt: 1.25 }}>
+            {athlete?.function?.toLowerCase() === 'athlete' && <OpsButton aria-label="Weltmeisterstatus ändern" aria-pressed={athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!permissions.canEdit || saving || athlete.singleRoomQuotaExemptReason === 'OTHER'} onClick={async () => {
+              setSaving(true); setSaveError(null);
+              try { const updated = await api.updateAthlete(athlete.id, { singleRoomQuotaExemptReason: athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? null : 'WORLD_CHAMPION' }); onUpdate(updated); }
+              catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
+              finally { setSaving(false); }
+            }}><Crown className={`mr-2 inline h-5 w-5 ${athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : 'Weltmeister bestätigen'}</OpsButton>}
+          </Box>
+        </DialogSection>
+
         <DialogSection icon={<UserRound size={18} />} title="Stammdaten (FIS)" subtitle="Synchronisiert über den FIS-Import und nicht manuell editierbar." badge={<><LockKeyhole size={13} /> Schreibgeschützt</>}>
           <FieldGrid>
             <ReadonlyField label="Vorname" value={athlete?.firstname} />
@@ -211,55 +342,6 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
           </FieldGrid>
         </DialogSection>
 
-        <DialogSection icon={<Building2 size={18} />} title="Unterkunft" subtitle="Zimmerzuweisungen werden in der Disposition bearbeitet.">
-          <FieldGrid>
-            {athlete?.function?.toLowerCase() === 'athlete' && <OpsButton aria-label="Weltmeisterstatus ändern" aria-pressed={athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!permissions.canEdit || saving || athlete.singleRoomQuotaExemptReason === 'OTHER'} onClick={async () => {
-              setSaving(true); setSaveError(null);
-              try { const updated = await api.updateAthlete(athlete.id, { singleRoomQuotaExemptReason: athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? null : 'WORLD_CHAMPION' }); onUpdate(updated); }
-              catch (e) { setSaveError(e instanceof Error ? e.message : String(e)); }
-              finally { setSaving(false); }
-            }}><Crown className={`mr-2 inline h-5 w-5 ${athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{athlete.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : 'Weltmeister bestätigen'}</OpsButton>}
-            <AccommodationRequirementField compact allowNoDispo person={{accommodationRequirement:stay.requirement,accommodationRequirementSource:athlete?.accommodationRequirementSource}} disabled={!permissions.canEdit || saving} onChange={requirement=>setStay(current=>({...current,requirement,requirementTouched:true,releaseRequirement:false}))} onRelease={()=>setStay(current=>({...current,requirementTouched:true,releaseRequirement:true}))}/>
-            {stay.requirement === 'NO_DISPO' && Boolean(athlete?.accommodationCoverage?.segments.length || athlete?.assignment?.hasAssignment) &&
-              <Typography variant="body2" color="warning.main">Nicht einplanen · Bestehende Buchung bleibt erhalten.</Typography>}
-            {stay.releaseRequirement && <p className="text-xs">Beim Speichern wird der Quellwert übernommen.</p>}
-            <AccommodationRateField dense compact value={stay.rate} disabled={!permissions.canEdit || saving} onChange={rate=>setStay(current=>({...current,rate}))}/>
-            <ReadonlyField label="Hotel" value={athlete ? personAccommodation(athlete).hotelLabel : undefined} />
-            <ReadonlyField label="Zimmertyp" value={athlete ? personAccommodation(athlete).roomLabel : undefined} />
-            <Box><Typography variant="caption" color="text.secondary">Mehrpreis</Typography><Box sx={{ mt: 0.75 }}>{!accommodationSurcharge(athlete).applicable ? <Typography variant="body2" color="text.secondary">—</Typography> : accommodationSurcharge(athlete).hasAccommodationSurcharge ? <StatusChip tone="warning">Ja</StatusChip> : <Typography variant="body2" color="text.secondary">Nein</Typography>}</Box></Box>
-            <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
-            <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
-          </FieldGrid>
-          {athlete?.accommodationRequirement === 'UNRESOLVED' &&
-            <Typography variant="body2" color="warning.main">Unterkunftsbedarf offen · Disposition erst nach Entscheidung.</Typography>}
-          {Boolean(reportedRequests?.length) && <Box sx={{ mt: 1 }}>
-            <Typography variant="subtitle2">Gemeldete Zimmerwünsche</Typography>
-            {reportedRequests?.map(request => <Typography key={`${request.version}-${request.entryRow}`} variant="body2">
-              {request.family === 'Freestyle' ? 'Freestyle / Freeski' : request.family === 'Snowboard' ? 'Snowboard' : 'Meldung'}
-              {' · '}{request.roomType || 'Keine Angabe'}{request.partner && ` · ${request.partner}`}
-              {' · '}{request.arrivalDate || '—'} bis {request.departureDate || '—'}
-              {' · '}Version {request.version}, Entry List Zeile {request.entryRow ?? '—'}
-              {request.roomRows.length > 0 && ` · Room List Zeile ${request.roomRows.join(', ')}`}
-            </Typography>)}
-          </Box>}
-          {athlete?.assignment?.hasAssignment && <Box sx={{ mt: 1.25 }}>
-            <Button
-              size="small"
-              variant="text"
-              onClick={() => {
-                onClose();
-                navigate(assignmentWorkspaceHref({
-                  bookingId: athlete.assignment?.bookingId,
-                  hotelId: athlete.assignment?.hotelId,
-                  personId: athlete.id,
-                }));
-              }}
-            >
-              Zuweisung öffnen →
-            </Button>
-          </Box>}
-        </DialogSection>
-
         <DialogSection icon={<ClipboardList size={18} />} title="Import" subtitle="Vorbereitet für die zukünftige Änderungsverfolgung.">
           <FieldGrid>
             <ReadonlyField label="Importdatum" value={date(athlete?.athletesLastSeenAt)} />
@@ -274,7 +356,13 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
       </Stack>
     </DialogContent>
     {saveError && <Alert severity="error" sx={{ mx: 3, mt: 2 }}>{saveError}</Alert>}
-    <DialogActions sx={{ px: { xs: 2.5, sm: 3 }, py: 2 }}><Button onClick={onClose}>Abbrechen</Button>{permissions.canEdit && <Button variant="contained" onClick={() => void save()} disabled={saving}>{saving ? 'Speichern…' : 'Speichern'}</Button>}</DialogActions>
+    <DialogActions sx={{ px: { xs: 2, sm: 3 }, py: 2, flexWrap: 'wrap' }}>
+      <Button onClick={close} disabled={saving}>Abbrechen</Button>
+      {permissions.canEdit && <Button variant={position ? 'outlined' : 'contained'} onClick={() => void save()}
+        disabled={saving || (stay.requirementTouched && stay.requirement === 'UNRESOLVED' && !stay.releaseRequirement)}>{saving ? 'Speichern…' : 'Speichern'}</Button>}
+      {permissions.canEdit && position && <Button variant="contained" onClick={() => void save(true)}
+        disabled={saving || (stay.requirement === 'UNRESOLVED' && !stay.releaseRequirement)}>Speichern &amp; weiter</Button>}
+    </DialogActions>
   </Dialog>;
 }
 
@@ -317,6 +405,8 @@ export function Athletes() {
   const [filters, setFilters] = useState<Filters>({ ...emptyFilters, nation: requestedNation, competitions: requestedDiscipline ? [requestedDiscipline] : [], status: requestedStatus });
   const [search, setSearch] = useState('');
   const [selectedAthlete, setSelectedAthlete] = useState<Athlete | null>(null);
+  const [guidedDone, setGuidedDone] = useState(0);
+  const [clarificationMessage, setClarificationMessage] = useState('');
   const [decisionId, setDecisionId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -348,6 +438,7 @@ export function Athletes() {
       { value: 'no-room', label: 'Kein Zimmer benötigt', count: athletes.filter(athlete=>athlete.accommodationRequirement==='NO_ROOM').length },
       { value: 'new', label: 'Neu', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'new').length },
       { value: 'review', label: 'Disposition prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'review').length },
+      { value: 'accommodation-clarification', label: 'Unterkunft klären', count: athletes.filter(a => a.accommodationRequirement === 'UNRESOLVED').length },
       { value: 'conflict', label: 'Stammdaten prüfen', count: athletes.filter(athlete => athleteWorkCategory(athlete) === 'conflict').length },
     ],
     notes: [{ value: 'present', label: 'Mit Hinweisen', count: athletes.filter(athlete => Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim())).length }],
@@ -356,10 +447,8 @@ export function Athletes() {
   const areaCandidates = useMemo(() => athletes.filter(athlete => {
     const term = search.trim().toLocaleLowerCase('de');
     const searchable = `${athlete.firstname} ${athlete.lastname} ${athlete.nationCode} ${athlete.disciplines?.join(' ') || athlete.discipline || ''} ${athlete.function || ''} ${personAccommodation(athlete).hotelLabel} ${personAccommodation(athlete).details} ${athlete.additionalItems || ''} ${athlete.internalNote || ''}`.toLocaleLowerCase('de');
-    const category = athleteWorkCategory(athlete);
-    const statusMatches = !filters.status || (filters.status === 'open' ? requiresAccommodation(athlete) && personAccommodation(athlete).status!=='FULLY_ASSIGNED' : filters.status === category);
     const singleRoomMatches = !requestedSingleRoomStatus || (athlete.single_room_status === requestedSingleRoomStatus && (requestedSingleRoomStatus!=='PENDING_APPROVAL' || requiresAccommodation(athlete)));
-    const reviewMatches = requestedReview !== 'invalid' || category === 'conflict';
+    const reviewMatches = requestedReview !== 'invalid' || athleteWorkCategory(athlete) === 'conflict';
     const movementMatches = !requestedMovement || !requestedDate
       || (requestedMovement === 'arrival' ? athlete.arrivalDate === requestedDate : athlete.departureDate === requestedDate);
     return (!term || searchable.includes(term))
@@ -369,14 +458,27 @@ export function Athletes() {
       && (!filters.rate || (athlete.accommodationRateCategory || 'STANDARD')===filters.rate)
       && matchesPersonFunction(athlete, filters.function)
       && (!filters.notes || Boolean(athlete.additionalItems?.trim() || athlete.internalNote?.trim()))
-      && statusMatches
       && singleRoomMatches
       && reviewMatches
       && movementMatches;
   }), [athletes, filters, requestedDate, requestedMovement, requestedReview, requestedSingleRoomStatus, search]);
 
-  const areaOptions = useMemo(() => sportAreaOptions(areaCandidates, filters.competitions), [areaCandidates, filters.competitions]);
-  const filtered = useMemo(() => areaCandidates.filter(athlete => matchesCompetitionSelection(athlete, filters.competitions, filters.sport)), [areaCandidates, filters.competitions, filters.sport]);
+  const statusCandidates = areaCandidates.filter(athlete => !filters.status ||
+    (filters.status === 'open' ? requiresAccommodation(athlete) && personAccommodation(athlete).status !== 'FULLY_ASSIGNED'
+      : filters.status === 'fis-deviation' ? athlete.hasFisAccommodationDeviation
+      : filters.status === athleteWorkCategory(athlete)));
+  const areaOptions = sportAreaOptions(statusCandidates, filters.competitions);
+  const matchesSport = (athlete: Athlete) => matchesCompetitionSelection(athlete, filters.competitions, filters.sport);
+  const filtered = statusCandidates.filter(matchesSport);
+  const fisDeviationCount = areaCandidates.filter(athlete => athlete.hasFisAccommodationDeviation && matchesSport(athlete)).length;
+  const pendingClarifications = filtered.filter(person => person.nationCode === selectedAthlete?.nationCode && person.accommodationRequirement === 'UNRESOLVED');
+  const isGuided = selectedAthlete?.accommodationRequirement === 'UNRESOLVED' || guidedDone > 0;
+  const openPerson = (person: Athlete) => {
+    setGuidedDone(0);
+    setClarificationMessage('');
+    setSelectedAthlete(person);
+  };
+
 
   const activeFilterCount = Object.entries(filters).filter(([, value]) => Array.isArray(value) ? value.length : Boolean(value)).length;
   const setFilter = (key: FilterKey, value: string) => setFilters(current => ({ ...current, [key]: value }));
@@ -400,7 +502,7 @@ export function Athletes() {
           <FilterGroup title="Gender" filterKey="gender" items={groups.gender} selected={filters.gender} onSelect={setFilter} />
           <FilterGroup title="Unterkunftstarif" filterKey="rate" items={[{value:"STANDARD",label:"Standard",count:athletes.filter(p=>p.accommodationRateCategory!=="SPECIAL").length},{value:"SPECIAL",label:"Sondertarif",count:athletes.filter(p=>p.accommodationRateCategory==="SPECIAL").length}]} selected={filters.rate} onSelect={setFilter}/>
           <FilterGroup title="Funktion" filterKey="function" items={groups.function} selected={filters.function} onSelect={setFilter} />
-          <FilterGroup title="Status" filterKey="status" items={groups.status} selected={filters.status} onSelect={setFilter} />
+          <FilterGroup title="Status" filterKey="status" items={[...groups.status, {value:'fis-deviation', label:'Abweichung FIS', count:fisDeviationCount}]} selected={filters.status} onSelect={setFilter} />
           <FilterGroup title="Hinweise" filterKey="notes" items={groups.notes} selected={filters.notes} onSelect={setFilter} />
         </nav>
       </ContentCard>
@@ -423,16 +525,18 @@ export function Athletes() {
               <tr>{['Name', 'Nation', 'Gender', 'Wettbewerbe', 'Anreise', 'Abreise', 'Hotel', 'Zimmer', 'Hinweise', 'Status', 'Import'].map(label => <th key={label} className="whitespace-nowrap border-b border-[var(--ops-border)] px-2 py-3">{label}</th>)}</tr>
             </thead>
             <tbody>
-              {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => setSelectedAthlete(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') setSelectedAthlete(athlete); }} className={`group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)] ${athlete.accommodationRequirement === 'NO_DISPO' ? 'bg-[var(--ops-surface-overlay)]' : ''}`}>
+              {filtered.map(athlete => <tr key={athlete.id} tabIndex={0} onClick={() => openPerson(athlete)} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') openPerson(athlete); }} className={`group cursor-pointer outline-none transition hover:bg-[var(--ops-surface-elevated)] focus:bg-[var(--ops-tone-primary-surface)] ${athlete.accommodationRequirement === 'NO_DISPO' ? 'bg-[var(--ops-surface-overlay)]' : ''}`}>
                 <Cell><div><b className={`block whitespace-nowrap text-[15px] font-extrabold leading-5 ${athlete.accommodationRequirement === 'NO_DISPO' ? 'text-[var(--ops-text-muted)]' : 'text-[var(--ops-text)]'}`}>{athlete.firstname} {athlete.lastname}</b><div className="mt-1.5 flex flex-wrap gap-1"><AccommodationRateChip category={athlete.accommodationRateCategory}/><SingleRoomAssignmentBadges status={athlete.single_room_status} countsAsSingle={athlete.assignment?.countsAsSingle} exemptReason={athlete.singleRoomQuotaExemptReason} /></div></div></Cell>
                 <Cell><b>{athlete.nationCode}</b></Cell><Cell>{genderLabel(athlete.gender)}</Cell>
                 <Cell><div className="min-w-0"><b className="ops-table-wrap block font-bold text-[var(--ops-text)]" title={previewEventGroupLabel(athlete.quotaDisciplines)}>{previewEventGroupLabel(athlete.quotaDisciplines)}</b><span className="ops-table-wrap block text-xs text-[var(--ops-text-muted)]">{competitionMembershipList(athlete.competitions)}</span><span className="mt-0.5 block truncate text-[11px] font-medium text-[var(--ops-text-subtle)]" title={athlete.function || 'Athlet'}>{athlete.function || 'Athlet'}</span></div></Cell>
                 <Cell>{date(athlete.arrivalDate)}</Cell><Cell>{date(athlete.departureDate)}</Cell>
                 <Cell><span className="block truncate" title={personAccommodation(athlete).details || personAccommodation(athlete).hotelLabel}>{personAccommodation(athlete).hotelLabel==='—' ? '—' : <InlineActionLink onClick={event=>{event.stopPropagation();navigate(personAccommodation(athlete).segments.length>1 ? assignmentWorkspaceHref({personId:athlete.id}) : `/hotels?hotelId=${personAccommodation(athlete).segments[0]?.hotelId || athlete.assignment?.hotelId || ''}`);}}>{personAccommodation(athlete).hotelLabel}</InlineActionLink>}</span></Cell>
                 <Cell><span title={personAccommodation(athlete).details}><InlineActionLink className="ops-table-wrap text-xs" onClick={event=>{event.stopPropagation();navigate(assignmentWorkspaceHref({personId:athlete.id}));}}>{roomTypeLabel(athlete)}</InlineActionLink></span></Cell>
-                <Cell><div className="flex flex-col items-start gap-1"><span className="ops-table-wrap text-xs text-[var(--ops-warning)]" title={stayWindowDetails(athlete.stayWindow)}>{stayWindowText(athlete.stayWindow)}</span><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={setSelectedAthlete}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={setSelectedAthlete}/></div></Cell>
-                <Cell><span className="ops-table-wrap"><StatusChip tone={personAccommodation(athlete).tone}>{assignmentLabel(athlete)}</StatusChip></span>{athlete.accommodationRequirement === 'NO_DISPO' && personAccommodation(athlete).status === 'CONFLICT' &&
-                  <span className="mt-1 block text-xs text-[var(--ops-warning)]">Nicht einplanen · Buchung bleibt erhalten</span>}</Cell>
+                <Cell><div className="flex flex-col items-start gap-1"><span className="ops-table-wrap text-xs text-[var(--ops-warning)]" title={stayWindowDetails(athlete.stayWindow)}>{stayWindowText(athlete.stayWindow)}</span><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={openPerson}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={openPerson}/></div></Cell>
+                <Cell><span className="ops-table-wrap"><StatusChip tone={personAccommodation(athlete).tone}>{assignmentLabel(athlete)}</StatusChip></span>
+                  {athlete.accommodationDecisionLabel && (athlete.accommodationRequirement !== 'NO_DISPO' || athlete.accommodationDecisionLabel !== assignmentLabel(athlete)) &&
+                    <span className="mt-1 block text-xs">{athlete.accommodationDecisionLabel}</span>}{athlete.accommodationRequirement === 'NO_DISPO' && Boolean(athlete.accommodationCoverage?.segments.length || athlete.assignment?.hasAssignment) &&
+                  <span className="mt-1 block text-xs text-[var(--ops-warning)]">Bestehende Buchung bleibt erhalten.</span>}</Cell>
                 <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>
               </tr>)}
             </tbody>
@@ -441,7 +545,29 @@ export function Athletes() {
         </div>
       </ContentCard>
     </div>
-    <AthleteDialog onUpdate={updated => { setSelectedAthlete(current => current ? {...current,...updated} : updated); setAthletes(current => current.map(person => person.id === updated.id ? {...person, ...updated} : person)); }} athlete={selectedAthlete} open={Boolean(selectedAthlete)} onClose={() => setSelectedAthlete(null)} onShowDecision={setDecisionId} />
+    {clarificationMessage && <Alert severity="success" role="status">{clarificationMessage}</Alert>}
+    <AthleteDialog
+      people={athletes}
+      position={isGuided && selectedAthlete ? `${guidedDone + 1} von ${guidedDone + Math.max(1, pendingClarifications.length)}` : undefined}
+      onUpdate={updated => {
+        setSelectedAthlete(current => current ? {...current, ...updated} : updated);
+        setAthletes(current => current.map(person => person.id === updated.id ? {...person, ...updated} : person));
+      }}
+      onNext={updated => {
+        if (updated.accommodationRequirement === 'UNRESOLVED') return;
+        const index = pendingClarifications.findIndex(person => person.id === updated.id);
+        const next = pendingClarifications[index + 1] || pendingClarifications.find(person => person.id !== updated.id);
+        if (next) {
+          setGuidedDone(done => done + 1);
+          setSelectedAthlete(next);
+        } else {
+          setSelectedAthlete(null);
+          setGuidedDone(0);
+          setClarificationMessage('Für diese Nation sind in der aktuellen Auswahl alle Unterkunftsklärungen abgeschlossen.');
+        }
+      }}
+      athlete={selectedAthlete} open={Boolean(selectedAthlete)}
+      onClose={() => { setSelectedAthlete(null); setGuidedDone(0); }} onShowDecision={setDecisionId} />
     <ImportDecisionDialog decisionId={decisionId} onClose={() => setDecisionId(null)} onOpenSession={sessionId => void navigate(`/import?sessionId=${sessionId}`)} />
   </SplitPageLayout>;
 }
