@@ -1,4 +1,4 @@
-export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM' | 'NO_DISPO';
+export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM' | 'NO_DISPO' | 'UNRESOLVED';
 export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
 export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL' | 'APPROVAL'; accommodationRateApprovalId?: number; accommodationRateApprovalIds?: number[]; accommodationRateExplanation?: string; }

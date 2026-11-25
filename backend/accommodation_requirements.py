@@ -2,6 +2,7 @@
 BOOKING_MESSAGE = 'Für diese Person bestehen Unterkunftszuweisungen. Bitte diese zuerst ausdrücklich entfernen.'
 NO_ACCOMMODATION = frozenset({'NO_ROOM', 'NO_DISPO'})
 REQUIREMENTS = NO_ACCOMMODATION | {'REQUIRED'}
+NO_BOOKABLE_DEMAND = NO_ACCOMMODATION | {'UNRESOLVED'}
 INVALID_REQUIREMENT = 'accommodationRequirement must be REQUIRED, NO_ROOM, NO_DISPO or null'
 NORMAL_REQUESTS = {'single', 'double', 'double shared', 'double single', 'appartment', 'apartment', 'ez', 'dz', 'ez / du', 'dz / du'}
 
@@ -35,9 +36,10 @@ def ensure_no_bookings(person, requirement='NO_ROOM'):
 
 def require_assignable(person):
     requirement = requirement_projection(person)['accommodationRequirement']
-    if requirement in NO_ACCOMMODATION:
+    if requirement in NO_BOOKABLE_DEMAND:
         from accommodation_split import SplitError
-        label = 'Nicht einplanen' if requirement == 'NO_DISPO' else 'Kein Zimmer benötigt'
+        label = {'NO_DISPO': 'Nicht einplanen', 'NO_ROOM': 'Kein Zimmer benötigt',
+                 'UNRESOLVED': 'Unterkunftsbedarf offen'}[requirement]
         raise SplitError(f'{requirement}_ASSIGNMENT_FORBIDDEN', f'{label}. Unterkunftsbedarf zuerst ausdrücklich ändern.')
 
 
@@ -59,9 +61,13 @@ def resolve_requirement(existing, values, override=None):
             raise ValueError(INVALID_REQUIREMENT)
         if value:
             return {**current, 'accommodationRequirement': value, 'accommodationRequirementSource': 'MANUAL'}, proposed, False
+        if current['accommodationRequirement'] == 'UNRESOLVED':
+            return current, None, True
         # Explicit release resumes source ownership; absent evidence remains conservative.
         imported = proposed or getattr(existing, 'accommodation_requirement_import_value', None)
         current = {'accommodationRequirement': imported or 'REQUIRED', 'accommodationRequirementSource': 'IMPORT' if imported else 'DEFAULT'}
+    elif current['accommodationRequirement'] == 'UNRESOLVED':
+        return current, None, True
     elif current['accommodationRequirementSource'] == 'MANUAL':
         return current, proposed, False
     if proposed:
@@ -125,6 +131,23 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
     issues = []
     for person in people:
         existing = _find_existing_athlete(person, maps)
+        current = requirement_projection(existing)
+        if ((person.get('unresolvedSourceAccommodation') or current['accommodationRequirement'] == 'UNRESOLVED')
+                and person.get('matchKey') in (overrides or {})):
+            from imports.event_context import ImportValidationError
+            raise ImportValidationError('ACCOMMODATION_REQUIREMENT_UNRESOLVED',
+                'Der Unterkunftsbedarf dieser Person wird nach dem Import im Athletendetail entschieden.')
+        if person.get('unresolvedSourceAccommodation'):
+            if existing is not None:
+                person.update(current)
+                issues.append({'code': 'ACCOMMODATION_REQUIREMENT_EXISTING_PERSON',
+                               'message': 'Offener Unterkunftsbedarf darf bestehende Personen nicht überschreiben.',
+                               'details': {'personKey': person.get('matchKey')}})
+            else:
+                person.update(accommodationRequirement='UNRESOLVED', accommodationRequirementSource='IMPORT')
+            person['importAccommodationRequirement'] = None
+            person['accommodationRequirementReviewRequired'] = True
+            continue
         related_rooms = [r for r in rooms if person.get('matchKey') in {r.get('person1Key'), r.get('person2Key')}]
         source = person.get('entryAccommodationSource') or person
         values = [source.get('roomType'), *(room.get('roomType') for room in related_rooms)]
@@ -143,6 +166,8 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
             values = values[1:]
         effective, proposed, review = resolve_requirement(existing, values, (overrides or {}).get(person.get('matchKey')))
         person.update(effective)
+        if effective['accommodationRequirement'] == 'UNRESOLVED':
+            person.update(roomType=None, sharedWithName=None)
         person['importAccommodationRequirement'] = proposed
         person['accommodationRequirementReviewRequired'] = review
         if person['accommodationRequirement'] == 'NO_ROOM' and (
@@ -152,7 +177,7 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
         elif source_requirement(values)[1] and effective['accommodationRequirementSource'] != 'MANUAL':
             issues.append({'code': 'ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT', 'message': 'Widersprüchliche Unterkunftswünsche in Entries und Room List.',
                            'details': {'personKey': person.get('matchKey')}})
-        if person['accommodationRequirement'] not in NO_ACCOMMODATION:
+        if person['accommodationRequirement'] not in NO_BOOKABLE_DEMAND:
             stay_issue = _stay_review(person, related_rooms)
             if stay_issue:
                 code, message = stay_issue
@@ -162,7 +187,7 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
 
 
 def set_requirement(person, value, source):
-    if value not in REQUIREMENTS or source not in {'DEFAULT', 'IMPORT', 'MANUAL'}:
+    if value not in REQUIREMENTS | {'UNRESOLVED'} or source not in {'DEFAULT', 'IMPORT', 'MANUAL'}:
         raise ValueError('Invalid accommodation requirement/source')
     if value == 'NO_ROOM':
         ensure_no_bookings(person, value)
@@ -186,7 +211,7 @@ def legacy_candidates():
 
 def accommodation_metrics(people, coverage_by_id):
     unique = {str(p['personId']): p for p in people}
-    required = {key: p for key, p in unique.items() if p.get('accommodationRequirement') not in NO_ACCOMMODATION}
+    required = {key: p for key, p in unique.items() if p.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND}
     statuses = [coverage_by_id.get(key, {}).get('coverageStatus', 'UNASSIGNED') for key in required]
     no_dispo = sum(p.get('accommodationRequirement') == 'NO_DISPO' for p in unique.values())
     return {'accommodationPeopleRequired': len(required),
@@ -198,5 +223,5 @@ def accommodation_metrics(people, coverage_by_id):
 
 
 def accommodation_room_requests(people, rooms):
-    required = {p.get('matchKey') for p in people if p.get('accommodationRequirement') not in NO_ACCOMMODATION}
+    required = {p.get('matchKey') for p in people if p.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND}
     return [room for room in rooms if required & {room.get('person1Key'), room.get('person2Key')}]
