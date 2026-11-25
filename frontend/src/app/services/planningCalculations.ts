@@ -242,7 +242,7 @@ type DemandPerson = Pick<import('../types.ts').FisImportPreviewPerson,
   'existingAthleteId' | 'matchKey' | 'arrivalDate' | 'departureDate' | 'roomType' | 'sharedWithName' |
   'accommodationRequirement' | 'accommodationRequirementReviewRequired'>;
 type DemandRoom = Pick<import('../types.ts').FisImportPreviewRoom,
-  'person1Key' | 'person2Key' | 'roomType' | 'checkInDate' | 'checkOutDate' | 'sharedWithRawName'>;
+  'person1Key' | 'person2Key' | 'roomType' | 'checkInDate' | 'checkOutDate' | 'sharedWithRawName' | 'sourceOnlyPartner'>;
 export type ExcelDemand = { nation: string; people: DemandPerson[]; rooms: DemandRoom[]; excludedIds: string[]; provisional: boolean; conflict?: string; importStatus?: string; roomStatus?: 'available' | 'zero' | 'missing' | 'conflict' };
 
 type DemandStay = { start: string; end: string; type: string; partner?: string; unclear?: boolean; secondary?: boolean };
@@ -261,8 +261,8 @@ export function excelDemandRecords(people: DemandPerson[], rooms: DemandRoom[], 
   for (const room of rooms) {
     for (const [person, partner] of [[room.person1Key, room.person2Key], [room.person2Key, room.person1Key]]) {
       if (!person) continue;
-      const period = stay(room.checkInDate, room.checkOutDate, room.roomType, partner && prefix + partner);
-      period.unclear = Boolean(!partner && room.sharedWithRawName);
+      const period = stay(room.checkInDate, room.checkOutDate, room.roomType, !room.sourceOnlyPartner && partner ? prefix + partner : undefined);
+      period.unclear = Boolean(room.sourceOnlyPartner || (!partner && room.sharedWithRawName));
       period.secondary = person === room.person2Key;
       const periods = byPerson.get(person) ?? [];
       periods.push(period);

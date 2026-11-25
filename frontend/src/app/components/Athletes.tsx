@@ -140,6 +140,18 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
     setSaveError(null);
   }, [athlete]);
 
+  const [reportedRequests, setReportedRequests] = useState<Athlete['reportedAccommodationRequests']>();
+  const athleteId = athlete?.id;
+  useEffect(() => {
+    setReportedRequests(undefined);
+    if (!open || !athleteId) return;
+    let active = true;
+    void api.getAthlete(athleteId).then(person => {
+      if (active) setReportedRequests(person.reportedAccommodationRequests);
+    }).catch(() => { if (active) setReportedRequests(undefined); });
+    return () => { active = false; };
+  }, [open, athleteId]);
+
   const save = async () => {
     if (!athlete) return;
     setSaving(true); setSaveError(null);
@@ -218,6 +230,18 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate }: { o
             <ReadonlyField label="Zimmerpartner" value={athlete?.sharedWithName} />
             <ReadonlyField label="Assignment-Status" value={assignmentStatus} />
           </FieldGrid>
+          {athlete?.accommodationRequirement === 'UNRESOLVED' &&
+            <Typography variant="body2" color="warning.main">Unterkunftsbedarf offen · Disposition erst nach Entscheidung.</Typography>}
+          {Boolean(reportedRequests?.length) && <Box sx={{ mt: 1 }}>
+            <Typography variant="subtitle2">Gemeldete Zimmerwünsche</Typography>
+            {reportedRequests?.map(request => <Typography key={`${request.version}-${request.entryRow}`} variant="body2">
+              {request.family === 'Freestyle' ? 'Freestyle / Freeski' : request.family === 'Snowboard' ? 'Snowboard' : 'Meldung'}
+              {' · '}{request.roomType || 'Keine Angabe'}{request.partner && ` · ${request.partner}`}
+              {' · '}{request.arrivalDate || '—'} bis {request.departureDate || '—'}
+              {' · '}Version {request.version}, Entry List Zeile {request.entryRow ?? '—'}
+              {request.roomRows.length > 0 && ` · Room List Zeile ${request.roomRows.join(', ')}`}
+            </Typography>)}
+          </Box>}
           {athlete?.assignment?.hasAssignment && <Box sx={{ mt: 1.25 }}>
             <Button
               size="small"

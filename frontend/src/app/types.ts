@@ -178,6 +178,8 @@ export interface StayWindow {
 }
 
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
+  reportedAccommodationRequests?: Array<{family?: string; version: number; entryRow?: number;
+    roomType?: string; partner?: string; arrivalDate?: string; departureDate?: string; roomRows: number[]}>;
   stayWindow?:StayWindow;
   accommodationCoverage?: AccommodationCoverage;
   id: string;
@@ -568,6 +570,7 @@ export interface FisImportPreviewPerson extends AccommodationRateFields, Accommo
 }
 
 export interface FisImportPreviewRoom {
+  sourceOnlyPartner?: boolean;
   sourceRows?:Array<{versionId:number;version:number;row?:number}>;
   person1Key?: string;
   person2Key?: string | null;

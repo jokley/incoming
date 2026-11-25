@@ -104,6 +104,14 @@ test('all four sources compare independent demand with the same dated room contr
     { ...dates, matchKey: 'A', existingAthleteId: 1, roomType: 'Single' },
     { ...dates, matchKey: 'C', roomType: 'Single' },
   ], [], []));
+  const reportedPair = [{person1Key:'A', person2Key:'B', roomType:'Double shared',
+    checkInDate:dates.arrivalDate, checkOutDate:dates.departureDate, sourceOnlyPartner:true}];
+  const regular = {...dates, matchKey:'B', roomType:'Double shared', accommodationRequirement:'REQUIRED'};
+  const open = {...dates, matchKey:'A', roomType:'Double shared', accommodationRequirement:'UNRESOLVED'};
+  const waiting = concreteRoomDemand(excelDemandRecords([open, regular], reportedPair, []));
+  assert.ok(waiting.days.filter(day => day.beds).every(day => day.dz === 1 && day.ez === 0 && day.beds === 1 && day.provisional));
+  const decided = concreteRoomDemand(excelDemandRecords([{...open, accommodationRequirement:'REQUIRED'}, regular], reportedPair, []));
+  assert.ok(decided.days.filter(day => day.beds).every(day => day.dz === 2 && day.beds === 2 && day.provisional));
   const imported = concreteRoomDemand(importedDemandRecords(athletes, []));
   for (const [source, demand, expected] of [
     ['event', undefined, [4, 2, 2]],
