@@ -458,9 +458,9 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
     assert next(p for p in restored.json['preview']['people'] if p['matchKey'] == target['matchKey'])['accommodationRequirement'] == 'UNRESOLVED'
     athlete_to_exclude = next(p for p in restored.json['preview']['people'] if p['function'].lower() == 'athlete')
     athlete_path = f"/api/import/sessions/{joint.json['id']}/accommodation-requirements/{athlete_to_exclude['matchKey']}"
-    restored = client.patch(athlete_path, json={'accommodationRequirement': 'NO_DISPO'})
-    assert restored.status_code == 200, restored.json
-    joint = restored
+    joint = client.patch(athlete_path, json={'accommodationRequirement': 'NO_DISPO'})
+    assert joint.status_code == 200, joint.json
+    assert quotas(joint.json['preview']) == quotas(preview)
     memberships = {p['matchKey']: set(map(str, p['competitionIds'])) for p in preview['people']}
     run({'session': joint.json}, owner)
 
