@@ -45,6 +45,7 @@ export interface ListRow {
   accommodationRequirement?: string;
   accommodationStatus?: string;
   singleRoomSpecialStatus: string;
+  fisAccommodationDeviation?: string;
   quotaEvaluation: 'EZ' | 'DZ' | '—';
   roommate: string;
   athleteRemark: string;
@@ -66,7 +67,7 @@ export interface ListFilters {
   role: string;
   hotel: string;
   status: '' | WorkCategory;
-  hint: '' | 'internal' | 'athlete' | 'import' | 'room-change' | 'single-room' | 'surcharge' | 'without-room' | 'no-room';
+  hint: '' | 'internal' | 'athlete' | 'import' | 'room-change' | 'single-room' | 'surcharge' | 'without-room' | 'no-room' | 'fis-deviation';
   movement: '' | 'arrival' | 'departure';
   period: '' | 'today' | 'tomorrow' | 'week';
   assignedOnly: boolean;
@@ -262,6 +263,8 @@ export function createListRows(athletes: Athlete[], bookings: RoomBooking[], hot
       approvedExtraSingleSurcharge: surchargeLabel('APPROVED_EXTRA_SINGLE'),
       singleRoomSpecialStatus: singleRoomSpecialStatusLabel(
         athlete.single_room_status, athlete.singleRoomQuotaExemptReason),
+      fisAccommodationDeviation: athlete.hasFisAccommodationDeviation
+        ? athlete.fisAccommodationDeviationReasons?.join(', ') || 'Ja' : '',
       quotaEvaluation: firstSegment?.quotaEvaluation || '—',
       roommate: firstSegment?.roommate || value(athlete.sharedWithName),
       athleteRemark: value(athlete.additionalItems),
@@ -290,6 +293,7 @@ export function filterListRows(rows: ListRow[], kind: ListKind, filters: ListFil
     if (filters.hint === 'athlete' && row.athleteRemark === '—') return false;
     if (filters.hint === 'import' && !row.importChanged) return false;
     if (filters.hint === 'room-change' && !row.roomChanged) return false;
+    if (filters.hint === 'fis-deviation' && !row.fisAccommodationDeviation) return false;
     if (filters.hint === 'single-room' && row.quotaEvaluation !== 'EZ' && !row.segments.some(segment=>segment.countsAsSingle) && !row.singleRoomPending) return false;
     if (filters.hint === 'surcharge' && row.surcharge !== 'Ja') return false;
     if (filters.hint === 'without-room' && (row.assigned || !requiresAccommodation(row))) return false;

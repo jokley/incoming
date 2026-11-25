@@ -986,7 +986,7 @@ class RoomBooking(db.Model):
                      (count == 1) & (func.coalesce(capacity == 1, False) | cls.counts_as_single.is_(True))),
                     else_=cls.counts_as_single)
 
-    def to_dict(self):
+    def to_dict(self, *, accommodation_decisions=None):
         from accommodation_scope import validate_serialized_ownership
         validate_serialized_ownership(self)
         return {
@@ -999,7 +999,7 @@ class RoomBooking(db.Model):
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
             'countsAsSingle': self.effective_counts_as_single,
-            'occupants': [occupant.to_dict() for occupant in self.occupants]
+            'occupants': [occupant.to_dict(accommodation_decisions=accommodation_decisions) for occupant in self.occupants]
         }
 
 
@@ -1017,13 +1017,13 @@ class RoomBookingOccupant(db.Model):
 
     athlete = db.relationship('Athlete', backref='room_booking_memberships')
 
-    def to_dict(self):
+    def to_dict(self, *, accommodation_decisions=None):
         from accommodation_scope import validate_serialized_ownership
         validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'roomBookingId': str(self.room_booking_id),
-            'athlete': self.athlete.to_dict(),
+            'athlete': {**self.athlete.to_dict(), **((accommodation_decisions or {}).get(self.athlete_id, {}))},
             'role': self.role
         }
 

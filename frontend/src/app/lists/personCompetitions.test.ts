@@ -56,7 +56,7 @@ test('hotel and text filters find later segments and retain the complete person 
 });
 
 test('Excel retains all segment values in one person row or separate hotel rows',async()=>{
- const rows=createListRows([guest],[booking('b','Hotel B','2027-03-15',false),booking('a','Hotel A','2027-03-10',true)]);
+ const rows=createListRows([{...guest,hasFisAccommodationDeviation:true,fisAccommodationDeviationReasons:['Zimmertyp','Zimmerpartner']}],[booking('b','Hotel B','2027-03-15',false),booking('a','Hotel A','2027-03-10',true)]);
  const originalDocument=Object.getOwnPropertyDescriptor(globalThis,'document');
  const originalCreate=URL.createObjectURL;
  const originalTimeout=globalThis.setTimeout;
@@ -67,6 +67,9 @@ test('Excel retains all segment values in one person row or separate hotel rows'
   globalThis.setTimeout=(()=>0) as unknown as typeof setTimeout;
   exportExcel(rows,'nations');
   const personXml=await blob!.text();
+  const deviation = 'Zimmertyp, Zimmerpartner';
+  assert.match(personXml,/Abweichung FIS/);
+  assert.equal(personXml.split(deviation).length-1, 1);
   assert.match(personXml,/Hotel A\nHotel B/);assert.match(personXml,/2027-03-10\n2027-03-15/);
   assert.match(personXml,/DZ a\nDZ b/);assert.match(personXml,/DZ\nDZ/);
   assert.match(personXml,/2027-03-20\n2027-03-20/);assert.match(personXml,/Ja\nNein/);
@@ -74,6 +77,7 @@ test('Excel retains all segment values in one person row or separate hotel rows'
   exportExcel(rows,'hotels');
   const hotelXml=await blob!.text();
   assert.equal((hotelXml.match(/<row r=/g)||[]).length,3);
+  assert.equal(hotelXml.split(deviation).length-1, 2);
   assert.match(hotelXml,/Hotel A/);assert.match(hotelXml,/Hotel B/);
  } finally {
   if(originalDocument)Object.defineProperty(globalThis,'document',originalDocument);else Reflect.deleteProperty(globalThis,'document');

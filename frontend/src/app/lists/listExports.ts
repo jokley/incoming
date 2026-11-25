@@ -5,7 +5,7 @@ export const personExportColumns: Array<[keyof ListRow, string]> = [
   ['nation', 'Nation'], ['discipline', 'Disziplin / Event'], ['role', 'Funktion'],
   ['stayWindow','Zusatznächte'], ['hotelStayNote','Hotelhinweis Zusatznächte'], ['eventPeriod','Eventzeitraum'], ['allowedStay','Zulässiger Aufenthalt'], ['assessedStay','Bewerteter Aufenthalt'], ['arrival', 'Anreise'], ['departure', 'Abreise'], ['firstMeal', 'First Meal'],
   ['lastMeal', 'Last Meal'], ['specialMeal', 'Special Meal'], ['lateCheckout', 'Late Checkout'],
-  ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['surcharge', 'Mehrpreis'],
+  ['accommodationStatus', 'Unterkunftsstatus'], ['singleRoomSpecialStatus', 'EZ-Sonderstatus'], ['fisAccommodationDeviation', 'Abweichung FIS'], ['surcharge', 'Mehrpreis'],
   ['specialRateSurcharge', 'Sondertarif'], ['approvedExtraSingleSurcharge', 'Genehmigtes zusätzliches EZ'], ['roommate', 'Zimmerpartner'],
   ['athleteRemark', 'Bemerkung Athlet'], ['internalNote', 'Bemerkung Intern'],
   ['quotaEvaluation', 'EZ-Nutzung (countsAsSingle)'],

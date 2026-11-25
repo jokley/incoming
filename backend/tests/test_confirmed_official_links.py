@@ -442,6 +442,25 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
     assert sum(p['function'].lower() == 'athlete' for p in preview['people']) == 35
     assert sum(p['accommodationRequirement'] == 'UNRESOLVED' for p in preview['people']) == 5
     assert len([r for r in preview['rooms'] if r.get('sourceOnlyPartner')]) == 3
+    client = app.test_client()
+    target = next(p for p in preview['people'] if p['lastname'] == 'PALA')
+    url = f"/api/import/sessions/{joint.json['id']}/accommodation-requirements/{target['matchKey']}"
+    excluded = client.patch(url, json={'accommodationRequirement': 'NO_DISPO'})
+    assert excluded.status_code == 200, excluded.json
+    staged = next(p for p in excluded.json['preview']['people'] if p['matchKey'] == target['matchKey'])
+    assert staged['accommodationRequirement'] == 'NO_DISPO'
+    assert staged['fisAccommodationDeviationReasons'] == ['No Dispo']
+    rechecked = compose(second.json, owner)
+    assert rechecked.status_code == 200, rechecked.json
+    assert next(p for p in rechecked.json['preview']['people'] if p['matchKey'] == target['matchKey'])['accommodationRequirement'] == 'NO_DISPO'
+    restored = client.patch(url, json={'accommodationRequirement': None})
+    assert restored.status_code == 200, restored.json
+    assert next(p for p in restored.json['preview']['people'] if p['matchKey'] == target['matchKey'])['accommodationRequirement'] == 'UNRESOLVED'
+    athlete_to_exclude = next(p for p in restored.json['preview']['people'] if p['function'].lower() == 'athlete')
+    athlete_path = f"/api/import/sessions/{joint.json['id']}/accommodation-requirements/{athlete_to_exclude['matchKey']}"
+    restored = client.patch(athlete_path, json={'accommodationRequirement': 'NO_DISPO'})
+    assert restored.status_code == 200, restored.json
+    joint = restored
     memberships = {p['matchKey']: set(map(str, p['competitionIds'])) for p in preview['people']}
     run({'session': joint.json}, owner)
 
@@ -449,6 +468,9 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
     assert len(people) == 69
     assert {p.fis_code or p.competitor_id: {str(c.id) for c in p.competitions} for p in people} == memberships
     unresolved = {str(p.id) for p in people if p.accommodation_requirement == 'UNRESOLVED'}
+    excluded_athlete = Athlete.query.filter_by(fis_code=athlete_to_exclude['fisCode']).one()
+    assert excluded_athlete.accommodation_requirement == 'NO_DISPO'
+    assert excluded_athlete.accommodation_requirement_source == 'MANUAL'
     assert len(unresolved) == 5
     klotz = Athlete.query.filter_by(lastname='KLOTZ', firstname='Siegmar').one()
     pala = Athlete.query.filter_by(lastname='PALA', firstname='Bartolomeo').one()
@@ -475,6 +497,8 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
         run({'session': recomposed.json}, owner)
 
     repeat_original()
+    assert excluded_athlete.accommodation_requirement == 'NO_DISPO'
+    assert excluded_athlete.accommodation_requirement_source == 'MANUAL'
     assert pala.accommodation_requirement == 'UNRESOLVED'
     for value in ('REQUIRED', 'NO_ROOM', 'NO_DISPO'):
         edited = client.patch(f'/api/athletes/{pala.id}', json={'accommodationRequirement': value})
@@ -543,6 +567,21 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
     booked_no_dispo = client.patch(regular_url, json={'accommodationRequirement': 'NO_DISPO'})
     assert booked_no_dispo.status_code == 200
     assert booked_no_dispo.json['accommodationCoverage']['segments']
+    grouped = client.get('/api/room-bookings/grouped')
+    assert grouped.status_code == 200
+    occupant, = grouped.json[0]['occupants']
+    assert occupant['athlete']['fisAccommodationDeviationReasons'] == ['No Dispo']
+    from test_import_performance import sql_count
+    from routes.athletes import fis_accommodation_decisions
+    # Measure the projection with loaded people, as on the production read paths.
+    loaded = Athlete.query.filter(Athlete.id.in_([klotz.id, pala.id, excluded_athlete.id])).all()
+    with sql_count() as queries:
+        single = fis_accommodation_decisions([klotz])
+    with sql_count() as many_queries:
+        multiple = fis_accommodation_decisions(loaded)
+    assert single[klotz.id] == multiple[klotz.id]
+    assert len(queries) == len(many_queries) <= 2
+
     assert RoomBooking.query.one().id == booking_id
 
     assert {i: db.session.get(ImportSessionVersion, i).preview_json for i in source_ids} == sources_before
@@ -557,3 +596,15 @@ def test_no_dispo_without_comparable_fis_source_is_not_a_deviation():
         result = {}
         add_accommodation_decision(result, athlete, requests)
         assert result == {'accommodationDecisionLabel': 'Nicht disponieren', 'hasFisAccommodationDeviation': False}
+
+    athlete.accommodation_requirement = 'REQUIRED'
+    athlete.room_type = 'Double shared'
+    athlete.shared_with_name = 'Current Partner'
+    request = {'roomType': 'Double shared', 'partner': None}
+    result = {}
+    add_accommodation_decision(result, athlete, [request])
+    assert result['hasFisAccommodationDeviation'] is False
+    assert 'matchesDecision' not in request
+
+    add_accommodation_decision(result, athlete, [{'roomType': 'Single', 'partner': 'Reported Partner'}])
+    assert result['fisAccommodationDeviationReasons'] == ['Zimmerpartner', 'Zimmertyp']
