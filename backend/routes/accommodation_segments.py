@@ -55,7 +55,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if request.method == 'DELETE':
             db.session.delete(membership)
             db.session.flush()
-            if not event_query(RoomBookingOccupant).filter_by(room_booking_id=existing.id).count():
+            remaining = event_query(RoomBookingOccupant).filter_by(room_booking_id=existing.id).count()
+            if not remaining:
                 db.session.delete(existing)
             _acknowledge_import_changes([person.id])
             db.session.flush()
@@ -82,9 +83,14 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
 
         target = event_get(RoomBooking, int(data['joinBookingId']), required=True) if data.get('joinBookingId') else None
         _require(not target or not existing, 'INVALID_JOIN', 'Beitreten ist nur beim Hinzufügen möglich.')
+        release_single_use = data.get('confirmReleaseSingleUse') is True
+        if release_single_use:
+            _require(target and target.is_double_room and len(target.occupants) == 1 and target.effective_counts_as_single,
+                     'SINGLE_USE_CHANGED', 'Die EZ-Nutzung oder Zimmerbelegung hat sich geändert. Bitte erneut prüfen.')
         if target:
-            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair or not target.counts_as_single,
-                     'ROOM_SINGLE_USE', 'Zimmer ist durch EZ-Nutzung gesperrt.')
+            _require(target.hotel.accommodation_type == 'EXTERNAL' or assembling_pair
+                     or release_single_use or not target.effective_counts_as_single,
+                     'ROOM_SINGLE_USE', 'Bitte das Aufheben der EZ-Nutzung bestätigen.')
             _require(not any(o.athlete_id == person.id for o in target.occupants),
                      'ALREADY_ATTACHED', 'Person ist diesem Zimmer bereits zugewiesen.')
             _require(target.check_in_date == start and target.check_out_date == end,
@@ -98,10 +104,14 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             'hotelId': str(target.hotel_id) if target else data.get('hotelId'),
             'roomTypeId': target.room_type_id if target else data.get('roomTypeId'),
             'roomNumber': target.room_number if target else data.get('roomNumber'),
+            'inventoryId': data.get('inventoryId'),
+            'bedroomIndex': target.bedroom_index if target else data.get('bedroomIndex', existing.bedroom_index if existing else None),
+            'confirmApartmentException': data.get('confirmApartmentException'),
+            'apartmentExceptionReason': data.get('apartmentExceptionReason'),
             'checkInDate': data['checkInDate'], 'checkOutDate': data['checkOutDate'],
         }
         if existing or target:
-            payload_data['countsAsSingle'] = (existing or target).counts_as_single
+            payload_data['countsAsSingle'] = False if release_single_use else (existing or target).counts_as_single
         else:
             if new_booking_default is not None:
                 payload_data['countsAsSingle'] = new_booking_default
@@ -111,6 +121,7 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         if (shared and start == existing.check_in_date and end == existing.check_out_date
                 and str(payload_data['hotelId']) == str(existing.hotel_id)
                 and str(payload_data['roomTypeId']) == str(existing.room_type_id)
+                and payload_data['bedroomIndex'] == existing.bedroom_index
                 and (_planned_room_key(payload_data['roomNumber']) or payload_data['roomNumber'])
                 == (_planned_room_key(existing.room_number) or existing.room_number)):
             # Saving an unchanged shared segment must not force a new reservation.
@@ -121,6 +132,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             return jsonify(result)
         # A shared edit creates a separate room booking. Its old room still
         # consumes capacity for the other occupants, but is excluded for this person.
+        if target and target.bedroom_index is not None:
+            payload_data['athleteIds'].extend(str(o.athlete_id) for o in target.occupants)
         payload, _, error = _validate_booking_payload(payload_data,
             existing_booking=target or (existing if not shared else None),
             person_booking_exclusion_id=existing.id if existing else None, allow_single_join=assembling_pair)
@@ -132,7 +145,8 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
         excluded = {b.id for b in (target, existing if not shared else None) if b}
         same_room = event_query(RoomBooking).filter_by(hotel_id=payload['hotel_id'], room_type_id=payload['room_type_id']).all()
         for other in ([] if external else same_room):
-            if other.id in excluded:
+            if other.id in excluded or (payload.get('bedroom_index') is not None
+                    and other.bedroom_index is not None and other.bedroom_index != payload['bedroom_index']):
                 continue
             same_number = (_planned_room_key(other.room_number) or other.room_number) == (
                 _planned_room_key(payload['room_number']) or payload['room_number'])
@@ -143,6 +157,14 @@ def _mutate_segment(person_id, booking_id=None, *, data_override=None, commit=Tr
             db.session.add(RoomBookingOccupant(athlete_id=person.id, room_booking_id=target.id))
             _acknowledge_import_changes([person.id])
             booking = target
+            if target.is_double_room or target.bedroom_index is not None:
+                target.counts_as_single = False
+            if target.bedroom_index is not None and payload.get('apartment_exception'):
+                from apartment_occupancy import audit_exception
+                target.apartment_exception = payload['apartment_exception']
+                audit_exception(target)
+            if release_single_use:
+                g.released_single_use = True
         else:
             role = membership.role if membership else None
             if shared:
@@ -184,6 +206,8 @@ def add_shared_segment():
                  'INVALID_PEOPLE', 'Eine Person oder zwei Zimmerpartner auswählen.')
         ids = [int(value) for value in ids]
         _require(len(set(ids)) == len(ids), 'INVALID_PEOPLE', 'Personen müssen unterschiedlich sein.')
+        if data.get('confirmReleaseSingleUse') is True:
+            _require(len(ids) == 1, 'INVALID_PEOPLE', 'Genau eine zweite Person auswählen.')
         from external_accommodation import external_plan, release_standard_period
         hotel = event_get(Hotel, int(data.get('hotelId', 0)))
         external = bool(hotel and hotel.accommodation_type == 'EXTERNAL')
@@ -211,7 +235,19 @@ def add_shared_segment():
             _require(coverage['coverageStatus'] != 'CONFLICT' and (external or interval in coverage['openIntervals']),
                      'OPEN_INTERVAL_CHANGED', 'Der gewählte offene Zeitraum muss für alle Personen identisch und noch offen sein. Bitte Ansicht aktualisieren.')
         from app import _initialize_new_booking_counts_as_single
-        default_flag = _initialize_new_booking_counts_as_single({**data, 'athleteIds': ids}, people=people)['countsAsSingle']
+        initialized = _initialize_new_booking_counts_as_single({**data, 'athleteIds': ids}, people=people)
+        if data.get('bedroomIndex') is not None and not data.get('joinBookingId'):
+            from app import _validate_booking_payload, _save_booking_from_payload
+            validated, _, error = _validate_booking_payload(initialized)
+            if error:
+                db.session.rollback()
+                return error
+            booking = _save_booking_from_payload(validated, commit=False)
+            result = {'success': True, 'booking': booking.to_dict(),
+                      'people': [{'personId': str(person.id), 'accommodationCoverage': coverage_for(person)} for person in people]}
+            db.session.commit()
+            return jsonify(result), 201
+        default_flag = initialized['countsAsSingle']
         join_id = data.get('joinBookingId')
         for person in people:
             response = _mutate_segment(person.id, data_override={**data, 'joinBookingId': join_id}, commit=False, new_booking_default=default_flag, assembling_pair=not data.get('joinBookingId'))
@@ -295,3 +331,59 @@ def preview_external_segment():
         return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), error.status
     finally:
         db.session.rollback()
+
+
+@accommodation_segments.post('/api/assignments/bookings/<int:booking_id>/bedroom')
+def resolve_legacy_bedroom(booking_id):
+    """Bind the current apartment booking in place, without replacing occupants."""
+    from app import _build_virtual_slots, _validate_booking_payload
+    from apartment_occupancy import audit_apartment_change
+    from models import HotelRoomInventory
+
+    try:
+        lock_accommodation_writes()
+        booking = event_get(RoomBooking, booking_id, required=True)
+        data = request.get_json(silent=True) or {}
+        _require(isinstance(data, dict), 'INVALID_BEDROOM', 'Ungültige Schlafraumzuordnung.')
+        _require(booking.hotel.accommodation_type != 'EXTERNAL' and booking.bedroom_index is None
+                 and booking.room_type and booking.room_type.apartment_layout,
+                 'LEGACY_APARTMENT_REQUIRED', 'Die Buchung hat keinen offenen Schlafraumbezug.')
+        people = sorted(str(row.athlete_id) for row in booking.occupants)
+        before = booking.to_dict()
+        expected = {key: before[key] for key in ('checkInDate', 'checkOutDate', 'roomNumber', 'countsAsSingle')}
+        expected['athleteIds'] = people
+        _require(data.get('expected') == expected, 'STALE_LEGACY_BOOKING',
+                 'Die Buchung wurde geändert. Bitte Ansicht aktualisieren und die Personen erneut prüfen.')
+        _require(not booking.counts_as_single or len(people) == 1,
+                 'LEGACY_SINGLE_USE_CONFLICT', 'Mehrere Personen mit hinterlegter EZ-Nutzung. Bitte Belegung fachlich klären.')
+        scope = {'hotel_id': booking.hotel_id, 'room_type_id': booking.room_type_id}
+        inventories = event_query(HotelRoomInventory).filter_by(**scope).all()
+        bookings = event_query(RoomBooking).filter_by(**scope).options(db.joinedload(RoomBooking.occupants)).all()
+        slots = _build_virtual_slots(booking.hotel, booking.room_type, inventories, bookings)
+        slot = next((row for row in slots if row['inventoryId'] and booking in row['bookings']), None)
+        _require(slot and data.get('inventoryId') == slot['inventoryId'] and data.get('roomNumber') == slot['roomNumber'],
+                 'STALE_APARTMENT_SLOT', 'Das bestätigte Apartment ist nicht mehr eindeutig verfügbar. Bitte Ansicht aktualisieren.')
+        payload, _, error = _validate_booking_payload({
+            **expected, 'hotelId': booking.hotel_id, 'roomTypeId': booking.room_type_id,
+            'roomNumber': slot['roomNumber'], 'inventoryId': slot['inventoryId'],
+            'bedroomIndex': data.get('bedroomIndex'),
+        }, existing_booking=booking, legacy_apartment_slots=slots)
+        if error:
+            db.session.rollback()
+            return error
+        booking.room_number = payload['room_number']
+        booking.bedroom_index = payload['bedroom_index']
+        audit_apartment_change(booking, 'Schlafraum zugeordnet', {
+            **expected, 'previousRoomNumber': expected['roomNumber'], 'roomNumber': booking.room_number,
+            'inventoryId': slot['inventoryId'], 'bedroomIndex': booking.bedroom_index,
+        })
+        result = booking.to_dict()
+        db.session.commit()
+        g.atomic_apartment_audit = True
+        return jsonify(result)
+    except InvalidSegment as error:
+        db.session.rollback()
+        return jsonify(error='VALIDATION_ERROR', reasonCode=error.code, message=error.message), 400
+    except Exception:
+        db.session.rollback()
+        raise

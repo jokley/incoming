@@ -70,8 +70,8 @@ def person_accommodation_coverage(arrival, departure, bookings, requirement='REQ
             'accommodationType': getattr(booking.hotel, 'accommodation_type', 'STANDARD'),
             'roomTypeId': str(booking.room_type_id) if booking.room_type_id else None,
             'roomTypeName': booking.room_type.name if booking.room_type else None,
-            'roomNumber': booking.room_number, **_interval(left, right),
-            'countsAsSingle': bool(booking.counts_as_single), 'conflictCodes': codes,
+            'roomNumber': booking.room_number, 'bedroomIndex': getattr(booking, 'bedroom_index', None), **_interval(left, right),
+            'countsAsSingle': bool(getattr(booking, 'effective_counts_as_single', booking.counts_as_single)), 'conflictCodes': codes,
         })
         if left and right and left < right:
             dated.append((left, right, booking.id, codes))
@@ -129,6 +129,10 @@ def person_disposition_status(person, coverage, bookings, allocation, *, room_re
     for source in coverage['segments']:
         booking = unique[source['bookingId']]
         capacity = getattr(booking.room_type, 'max_persons', None) if booking.room_type else None
+        bedroom = getattr(booking, 'bedroom_index', None)
+        layout = getattr(booking.room_type, 'apartment_layout', None)
+        if bedroom and layout and 1 <= bedroom <= len(layout['bedrooms']):
+            capacity = layout['bedrooms'][bedroom-1]
         occupants = {item.athlete_id for item in getattr(booking, 'occupants', [])}
         count = len(occupants)
         physical = ('SINGLE_ROOM' if capacity == 1 and count == 1 else
@@ -149,7 +153,7 @@ def person_disposition_status(person, coverage, bookings, allocation, *, room_re
                   'UNASSIGNED' if not segments else 'MISMATCH' if mismatch else
                   'MATCH' if coverage['coverageStatus'] == 'FULLY_ASSIGNED' and
                   all(s['comparison'] == 'MATCH' for s in segments) else 'UNKNOWN')
-    single = any(b.counts_as_single for b in unique.values())
+    single = any(segment['countsAsSingle'] for segment in segments)
     status = allocation['status'] if single and allocation else 'UNKNOWN' if single else 'NO_SINGLE_USE'
     context = allocation['context'] if single and allocation else None
     reason = ('Kein gültiger Quotenkontext zuordenbar' if status == 'PENDING' and context is None else
@@ -169,7 +173,7 @@ def person_disposition_status(person, coverage, bookings, allocation, *, room_re
                            'segments': segments},
         'singleRoom': {'hasSingleUse': single, 'status': status, 'context': context,
                        'eligibleContexts': allocation['eligibleContexts'] if single and allocation else [],
-                       'bookingIds': sorted(key for key,b in unique.items() if b.counts_as_single),
+                       'bookingIds': sorted(segment['bookingId'] for segment in segments if segment['countsAsSingle']),
                        'storedApprovalId': person.get('singleRoomDecisionId'),
                        'approvalApplicable': approval_applicable,
                        'applicableApprovalId': person.get('singleRoomDecisionId') if approval_applicable else None,

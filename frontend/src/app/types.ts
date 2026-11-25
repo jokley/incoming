@@ -2,10 +2,14 @@ export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM' | 'NO_DISPO';
 export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
 export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL' | 'APPROVAL'; accommodationRateApprovalId?: number; accommodationRateApprovalIds?: number[]; accommodationRateExplanation?: string; }
+export type ApartmentLayout = { bedrooms: number[]; showers: number };
+export type ApartmentException = { rules: string[]; reason: string; username: string; timestamp: string };
+
 export interface RoomType {
   id: string;
   name: string;
   maxPersons: number;
+  apartmentLayout?: ApartmentLayout | null;
 }
 
 export interface AuthenticatedUser {
@@ -295,6 +299,8 @@ export interface RoomBookingOccupant {
 }
 
 export interface RoomBooking {
+  bedroomIndex?: number | null;
+  apartmentException?: ApartmentException | null;
   id: string;
   hotel: { id: string; name: string; accommodationType?: 'STANDARD' | 'EXTERNAL' };
   roomType: RoomType | null;
@@ -371,12 +377,17 @@ export interface RoomBookingUnit {
 }
 
 export interface AssignmentValidationResult {
+  apartmentRules?: string[];
+  bedroomIndex?: number;
   slotId: string;
   status: 'valid' | 'warning' | 'blocked';
   messages: string[];
 }
 
 export interface AssignmentGridBooking {
+  sourceRoomNumber?: string | null;
+  bedroomIndex?: number | null;
+  apartmentException?: ApartmentException | null;
   bookingId: string;
   roomNumber?: string | null;
   hotelId: string;
@@ -385,7 +396,7 @@ export interface AssignmentGridBooking {
   checkOutDate?: string | null;
   countsAsSingle?: boolean;
   capacity?: number;
-  occupants: Array<{
+  occupants: Array<AccommodationRequirementFields & {
     athleteId: string;
     name: string;
     nationCode: string;
@@ -409,7 +420,11 @@ export interface AssignmentGridBooking {
 }
 
 export interface AssignmentSlot {
+  bedroomIndex?: number | null;
+  apartmentLayout?: ApartmentLayout | null;
   slotId: string;
+  inventoryId?: string | null;
+  roomLabel?: string;
   hotelId: string;
   hotelName: string;
   roomTypeId: string;

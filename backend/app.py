@@ -427,7 +427,7 @@ def create_simulation():
         assignments = 0
         assigned_people = 0
         hotel_ids = set()
-        bookings_by_slot = {}
+        bookings_by_slot = {str(booking.id): booking for booking in bookings}
         for hotel_id, room_type_id, check_in_date, check_out_date in existing_bookings:
             bookings_by_slot.setdefault((hotel_id, room_type_id), []).append(
                 (check_in_date, check_out_date))
@@ -656,6 +656,8 @@ def _business_activity(entity_type, entity_id, action, payload, response):
             title = 'Zimmer zugewiesen'
         if segment_operation:
             title = 'Unterkunftszuweisung entfernt' if request.method == 'DELETE' else 'Unterkunftszuweisung bearbeitet' if request.method == 'PUT' else 'Unterkunftszuweisung hinzugefügt'
+        if segment_operation and getattr(g, 'released_single_use', False):
+            title = 'EZ-Nutzung aufgehoben und Zimmerpartner hinzugefügt'
         if request.path.endswith('/split'):
             title = 'Zuweisung geteilt'
             details.append(f"Teilungsdatum: {response.get('splitDate', '')}; Personen: {', '.join(str(value) for value in payload.get('athleteIds', []))}")
@@ -777,7 +779,7 @@ def _business_activity(entity_type, entity_id, action, payload, response):
 
 @app.after_request
 def audit_successful_mutation(response):
-    if getattr(g,'atomic_import_audit',False):
+    if getattr(g,'atomic_import_audit',False) or getattr(g,'atomic_apartment_audit',False):
         response.headers['X-Request-ID']=getattr(g,'request_id','')
         return response
     user = current_user()
@@ -1100,14 +1102,12 @@ def _calculate_unit_validation(unit, slot, existing_bookings):
         blocking_messages.append(f'{unit["roomType"]} passt nicht auf {slot["roomTypeName"]}')
 
     if not slot['dateCoverage']['coversRequestedRange']:
-        warning_messages.append('Kontingent-Zeitraum deckt den gewünschten Aufenthalt nicht vollständig ab')
+        blocking_messages.append('Kontingent-Zeitraum deckt den gewünschten Aufenthalt nicht vollständig ab')
 
     for booking in existing_bookings:
         if booking.id == unit.get('assignedBookingId'):
             continue
         if str(booking.hotel_id) != str(slot['hotelId']) or str(booking.room_type_id) != str(slot['roomTypeId']):
-            continue
-        if (_planned_room_key(booking.room_number) or booking.room_number or '') != (slot['roomNumber'] or ''):
             continue
         if _dates_overlap(
             booking.check_in_date,
@@ -1145,48 +1145,95 @@ def _planned_room_key(room_number):
     return _planned_room_number(int(match.group(1))) if match else None
 
 
+def _inventory_room_number(inventory_id, index):
+    # Store the inventory identity in the existing virtual room key (VARCHAR(20)).
+    return f'K{inventory_id:x}-{index:x}'
+
+
+def _inventory_room_coordinates(room_number):
+    match = re.fullmatch(r'K([0-9a-f]{1,8})-([0-9a-f]{1,8})', room_number or '')
+    return tuple(int(value, 16) for value in match.groups()) if match else (None, None)
+
+
 def _build_virtual_slots(hotel, room_type, inventories, bookings):
-    slot_count = sum(inv.room_count for inv in inventories)
-    relevant_bookings = [
-        booking for booking in bookings
-        if booking.hotel_id == hotel.id and booking.room_type_id == room_type.id
-    ]
-    bookings_by_room_number = {}
-    unmatched_bookings = []
-    for booking in relevant_bookings:
-        key = _planned_room_key(booking.room_number)
-        if key:
-            bookings_by_room_number.setdefault(key, []).append(booking)
-        else:
-            unmatched_bookings.append(booking)
+    from assignment_availability import inventory_covers
     slots = []
-    for index in range(slot_count):
-        room_number = _planned_room_number(index + 1)
-        slot_bookings = bookings_by_room_number.get(room_number, [])
-        if not slot_bookings and unmatched_bookings:
-            slot_bookings = [unmatched_bookings.pop(0)]
-        slot_bookings = sorted(slot_bookings, key=lambda booking: (booking.check_in_date or datetime.max.date(), booking.id))
-        slots.append({
-            'slotId': f'{hotel.id}:{room_type.id}:{index + 1}',
-            'hotelId': str(hotel.id),
-            'hotelName': hotel.name,
-            'roomTypeId': str(room_type.id),
-            'roomTypeName': room_type.name,
-            'capacity': room_type.max_persons,
-            'slotIndex': index + 1,
-            'roomNumber': room_number,
-            'inventoryRoomCount': slot_count,
-            'dateCoverage': {
-                'availableFrom': min(inv.available_from for inv in inventories).isoformat() if inventories else None,
-                'availableUntil': max(inv.available_until for inv in inventories).isoformat() if inventories else None,
-                'coversRequestedRange': True,
-                'intervals': [{'availableFrom': inv.available_from.isoformat(),
-                    'availableUntil': inv.available_until.isoformat()}
-                    for inv in sorted(inventories, key=lambda inv: (inv.available_from, inv.available_until))],
-            },
-            'bookings': slot_bookings,
-        })
+    by_inventory = {}
+    for inventory in sorted(inventories, key=lambda row: (row.available_from, row.available_until, row.id)):
+        coverage = {'availableFrom': inventory.available_from.isoformat(),
+                    'availableUntil': inventory.available_until.isoformat()}
+        rows = [{
+            'slotId': f'{hotel.id}:{room_type.id}:{inventory.id}:{index}',
+            'inventoryId': str(inventory.id),
+            'hotelId': str(hotel.id), 'hotelName': hotel.name,
+            'roomTypeId': str(room_type.id), 'roomTypeName': room_type.name,
+            'capacity': room_type.max_persons, 'slotIndex': index,
+            'roomNumber': _inventory_room_number(inventory.id, index),
+            'roomLabel': _planned_room_number(index),
+            'inventoryRoomCount': inventory.room_count,
+            'apartmentLayout': room_type.apartment_layout,
+            'dateCoverage': {**coverage, 'coversRequestedRange': True, 'intervals': [coverage]},
+            'bookings': [],
+        } for index in range(1, inventory.room_count + 1)]
+        by_inventory[inventory.id] = (inventory, rows)
+        slots.extend(rows)
+
+    def place(booking):
+        inventory_id, index = _inventory_room_coordinates(booking.room_number)
+        if inventory_id is not None:
+            inventory, rows = by_inventory.get(inventory_id, (None, []))
+            if 0 < index <= len(rows) and inventory_covers(inventory, booking.check_in_date, booking.check_out_date):
+                return rows[index - 1]
+            # A removed or modified contingent must never move a persisted virtual room.
+            return None
+        key = _planned_room_key(booking.room_number)
+        preferred = int(key.split()[-1]) if key else None
+        for inventory, rows in by_inventory.values():
+            if not inventory_covers(inventory, booking.check_in_date, booking.check_out_date):
+                continue
+            ordered = ([rows[preferred - 1]] if preferred and preferred <= len(rows) else []) + rows
+            for slot in ordered:
+                if not any(_dates_overlap(b.check_in_date, b.check_out_date,
+                                          booking.check_in_date, booking.check_out_date) for b in slot['bookings']):
+                    return slot
+        return None
+
+    relevant = [b for b in bookings if b.hotel_id == hotel.id and b.room_type_id == room_type.id]
+    # Place persisted virtual IDs first; use date coverage for legacy room numbers.
+    for booking in sorted(relevant, key=lambda b: (_inventory_room_coordinates(b.room_number)[0] is None,
+                                                   b.check_in_date or datetime.max.date(), b.id)):
+        slot = place(booking)
+        if slot is None:
+            slot = {
+                'slotId': f'{hotel.id}:{room_type.id}:legacy:{booking.id}', 'inventoryId': None,
+                'hotelId': str(hotel.id), 'hotelName': hotel.name,
+                'roomTypeId': str(room_type.id), 'roomTypeName': room_type.name,
+                'capacity': room_type.max_persons, 'slotIndex': 0, 'roomNumber': booking.room_number,
+                'inventoryRoomCount': 0, 'dateCoverage': {'coversRequestedRange': False, 'intervals': []},
+                'bookings': [],
+            }
+            slots.append(slot)
+        slot['bookings'].append(booking)
     return slots
+
+
+def inventory_slot_guard(hotel, room_type, inventories, bookings, start, end, *, selected, room_number):
+    from assignment_availability import inventory_guard, inventory_covers, NO_SINGLE_CONTINGENT
+    candidates = [row for row in inventories if (selected is None or row.id == selected.id)
+                  and inventory_covers(row, start, end)]
+    if not candidates:
+        return NO_SINGLE_CONTINGENT
+    slots = _build_virtual_slots(hotel, room_type, inventories, bookings)
+    historical = [booking for slot in slots if slot['inventoryId'] is None for booking in slot['bookings']]
+    for inventory in candidates:
+        rows = [slot for slot in slots if slot['inventoryId'] == str(inventory.id)]
+        if inventory_guard([inventory], historical + [b for slot in rows for b in slot['bookings']], start, end):
+            continue
+        if selected and any(slot['roomNumber'] == room_number and any(
+                _dates_overlap(b.check_in_date, b.check_out_date, start, end) for b in slot['bookings']) for slot in rows):
+            return 'ROOM_BOOKING_OVERLAP', 'Zimmer ist im benötigten Zeitraum nicht verfügbar.'
+        return None
+    return 'KONTINGENT_EXCEEDED', 'Ausgewähltes Kontingent ist im benötigten Zeitraum belegt.'
 
 
 def _find_booking_for_athlete(booking_map, athlete_id):
@@ -1348,7 +1395,7 @@ def _build_room_booking_units():
                 'assignedHotelName': athlete_booking.hotel.name if athlete_booking and athlete_booking.hotel else None,
                 'assignedRoomTypeId': str(athlete_booking.room_type_id) if athlete_booking else None,
                 'assignedRoomNumber': athlete_booking.room_number if athlete_booking else None,
-                'countsAsSingle': bool(athlete_booking.counts_as_single) if athlete_booking else False,
+                'countsAsSingle': athlete_booking.effective_counts_as_single if athlete_booking else False,
             })
 
         warnings = _derive_assignment_warnings(unit_athletes, room_type)
@@ -1386,7 +1433,7 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
     for hotel_section in hotel_sections:
         for slot in hotel_section['slots']:
             slot_copy = dict(slot)
-            covers_requested_range = True
+            covers_requested_range = slot['inventoryId'] is not None
             date_coverage = slot['dateCoverage']
             if (date_coverage['availableFrom'] and date_coverage['availableUntil']
                     and unit.get('checkInDate') and unit.get('checkOutDate')):
@@ -1395,10 +1442,7 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
                     and date_coverage['availableUntil'] >= unit['checkOutDate'])
             slot_copy['dateCoverage'] = dict(date_coverage)
             slot_copy['dateCoverage']['coversRequestedRange'] = covers_requested_range
-            relevant_bookings = bookings_by_slot.get(
-                (slot['hotelId'], slot['roomTypeId'], slot['roomNumber'] or ''),
-                [],
-            )
+            relevant_bookings = [bookings_by_slot[row['bookingId']] for row in slot['bookings']]
             validations.append({
                 'slotId': slot['slotId'],
                 **_calculate_unit_validation(unit, slot_copy, relevant_bookings),
@@ -1427,12 +1471,10 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     timeline_end = max(all_dates).isoformat() if all_dates else None
 
     bookings_by_hotel_room_type = {}
-    bookings_by_slot = {}
+    bookings_by_slot = {str(booking.id): booking for booking in bookings}
     for booking in bookings:
         hotel_room_type_key = (booking.hotel_id, booking.room_type_id)
         bookings_by_hotel_room_type.setdefault(hotel_room_type_key, []).append(booking)
-        slot_key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
-        bookings_by_slot.setdefault(slot_key, []).append(booking)
 
     hotel_sections = []
     for hotel in hotels:
@@ -1440,6 +1482,10 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
         for inventory in ([] if hotel.accommodation_type == 'EXTERNAL' else hotel.room_inventories or []):
             by_room_type.setdefault(inventory.room_type_id, {'roomType': inventory.room_type, 'inventories': []})
             by_room_type[inventory.room_type_id]['inventories'].append(inventory)
+
+        for booking in bookings:
+            if booking.hotel_id == hotel.id and booking.room_type and hotel.accommodation_type != 'EXTERNAL':
+                by_room_type.setdefault(booking.room_type_id, {'roomType': booking.room_type, 'inventories': []})
 
         slots = []
         for room_type_id, payload in by_room_type.items():
@@ -1467,13 +1513,16 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                     'bookings': [
                         {
                             'bookingId': str(booking.id),
-                            'roomNumber': slot['roomNumber'],
+                            'bedroomIndex': booking.bedroom_index, 'apartmentException': booking.apartment_exception,
+                            'sourceRoomNumber': booking.room_number,
+                            'roomNumber': _planned_room_key(booking.room_number) or booking.room_number,
                             'hotelId': str(booking.hotel_id),
                             'roomTypeId': str(booking.room_type_id),
                             'checkInDate': booking.check_in_date.isoformat() if booking.check_in_date else None,
                             'checkOutDate': booking.check_out_date.isoformat() if booking.check_out_date else None,
-                            'countsAsSingle': bool(booking.counts_as_single),
-                            'capacity': slot['capacity'],
+                            'countsAsSingle': booking.effective_counts_as_single,
+                            'capacity': (slot['apartmentLayout']['bedrooms'][booking.bedroom_index - 1]
+                                         if booking.bedroom_index and slot.get('apartmentLayout') else slot['capacity']),
                             'occupants': [
                                 {
                                     'athleteId': str(occ.athlete.id),
@@ -1556,7 +1605,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
     }
 
 
-def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None, allow_single_join=False):
+def _validate_booking_payload(data, existing_booking=None, person_booking_exclusion_id=None, allow_single_join=False, legacy_apartment_slots=None):
     if existing_booking is not None:
         require_event_object(existing_booking)
     athlete_ids = data.get('athleteIds', [])
@@ -1577,7 +1626,12 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
         if int_id not in unique_athlete_ids:
             unique_athlete_ids.append(int_id)
 
-    if not external and len(unique_athlete_ids) > room_type.max_persons:
+    layout = room_type.apartment_layout if room_type and not external else None
+    bedroom = data.get('bedroomIndex')
+    exception = None
+    if bedroom is not None and not layout:
+        return None, None, _booking_error('APARTMENT_LAYOUT_REQUIRED', 'Für diesen Zimmertyp ist kein Schlafraum bestätigt.')
+    if not external and not layout and len(unique_athlete_ids) > room_type.max_persons:
         return None, None, _booking_error('CAPACITY_EXCEEDED', f'Room type max occupancy is {room_type.max_persons}')
 
     if (existing_booking and not external and existing_booking.counts_as_single
@@ -1591,8 +1645,9 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
 
     from accommodation_split import SplitError
     try:
-        for person in athletes:
-            require_assignable(person)
+        if legacy_apartment_slots is None:
+            for person in athletes:
+                require_assignable(person)
     except SplitError as error:
         return None, None, _booking_error(error.code, error.message)
     if external:
@@ -1630,29 +1685,84 @@ def _validate_booking_payload(data, existing_booking=None, person_booking_exclus
     if not external:
         from assignment_availability import inventory_guard
         inventories = event_query(HotelRoomInventory).filter_by(hotel_id=hotel_id, room_type_id=room_type_id).all()
-        query = event_query(RoomBooking).filter_by(hotel_id=hotel_id, room_type_id=room_type_id).filter(
-            RoomBooking.check_in_date < check_out_date, RoomBooking.check_out_date > check_in_date)
+        query = event_query(RoomBooking).filter_by(hotel_id=hotel_id, room_type_id=room_type_id)
         if existing_booking:
             query = query.filter(RoomBooking.id != existing_booking.id)
         other_bookings = query.all()
-        failure = inventory_guard(inventories, other_bookings, check_in_date, check_out_date)
+        selected_id, selected_index = _inventory_room_coordinates(data.get('roomNumber'))
+        explicit_id = data.get('inventoryId')
+        if explicit_id is not None and str(selected_id) != str(explicit_id):
+            return None, None, _booking_error('INVALID_INVENTORY', 'Zimmer gehört nicht zum ausgewählten Kontingent.')
+        if selected_id is not None:
+            selected = next((row for row in inventories if row.id == selected_id), None)
+            if not selected or not 0 < selected_index <= selected.room_count:
+                return None, None, _booking_error('INVALID_INVENTORY', 'Ausgewähltes Kontingent oder Zimmer ist nicht mehr verfügbar.')
+        else:
+            selected = None
+        same_apartment = []
+        if layout:
+            if selected is None:
+                return None, None, _booking_error('APARTMENT_SLOT_REQUIRED', 'Bitte ein konkretes Apartmentkontingent und einen Schlafraum wählen.')
+            from apartment_occupancy import evaluate, exception_evidence
+            slots = (legacy_apartment_slots if legacy_apartment_slots is not None else
+                     _build_virtual_slots(hotel, room_type, inventories, other_bookings))
+            same_apartment = next(([row for row in slot['bookings']
+                                    if not existing_booking or row.id != existing_booking.id]
+                for slot in slots if slot['roomNumber'] == data.get('roomNumber')
+                and slot['inventoryId'] == str(selected.id)), [])
+            hard_failure, rules = evaluate(layout, room_type.max_persons, bedroom, len(unique_athlete_ids),
+                                           same_apartment, check_in_date, check_out_date)
+            if hard_failure:
+                return None, None, _booking_error('APARTMENT_PHYSICAL_LIMIT', hard_failure)
+            reason = data.get('apartmentExceptionReason')
+            if rules:
+                user = current_user()
+                if data.get('confirmApartmentException') is not True or not isinstance(reason, str) or not 1 <= len(reason.strip()) <= 1000 or not user:
+                    return None, None, _booking_error('APARTMENT_EXCEPTION_REQUIRED',
+                        'Reguläre Apartmentgrenze überschritten (' + ', '.join(rules) + '). Ausnahme bestätigen und begründen.')
+                accepted = data.get('acceptedApartmentRules')
+                if accepted is not None and accepted != rules:
+                    return None, None, _booking_error('APARTMENT_EXCEPTION_CHANGED',
+                        'Die betroffenen Apartmentregeln haben sich geändert. Ausnahme erneut prüfen.')
+                exception = exception_evidence(rules, reason.strip(), user, selected.id, data['roomNumber'],
+                                               bedroom, check_in_date, check_out_date)
+        # An already occupied apartment still consumes exactly one physical slot.
+        capacity_bookings = [row for row in other_bookings if row not in same_apartment]
+        failure = inventory_guard(inventories, capacity_bookings, check_in_date, check_out_date)
+        if not failure:
+            if layout:
+                # Reuse the projection with the occupied apartment still present. Removing
+                # it before projecting would move an unrelated legacy booking into the target.
+                selected_rows = [row for slot in slots
+                                 if slot['inventoryId'] in (None, str(selected.id))
+                                 for row in slot['bookings'] if row in capacity_bookings]
+                failure = inventory_guard([selected], selected_rows, check_in_date, check_out_date)
+            else:
+                failure = inventory_slot_guard(hotel, room_type, inventories, capacity_bookings, check_in_date, check_out_date,
+                                               selected=selected, room_number=data.get('roomNumber'))
         if failure:
             return None, None, _booking_error(*failure)
-        if data.get('roomNumber') and any(
+        if not layout and data.get('roomNumber') and any(
             (_planned_room_key(b.room_number) or b.room_number) == (_planned_room_key(data['roomNumber']) or data['roomNumber'])
             and _dates_overlap(b.check_in_date,b.check_out_date,check_in_date,check_out_date)
             for b in other_bookings):
             return None, None, _booking_error('ROOM_BOOKING_OVERLAP', 'Zimmer ist im benötigten Zeitraum nicht verfügbar.')
 
+    counts_as_single = bool(data.get('countsAsSingle', existing_booking.counts_as_single if existing_booking else False))
+    if layout:
+        counts_as_single = len(unique_athlete_ids) == 1 and (room_type.bedroom_capacity(bedroom) == 1 or counts_as_single)
+    elif not external and room_type.max_persons == 2 and len(unique_athlete_ids) == 2:
+        counts_as_single = False
     return {
         'hotel_id': hotel_id,
         'room_type_id': room_type_id,
         'room_number': data.get('roomNumber'),
+        'bedroom_index': bedroom,
+        'apartment_exception': exception,
         'check_in_date': check_in_date,
         'check_out_date': check_out_date,
         'athlete_ids': unique_athlete_ids,
-        'counts_as_single': bool(data.get(
-            'countsAsSingle', existing_booking.counts_as_single if existing_booking else False)),
+        'counts_as_single': counts_as_single,
     }, room_type, None
 
 
@@ -1667,6 +1777,8 @@ def _initialize_new_booking_counts_as_single(data, *, people=None):
     hotel = event_get(Hotel, int(data['hotelId'])) if data.get('hotelId') else None
     room_type = db.session.get(RoomType, int(data['roomTypeId'])) if data.get('roomTypeId') else None
     capacity = room_type.max_persons if room_type and not (hotel and hotel.accommodation_type == 'EXTERNAL') else None
+    if room_type and data.get('bedroomIndex') is not None:
+        capacity = room_type.bedroom_capacity(data['bedroomIndex'])
     initialized = dict(data)
     initialized['countsAsSingle'] = default_counts_as_single(capacity, len(athlete_ids),
         single_request=any(_room_type_label(person.room_type) == 'single' for person in people),
@@ -1684,6 +1796,8 @@ def _save_booking_from_payload(payload, existing_booking=None, commit=True):
             hotel_id=payload['hotel_id'],
             room_type_id=payload['room_type_id'],
             room_number=payload['room_number'],
+            bedroom_index=payload.get('bedroom_index'),
+            apartment_exception=payload.get('apartment_exception'),
             check_in_date=payload['check_in_date'],
             check_out_date=payload['check_out_date'],
             counts_as_single=payload.get('counts_as_single', False),
@@ -1695,6 +1809,8 @@ def _save_booking_from_payload(payload, existing_booking=None, commit=True):
         booking.hotel_id = payload['hotel_id']
         booking.room_type_id = payload['room_type_id']
         booking.room_number = payload['room_number']
+        booking.bedroom_index = payload.get('bedroom_index')
+        booking.apartment_exception = payload.get('apartment_exception')
         booking.check_in_date = payload['check_in_date']
         booking.check_out_date = payload['check_out_date']
         booking.counts_as_single = payload.get('counts_as_single', False)
@@ -1704,6 +1820,8 @@ def _save_booking_from_payload(payload, existing_booking=None, commit=True):
         db.session.add(RoomBookingOccupant(room_booking_id=booking.id, athlete_id=athlete_id))
     db.session.flush()
     _acknowledge_import_changes(payload['athlete_ids'])
+    from apartment_occupancy import audit_exception
+    audit_exception(booking)
     if commit:
         db.session.commit()
     else:
@@ -1755,16 +1873,14 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                'function': a.function, 'matchKey': a.fis_code or a.competitor_id or next(iter(sorted(person_keys(a))), str(a.id)),
                'singleRoomQuotaExemptReason': a.single_room_quota_exempt_reason} for a in athletes]
 
-    # Aggregate every booking membership once. A person with any persisted
-    # counts_as_single booking consumes one physical single at most; additional
-    # bookings never multiply the person or alter the flags themselves.
+    # Aggregate physical single use once per person across all their stays.
     booking_by_athlete = {}
     athlete_ids = [athlete.id for athlete in athletes]
     membership_rows = []
     if athlete_ids:
         membership_rows = db.session.query(
             RoomBookingOccupant.athlete_id,
-            RoomBooking.counts_as_single,
+            RoomBooking.effective_counts_as_single,
         ).filter(ownership_clause(RoomBooking, accommodation_event_id())).filter(ownership_clause(RoomBookingOccupant, accommodation_event_id())).join(
             RoomBooking,
             RoomBooking.id == RoomBookingOccupant.room_booking_id,
@@ -1774,8 +1890,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
     for athlete_id, counts_as_single in membership_rows:
         booking_by_athlete[athlete_id] = booking_by_athlete.get(athlete_id, False) or bool(counts_as_single)
 
-    # The persisted assignment flag is the sole source of truth for operational
-    # quota usage. The physical room type and import entitlement stay unchanged.
+    # Bedroom occupancy supplies physical usage. The quota engine still resolves entitlement.
     assigned = []
     person_approvals = {}
     for athlete, person in zip(athletes, roster):
@@ -1941,7 +2056,7 @@ def _build_official_quota_usage_rows(nation_code=None, discipline=None, gender=N
                 and (not gender or row['personalGender']==normalize_gender(gender) or not row['editable'])
                 and (not personal_gender or row['personalGender']==normalize_gender(personal_gender))]
             planning=operative_projection(forecast)
-            summary=summarize_person_disposition(people,planning['replacedPersonIds'])
+            summary=summarize_person_disposition(people)
             summary.update(virtualPlaces=0,virtualGroups=0,planningConflicts=planning['conflicts'],
                 operationalAccommodationDemand=summary['accommodationPeopleRequired']+planning['virtualPlaces'])
             result.update(personPlanning=planning,personStatuses=people, personSummary=summary,
@@ -2296,6 +2411,9 @@ def confirm_previewed_fis_import():
 @app.route('/api/import/sessions', methods=['GET'])
 def list_import_sessions():
     configured_event_id()  # Operational history cannot select an event without deployment configuration.
+    if has_request_context() and request.args.get('view') == 'queue':
+        from imports.workflow import import_queue_rows
+        return jsonify(import_queue_rows(import_event_id(), request.args.get('decisionId', type=int)))
     from sqlalchemy.orm import selectinload
     sessions = ImportSession.query.filter_by(event_id=import_event_id()).options(
         selectinload(ImportSession.current_version), selectinload(ImportSession.versions),
@@ -2405,7 +2523,9 @@ def get_import_session(session_id):
 @app.route('/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>', methods=['PATCH'])
 def stage_accommodation_requirement(session_id, person_key):
     from copy import deepcopy
-    from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
+    from imports.identity import _find_existing_athlete
+    from imports.read_context import ImportReadContext
+    from imports.workflow import review_approvals
     lock_accommodation_writes()
     session = ImportSession.query.filter_by(id=session_id).with_for_update().first_or_404()
     if session.status in {'APPROVED', 'IMPORTED', 'REPLACED', 'ARCHIVED', 'CANCELLED'} or not session.current_version:
@@ -2415,25 +2535,25 @@ def stage_accommodation_requirement(session_id, person_key):
         return jsonify(error=INVALID_REQUIREMENT), 400
     preview = json.loads(session.current_version.preview_json or '{}')
     validate_session_event(session, preview)
-    _import_session_raw_preview(session)
+    raw = _import_session_raw_preview(session)
     target = next((p for p in preview.get('people', []) if p.get('matchKey') == person_key), None)
     if target is None:
         return jsonify(error='Person is not part of the current import version'), 404
-    existing = _find_existing_athlete(target, _build_existing_athlete_maps(event_id=session.event_id))
+    read_context = ImportReadContext(session.event_id)
+    existing = _find_existing_athlete(target, read_context.athlete_maps)
     old = {key: target.get(key) for key in ('accommodationRequirement', 'accommodationRequirementSource')}
     preview.setdefault('accommodationRequirementOverrides', {})[person_key] = {
         'requirement': data['accommodationRequirement'], 'base': requirement_projection(existing)}
     preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
-    raw = _import_session_raw_preview(session)
     staged_raw = deepcopy(raw) if raw else None
     try:
-        recalculate_fis_import_preview(preview)
+        recalculate_fis_import_preview(preview, read_context=read_context)
         if any(e.get('code') == 'ACCOMMODATION_REQUIREMENT_BOOKINGS' and e.get('details', {}).get('personKey') == person_key for e in preview.get('errors', [])):
             raise RequirementConflict(f"{target['accommodationRequirement']}_HAS_BOOKINGS", BOOKING_MESSAGE)
         if staged_raw:
             staged_raw['accommodationRequirementOverrides'] = preview['accommodationRequirementOverrides']
             staged_raw['_currentApprovalIds'] = preview['_currentApprovalIds']
-            recalculate_fis_import_preview(staged_raw)
+            recalculate_fis_import_preview(staged_raw, read_context=read_context)
     except ImportValidationError as exc:
         db.session.rollback()
         return jsonify(exc.to_dict()), 409
@@ -2455,12 +2575,15 @@ def stage_accommodation_requirement(session_id, person_key):
             db.session.add(ImportApproval(session_id=session.id, version_id=session.current_version_id,
                 nation=session.nation, approval_type=issue['code'], description=issue['message'],
                 quota_details_json=json.dumps(details, ensure_ascii=False), decision='PENDING', username=current_user().username))
-    session.current_version.preview_json = json.dumps(preview, ensure_ascii=False)
     db.session.flush()
     db.session.expire(session, ['approvals'])
     session.status = ('DRAFT' if preview.get('errors') else 'WAITING_FOR_NATION'
         if any(a.decision == 'PENDING' for a in session.current_approvals) else 'PROFESSIONALLY_REVIEWED')
-    refresh_plan(session)
+    # Rebuilding pending tasks can change the candidate set. Recalculate when
+    # it does. The roster and booking snapshot is shared under the write lock.
+    approval_ids = {a.id for a in review_approvals(session, preview)}
+    refresh_plan(session, preview, read_context=read_context,
+                 recalculate=approval_ids != set(preview['_currentApprovalIds']))
     db.session.commit()
     if staged_raw:
         PREVIEW_STORE[session.current_version.preview_token] = staged_raw
@@ -3410,7 +3533,7 @@ def _update_athlete_operations(athlete, data):
             return jsonify(error=INVALID_REQUIREMENT), 400
         requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
             {'requirement': value, 'base': requirement_projection(athlete)})
-        if requirement_change['accommodationRequirement'] in NO_ACCOMMODATION:
+        if requirement_change['accommodationRequirement'] == 'NO_ROOM':
             from accommodation_requirements import ensure_no_bookings
             ensure_no_bookings(athlete, requirement_change['accommodationRequirement'])
     previous_exempt_reason = athlete.single_room_quota_exempt_reason
@@ -3457,7 +3580,7 @@ def _update_athlete_operations(athlete, data):
             athlete.single_room_decision_id = None
         elif previous_exempt_reason:
             membership = event_query(RoomBookingOccupant).filter_by(athlete_id=athlete.id).first()
-            if membership and membership.room_booking and membership.room_booking.counts_as_single:
+            if membership and membership.room_booking and membership.room_booking.effective_counts_as_single:
                 rows = _build_official_quota_usage_rows(nation_code=athlete.nation_code)
                 allocation = next((item for row in rows for item in row['singleRoomAllocations']
                     if item['personId'] == athlete.id), None)
@@ -3573,10 +3696,7 @@ def get_assignment_planning_validations(validation_key):
         unit = {**index[ids[0]][1], **interval, 'assignedBookingId': None,
                 'occupants': [index[identity][0] for identity in ids],
                 'allowedRoomTypeLabels': ['single', 'double'] if len(ids) == 1 else ['double']}
-        by_slot = {}
-        for booking in event_query(RoomBooking).all():
-            key = (str(booking.hotel_id), str(booking.room_type_id), _planned_room_key(booking.room_number) or booking.room_number or '')
-            by_slot.setdefault(key, []).append(booking)
+        by_slot = {str(booking.id): booking for booking in event_query(RoomBooking).all()}
         return _assignment_jsonify({'validationKey': validation_key,
             'validations': _build_unit_validations(unit, planning['hotels'], by_slot)})
     planning = _build_assignment_planning_view({validation_key}, assignment_interval=interval)
@@ -3600,6 +3720,7 @@ def create_room_booking():
     payload_data = {
         'athleteIds': data.get('athleteIds') or [],
         'hotelId': data.get('hotelId'),
+        'inventoryId': data.get('inventoryId'),
         'roomTypeId': data.get('roomTypeId'),
         'roomNumber': data.get('roomNumber'),
         'checkInDate': data.get('checkInDate'),
@@ -3641,9 +3762,21 @@ def create_room_booking():
 def update_assigned_unit(booking_id):
     booking = event_get(RoomBooking, booking_id, required=True)
     data = request.json or {}
+    if data.keys() == {'countsAsSingle'} and (booking.is_double_room or booking.bedroom_index is not None):
+        # Update the valuation in place, preserving memberships and exception evidence.
+        if (not booking.is_double_room or len(booking.occupants) != 1
+                or type(data['countsAsSingle']) is not bool):
+            return _booking_error('INVALID_SINGLE_USE', 'Die EZ-Wertung kann bei einem DZ mit genau einer Person geändert werden.')
+        booking.counts_as_single = data['countsAsSingle']
+        db.session.commit()
+        return _assignment_jsonify(booking.to_dict())
     payload_data = {
         'athleteIds': [str(occ.athlete_id) for occ in (booking.occupants or []) if occ.athlete_id],
         'hotelId': data.get('hotelId') or str(booking.hotel_id),
+        'inventoryId': data.get('inventoryId'),
+        'bedroomIndex': data.get('bedroomIndex', booking.bedroom_index),
+        'confirmApartmentException': data.get('confirmApartmentException'),
+        'apartmentExceptionReason': data.get('apartmentExceptionReason'),
         'roomTypeId': data.get('roomTypeId') or str(booking.room_type_id),
         'roomNumber': data.get('roomNumber', booking.room_number),
         'checkInDate': data.get('checkInDate') or (booking.check_in_date.isoformat() if booking.check_in_date else None),

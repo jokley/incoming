@@ -1,7 +1,7 @@
 import type { AssignmentGridHotel, AssignmentSlot } from '../types.ts';
 
-export function contingentComments(hotel:AssignmentGridHotel|undefined,roomTypeId?:string) {
-  return (hotel?.inventoryComments ?? []).filter(item=>(!roomTypeId || item.roomTypeId===roomTypeId) && Boolean(item.comment?.trim()));
+export function contingentComments(hotel:AssignmentGridHotel|undefined,roomTypeId?:string, inventoryId?:string|null) {
+  return (hotel?.inventoryComments ?? []).filter(item=>(!roomTypeId || item.roomTypeId===roomTypeId) && (inventoryId === undefined || item.id === inventoryId) && Boolean(item.comment?.trim()));
 }
 
 export function visibleAssignmentComment(comment?:string|null):string|null {

@@ -1,5 +1,6 @@
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy import MetaData
+from sqlalchemy import MetaData, case, func, select
+from sqlalchemy.ext.hybrid import hybrid_property
 from datetime import datetime
 import json
 from accommodation_rates import rate_projection
@@ -315,13 +316,19 @@ class RoomType(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), nullable=False, unique=True)  # z.B. "DZ / DU"
     max_persons = db.Column(db.Integer, nullable=False)  # z.B. 2
+    apartment_layout = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    def bedroom_capacity(self, index):
+        bedrooms = (self.apartment_layout or {}).get('bedrooms', [])
+        return bedrooms[index - 1] if type(index) is int and 1 <= index <= len(bedrooms) else None
 
     def to_dict(self):
         return {
             'id': str(self.id),
             'name': self.name,
-            'maxPersons': self.max_persons
+            'maxPersons': self.max_persons,
+            'apartmentLayout': self.apartment_layout
         }
 
 
@@ -941,11 +948,43 @@ class RoomBooking(db.Model):
     check_in_date = db.Column(db.Date)
     check_out_date = db.Column(db.Date)
     counts_as_single = db.Column(db.Boolean, default=False)
+    bedroom_index = db.Column(db.Integer)
+    apartment_exception = db.Column(db.JSON)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     hotel = db.relationship('Hotel', backref='room_bookings')
     room_type = db.relationship('RoomType', backref='room_bookings')
     occupants = db.relationship('RoomBookingOccupant', backref='room_booking', lazy=True, cascade='all, delete-orphan')
+
+    @property
+    def bedroom_capacity(self):
+        return self.room_type.bedroom_capacity(self.bedroom_index) if self.room_type else None
+
+    @property
+    def is_double_room(self):
+        if not self.room_type or self.hotel.accommodation_type == 'EXTERNAL':
+            return False
+        if self.room_type.apartment_layout:
+            return self.bedroom_capacity == 2
+        return self.room_type.max_persons == 2
+
+    @hybrid_property
+    def effective_counts_as_single(self):
+        if self.bedroom_index is not None:
+            return len(self.occupants) == 1 and (self.bedroom_capacity == 1 or bool(self.counts_as_single))
+        return bool(self.counts_as_single)
+
+    @effective_counts_as_single.expression
+    def effective_counts_as_single(cls):
+        members = RoomBookingOccupant.__table__.alias()
+        count = (select(func.count()).select_from(members)
+                 .where(members.c.room_booking_id == cls.id).correlate(cls).scalar_subquery())
+        room_types = RoomType.__table__.alias()
+        capacity = (select(room_types.c.apartment_layout['bedrooms'][cls.bedroom_index - 1].as_integer())
+                    .where(room_types.c.id == cls.room_type_id).correlate(cls).scalar_subquery())
+        return case((cls.bedroom_index.is_not(None),
+                     (count == 1) & (func.coalesce(capacity == 1, False) | cls.counts_as_single.is_(True))),
+                    else_=cls.counts_as_single)
 
     def to_dict(self):
         from accommodation_scope import validate_serialized_ownership
@@ -955,9 +994,11 @@ class RoomBooking(db.Model):
             'hotel': {'id': str(self.hotel_id), 'name': self.hotel.name, 'accommodationType': self.hotel.accommodation_type},
             'roomType': self.room_type.to_dict() if self.room_type else None,
             'roomNumber': self.room_number,
+            'bedroomIndex': self.bedroom_index,
+            'apartmentException': self.apartment_exception,
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
-            'countsAsSingle': bool(self.counts_as_single),
+            'countsAsSingle': self.effective_counts_as_single,
             'occupants': [occupant.to_dict() for occupant in self.occupants]
         }
 

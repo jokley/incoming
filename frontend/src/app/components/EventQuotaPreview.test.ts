@@ -129,7 +129,7 @@ test('closed sessions ignore historical open submissions and never auto-recheck'
 });
 
 test('queue excludes closed sessions from normal count and keeps collapsed history',()=>{
- const sessions=['PROFESSIONALLY_REVIEWED','IMPORTED','ARCHIVED','CANCELLED'].map((status,i)=>({...sourceSession,id:String(i),nation:['ARG','ITA','JPN','CAN'][i],status,submissions:[],errors:0,warnings:0}));
+ const sessions=['PROFESSIONALLY_REVIEWED','IMPORTED','ARCHIVED','CANCELLED'].map((status,i)=>({...sourceSession,id:String(i),nation:['ARG','ITA','JPN','CAN'][i],status,submissions:[],errors:0,warnings:0,pendingDecisions:0,hasOpenSubmissions:false}));
  const html=renderToStaticMarkup(createElement(Queue,{sessions,selectedId:null,onSelect:()=>{},onClose:()=>{}}));
  assert.ok(html.includes('Importwarteschlange (2)'));
  const open=html.slice(html.indexOf('Offene Nationen'),html.indexOf('Importierte Nationen'));

@@ -25,10 +25,10 @@ import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, F
 
 import { api } from '../services/api';
 import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
-import { archiveImportSessionChecked, importConfirmationMessage, reloadImportSession } from '../services/importConfirmation';
+import { archiveImportSessionChecked, importConfirmationMessage } from '../services/importConfirmation';
 import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel, sportAreaLabel } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange } from '../types';
-import { closedImportStatuses, IMPORT_SESSION_STATUS, type ImportSession, type NationClarification } from '../data/importSessions';
+import { closedImportStatuses, importQueueSession, IMPORT_SESSION_STATUS, type ImportQueueSession, type ImportSession, type NationClarification } from '../data/importSessions';
 import { ContentCard, EmptyState, EnterpriseDialog, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, type OperationsTask } from './OperationsDecisionDialog';
@@ -79,10 +79,9 @@ export function DataImport() {
   const importAllowed = permissions.canManageImports;
   const [searchParams] = useSearchParams();
   const [selected, setSelected] = useState<ImportSession | null>(null);
-  const [closingSession,setClosingSession]=useState<ImportSession|null>(null);
+  const [closingSession,setClosingSession]=useState<ImportQueueSession|null>(null);
   const [closeError,setCloseError]=useState<string|null>(null);
-  const [closeRefreshWarning,setCloseRefreshWarning]=useState<string|null>(null);
-  const [sessions, setSessions] = useState<ImportSession[]>([]);
+  const [sessions, setSessions] = useState<ImportQueueSession[]>([]);
   const [files, setFiles] = useState<File[]>([]);
   const [fullReplacement,setFullReplacement]=useState(false);
   const [preview, setPreview] = useState<FisImportPreview | null>(null);
@@ -107,19 +106,43 @@ export function DataImport() {
   const { eventId, selectedEvent } = useActiveEvent();
   useActiveEventBlocker(Boolean(selected || preview || files.length || loading || confirming || savingTask), 'Bitte den laufenden Import-Review zuerst abschließen oder verlassen.');
 
-  const refreshSessions = async () => setSessions(await api.getImportSessions());
-  useEffect(() => { setShownDecisionId(searchParams.get('decisionId')); }, [searchParams]);
-  useEffect(() => { (async () => { try { const loaded = await api.getImportSessions(); setSessions(loaded); const requested = searchParams.get('sessionId'); const requestedDecision = searchParams.get('decisionId'); const match = requested ? loaded.find(session => session.id === requested) : requestedDecision ? loaded.find(session => session.approvals.some(approval => String(approval.id) === requestedDecision)) : searchParams.get('nation') ? loaded.find(session=>session.nation===searchParams.get('nation')&&!['CANCELLED','REPLACED'].includes(session.status)) : undefined; if (match) await selectSession(match); } catch(e) { setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden'); } })(); }, []);
-  const selectSession = async (session: ImportSession) => {
+  const updateQueue = (updated: ImportSession) => {
+    const summary = importQueueSession(updated);
+    setSessions(rows => rows.some(row => row.id === summary.id)
+      ? rows.map(row => row.id === summary.id ? summary : row) : [summary, ...rows]);
+  };
+  useEffect(() => { setSessions([]); }, [eventId]);
+  const requested = searchParams.get('sessionId');
+  const requestedDecision = searchParams.get('decisionId');
+  const requestedNation = searchParams.get('nation');
+  useEffect(() => { setShownDecisionId(requestedDecision); }, [requestedDecision]);
+  useEffect(() => {
+    if (!eventId) return;
+    let current = true;
+    void api.getImportQueue(requested ? null : requestedDecision).then(async loaded => {
+      if (!current) return;
+      setSessions(loaded);
+      const match = requested ? loaded.find(session => session.id === requested)
+        : requestedDecision ? loaded.find(session => session.matchesDecision)
+        : requestedNation ? loaded.find(session => session.nation === requestedNation && !['CANCELLED','REPLACED'].includes(session.status))
+        : undefined;
+      if (match) await selectSession(match);
+    }).catch(e => {
+      if (current) setError(e instanceof Error ? e.message : 'Sessions konnten nicht geladen werden');
+    });
+    return () => { current = false; };
+  }, [eventId, requested, requestedDecision, requestedNation]);
+
+  const selectSession = async (session: Pick<ImportQueueSession, 'id'>) => {
     setLoading(true);
     try {
       const full = await api.getImportSession(session.id);
       if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
-      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);setCloseRefreshWarning(null);
+      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);
       const selection = importAllowed && full.status!=='IMPORTED' ? nationReviewSelection(full) : undefined;
       const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
       setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
-      if (selection) await refreshSessions();
+      updateQueue(draft);
     } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) reportImportError(e,'Importsession konnte nicht geladen werden.'); }
     finally { setLoading(false); }
   };
@@ -132,26 +155,24 @@ export function DataImport() {
     if(input)input.value=''; // The same file pair may be selected again for a reimport.
   };
   const cancel = () => { setFiles([]); setPreview(selected?.preview ?? null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null);setCloseRefreshWarning(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
       const selection = fullReplacement ? undefined : nationReviewSelection(uploaded);
       const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : uploaded;
-      setSelected(draft); setPreview(draft.preview ?? null); await refreshSessions(); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
+      setSelected(draft); setPreview(draft.preview ?? null); updateQueue(draft); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const closeSession = async () => {
-    if(!closingSession)return;setConfirming(true);setCloseError(null);setCloseRefreshWarning(null);
+    if(!closingSession)return;setConfirming(true);setCloseError(null);
     let archived: ImportSession;
     try {archived=await archiveImportSessionChecked(closingSession,api);}
     catch(e){setCloseError(e instanceof Error?e.message:'Importsession konnte nicht geschlossen werden.');setConfirming(false);return;}
-    setSessions(rows=>rows.map(row=>row.id===archived.id?archived:row));
+    updateQueue(archived);
     if(selected?.id===archived.id){setSelected(null);setPreview(null);setFiles([]);setDetail(null);setActiveTask(null);setQuestion(null);setError(null);setSuccess(null);}
     setClosingSession(null);
-    try {await refreshSessions();}
-    catch {setCloseRefreshWarning(`${archived.nation}: Importsession ist geschlossen. Die Warteschlange konnte nicht neu geladen werden. Bitte die Seite zur Aktualisierung erneut laden.`);}
-    finally{setConfirming(false);}
+    setConfirming(false);
   };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
-      if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);} setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); await refreshSessions(); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
-  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); await refreshSessions(); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const [updated, loaded] = await reloadImportSession(selected.id, api); setSelected(updated); setPreview(updated.preview ?? null); setSessions(loaded);  } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+      if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);updateQueue(draft);} else updateQueue(restored); setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
+  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); if (updated.selected) updateQueue(updated.selected); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const updated = await api.getImportSession(selected.id); setSelected(updated); setPreview(updated.preview ?? null); updateQueue(updated);  } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const recheck = async () => {
     if(!selected)return;
     setConfirming(true);setError(null);
@@ -162,7 +183,7 @@ export function DataImport() {
       const source=family?current.submissions?.find(part=>part.family===family):undefined;
       const selection=source?{sourceVersionId:source.versionId}:nationReviewSelection(current,true);
       const updated=await api.recheckImportSession(selected.id,selection);
-      setSelected(updated);setPreview(updated.preview??null);await refreshSessions();
+      setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);
     } catch(e){reportImportError(e,'Erneute Prüfung fehlgeschlagen');}
     finally{setConfirming(false);}
   };
@@ -170,7 +191,7 @@ export function DataImport() {
   const prepareSubmissions = async (sourceVersionId?:string) => {
     if(!selected)return;
     setConfirming(true);setError(null);setSuccess(null);
-    try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);await refreshSessions();}
+    try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);updateQueue(updated);}
     catch(e){reportImportError(e,'Teilmeldungen konnten nicht geprüft werden.');}
     finally{setConfirming(false);}
   };
@@ -183,7 +204,7 @@ export function DataImport() {
       const nextApproval = updated.approvals.find(approval => approval.decision === 'PENDING');
       setActiveTask(nextApproval ? buildOperationsTask(updated, nextApproval) : null);
       setSuccess(nextApproval ? 'Nächster Schritt geöffnet.' : 'Entscheidung gespeichert.');
-      await refreshSessions();
+      updateQueue(updated);
     }
     catch (e) { setError(e instanceof Error ? e.message : 'Entscheidung konnte nicht gespeichert werden'); }
     finally { setSavingTask(false); }
@@ -192,14 +213,19 @@ export function DataImport() {
   const setPreviewRequirement = async (personKey:string, accommodationRequirement:AccommodationRequirement|null) => {
     if(!selected)return;
     setSavingTask(true);setError(null);
-    try {const updated=await api.stageAccommodationRequirement(selected.id,personKey,accommodationRequirement);setSelected(updated);setPreview(updated.preview??null);await refreshSessions();}
-    catch(e){setError(e instanceof Error ? e.message : 'Unterkunftsbedarf konnte nicht gespeichert werden.');}
+    try {
+      const updated = await api.stageAccommodationRequirement(selected.id, personKey, accommodationRequirement);
+      setSelected(updated);
+      setPreview(updated.preview ?? null);
+      updateQueue(updated);
+    }
+    catch(e){setError(e instanceof Error ? `Unterkunftsbedarf konnte nicht gespeichert werden. ${e.message}` : 'Unterkunftsbedarf konnte nicht gespeichert werden.');}
     finally {setSavingTask(false);}
   };
   const setPreviewRate = async (personKey:string, category:'STANDARD'|'SPECIAL') => {
     if(!selected)return;
     setSavingTask(true);setError(null);
-    try {const updated=await api.stageAccommodationRate(selected.id,personKey,category);setSelected(updated);setPreview(updated.preview??null);await refreshSessions();}
+    try {const updated=await api.stageAccommodationRate(selected.id,personKey,category);setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);}
     catch(e){setError(e instanceof Error ? e.message : 'Tarif konnte nicht gespeichert werden.');}
     finally {setSavingTask(false);}
   };
@@ -217,7 +243,7 @@ export function DataImport() {
         setActiveTask(pending ? buildOperationsTask(updated, pending) : null);
         if (!pending) setSuccess('Quote nach Sonderstatus erfüllt. Keine Genehmigung mehr erforderlich.');
       }
-      await refreshSessions();
+      updateQueue(updated);
     }
     catch (error) { setError(error instanceof Error ? error.message : 'EZ-Sonderstatus konnte nicht gespeichert werden.'); }
     finally { setSavingTask(false); }
@@ -244,8 +270,9 @@ export function DataImport() {
   const askAbout=(keys:string[])=>{setDetail(null);setPersonKey(null);setQuestion({action:'OPEN',initialPersonKeys:keys});};
   const deferredKeys=preview?deferredImportPersonKeys(preview,selected?.nnPlanning):new Set<string>();
   const deferredRows=new Set<ReactNode[]>();
-  const deferredHint='Weiterhin vollständig FIS-gemeldet. Von der automatischen vorläufigen Unterkunftsauswahl nicht erfasst; kein zusätzlicher offener Unterkunftsbedarf. Bestehende Buchungen und Wünsche bleiben unverändert.';
-  const planningLabel=(key?:string|null)=>key&&deferredKeys.has(key)?<span title={deferredHint} className="mt-1 block text-xs font-normal text-[var(--ops-text-muted)]">Vorerst nicht eingeplant</span>:null;
+  const noDispoKeys = new Set(preview?.people.filter(person => person.accommodationRequirement === 'NO_DISPO').map(person => person.matchKey));
+  const deferredHint='Weiterhin vollständig FIS-gemeldet. Außerhalb der Planungsempfehlung bleibt eine Disposition bei Unterkunftsbedarf möglich. Bestehende Buchungen und Wünsche bleiben unverändert.';
+  const planningLabel=(key?:string|null)=>key&&deferredKeys.has(key)?<span title={deferredHint} className="mt-1 block text-xs font-normal text-[var(--ops-text-muted)]">{noDispoKeys.has(key) ? 'Nicht einplanen' : 'Außerhalb der Planungsempfehlung'}</span>:null;
   const peopleRows = preview?.people.map(p => {
     const status: SingleRoomStatus = p.singleRoomEntitlement === 'APPROVED_EXTRA'
       ? 'APPROVED_EXTRA'
@@ -298,7 +325,6 @@ export function DataImport() {
     <input id="fis-files-input" type="file" accept=".xlsx,.xls" multiple disabled={!importAllowed||loading||confirming||savingTask} className="hidden" onChange={e=>handleFiles(e.target.files)}/>
     <SplitPageLayout className="flex min-h-full flex-col gap-5 space-y-0 xl:h-full xl:min-h-0">
       <PageHeader eyebrow="Operations Center" title="Import Center" subtitle="Nationen prüfen, freigeben und kontrolliert importieren." meta={selected ? <><StatusChip tone={!preview||preview.planStale||preview.quotaRulesChanged ? 'warning' : selected.errors ? 'error' : selected.approvals.some(a => a.decision === 'PENDING') ? 'warning' : 'success'}>{closedImportStatuses.has(selected.status)?IMPORT_SESSION_STATUS[selected.status]:!preview||preview.planStale||preview.quotaRulesChanged?'Prüfung erforderlich':IMPORT_SESSION_STATUS[selected.status]}</StatusChip><span className="text-sm text-[var(--ops-text-muted)]">{selected.nation} · {importScopeLabel(preview) || 'Nationsentwurf'}</span></> : <StatusChip tone="primary">Dateien hinzufügen</StatusChip>} />
-      {closeRefreshWarning&&<InfoPanel tone="warning" title="Aktualisierung ausstehend">{closeRefreshWarning}</InfoPanel>}
     {files.length>0&&<details className="mx-5 mb-3 text-sm"><summary className="cursor-pointer">Sonderaktion: vollständige Nation ersetzen</summary><label className="mt-2 flex gap-2"><input type="checkbox" checked={fullReplacement} onChange={e=>setFullReplacement(e.target.checked)} disabled={loading||confirming}/>Diese Dateien bilden die vollständige Nation. Fehlende Personen können nach Prüfung und Bestätigung entfernt werden.</label></details>}
       <div className="flex flex-col gap-5 xl:min-h-0 xl:flex-1 xl:flex-row">
         <ImportQueue sessions={sessions} selectedId={selected?.id ?? null} onSelect={selectSession} onClose={importAllowed?session=>{setCloseError(null);setClosingSession(session);}:undefined} busy={loading||confirming||savingTask||questionBusy} />
@@ -351,8 +377,8 @@ export function DataImport() {
         </ContentCard>
       </div>
     </SplitPageLayout>
-    <DetailDialog deferredRows={deferredRows} hasDeferredPeople={deferredKeys.size>0} nn={selected?.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} groupedRows={groupedRows} detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:filteredRoomRows, quota:quotaRows(preview),athleteQuota:athleteQuotaRows(preview)})} preview={preview??(selected?.status==='ARCHIVED'?selected.preview??null:null)} control={selected?.importControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
-    {activePerson&&preview&&<ImportPersonDialog key={activePerson.matchKey} person={activePerson} preview={preview} session={selected} canWrite={canEditPreview} onPeople={()=>showPeople([activePerson.matchKey!])} onQuestion={()=>askAbout([activePerson.matchKey!])} onClose={()=>setPersonKey(null)} />}
+    <DetailDialog error={error} deferredRows={deferredRows} hasDeferredPeople={deferredKeys.size>0} nn={selected?.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} groupedRows={groupedRows} detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:filteredRoomRows, quota:quotaRows(preview),athleteQuota:athleteQuotaRows(preview)})} preview={preview??(selected?.status==='ARCHIVED'?selected.preview??null:null)} control={selected?.importControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
+    {activePerson&&preview&&<ImportPersonDialog key={activePerson.matchKey} person={activePerson} preview={preview} session={selected} onClose={()=>setPersonKey(null)} />}
     {closingSession&&<EnterpriseDialog open title="Importsession schließen?" size="medium" onClose={()=>{if(!confirming)setClosingSession(null);}} actions={<><OpsButton disabled={confirming} onClick={()=>setClosingSession(null)}>Abbrechen</OpsButton><OpsButton disabled={confirming} onClick={()=>void closeSession()}>Importsession schließen</OpsButton></>}>
       <p className="text-sm">Der aktuelle Importworkflow und alle offenen Prüfungen dieser Nation werden beendet. Die Nationsmeldung verschwindet aus der aktiven Importwarteschlange. Bereits importierte Personen, Zimmer und Genehmigungen bleiben unverändert.</p>
       <p className="mt-3 font-bold">{closingSession.nation}</p>{closeError&&<p role="alert" className="mt-3 text-[var(--ops-error)]">{closeError}</p>}
@@ -360,12 +386,12 @@ export function DataImport() {
     {question&&selected&&<NationClarificationDialog session={selected} action={question.action} item={question.item} initialPersonKeys={question.initialPersonKeys}
       onClose={()=>setQuestion(null)} onBusy={setQuestionBusy} onSave={async data=>{
         const saved=await api.documentImportClarification(selected.id,data);
-        setSelected(saved);setPreview(saved.preview??null);setSessions(rows=>rows.map(row=>row.id===saved.id?saved:row));
+        setSelected(saved);setPreview(saved.preview??null);updateQueue(saved);
       }}/>}
     {officialProposal&&permissions.canManageImports&&<OfficialLinkDialog key={officialProposal.token} proposal={officialProposal} onClose={()=>setOfficialProposal(null)} onConfirm={async keys=>{
       await api.documentImportClarification(officialProposal.sessionId,{officialLinkAction:'CONFIRM',token:officialProposal.token,candidateKeys:keys,confirmed:true});
       const sessionId=officialProposal.sessionId;setOfficialProposal(null);
-      if(files.length>=2)await runPreview();else await selectSession(await api.getImportSession(sessionId));
+      if(files.length>=2)await runPreview();else await selectSession({id: sessionId});
     }}/>}
     <OperationsDecisionDialog canWrite={importAllowed} task={activeTask} saving={savingTask} onClose={() => setActiveTask(null)} onSave={saveTask}/>
     <ImportDecisionDialog decisionId={shownDecisionId} onClose={() => setShownDecisionId(null)} onOpenSession={async sessionId => { setShownDecisionId(null); const session = sessions.find(item => item.id === sessionId); if (session) await selectSession(session); }} />
@@ -546,21 +572,26 @@ const detailLabels:Record<string,string>={firstname:'Vorname',lastname:'Nachname
 function displayValue(value:unknown):string { if(value===null||value===undefined||value==='')return 'Noch zu ermitteln'; if(Array.isArray(value))return value.map(displayValue).join(', '); if(typeof value==='object')return Object.entries(value as Record<string,unknown>).map(([key,item])=>`${detailLabels[key]??key}: ${displayValue(item)}`).join(' · '); return String(value); }
 function RecordSection({title,children}:{title:string;children:ReactNode}) { return <section><h3 className="mb-2 text-xs font-extrabold uppercase tracking-wider text-[var(--ops-text-subtle)]">{title}</h3><div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4">{children}</div></section>; }
 function IssueRecord({issue,isInformation,isDecision}:{issue:FisImportIssue;isInformation:boolean;isDecision:boolean}) { const copy=issueCopy[issue.code]; const detected=/discipline/i.test(issue.code); return <article className="space-y-4"><RecordSection title="1. Was ist passiert?"><p className="font-bold">{detected?'Disziplin automatisch erkannt':copy?.message??issue.message}</p>{detected&&<p className="mt-2 text-sm text-[var(--ops-text-muted)]">Erkannt: {displayValue(issue.details?.discipline??issue.details?.value)} · Quelle: Dateiname</p>}</RecordSection>{Object.keys(issue.details??{}).length>0&&<RecordSection title="2. Betroffene Daten"><div className="grid gap-3 sm:grid-cols-2">{Object.entries(issue.details??{}).map(([key,value])=><div key={key}><div className="text-xs font-bold text-[var(--ops-text-subtle)]">{detailLabels[key]??key}</div><div className="font-semibold">{displayValue(value)}</div></div>)}</div></RecordSection>}<RecordSection title="3. Auswirkung"><div className="flex gap-2 font-bold">{isInformation?<CheckCircle className="h-5 w-5 text-[var(--ops-success)]"/>:<AlertTriangle className="h-5 w-5 text-[var(--ops-warning)]"/>}{isInformation?'Information · keine zusätzliche Importsperre':isDecision?'Fachlich klären · keine zusätzliche Importsperre':'Import ist bis zur Korrektur blockiert'}</div></RecordSection><InfoPanel tone={isInformation?'success':'info'} title="Was ist jetzt zu tun?">{isInformation?'Hinweis anhand der Quelldaten nachvollziehen.':isDecision?'Sachverhalt bei Bedarf mit Nation oder FIS klären. Bestehende Genehmigungsfälle bleiben unverändert.':copy?.action??'Bitte die fehlerhaften Quelldaten korrigieren.'}</InfoPanel></article>; }
-function DetailDialog({deferredRows,hasDeferredPeople,nn,grouped=false,groupedRows,detail,onClose,preview,control,personFilter,onFilter,search,onSearch,quotaPeopleFilter,onQuotaPeople}:{deferredRows?:Set<ReactNode[]>;hasDeferredPeople?:boolean;nn?:NNPlanningControls;grouped?:boolean;groupedRows?:Array<{area:string;group?:string;items:ReactNode[][]}>;detail:Detail|null;onClose:()=>void;preview:FisImportPreview|null;control?:ImportControl;personFilter:ImportListFilter;onFilter:(kind:ImportListFilter)=>void;search:string;onSearch:(value:string)=>void;quotaPeopleFilter:QuotaPeopleFilter|null;onQuotaPeople:(filter:QuotaPeopleFilter|null)=>void}) {
+function DetailDialog({error,deferredRows,hasDeferredPeople,nn,grouped=false,groupedRows,detail,onClose,preview,control,personFilter,onFilter,search,onSearch,quotaPeopleFilter,onQuotaPeople}:{error?:string|null;deferredRows?:Set<ReactNode[]>;hasDeferredPeople?:boolean;nn?:NNPlanningControls;grouped?:boolean;groupedRows?:Array<{area:string;group?:string;items:ReactNode[][]}>;detail:Detail|null;onClose:()=>void;preview:FisImportPreview|null;control?:ImportControl;personFilter:ImportListFilter;onFilter:(kind:ImportListFilter)=>void;search:string;onSearch:(value:string)=>void;quotaPeopleFilter:QuotaPeopleFilter|null;onQuotaPeople:(filter:QuotaPeopleFilter|null)=>void}) {
   if(detail && ['Officials & EZ-Quote','Quota & EZ','Athleten-/Disziplinquote'].includes(detail.title))return <QuotaOverviewDialog nn={nn} grouped={grouped} preview={preview} control={control} kind={detail.title==='Athleten-/Disziplinquote'?'athlete':'officials'} onPeople={onQuotaPeople} focusSport={detail.focusSport} onClose={onClose}/>;
   const isQuota=detail?.title === 'Officials & EZ-Quote';
   const wide= isQuota || detail?.title === 'Personen der Importvorschau';
   const uncheckable=preview?.people.filter(person=>personMatchesImportFilter(person,'stayUnclear',preview,control))??[];
   const unavailableLabel=uncheckable.every(person=>control?.people.find(row=>row.personKey===person.matchKey)?.stayWindow?.reason==='EVENT_DATES_UNCLEAR')?stayWindowText(control?.people.find(row=>row.personKey===uncheckable[0]?.matchKey)?.stayWindow):'Event-/Aufenthaltsdaten unklar';
   return (
-    <EnterpriseDialog open={Boolean(detail)} onClose={onClose} size={wide?'table':'large'} title={<>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></>}>
-        {['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&preview&&<div className="space-y-3"><div className="flex flex-wrap gap-3"><label className="flex min-w-0 flex-wrap items-center gap-2 text-sm">Person suchen<input value={search} onChange={e=>onSearch(e.target.value)} className="min-w-0 max-w-full rounded border border-[var(--ops-border)] bg-[var(--ops-background)] p-2"/></label><label className="flex min-w-0 flex-wrap items-center gap-2 text-sm">Anzeigen<select value={personFilter} onChange={e=>onFilter(e.target.value as ImportListFilter)} className="min-w-0 max-w-full rounded border border-[var(--ops-border)] bg-[var(--ops-background)] p-2">{Object.entries(importListFilters).map(([key,label])=><option key={key} value={key}>{key==='all'&&detail?.title==='Personen der Importvorschau'?'Alle Personen':label}</option>)}</select></label></div></div>}
+    <Dialog open={Boolean(detail)} onClose={onClose} fullWidth maxWidth={wide ? false : "lg"} sx={wide ? {'& .MuiDialog-paper': {width: {xs: 'calc(100vw - 32px)', sm: '90vw'}, maxWidth: '1600px', maxHeight: 'calc(100dvh - 64px)'}} : undefined}>
+      <DialogTitle>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></DialogTitle>
+      <DialogContent dividers sx={{overflowY: 'auto'}}>
+        {detail?.title==='Personen der Importvorschau' && error && <div role="alert" className="mb-3">
+          <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>
+        </div>}
+        {['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&preview&&<div className="space-y-3"><div className="flex flex-wrap gap-3"><label className="text-sm">Person suchen<input value={search} onChange={e=>onSearch(e.target.value)} className="ml-2 rounded border border-[var(--ops-border)] bg-[var(--ops-background)] p-2"/></label><label className="text-sm">Anzeigen<select value={personFilter} onChange={e=>onFilter(e.target.value as ImportListFilter)} className="ml-2 rounded border border-[var(--ops-border)] bg-[var(--ops-background)] p-2">{Object.entries(importListFilters).map(([key,label])=><option key={key} value={key}>{key==='all'&&detail?.title==='Personen der Importvorschau'?'Alle Personen':label}</option>)}</select></label></div></div>}
         {detail?.title==='Personen der Importvorschau'&&uncheckable.length>0&&<button type="button" className="my-2 text-left text-sm text-[var(--ops-warning)]" onClick={()=>{onQuotaPeople(null);onSearch('');onFilter('stayUnclear');}}>{uncheckable.length} Aufenthalte nicht prüfbar · {unavailableLabel}</button>}
         {personFilter==='error'&&preview&&['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&<ul className="space-y-1 text-sm text-[var(--ops-error)]">{preview.errors.filter(i=>i.code.startsWith('ROOM_')===(detail?.title==='Zimmer der Importvorschau')).map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>}
         {detail?.title==='Personen der Importvorschau'&&quotaPeopleFilter&&<div className="mb-2 flex flex-wrap items-center gap-2 text-sm" aria-label="Quoten-Personenfilter"><strong>{quotaPeopleFilter.role==='officials'?'Officials':quotaPeopleFilter.role==='athletes'?'Athleten':'Personen'}{quotaPeopleFilter.nation?` · ${quotaPeopleFilter.nation}`:''}{quotaPeopleFilter.group?` · ${quotaPeopleFilter.group}`:''}{quotaPeopleFilter.multipleGroups?' · Mehrere Event Groups':''}{quotaPeopleFilter.competition?` · ${quotaPeopleFilter.competition}`:''}{quotaPeopleFilter.family?` · ${quotaPeopleFilter.family}`:''}{quotaPeopleFilter.gender?` · ${quotaPeopleFilter.gender==='M'?'Männer':'Frauen'}`:''}</strong><button type="button" className="text-[var(--ops-primary)] underline" onClick={()=>onQuotaPeople(null)}>Filter aufheben</button></div>}
         <div className="space-y-6">{(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')?[]:detail?.issues)?.map((issue,i)=><IssueRecord key={`${issue.code}-${i}`} issue={issue} isInformation={!preview?.errors.some(e=>e.code===issue.code)&&!control?.issues.some(i=>i.code===issue.code&&i.kind==='clarification')} isDecision={!preview?.errors.some(e=>e.code===issue.code)&&Boolean(control?.issues.some(i=>i.code===issue.code&&i.kind==='clarification'))}/>)}</div>
-        {hasDeferredPeople&&['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Grau gekennzeichnet: vorerst nicht für die Unterkunft eingeplant. Alle Meldungen bleiben erhalten; Details und Bearbeitung sind weiterhin verfügbar.</p>}
-        {detail?.rows&&detail.rows.length>0&&<div tabIndex={0} role="region" aria-label={`${detail.title} – Tabelle horizontal scrollbar`} className="mt-3 max-h-[65dvh] max-w-full overflow-auto overscroll-contain rounded border border-[var(--ops-border)]"><table className={`w-full text-sm ${wide ? 'min-w-[1400px]' : ''}`}><thead><tr>{detail.headers?.map(h=><th key={h} className={`sticky top-0 z-20 bg-[var(--ops-surface)] border-b border-[var(--ops-divider)] px-3 py-2 whitespace-nowrap text-xs uppercase ${wide&&h===detail.headers?.[0]?'sm:left-0 sm:z-30 min-w-[220px] max-w-[280px]':''} text-[var(--ops-text-subtle)] ${isQuota && quotaHeaders.indexOf(h) >= 2 && quotaHeaders.indexOf(h) <= 6 ? 'text-right' : 'text-left'}`}>{h}</th>)}</tr></thead><tbody>{(groupedRows??[{area:'',items:detail.rows}]).map((section,index)=><Fragment key={index}>{groupedRows&&<tr><th scope="rowgroup" colSpan={detail.headers?.length} className="bg-[var(--ops-surface-elevated)] px-3 py-2 text-left">{section.area}<span className="ml-2 text-xs font-normal">{section.items.length} {detail.title==='Personen der Importvorschau'?'Personen':'Zimmerangaben'}</span></th></tr>}{section.items.map((r,i)=><tr key={i} data-provisional-planning={deferredRows?.has(r)?'deferred':undefined} className={`border-b border-[var(--ops-divider)] ${deferredRows?.has(r)?'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-muted)]':''}`}>{r.map((c,j)=><td key={j} className={`px-3 py-2 ${j===0&&wide?'sm:sticky sm:left-0 sm:z-10 min-w-[220px] max-w-[280px] bg-[var(--ops-surface)]':''} ${isQuota && j >= 2 && j <= 6 ? 'text-right tabular-nums' : ''}`}>{c}</td>)}</tr>)}</Fragment>)}</tbody></table></div>}
+        {hasDeferredPeople&&['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Grau gekennzeichnet sind Personen außerhalb der Planungsempfehlung. „Nicht einplanen“ kennzeichnet den ausdrücklich ausgeschlossenen Unterkunftsbedarf.</p>}
+        {detail?.rows&&detail.rows.length>0&&<div tabIndex={0} role="region" aria-label={`${detail.title} – Tabelle horizontal scrollbar`} className="mt-3 overflow-x-auto"><table className={`w-full text-sm ${wide ? 'min-w-[1050px]' : ''}`}><thead><tr>{detail.headers?.map(h=><th key={h} className={`border-b border-[var(--ops-divider)] px-3 py-2 whitespace-nowrap text-xs uppercase text-[var(--ops-text-subtle)] ${isQuota && quotaHeaders.indexOf(h) >= 2 && quotaHeaders.indexOf(h) <= 6 ? 'text-right' : 'text-left'}`}>{h}</th>)}</tr></thead><tbody>{(groupedRows??[{area:'',items:detail.rows}]).map((section,index)=><Fragment key={index}>{groupedRows&&<tr><th scope="rowgroup" colSpan={detail.headers?.length} className="bg-[var(--ops-surface-elevated)] px-3 py-2 text-left">{section.area}<span className="ml-2 text-xs font-normal">{section.items.length} {detail.title==='Personen der Importvorschau'?'Personen':'Zimmerangaben'}</span></th></tr>}{section.items.map((r,i)=><tr key={i} data-provisional-planning={deferredRows?.has(r)?'deferred':undefined} className={`border-b border-[var(--ops-divider)] ${deferredRows?.has(r)?'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-muted)]':''}`}>{r.map((c,j)=><td key={j} className={`px-3 py-2 ${isQuota && j >= 2 && j <= 6 ? 'text-right tabular-nums' : ''}`}>{c}</td>)}</tr>)}</Fragment>)}</tbody></table></div>}
         {detail&&!detail.issues?.length&&!detail.rows?.length&&<EmptyState title="Keine betroffenen Datensätze" description="Für diese Session liegen keine Detailänderungen vor."/>}
     </EnterpriseDialog>
   );

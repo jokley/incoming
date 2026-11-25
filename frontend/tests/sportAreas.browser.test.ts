@@ -147,7 +147,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const vite=await createServer({root,configFile:`${root}vite.config.ts`,envFile:false,base:'/',cacheDir:await mkdtemp(`${tmpdir()}/incoming-nn-browser-`),define:{'import.meta.env.VITE_API_URL':JSON.stringify('/api')},server:{host:'127.0.0.1',port:0,open:false,hmr:false,ws:false}});
  t.after(()=>vite.close());await vite.listen();
  const browser=await chromium.launch({headless:true,executablePath:'/usr/bin/chromium'});t.after(()=>browser.close());
- const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);
+ const page=await browser.newPage({viewport:{width:1440,height:1050}});page.setDefaultTimeout(10000);page.setDefaultNavigationTimeout(30000);
  const origin=`http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
  const people=Array.from({length:9},(_,i)=>({athleteQuotaFamilies:['Freestyle'],rowNumber:i+2,roomType:'Double shared',accommodationRateCategory:'STANDARD',matchKey:'p'+i,id:String(i+1),firstname:i===0?'Champion':'Athlete'+i,lastname:'Synthetic',nationCode:'FIN',function:'Athlete',gender:'M',single_room_status:'NONE',competitions:[],quotaDisciplines:['Freeski Park & Pipe'],accommodationRequirement:'REQUIRED'}));
  const row:any={areaId:'forecast-scope',eventId:'1',nationCode:'FIN',discipline:'Freeski Park & Pipe',personalGender:'M',sportFamilies:['Freestyle'],reportedCount:9,expectedTotal:null,virtualPlaces:0,bookedPeopleCount:0,usesVirtualPlanning:false,replacedPersonIds:[],status:'NOT_SET',conflict:false,reasons:[],editable:true,worldChampionCount:1,people:[],quotaHints:[{name:'Halfpipe Herren',regularMax:4}],checkInDate:null,checkOutDate:null,note:null,revision:0,baseToken:'original',updatedBy:null,updatedAt:null};
@@ -167,14 +167,39 @@ test('automatic person selection is shared by athlete and Officials quota views 
   const context={gender:'M',athletes:count,athletesEntered:9,expectedAthletes:count,officialQuota:count===4?6:7,registeredOfficials:10,officialsDeviation:count===4?4:3,singleRoomOfficialBasis:count===4?6:7,singleRoomsAllowed:count===4?2:3,singleRoomsRequested:3,singleRoomsPending:count===4?1:0,singleRoomsApproved:0,quotaExemptSingleRooms:0};
   planning.operationalQuota={conflict:false,reasons:[],people:Array.from({length:3},(_,i)=>({matchKey:'staff'+i,nationCode:'FIN',singleRoomAllocation:{identity:'staff'+i,status:i<context.singleRoomsAllowed?'COVERED':'PENDING',context:['FIN',row.discipline,'M']}})),rows:[context],overview:{...preview.quotaOverview,nations:[{...preview.quotaOverview.nations[0],groups:[{name:row.discipline,officials:10,athletes:9,contexts:[context],totals:context}]}]}};
  };project(4);
+ let listRequests=0;
+ const detailRequests:string[]=[];
+ let rejectRequirement=true;
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
+  if(req.method()==='GET' && path==='/import/sessions'){
+   const params=new URL(req.url()).searchParams;
+   assert.equal(params.get('view'),'queue');
+   listRequests++;
+   const summary={id:'1',nation:'FIN',status:session.status,version:1,currentVersionId:'30',
+     uploadedAt:'2026-11-22T00:00:00Z',uploadedBy:'tester',errors:0,warnings:0,pendingDecisions:0,hasOpenSubmissions:false};
+   return route.fulfill({json:[{...summary,matchesDecision:params.get('decisionId')==='42'},
+     {...summary,id:'2',nation:'ITA',status:'ARCHIVED'}]});
+  }
+  if(req.method()==='GET' && /^\/import\/sessions\/\d+$/.test(path))detailRequests.push(path);
+  if(path==='/import/approvals/42')return route.fulfill({json:{id:'42',nation:'FIN',decision:'APPROVED',
+    importSession:{id:'1',nation:'FIN'},people:[],description:'Historical decision'}});
+  if(path==='/import/sessions/2')return route.fulfill({json:{...session,id:'2',nation:'ITA',status:'ARCHIVED',preview:null}});
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
   if(path==='/import/sessions/1/accommodation-requirements/p2' && req.method()==='PATCH'){
    assert.deepEqual(req.postDataJSON(),{accommodationRequirement:'NO_DISPO'});
+   if(rejectRequirement){
+    rejectRequirement=false;
+    return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
+   }
    people[2].accommodationRequirement='NO_DISPO';
    return route.fulfill({json:session});
+  }
+  if(path==='/athletes/3' && req.method()==='PATCH'){
+   assert.equal(req.postDataJSON().accommodationRequirement,'REQUIRED');
+   people[2].accommodationRequirement='REQUIRED';
+   return route.fulfill({json:people[2]});
   }
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
@@ -201,7 +226,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await openRooms();list=page.getByRole('dialog',{name:'Zimmer der Importvorschau'});
  assert.equal(await list.locator('tbody tr:has(td)').count(),4);
  assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),2);
- const mixed=list.getByRole('row').filter({hasText:'Champion Synthetic'});assert.equal(await mixed.getAttribute('data-provisional-planning'),null);assert.equal(await mixed.getByText('Vorerst nicht eingeplant',{exact:true}).count(),1);
+ const mixed=list.getByRole('row').filter({hasText:'Champion Synthetic'});assert.equal(await mixed.getAttribute('data-provisional-planning'),null);assert.equal(await mixed.getByText('Außerhalb der Planungsempfehlung',{exact:true}).count(),1);
  const unknown=list.getByRole('row').filter({hasText:'Athlete8 Synthetic'});assert.equal(await unknown.getAttribute('data-provisional-planning'),null);assert.match(await unknown.innerText(),/Zimmerpartner ungeklärt/);
  await list.getByLabel('Anzeigen').selectOption('partner');assert.equal(await list.locator('tbody tr:has(td)').count(),1);assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),0);
  await list.getByLabel('Anzeigen').selectOption('all');
@@ -253,11 +278,45 @@ test('automatic person selection is shared by athlete and Officials quota views 
  list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
  await list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'}).click();
  assert.deepEqual(await page.getByRole('option').allTextContents(),['Unterkunft benötigt','Kein Zimmer benötigt','Nicht einplanen']);
+ const beforeSaveListRequests=listRequests;
+ await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ await list.getByRole('alert').filter({hasText:'Änderungsplan erneut prüfen.'}).waitFor();
+ const requirement = list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'});
+ assert.equal(await requirement.innerText(),'Unterkunft benötigt');
+ await requirement.click();
  await page.getByRole('option',{name:'Nicht einplanen'}).click();
  const skipped=list.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
- await skipped.getByText('Vorerst nicht eingeplant',{exact:true}).waitFor();
+ await skipped.getByText('Nicht einplanen',{exact:true}).first().waitFor();
+ assert.equal(await skipped.getAttribute('data-provisional-planning'),'deferred');
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
- assert.deepEqual(writes,['/import/sessions/1/accommodation-requirements/p2']);
+ assert.equal(listRequests,beforeSaveListRequests);
+ assert.deepEqual(writes,Array(2).fill('/import/sessions/1/accommodation-requirements/p2'));
+ await page.goto(`${origin}/athletes`);
+ const personRow=page.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
+ await personRow.getByText('Nicht einplanen',{exact:true}).first().waitFor();
+ assert.match((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
+ await personRow.click();
+ const personDialog=page.getByRole('dialog');
+ await personDialog.getByRole('combobox').filter({hasText:'Nicht einplanen'}).click();
+ await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
+ await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
+ await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
+ assert.doesNotMatch((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),'/athletes/3']);
+ detailRequests.length=0;
+ await page.goto(`${origin}/import`);
+ await page.getByText('Geschlossene Importsessions (1)',{exact:true}).waitFor();
+ assert.deepEqual(detailRequests,[]);
+ await page.getByText('Geschlossene Importsessions (1)',{exact:true}).click();
+ await page.getByRole('button',{name:/^ITA /}).click();
+ await page.getByText('Importsession geschlossen',{exact:true}).waitFor();
+ assert.deepEqual(detailRequests,['/import/sessions/2']);
+
+ detailRequests.length=0;
+ await page.goto(`${origin}/import?decisionId=42`);
+ await page.getByText('Historical decision',{exact:true}).waitFor();
+ await page.getByText(/FIN –/).waitFor({state:'attached'});
+ assert.deepEqual(detailRequests,['/import/sessions/1']);
  assert.deepEqual(errors,[]);
 });
 

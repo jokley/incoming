@@ -268,7 +268,7 @@ class ApiService {
     return this.request<RoomType[]>('/room-types');
   }
 
-  async createRoomType(data: { name: string; maxPersons: number }): Promise<RoomType> {
+  async createRoomType(data: { name: string; maxPersons: number; apartmentLayout?: import('../types').ApartmentLayout | null }): Promise<RoomType> {
     if (USE_MOCK_DATA) {
       const maxId = mockRoomTypes.reduce((max, rt) => Math.max(max, parseInt(rt.id) || 0), 0);
       const newRoomType: RoomType = {
@@ -285,7 +285,7 @@ class ApiService {
     });
   }
 
-  async updateRoomType(id: string, data: { name?: string; maxPersons?: number }): Promise<RoomType> {
+  async updateRoomType(id: string, data: { name?: string; maxPersons?: number; apartmentLayout?: import('../types').ApartmentLayout | null }): Promise<RoomType> {
     if (USE_MOCK_DATA) {
       const index = mockRoomTypes.findIndex(rt => rt.id === id);
       if (index === -1) throw new Error('Room type not found');
@@ -742,7 +742,15 @@ class ApiService {
     return this.request('/assignments/segments',{method:'POST',body:JSON.stringify(plan)});
   }
 
-  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;roomNumber?:string;checkInDate:string;checkOutDate:string;joinBookingId?:string}) {
+  async resolveLegacyBedroom(bookingId: string, data: {
+    inventoryId: string; roomNumber: string; bedroomIndex: number;
+    expected: {checkInDate: string | null; checkOutDate: string | null; roomNumber: string | null;
+      countsAsSingle: boolean; athleteIds: string[]};
+  }) {
+    return this.request<RoomBooking>(`/assignments/bookings/${bookingId}/bedroom`, {method:'POST',body:JSON.stringify(data)});
+  }
+
+  async addAccommodationSegments(data:{athleteIds:string[];hotelId:string;roomTypeId:string;inventoryId?:string;roomNumber?:string;bedroomIndex?:number;confirmApartmentException?:boolean;apartmentExceptionReason?:string;acceptedApartmentRules?:string[];checkInDate:string;checkOutDate:string;joinBookingId?:string;confirmReleaseSingleUse?:true}) {
     return this.request<{success:boolean;booking:RoomBooking;people:Array<{personId:string;accommodationCoverage:import('../types').AccommodationCoverage}>}>('/assignments/segments',{method:'POST',body:JSON.stringify(data)});
   }
 
@@ -983,6 +991,11 @@ class ApiService {
   }
 
   async getImportSessions(): Promise<ImportSession[]> { return this.request('/import/sessions'); }
+  async getImportQueue(decisionId?: string | null): Promise<import('../data/importSessions').ImportQueueSession[]> {
+    const query = new URLSearchParams({view: 'queue'});
+    if (decisionId) query.set('decisionId', decisionId);
+    return this.request(`/import/sessions?${query}`);
+  }
   async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
   async stageAccommodationRequirement(sessionId: string, personKey: string, accommodationRequirement: AccommodationRequirement | null): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/accommodation-requirements/${encodeURIComponent(personKey)}`, {method:'PATCH',body:JSON.stringify({accommodationRequirement})});

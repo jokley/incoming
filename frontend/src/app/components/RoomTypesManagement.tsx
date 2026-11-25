@@ -12,22 +12,29 @@ import { ContentCard, CrudDialog, EmptyState, InfoPanel, OpsButton, PageHeader, 
 import { READ_ONLY_TOOLTIP } from './PageLayout';
 import { ActivitySummaryCard } from './activity';
 
-type RoomTypeForm = { name: string; maxPersons: number };
+type RoomTypeForm = { name: string; maxPersons: number; bedrooms: string; showers: number };
 type Usage = { hotel: Hotel; inventory: HotelRoomInventory };
-const EMPTY_FORM: RoomTypeForm = { name: '', maxPersons: 2 };
+const EMPTY_FORM: RoomTypeForm = { name: '', maxPersons: 2, bedrooms: '', showers: 0 };
 const date = (value: string) => new Date(`${value.slice(0, 10)}T00:00:00Z`).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', timeZone: 'UTC' });
 
 function Metric({ label, value, icon }: { label: string; value: number; icon: React.ReactNode }) {
   return <div className="rounded-[var(--ops-radius-lg)] bg-[var(--ops-surface-elevated)] p-4"><div className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-[var(--ops-text-subtle)]">{icon}{label}</div><div className="mt-2 text-2xl font-extrabold">{value}</div></div>;
 }
 
-function RoomTypeDialog({ open, roomType, onClose, onSave }: { open: boolean; roomType: RoomType | null; onClose: () => void; onSave: (value: RoomTypeForm) => Promise<void> }) {
-  const initial = roomType ? { name: roomType.name, maxPersons: roomType.maxPersons } : EMPTY_FORM;
+function RoomTypeDialog({ open, roomType, onClose, onSave }: { open: boolean; roomType: RoomType | null; onClose: () => void; onSave: (value: Omit<RoomType, 'id'>) => Promise<void> }) {
+  const initial = roomType ? { name: roomType.name, maxPersons: roomType.maxPersons, bedrooms: roomType.apartmentLayout?.bedrooms.join(', ') ?? '', showers: roomType.apartmentLayout?.showers ?? 0 } : EMPTY_FORM;
   const [form, setForm] = useState<RoomTypeForm>(initial);
   const [saving, setSaving] = useState(false);
   useEffect(() => { if (open) setForm(initial); }, [open, roomType?.id]);
-  return <CrudDialog open={open} title={roomType ? 'Zimmertyp bearbeiten' : 'Zimmertyp hinzufügen'} dirty={JSON.stringify(form) !== JSON.stringify(initial)} saving={saving} saveDisabled={!form.name.trim() || form.maxPersons < 1 || form.maxPersons > 10} onClose={onClose} onSave={async () => { setSaving(true); try { await onSave(form); onClose(); } finally { setSaving(false); } }}>
-    <Stack spacing={2.25} sx={{ pt: 1 }}><TextField required label="Bezeichnung" placeholder="z. B. DZ / DU" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} /><TextField required type="number" label="Maximale Personen" value={form.maxPersons || ''} inputProps={{ min: 1, max: 10, step: 1 }} helperText="Zulässige Belegung dieses Zimmertyps" onChange={event => setForm({ ...form, maxPersons: Number(event.target.value) })} />{roomType && <ActivitySummaryCard entityType="room-types" entityId={roomType.id} />}</Stack>
+  const bedrooms = form.bedrooms.trim() ? form.bedrooms.split(',').map(value => Number(value.trim())) : [];
+  const invalidLayout = bedrooms.length > 0 && (!bedrooms.every(value => value === 1 || value === 2)
+    || !Number.isInteger(form.showers) || form.showers < 1 || bedrooms.reduce((sum,value) => sum+value,0) < form.maxPersons);
+  return <CrudDialog open={open} title={roomType ? 'Zimmertyp bearbeiten' : 'Zimmertyp hinzufügen'} dirty={JSON.stringify(form) !== JSON.stringify(initial)} saving={saving} saveDisabled={!form.name.trim() || form.maxPersons < 1 || form.maxPersons > 10 || invalidLayout} onClose={onClose} onSave={async () => { setSaving(true); try { await onSave({name:form.name,maxPersons:form.maxPersons,apartmentLayout:bedrooms.length ? {bedrooms,showers:form.showers} : null}); onClose(); } finally { setSaving(false); } }}>
+    <Stack spacing={2.25} sx={{ pt: 1 }}><TextField required label="Bezeichnung" placeholder="z. B. DZ / DU" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} /><TextField required type="number" label="Maximale Personen" value={form.maxPersons || ''} inputProps={{ min: 1, max: 10, step: 1 }} helperText="Zulässige Belegung dieses Zimmertyps" onChange={event => setForm({ ...form, maxPersons: Number(event.target.value) })} /><TextField label="Physische Schlafräume (Apartment)" placeholder="2, 2, 1" helperText="Bestätigte Schlafplätze je Schlafraum, durch Komma getrennt."
+      value={form.bedrooms} onChange={event => setForm({...form,bedrooms:event.target.value})}/>
+      {form.bedrooms.trim() && <TextField required type="number" label="Verfügbare DU" value={form.showers || ''}
+        onChange={event => setForm({...form,showers:Number(event.target.value)})}/>}
+      {roomType && <ActivitySummaryCard entityType="room-types" entityId={roomType.id} />}</Stack>
   </CrudDialog>;
 }
 

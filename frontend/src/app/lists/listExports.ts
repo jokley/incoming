@@ -83,6 +83,9 @@ export function exportExcel(rows: ListRow[], kind: ListKind) {
 export function exportHotelOverviewExcel(rows: HotelContactRow[]) {
   const fields: Array<[keyof HotelContactRow, string]> = [['hotel','Hotel'],['region','Region'],['location','Ort'],['contactPerson','Ansprechpartner'],['phone','Telefon'],['email','E-Mail'],['hasHalfBoard','HP'],['hasSR','SR'],['contingents','Kontingente'],['inventoryPeriods','Kontingentintervalle'],['totalRooms','Vereinbarte Zimmer (Kontingentsumme)'],['totalBeds','Vereinbarte Betten (Kontingentsumme)'],['assignedBookings','Buchungen (gesamt)'],['assignedPersons','Personen (eindeutig im Hotel)'],['peakRooms','Spitze belegte Zimmer'],['peakPersons','Spitze Personen'],['peakBlockedBeds','Spitze zusätzlich blockierte Betten'],['comment','Kommentar']];
   const cells = (values: string[], rowNumber: number) => values.map((value, index) => `<c r="${columnName(index)}${rowNumber}" t="inlineStr"><is><t xml:space="preserve">${xml(value)}</t></is></c>`).join('');
+  if (rows.some(row=>row.peakBedrooms || row.apartmentExceptionDays)) {
+    fields.push(['peakBedrooms','Spitze belegte Apartment-Schlafräume'],['apartmentExceptionDays','Tage mit Apartmentausnahmen']);
+  }
   const display = (row: HotelContactRow, key: keyof HotelContactRow) => key === 'hasHalfBoard' || key === 'hasSR' ? (row[key] ? 'Ja' : 'Nein') : String(row[key] ?? '—');
   const worksheet = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="1">${cells(fields.map(([, label]) => label), 1)}</row>${rows.map((row, index) => `<row r="${index + 2}">${cells(fields.map(([key]) => display(row, key)), index + 2)}</row>`).join('')}</sheetData></worksheet>`;
   const files: Array<[string, string]> = [

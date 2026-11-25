@@ -19,7 +19,7 @@ test('actual API facade applies context to JSON, multipart, globals and download
   await assert.rejects(api.getAthletes(), /Eventkontext/);
   api.eventScope.activate('7');
   for (const call of [() => api.getAthletes(), () => api.getHotels(), () => api.getEvents(),
-    () => api.getRoomTypes(), () => api.getImportSessions(), () => api.getOfficialQuotaUsage(),
+    () => api.getRoomTypes(), () => api.getImportSessions(), () => api.getImportQueue('42'), () => api.getOfficialQuotaUsage(),
     () => api.getOfficialQuotaOverview({nationCode:'AUT',discipline:'Ski Cross',gender:'M'}),
     () => api.getAuditEvents(), () => api.previewFisImport([], true, undefined, '7')]) await call();
   assert.ok(calls.slice(2).every(c => new Headers(c.init?.headers).get('X-Championship-Event-ID') === '7'));

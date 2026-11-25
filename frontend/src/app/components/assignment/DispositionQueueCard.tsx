@@ -1,8 +1,7 @@
 import {PersonStatusIcons} from './PersonDispositionStatus';
 import { hasApplicableSingleRoomApproval, matchesQuotaAllowanceContext, singleRoomBadgeLabels } from '../../services/quotaEvaluation';
 import { semanticToneClasses } from '../../design-system/components/primitives';
-import {queueRoomRequest} from '../../services/assignmentPresentation';
-import { queueFunctionLabel } from '../../services/queuePersonType';
+import {assignmentPersonContext, queueRoomRequest} from '../../services/assignmentPresentation';
 import { externalStayEligibility, allExternalReason } from '../../services/externalStayEligibility';
 import { DispositionDragContext } from './DispositionDragContext';
 import { useContext, useState } from 'react';
@@ -60,7 +59,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
             singleRoomQuotaExemptReason:person.singleRoomQuotaExemptReason,approvedQuotaContexts:person.approvedQuotaContexts}));
         const champion = person.provisionalWorldChampion || singleRoomBadgeLabels(false,undefined,person.singleRoomQuotaExemptReason).includes('👑 WM');
         return <div key={person.athleteId} className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1 rounded-md bg-[var(--ops-surface-elevated)] px-2 py-1.5">
-        <div className="min-w-0"><span className="flex flex-wrap items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span><PersonStatusIcons personId={person.athleteId}/>{person.provisionalAccommodation&&<span title="Automatisch vorläufig aus der aktuellen bestätigten Entry List für die Unterkunft ausgewählt." className="rounded border border-[var(--ops-border)] px-1 text-[10px] text-[var(--ops-text-muted)]">Vorläufig</span>}{champion && <span title={person.provisionalWorldChampion?"Verifizierter Weltmeister-Zusatzplatz aus der aktuellen Entry List; keine zusätzliche EZ-Genehmigung.":"Weltmeister – hinterlegte EZ-Ausnahme"} aria-label="Weltmeister"><Crown className="h-3.5 w-3.5 text-amber-500 fill-amber-200"/></span>}{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}{approved && <span title="Aktuell anwendbare kostenpflichtige EZ-Vorabgenehmigung; vor Zuteilung noch kein aktiver EZ-Mehrpreis." className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${semanticToneClasses.success}`}>Mehrpreis genehmigt</span>}</span><span className="block text-[10px] leading-snug text-[var(--ops-text-muted)]">{queueFunctionLabel(person)}</span></div>
+        <div className="min-w-0"><span className="flex flex-wrap items-baseline gap-2 font-bold"><span className="break-words">{person.name}</span><PersonStatusIcons personId={person.athleteId}/>{person.provisionalAccommodation&&<span title="Empfehlung aus der aktuellen bestätigten Entry List. Weitere Athleten bleiben disponierbar." className="rounded border border-[var(--ops-border)] px-1 text-[10px] text-[var(--ops-text-muted)]">Empfohlen</span>}{champion && <span title={person.provisionalWorldChampion?"Verifizierter Weltmeister-Zusatzplatz aus der aktuellen Entry List; keine zusätzliche EZ-Genehmigung.":"Weltmeister – hinterlegte EZ-Ausnahme"} aria-label="Weltmeister"><Crown className="h-3.5 w-3.5 text-amber-500 fill-amber-200"/></span>}{!sharedRequest && <span aria-label={`Zimmerwunsch: ${queueRoomRequest(person,unit)}`} className="shrink-0 text-[11px] font-semibold text-[var(--ops-text-muted)]">{queueRoomRequest(person,unit)}</span>}{approved && <span title="Aktuell anwendbare kostenpflichtige EZ-Vorabgenehmigung; vor Zuteilung noch kein aktiver EZ-Mehrpreis." className={`rounded-md border px-1.5 py-0.5 text-[10px] font-semibold ${semanticToneClasses.success}`}>Mehrpreis genehmigt</span>}</span><span className="block break-words text-[10px] leading-snug text-[var(--ops-text-muted)]">{assignmentPersonContext(person)}</span></div>
         {enabled && action([person.athleteId],unit.occupants.length===1 ? 'Person' : person.firstname)}
       </div>;})}
     </div>
@@ -82,7 +81,7 @@ export function DispositionQueueCard({unit,selected,highlighted,onSelect,onDragS
 
 /** Existing planning conflicts, never virtual reservation or assignment cards. */
 export function PlanningClarification({group}:{group:import('../../types').ArrivalPlanningRow}) {
- return <article aria-label={`Planungsklärung ${group.nationCode} ${group.discipline??''}`} className="rounded-lg border border-[var(--ops-border)] p-2 text-xs">
+ return <article aria-label={`${group.conflict ? 'Planungsklärung' : 'Planungshinweis'} ${group.nationCode} ${group.discipline??''}`} className="rounded-lg border border-[var(--ops-border)] p-2 text-xs">
   <strong>{group.nationCode} · {group.discipline??'Zuordnung klären'} · {group.personalGender??'Gender klären'}</strong>
   <p className="text-[var(--ops-warning)]">{group.reasons.join(' ')}</p>
  </article>;

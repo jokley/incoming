@@ -63,6 +63,10 @@ def test_first_import_reimport_durable_and_two_events(events):
             repeated=run(again,event)
             assert repeated['summary']['peopleCreated']==0 and repeated['summary']['peopleUpdated']==0
             assert [p.id for p in Athlete.query.filter_by(event_id=event.id).order_by(Athlete.id)]==ids
+            queue = app.test_client().get('/api/import/sessions?view=queue').json
+            assert [(row['id'], row['version'], row['status'], row['pendingDecisions']) for row in queue] == [
+                (again['session']['id'], 2, 'IMPORTED', 0),
+            ]
     assert Athlete.query.count()==4
 
 
@@ -513,7 +517,7 @@ def test_provisional_selection_uses_confirmed_entry_order_and_protects_bookings(
     assert row['selectionWarnings'] and row['reasons']
     assert not ({str(people[codes[0]].id),str(people[codes[1]].id)} & set(row['replacedPersonIds']))
     plan=operative_projection(project('JPN'))
-    assert plan['virtualPlaces']==0 and plan['conflicts']==1
+    assert plan['virtualPlaces']==0 and plan['conflicts']==0
     assert RoomBookingOccupant.query.count()==2
 
 
@@ -631,8 +635,8 @@ def test_operational_selection_preview_matches_live_and_uses_existing_ez_tiers(e
     for field in ('expectedAthletes','officialQuota','singleRoomOfficialBasis','singleRoomsAllowed'):
         assert live[field]==context[field]
     usage=client.get('/api/fis/official-quotas?includePeople=true').json
-    assert usage['personSummary']['accommodationPeopleRequired']==4+official_count  # Four athletes plus the distinct named Officials.
-    assert usage['personSummary']['unassigned']==4+official_count
+    assert usage['personSummary']['accommodationPeopleRequired']==8+official_count  # All real people with an open accommodation requirement.
+    assert usage['personSummary']['unassigned']==8+official_count
     assert len(project('JPN')['rows'][0]['replacedPersonIds'])==4
 
 
@@ -779,19 +783,117 @@ def test_no_dispo_is_staged_persisted_and_releases_the_next_regular_place(events
     assert person.accommodation_requirement == 'NO_DISPO'
 
 
-def test_no_dispo_cannot_replace_an_existing_booking(events):
+@pytest.mark.parametrize('warm_cache', [False, True])
+def test_requirement_patch_reuses_calculated_preview_and_rolls_back_failed_plan(events, monkeypatch, warm_cache):
+    import app as routes
+    import excel_import as imports
+    from imports.event_context import ImportValidationError
+
     event = events[0]
-    pending = upload(event)
+    first = upload(event)
+    run(first, event)
+    draft = upload(event, session_id=first['session']['id'])
+    token = draft['previewToken']
+    if not warm_cache:
+        PREVIEW_STORE.pop(token, None)
+    client = app.test_client()
+    sid = draft['session']['id']
+    endpoint = f'/api/import/sessions/{sid}/accommodation-requirements/9300953'
+    recalculate = imports.recalculate_fis_import_preview
+    with patch.object(imports, 'recalculate_fis_import_preview', wraps=recalculate) as plan_calculation, \
+         patch.object(routes, 'recalculate_fis_import_preview', wraps=recalculate) as route_calculation:
+        for requirement in ('NO_DISPO', 'REQUIRED'):
+            result = client.patch(endpoint, json={'accommodationRequirement': requirement})
+            assert result.status_code == 200, result.json
+            target = next(p for p in result.json['preview']['people'] if p['fisCode'] == '9300953')
+            assert target['accommodationRequirement'] == requirement
+        assert plan_calculation.call_count == 0
+        assert route_calculation.call_count == (6 if warm_cache else 4)
+
+    session = db.session.get(ImportSession, int(sid))
+    pending = ImportApproval(session_id=session.id, version_id=session.current_version_id,
+        nation='JPN', approval_type='QUOTA_SINGLE_ROOMS_EXCEEDED', description='Single Rooms',
+        decision='PENDING', username='test')
+    db.session.add(pending)
+    db.session.commit()
+    with patch.object(imports, 'recalculate_fis_import_preview', wraps=recalculate) as plan_calculation:
+        result = client.patch(endpoint, json={'accommodationRequirement': 'REQUIRED'})
+        assert result.status_code == 200, result.json
+        assert plan_calculation.call_count == 1
+    assert result.json['approvals'] == []
+    saved = session.current_version.preview_json
+    raw_before = PREVIEW_STORE.get(token)
+    history_count = ImportSessionEvent.query.filter_by(session_id=session.id).count()
+    refresh = routes.refresh_plan
+
+    def reject_plan(*args, **kwargs):
+        refresh(*args, **kwargs)
+        raise ImportValidationError('STALE_PREVIEW', 'Änderungsplan erneut prüfen.')
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(routes, 'refresh_plan', reject_plan)
+        rejected = client.patch(endpoint, json={'accommodationRequirement': 'NO_DISPO'})
+    assert rejected.status_code == 409 and rejected.json['error'] == 'STALE_PREVIEW'
+    assert session.current_version.preview_json == saved
+    assert ImportSessionEvent.query.filter_by(session_id=session.id).count() == history_count
+    assert PREVIEW_STORE.get(token) is raw_before
+
+    booked = booking([Athlete.query.filter_by(fis_code='9300953').one()])
+    rejected = client.patch(endpoint, json={'accommodationRequirement': 'NO_ROOM'})
+    assert rejected.status_code == 409 and rejected.json['reasonCode'] == 'NO_ROOM_HAS_BOOKINGS'
+    assert db.session.get(RoomBooking, booked.id) is not None
+    assert session.current_version.preview_json == saved
+
+
+def test_no_dispo_preserves_booking_and_recalculates_recommendation(events):
+    from arrival_planning import project
+    from models import HotelRoomInventory
+
+    event = events[0]
+    codes = tuple(str(9400300 + index) for index in range(6))
+    # Use the existing five-person quota for this fixture's planning area.
+    from test_event_quota_rules import housing_revision
+    housing_revision(event, {'Snowboard Alpine': 5})
+    pending = upload(event, codes)
     run(pending, event)
-    person = Athlete.query.filter_by(fis_code='9300953').one()
-    booking([person])
-    corrected = upload(event, ('9300954', '9300953'), session_id=pending['session']['id'])
-    response = app.test_client().patch(
-        f"/api/import/sessions/{corrected['session']['id']}/accommodation-requirements/9300953",
-        json={'accommodationRequirement': 'NO_DISPO'})
-    assert response.status_code == 409, response.json
-    assert RoomBookingOccupant.query.filter_by(athlete_id=person.id).count() == 1
-    assert person.accommodation_requirement != 'NO_DISPO'
+    people = [Athlete.query.filter_by(fis_code=code).one() for code in codes]
+    person = people[1]
+    existing = booking([person])
+    booking_id = existing.id
+    db.session.add(HotelRoomInventory(hotel_id=existing.hotel_id, room_type_id=existing.room_type_id,
+        available_from=existing.check_in_date, available_until=existing.check_out_date, room_count=10))
+    db.session.commit()
+    client = app.test_client()
+    assert str(people[5].id) not in project('JPN')['rows'][0]['selectedPersonIds']
+    change = client.patch(f'/api/athletes/{person.id}', json={'accommodationRequirement': 'NO_DISPO'})
+    assert change.status_code == 200, change.json
+    assert change.json['accommodationCoverage']['openIntervals'] == []
+    assert change.json['accommodationCoverage']['conflicts'][0]['code'] == 'NO_DISPO_HAS_BOOKINGS'
+    row = project('JPN')['rows'][0]
+    assert str(people[5].id) in row['selectedPersonIds']
+    assert str(person.id) not in row['selectedPersonIds']
+    assert any('Buchung bleibt erhalten' in warning for warning in row['selectionWarnings'])
+    corrected = upload(event, codes, session_id=pending['session']['id'])
+    assert next(row for row in corrected['people'] if row['fisCode'] == person.fis_code)['accommodationRequirement'] == 'NO_DISPO'
+    run(corrected, event)
+    assert RoomBookingOccupant.query.filter_by(athlete_id=person.id).one().room_booking_id == booking_id
+    assert client.patch(f'/api/athletes/{person.id}', json={'accommodationRequirement': 'REQUIRED'}).status_code == 200
+    assert str(people[5].id) not in project('JPN')['rows'][0]['selectedPersonIds']
+    plan = client.get('/api/assignments/planning-view?includeValidations=false').json
+    assert str(people[5].id) in {p['athleteId'] for u in plan['units']['unassigned'] for p in u['occupants']}
+    assert str(people[5].id) in plan['athletePlanning']['replacedPersonIds']  # Forecast only.
+    for number, extra in enumerate([people[5], people[0], *people[2:5]], 2):
+        assigned = client.post(f'/api/assignments/persons/{extra.id}/segments', json={
+            'hotelId': str(existing.hotel_id), 'roomTypeId': str(existing.room_type_id), 'roomNumber': f'Zimmer {number:02}',
+            'checkInDate': '2027-03-03', 'checkOutDate': '2027-03-09',
+        })
+        assert assigned.status_code == 201, assigned.json
+    overview = client.get('/api/fis/official-quotas?nationCode=JPN&includePeople=true').json
+    assert overview['personSummary']['fullyAssigned'] == 6
+    assert overview['personSummary']['planningConflicts'] == 0
+    assert any('Mehr reguläre Athleten untergebracht' in reason
+               for group in overview['personPlanning']['groups'] for reason in group['reasons'])
+
 
 
 @pytest.mark.parametrize('legacy_approved', [False, True])
@@ -908,3 +1010,65 @@ def test_excel_analytics_distinguishes_sui_room_evidence(events, room_type, conf
         assert any(error['code']=='ACCOMMODATION_REQUIREMENT_SOURCE_CONFLICT' for error in preview['errors'])
         assert review(preview, event).status_code == 409
     assert Athlete.query.count() == 0
+
+
+def test_compact_import_queue_scopes_metadata_and_preserves_workflow(events):
+    from test_import_performance import sql_count
+
+    owner, other_event = events
+    target_id = None
+    for i in range(24):
+        status = ('IMPORTED', 'DRAFT', 'ARCHIVED', 'CANCELLED')[i % 4]
+        session = ImportSession(event_id=owner.id, nation=f'N{i:02}', status=status)
+        db.session.add(session)
+        db.session.flush()
+        for revision in range(1, 7):
+            preview = {
+                'eventId': owner.id, 'replacementScope': {'kind': 'SPORT_FAMILY',
+                    'family': 'Snowboard' if revision % 2 else 'Freestyle'},
+                '_workflow': {'state': 'IMPORTED' if revision < 6 else 'REVIEW'},
+                'errors': [{}] if revision == 6 else [], 'warnings': [{}, {}],
+                'people': [{'matchKey': str(person), 'function': 'Athlete'} for person in range(30)],
+            }
+            version = ImportSessionVersion(session_id=session.id, version=revision,
+                uploaded_by='queue tester', preview_json=json.dumps(preview))
+            db.session.add(version)
+            db.session.flush()
+            approval = ImportApproval(session_id=session.id, version_id=version.id, nation=session.nation,
+                approval_type='QUOTA_SINGLE_ROOMS_EXCEEDED', description='Single Rooms',
+                decision='PENDING', username='queue tester', quota_details_json='{"candidate":"PRIVATE_MARKER"}')
+            db.session.add(approval)
+            db.session.flush()
+            if i == 0 and revision == 1:
+                target_id = approval.id
+            db.session.add(ImportSessionEvent(session_id=session.id, version_id=version.id, event_type='NOTE',
+                title='History entry', description='PRIVATE_MARKER' * 100, username='queue tester'))
+        session.current_version = version
+    hidden = ImportSession(event_id=other_event.id, nation='OTHER', status='DRAFT')
+    db.session.add(hidden)
+    db.session.flush()
+    hidden_approval = ImportApproval(session_id=hidden.id, nation=hidden.nation, approval_type='NATION_APPROVED',
+        description='Other event', decision='APPROVED', username='queue tester')
+    db.session.add(hidden_approval)
+    db.session.commit()
+    hidden_id = hidden_approval.id
+
+    client = app.test_client()
+    with sql_count() as statements, patch('app.recalculate_fis_import_preview', side_effect=AssertionError('preview recalculated')):
+        response = client.get(f'/api/import/sessions?view=queue&decisionId={target_id}')
+    assert response.status_code == 200, response.json
+    assert len(statements) <= 9
+    assert b'PRIVATE_MARKER' not in response.data
+    assert len(response.data) < 10000
+    rows = response.json
+    assert len(rows) == 24 and {row['status'] for row in rows} == {'IMPORTED', 'ARCHIVED', 'DRAFT', 'CANCELLED'}
+    assert not any({'versions', 'history', 'preview', 'approvals'} & row.keys() for row in rows)
+    assert [row['nation'] for row in rows if row.get('matchesDecision')] == ['N00']
+    assert not any(row.get('matchesDecision') for row in client.get(f'/api/import/sessions?view=queue&decisionId={hidden_id}').json)
+    previous = {row['id']: row for row in client.get('/api/import/sessions').json}
+    for row in rows:
+        old = previous[row['id']]
+        assert (row['version'], row['errors'], row['warnings']) == (old['version'], old['errors'], old['warnings'])
+        assert row['pendingDecisions'] == sum(a['decision'] == 'PENDING' for a in old['approvals'])
+        assert row['hasOpenSubmissions'] == (old['status'] not in {'ARCHIVED', 'CANCELLED'}
+                                             and any(item['status'] != 'IMPORTED' for item in old['submissions']))

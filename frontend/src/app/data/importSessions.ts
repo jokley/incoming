@@ -50,3 +50,19 @@ export const completedImportStatuses = new Set<ImportSessionStatus>(['IMPORTED',
 
 export const closedImportStatuses = new Set<string>(['ARCHIVED', 'CANCELLED']);
 export const hasOpenSubmissions = (session:{status?:string;submissions?:ReadonlyArray<{status:string}>}) => !closedImportStatuses.has(session.status ?? '') && Boolean(session.submissions?.some(s=>s.status!=='IMPORTED'));
+
+export interface ImportQueueSession extends Pick<ImportSession,
+  'id' | 'nation' | 'discipline' | 'status' | 'version' | 'uploadedAt' | 'uploadedBy' |
+  'currentVersionId' | 'errors' | 'warnings'> {
+  pendingDecisions: number;
+  hasOpenSubmissions: boolean;
+  matchesDecision?: boolean;
+}
+
+export function importQueueSession(session: ImportSession): ImportQueueSession {
+  const { id, nation, discipline, status, currentVersionId, uploadedAt, uploadedBy, errors, warnings } = session;
+  return { id, nation, discipline, status, currentVersionId, uploadedAt, uploadedBy, errors, warnings,
+    version: session.currentVersion?.version ?? session.version,
+    pendingDecisions: session.approvals.filter(approval => approval.decision === 'PENDING').length,
+    hasOpenSubmissions: hasOpenSubmissions(session) };
+}

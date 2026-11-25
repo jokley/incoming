@@ -8,6 +8,23 @@ export function explicitRoomRequest(roomType?: string | null): string {
   return request;
 }
 
+/** Projected personal facts only. Quota contexts can refer to someone else's gender or group. */
+export function assignmentPersonContext(person: {
+  nationCode?: string | null;
+  gender?: string | null;
+  function?: string | null;
+  quotaDisciplines?: string[];
+}): string {
+  const gender = person.gender?.trim().toUpperCase();
+  const groups = [...new Set(person.quotaDisciplines?.map(group => group.trim()).filter(Boolean))];
+  return [
+    person.nationCode?.trim().toUpperCase() || '—',
+    gender === 'M' || gender === 'W' ? gender : '—',
+    person.function?.trim() || '—',
+    groups.join(' / ') || '—',
+  ].join(' · ');
+}
+
 /** Display only: person room request from the canonical planning projection.
  * Never infer a request from assigned capacity, tariff or quota status. */
 export function queueRoomRequest(person:Pick<RoomBookingUnitOccupant,'roomType'>, unit:Pick<RoomBookingUnit,'roomType'|'roomTypeLabel'|'roomCategoryLabel'>):string {

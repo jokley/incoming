@@ -117,9 +117,9 @@ def provisional_selection(people, event, entry_rows, booked):
     result = {}
     booked_ids = {str(identity) for identity in booked}
     for key, ids in groups.items():
-        retained = set(ids) & booked_ids
         skipped = {identity for identity in ids if by_id[identity].accommodation_requirement == 'NO_DISPO'}
-        eligible_ids = set(ids) - (skipped - retained)
+        eligible_ids = set(ids) - skipped
+        retained = eligible_ids & booked_ids
         limit=athlete_housing_limit(json.loads(event.quota_rules_json or '{}'),key[1])
         reasons = []
         if not all(key):
@@ -133,21 +133,21 @@ def provisional_selection(people, event, entry_rows, booked):
         eligible = eligible_ids & champions & provenance.keys()
         regular = [i for i in ordered if i not in eligible]
         automatic = set(regular[:limit]) | eligible
-        # Existing regular bookings consume planned regular places. Do not add
-        # new tasks beyond the configured total for an accommodated team.
+        # Existing regular bookings use places in the recommendation.
+        # The actual work queue is independent of this projection.
         selected = retained | eligible
         slots = max(0, limit - len(retained - eligible))
         selected.update([i for i in regular if i not in retained][:slots])
         warnings = []
-        if retained & skipped:
+        if booked_ids & skipped:
             warnings.append('Nicht einplanen steht im Konflikt mit einer bestehenden Buchung. Die Buchung bleibt erhalten.')
         if retained - automatic:
             warnings.append('Bestehende Buchungen weichen von der automatischen Listenauswahl ab; Bestand bleibt erhalten.')
         if len(retained - eligible) > limit:
-            warnings.append('Mehr reguläre Personen gebucht als vorläufig vorgesehen; Unterkunftsbestand klären.')
+            warnings.append('Mehr reguläre Athleten untergebracht als für diesen Planungsbereich vorgesehen.')
         result[key] = dict(selectedPersonIds=sorted(selected) if not reasons else [],
             provisionalPersonIds=sorted(selected-retained) if not reasons else [],
-            excludedPersonIds=sorted(set(ids)-selected if not reasons else skipped-retained),
+            excludedPersonIds=sorted(set(ids)-selected if not reasons else skipped),
             selectedCount=len(selected) if not reasons else None,
             # Retained bookings are physical stock, not extra regular quota slots.
             quotaAthleteCount=min(len(selected-eligible),limit)+len(eligible) if not reasons else None,
@@ -222,7 +222,7 @@ def project(nation=None, *, people_override=None, entry_rows=None):
                          sportFamilies=families,reportedCount=len(members),bookedPeopleCount=sum(p['hasBooking'] for p in members),
                          usesVirtualPlanning=False,virtualPlaces=0,
                          replacedPersonIds=chosen['excludedPersonIds'],**chosen,legacyForecastInactive=legacy,
-                         status='CONFLICT' if reasons or chosen['selectionWarnings'] else 'PLANNED',conflict=bool(reasons),reasons=reasons+chosen['selectionWarnings'],
+                         status='CONFLICT' if reasons else 'PLANNED',conflict=bool(reasons),reasons=reasons+chosen['selectionWarnings'],
                          source='IMPORTED_ENTRY_LIST',editable=key[1] is not None,people=members,
                          worldChampionCount=sum(p['worldChampionMarked'] or bool(p['titleReferences']) for p in members),
                          rosterDigest=roster_digest,baseToken=fingerprint({'forecast':values,'people':members}),**values))
@@ -239,13 +239,14 @@ def save(area, data, username, *, commit=True):
 
 
 def operative_projection(overview):
-    """One shared real-person selection for queue and accommodation predicates."""
+    """Expose recommendation and warnings alongside the unrestricted work queue."""
     rows=overview['rows']
+    # Forecast consumers still use these exclusions for the recommended demand.
     return dict(replacedPersonIds=sorted({i for row in rows for i in row['replacedPersonIds']}),
         provisionalPersonIds=sorted({i for row in rows for i in row['provisionalPersonIds']}),
         worldChampionPersonIds=sorted({i for row in rows for i in row['selectedWorldChampionIds']}),
         groups=[row for row in rows if row['reasons']], controlledAreas=len(rows),
-        zeroAreas=0,zeroGroups=[],virtualPlaces=0,conflicts=sum(bool(row['reasons']) for row in rows))
+        zeroAreas=0,zeroGroups=[],virtualPlaces=0,conflicts=sum(row['conflict'] for row in rows))
 
 
 
@@ -287,7 +288,7 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
                 gender=person.gender,quotaDisciplines=quota_disciplines(person.competitions),accommodationRequirement=person.accommodation_requirement,singleRoomQuotaExemptReason=person.single_room_quota_exempt_reason)
             roster.append(record)
             groups=projected_approval_groups(person.single_room_decision,person,roster=context.athletes)
-            demands.append(dict(record,countsAsSingle=any(m.room_booking.counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_ACCOMMODATION and str(person.room_type or '').strip().lower()=='single'),
+            demands.append(dict(record,countsAsSingle=any(m.room_booking.effective_counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_ACCOMMODATION and str(person.room_type or '').strip().lower()=='single'),
                 singleRoomStatus=person.single_room_status,approvedQuotaContexts=[dict(nationCode=n,discipline=d,gender=g) for n,d,g in groups]))
     else:
         allocations={item['personKey']:item for check in preview.get('quotaChecks',[]) for item in check.get('singleRoomAllocations',[])}
