@@ -96,6 +96,8 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  const grouping=page.getByRole('group',{name:'Gruppieren:'});await grouping.waitFor();
  await page.getByText(/Zimmerbedarf \(vorläufig\) · 02\.03\.: 1 bekannt · 1 DZ · 0 EZ/).waitFor();
  assert.equal(await grouping.getByRole('button',{name:'Aus',exact:true}).getAttribute('aria-pressed'),'true');
+ const findings=page.getByRole('region',{name:'Klärungsübersicht'});
+ assert.match(await findings.innerText(),/Blockierend.*Unresolved original Room List row/);
  const initialRequests=[...requests];await grouping.getByRole('button',{name:'Ein',exact:true}).click();
  const card=page;
  await card.getByRole('button',{name:/^Personen/}).first().click();let dialog=page.getByRole('dialog');await dialog.waitFor();

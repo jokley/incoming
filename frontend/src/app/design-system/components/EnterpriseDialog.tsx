@@ -2,7 +2,7 @@ import { useId, type KeyboardEvent, type ReactNode } from 'react';
 import Close from '@mui/icons-material/Close';
 import { Box, Button, CircularProgress, Dialog, DialogContent, IconButton, Stack, Typography } from '@mui/material';
 
-export type EnterpriseDialogSize = 'small' | 'medium' | 'large' | 'fullscreen';
+export type EnterpriseDialogSize = 'small' | 'medium' | 'large' | 'table' | 'fullscreen';
 
 const widthBySize = { small: 'sm', medium: 'md', large: 'lg' } as const;
 
@@ -39,7 +39,8 @@ export function EnterpriseDialog({ open, title, description, status, children, a
     onClose={busy ? undefined : onClose}
     fullWidth
     fullScreen={size === 'fullscreen'}
-    maxWidth={size === 'fullscreen' ? false : widthBySize[size]}
+    maxWidth={size === 'fullscreen'||size === 'table' ? false : widthBySize[size]}
+    sx={size==='table'?{'& .MuiDialog-paper':{width:'95vw',maxWidth:'1800px',m:'2.5vw',maxHeight:'95dvh'}}:undefined}
     aria-labelledby={titleId}
     aria-describedby={description ? descriptionId : undefined}
     onKeyDown={handleKeyDown}

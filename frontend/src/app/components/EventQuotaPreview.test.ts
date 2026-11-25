@@ -35,7 +35,7 @@ test('an unresolved family cannot appear quota compliant when no rows were calcu
 
 test('unmapped blocking file errors remain visible in the relevant tile',()=>{
  const html=renderToStaticMarkup(createElement(Preview,{preview:{...preview,errors:[{code:'ENTRY_MISSING_COLUMNS',message:'Pflichtspalten fehlen'}]},peopleRows:[],roomRows:[],onOpen:()=>{}}));
- assert.match(html,/1 Importfehler/);
+ assert.match(html,/1 Blockierende Importfehler/);
 });
 
 test('family tile surfaces CAN one and GER two unresolved positions without summing athletes',()=>{
