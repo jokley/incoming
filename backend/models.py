@@ -148,7 +148,7 @@ class ImportSession(db.Model):
                 and item.approval_type != 'QUOTA_OFFICIALS_EXCEEDED'
                 and not item.description.startswith('Officials überschritten')]
 
-    def to_dict(self, include_preview=False):
+    def to_dict(self, include_preview=False, *, read_context=None):
         current = self.current_version
         preview = json.loads(current.preview_json) if current and current.preview_json else None
         latest_upload = current.created_at if current else self.created_at
@@ -179,7 +179,7 @@ class ImportSession(db.Model):
                     from imports.read_context import ImportReadContext
                     from imports.identity import _find_existing_athlete
                     from competitions import competition_athlete_family
-                    context=ImportReadContext(self.event_id)
+                    context=read_context or ImportReadContext(self.event_id)
                     combined=merge_submission_previews(list(heads.values()),read_context=context)
                     people=combined['people']
                     matched={a.id for p in people if (a:=_find_existing_athlete(p,context.athlete_maps))}

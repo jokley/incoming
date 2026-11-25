@@ -178,7 +178,7 @@ def clarification_subjects(preview, control):
     return list(subjects.values())
 
 
-def _clarification_source_views(session, preview, control):
+def _clarification_source_views(session, preview, control, *, read_context=None):
     """Read current sources, plus the existing merge, without changing a version."""
     from imports.workflow import submission_heads, load_version_preview, merge_submission_previews
     from imports.read_context import ImportReadContext
@@ -192,7 +192,7 @@ def _clarification_source_views(session, preview, control):
     if not heads or (preview.get('replacementScope') or {}).get('kind')=='FULL_NATION':
         return [dict(families={'*'}, sources={'*':session.current_version_id}, preview=preview,
             subjects=clarification_subjects(preview, control), control=control, valid=not preview.get('errors'), shared=set())]
-    context = ImportReadContext(session.event_id)
+    context = read_context or ImportReadContext(session.event_id)
     views = []
     selections = [({family:version}, False) for family,version in sorted(heads.items())]
     if len(heads)>1:selections.append((heads, True))
@@ -238,9 +238,9 @@ def _clarification_rebind(subject, origin, view, session):
     return (candidates[0] if len(candidates)==1 else None), len(candidates)<=1
 
 
-def nation_clarifications(session, preview, control):
+def nation_clarifications(session, preview, control, *, read_context=None):
     import json
-    views = _clarification_source_views(session, preview, control)
+    views = _clarification_source_views(session, preview, control, read_context=read_context)
     selected = preview.get('replacementScope') or {}
     selected_families = set(selected.get('families') or [selected.get('family')]) if selected.get('kind')=='SPORT_FAMILY' else {'*'}
 
