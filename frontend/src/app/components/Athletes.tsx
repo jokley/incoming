@@ -1,3 +1,4 @@
+import { FisDeviationBadge } from './AccommodationRequirementField';
 import { requiresAccommodation } from '../services/accommodationRequirement.ts';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
 import type { AccommodationRequirement } from '../types';
@@ -252,6 +253,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate, onNex
           </Box> : null}
           <Typography variant="subtitle2">Operative Entscheidung</Typography>
           {athlete?.accommodationDecisionLabel && <StatusChip tone={athlete.accommodationDecisionLabel === 'Abweichung FIS' || athlete.accommodationRequirement === 'UNRESOLVED' ? 'warning' : 'neutral'}>{athlete.accommodationDecisionLabel}</StatusChip>}
+          {athlete && <FisDeviationBadge person={athlete} expanded/>}
           {stay.requirement === 'UNRESOLVED' && <Alert severity="warning" sx={{ my: 1 }}>Unterkunftsbedarf offen. Bitte eine Entscheidung treffen. Bis dahin bleibt die Person von der Disposition ausgeschlossen.</Alert>}
           <FormControlLabel label="Nicht disponieren (No Dispo)" control={<Checkbox checked={stay.requirement === 'NO_DISPO'} disabled={!permissions.canEdit || saving}
             onChange={event => setStay(current => ({...current, requirementTouched: true, releaseRequirement: false,
@@ -534,7 +536,7 @@ export function Athletes() {
                 <Cell><span title={personAccommodation(athlete).details}><InlineActionLink className="ops-table-wrap text-xs" onClick={event=>{event.stopPropagation();navigate(assignmentWorkspaceHref({personId:athlete.id}));}}>{roomTypeLabel(athlete)}</InlineActionLink></span></Cell>
                 <Cell><div className="flex flex-col items-start gap-1"><span className="ops-table-wrap text-xs text-[var(--ops-warning)]" title={stayWindowDetails(athlete.stayWindow)}>{stayWindowText(athlete.stayWindow)}</span><AthleteNoteBadge label="Intern" note={athlete.internalNote} athlete={athlete} onOpen={openPerson}/><AthleteNoteBadge label="Extern" note={athlete.additionalItems} athlete={athlete} onOpen={openPerson}/></div></Cell>
                 <Cell><span className="ops-table-wrap"><StatusChip tone={personAccommodation(athlete).tone}>{assignmentLabel(athlete)}</StatusChip></span>
-                  {athlete.accommodationDecisionLabel && (athlete.accommodationRequirement !== 'NO_DISPO' || athlete.accommodationDecisionLabel !== assignmentLabel(athlete)) &&
+                  <FisDeviationBadge person={athlete}/>{athlete.accommodationDecisionLabel && (athlete.accommodationRequirement !== 'NO_DISPO' || athlete.accommodationDecisionLabel !== assignmentLabel(athlete)) &&
                     <span className="mt-1 block text-xs">{athlete.accommodationDecisionLabel}</span>}{athlete.accommodationRequirement === 'NO_DISPO' && Boolean(athlete.accommodationCoverage?.segments.length || athlete.assignment?.hasAssignment) &&
                   <span className="mt-1 block text-xs text-[var(--ops-warning)]">Bestehende Buchung bleibt erhalten.</span>}</Cell>
                 <Cell>{athleteWorkCategory(athlete) === 'review' ? <button type="button" className="text-left" onClick={event => { event.stopPropagation(); navigate(`${assignmentWorkspaceHref({ bookingId: athlete.assignment?.bookingId, hotelId: athlete.assignment?.hotelId, personId: athlete.id })}&workflow=review`); }}><StatusChip tone="warning">Disposition prüfen</StatusChip>{reviewHint(athlete) && <span className="mt-1 block whitespace-nowrap text-[10px] font-medium text-[var(--ops-text-subtle)]">{reviewHint(athlete)}</span>}</button> : <StatusChip tone={athleteWorkCategory(athlete) === 'conflict' ? 'warning' : athleteWorkCategory(athlete) === 'new' ? 'primary' : 'neutral'}>{importLabel(athlete)}</StatusChip>}</Cell>

@@ -1,5 +1,5 @@
 export type AccommodationRequirement = 'REQUIRED' | 'NO_ROOM' | 'NO_DISPO' | 'UNRESOLVED';
-export interface AccommodationRequirementFields { accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
+export interface AccommodationRequirementFields { hasFisAccommodationDeviation?: boolean; fisAccommodationDeviationReasons?: string[]; accommodationRequirement?: AccommodationRequirement; accommodationRequirementSource?: 'DEFAULT' | 'IMPORT' | 'MANUAL'; }
 export type AccommodationRateCategory = 'STANDARD' | 'SPECIAL';
 export interface AccommodationRateFields { accommodationRateCategory?: AccommodationRateCategory; accommodationRateSource?: 'DEFAULT' | 'MANUAL' | 'APPROVAL'; accommodationRateApprovalId?: number; accommodationRateApprovalIds?: number[]; accommodationRateExplanation?: string; }
 export type ApartmentLayout = { bedrooms: number[]; showers: number };
@@ -179,7 +179,6 @@ export interface StayWindow {
 
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
   accommodationDecisionLabel?: string;
-  hasFisAccommodationDeviation?: boolean;
   reportedAccommodationRequests?: Array<{family?: string; version: number; entryRow?: number;
     roomType?: string; partner?: string; arrivalDate?: string; departureDate?: string; roomRows: number[]; matchesDecision?: boolean}>;
   stayWindow?:StayWindow;
@@ -539,6 +538,7 @@ export interface ImportControl {
 }
 
 export interface FisImportPreviewPerson extends AccommodationRateFields, AccommodationRequirementFields {
+  unresolvedSourceAccommodation?: boolean;
   entryAccommodationSource?: { roomType?: string | null };
   sourceIdentities?:Array<{family:string;staffId:string;function?:string;row?:number}>;
   sourceCompetitorId?:string;confirmedOfficialLinkId?:number;

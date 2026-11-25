@@ -188,13 +188,16 @@ test('automatic person selection is shared by athlete and Officials quota views 
   if(path==='/import/sessions/2')return route.fulfill({json:{...session,id:'2',nation:'ITA',status:'ARCHIVED',preview:null}});
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
-  if(path==='/import/sessions/1/accommodation-requirements/p2' && req.method()==='PATCH'){
-   assert.deepEqual(req.postDataJSON(),{accommodationRequirement:'NO_DISPO'});
-   if(rejectRequirement){
+  if(/^\/import\/sessions\/1\/accommodation-requirements\/p[25]$/.test(path) && req.method()==='PATCH'){
+   const payload=req.postDataJSON();
+   const i=Number(path.at(-1));
+   if(i===2 && rejectRequirement){
     rejectRequirement=false;
     return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
    }
-   people[2].accommodationRequirement='NO_DISPO';
+   Object.assign(people[i], {accommodationRequirement:payload.accommodationRequirement || 'REQUIRED',
+     hasFisAccommodationDeviation:payload.accommodationRequirement==='NO_DISPO',
+     fisAccommodationDeviationReasons:payload.accommodationRequirement==='NO_DISPO'?['No Dispo']:[]});
    return route.fulfill({json:session});
   }
   if(path==='/athletes/3' && req.method()==='GET') return route.fulfill({json:people[2]});
@@ -287,21 +290,28 @@ test('automatic person selection is shared by athlete and Officials quota views 
  assert.deepEqual(writes,[]);
  await openPeople();
  list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
- await list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'}).click();
- assert.deepEqual(await page.getByRole('option').allTextContents(),['Unterkunft benötigt','Kein Zimmer benötigt','Nicht einplanen']);
  const beforeSaveListRequests=listRequests;
- await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ const toggle = list.getByRole('checkbox',{name:'Nicht disponieren · Unterkunftsbedarf Athlete2 Synthetic'});
+ await toggle.click();
  await list.getByRole('alert').filter({hasText:'Änderungsplan erneut prüfen.'}).waitFor();
- const requirement = list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'});
- assert.equal(await requirement.innerText(),'Unterkunft benötigt');
- await requirement.click();
- await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ assert.equal(await toggle.isChecked(),false);
+ await toggle.click();
  const skipped=list.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
- await skipped.getByText('Nicht einplanen',{exact:true}).first().waitFor();
+ await skipped.getByRole('img',{name:/Abweichung zur FIS-Meldung.*No Dispo/}).waitFor();
  assert.equal(await skipped.getAttribute('data-provisional-planning'),'deferred');
+ assert.equal(await skipped.locator('.MuiSelect-nativeInput').evaluateAll(inputs =>
+   inputs.length === 2 && inputs.every(input => getComputedStyle(input).display === 'none')), true);
+ await page.screenshot({path:'/workspace/artifacts/import-no-dispo-fis-abweichung.png',animations:'disabled'});
+ await list.getByRole('button',{name:'Importdetails Athlete5 Synthetic'}).click();
+ const importDetail=page.getByRole('dialog',{name:'Athlete5 Synthetic'});
+ await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).click();
+ await importDetail.getByText(/Abweichung zur FIS-Meldung/).waitFor();
+ await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).click();
+ await importDetail.getByText(/Abweichung zur FIS-Meldung/).waitFor({state:'detached'});
+ await importDetail.getByRole('button',{name:'Schließen',exact:true}).click();
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
  assert.equal(listRequests,beforeSaveListRequests);
- assert.deepEqual(writes,Array(2).fill('/import/sessions/1/accommodation-requirements/p2'));
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5')]);
  await page.goto(`${origin}/athletes`);
  const personRow=page.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
  await personRow.getByText('Nicht einplanen',{exact:true}).first().waitFor();
@@ -314,7 +324,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
  assert.doesNotMatch((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
- assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),'/athletes/3']);
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5'),'/athletes/3']);
  detailRequests.length=0;
  await page.goto(`${origin}/import`);
  await page.getByText('Geschlossene Importsessions (1)',{exact:true}).waitFor();

@@ -142,8 +142,10 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
     for person in people:
         existing = _find_existing_athlete(person, maps)
         current = requirement_projection(existing)
-        if ((person.get('unresolvedSourceAccommodation') or current['accommodationRequirement'] == 'UNRESOLVED')
-                and person.get('matchKey') in (overrides or {})):
+        override = (overrides or {}).get(person.get('matchKey'))
+        deferred = person.get('unresolvedSourceAccommodation')
+        allow_no_dispo = deferred and existing is None and override and override.get('requirement') in {None, 'NO_DISPO'}
+        if (deferred or current['accommodationRequirement'] == 'UNRESOLVED') and override and not allow_no_dispo:
             from imports.event_context import ImportValidationError
             raise ImportValidationError('ACCOMMODATION_REQUIREMENT_UNRESOLVED',
                 'Der Unterkunftsbedarf dieser Person wird nach dem Import im Athletendetail entschieden.')
@@ -153,10 +155,13 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
                 issues.append({'code': 'ACCOMMODATION_REQUIREMENT_EXISTING_PERSON',
                                'message': 'Offener Unterkunftsbedarf darf bestehende Personen nicht überschreiben.',
                                'details': {'personKey': person.get('matchKey')}})
+            elif allow_no_dispo and override['requirement'] == 'NO_DISPO':
+                effective, _, _ = resolve_requirement(existing, [], override)
+                person.update(effective)
             else:
                 person.update(accommodationRequirement='UNRESOLVED', accommodationRequirementSource='IMPORT')
             person['importAccommodationRequirement'] = None
-            person['accommodationRequirementReviewRequired'] = True
+            person['accommodationRequirementReviewRequired'] = person['accommodationRequirement'] == 'UNRESOLVED'
             continue
         related_rooms = [r for r in rooms if person.get('matchKey') in {r.get('person1Key'), r.get('person2Key')}]
         source = person.get('entryAccommodationSource') or person

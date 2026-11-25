@@ -18,9 +18,12 @@ def _get_grouped_room_bookings_response():
             .selectinload(Athlete.competitions),
     ).order_by(RoomBooking.hotel_id, RoomBooking.room_number, RoomBooking.id).all()
     schedule = load_stay_schedule(accommodation_event_id())
+    from routes.athletes import fis_accommodation_decisions
+    people = {o.athlete_id: o.athlete for booking in bookings for o in booking.occupants if o.athlete}
+    decisions = fis_accommodation_decisions(people.values())
     rows = []
     for booking in bookings:
-        row = booking.to_dict()
+        row = booking.to_dict(accommodation_decisions=decisions)
         occupants = {str(o.athlete.id): o.athlete for o in booking.occupants if o.athlete}
         for occupant in row['occupants']:
             person = occupants[occupant['athlete']['id']]

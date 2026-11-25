@@ -125,3 +125,21 @@ never converted. Apply the schema migration before application deployment.
 - `frontend/src/app/types.ts`
 - `scripts/reconcile_accommodation_requirements.py`
 - `scripts/test_backend.py`
+
+## No Dispo im Import und FIS-Abweichungen
+
+In der Personenliste und im Personendetail des Import Centers lässt sich
+„Nicht disponieren“ für eine bearbeitbare Prüfversion ein- und ausschalten.
+„Bedarf bestätigen“ speichert den gewählten Bedarf als ausdrückliche
+Entscheidung. Beim Abwählen von No Dispo kehrt ein zuvor im Entwurf gesetzter
+Bedarf zurück. Ohne eine solche Entscheidung greift die vorhandene
+Quellauflösung. Bei einem für die Übernahme freigegebenen offenen
+Quellkonflikt bleibt der Bedarf nach dem Abwählen offen.
+
+Der Vergleich mit der FIS-Meldung wird aus den Quellrevisionen berechnet.
+Bestätigte, unveränderte Wünsche und noch offene Entscheidungen ergeben
+keine Abweichung. Ohne vergleichbare Quelle bleibt die Kennzeichnung leer.
+Der Vergleich gehört zur Person und bleibt bei einer Zimmerbuchung bestehen.
+Personen- und Hotelansichten sowie Excel zeigen die Ursachen auch bei
+mehreren Buchungssegmenten. Die Quellrevisionen werden je Anfrage gesammelt
+gelesen.

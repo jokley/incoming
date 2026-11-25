@@ -1,3 +1,5 @@
+import {AccommodationRequirementField, FisDeviationBadge} from './AccommodationRequirementField';
+import type {AccommodationRequirement} from '../types';
 import { requirementLabel } from '../services/accommodationRequirement';
 import {Tooltip} from '@mui/material';
 import type {NNPlanningControls} from '../types';
@@ -26,8 +28,8 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
   {stayWindowText(row?.stayWindow)&&<p className="text-sm text-[var(--ops-warning)]" title={stayWindowDetails(row?.stayWindow)}>{stayWindowText(row?.stayWindow)}<span className="block text-xs">{stayWindowNights(row?.stayWindow)}</span></p>}
   {issues.map(issue=><section key={issue.id} className="space-y-2 rounded border border-[var(--ops-border)] p-2"><p className="text-sm font-bold">{issue.kind==='error'?'Blockierend · ':''}{issue.message}</p><FindingEvidence finding={issue} preview={preview}/></section>)}
   <ContentCard className="space-y-2 p-3"><SectionHeader title="Person"/><dl className="grid gap-2 sm:grid-cols-2"><Fact label="Funktion">{value(person.function)}</Fact><Fact label="Geschlecht">{value(person.gender)}</Fact></dl><h4 className="text-sm font-bold">Wettbewerbe</h4><ul className="text-sm">{row?.competitions.map(c=><li key={c.id}>{c.name}</li>)}</ul></ContentCard>
-  <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><dl className="grid gap-2 sm:grid-cols-2">
-   <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_ROOM'?'No Room':requirementLabel(person.accommodationRequirement)}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
+  <ContentCard className="space-y-2 p-3"><SectionHeader title="Unterkunft"/><FisDeviationBadge person={person} expanded/><dl className="grid gap-2 sm:grid-cols-2">
+   <Fact label="Unterkunftsbedarf">{person.accommodationRequirement==='NO_DISPO'?'Nicht disponieren':requirementLabel(person.accommodationRequirement)}</Fact><Fact label="Zimmerwunsch">{value(person.roomType)}</Fact>
    <Fact label="Zimmerpartner">{partners.length?[...new Set(partners)].join('; '):person.sharedWithName||(/^double/i.test(person.roomType??'')?'Zimmerpartner fehlt':'Nicht angegeben')}</Fact>
    <Fact label="Aufenthalt">{value(person.arrivalDate)} – {value(person.departureDate)}</Fact><Fact label="Unterkunftstarif">{person.accommodationRateCategory==='SPECIAL'?'Sondertarif':'Standard'}</Fact><Fact label="EZ-Status">{entitlement(person.singleRoomEntitlement)}{person.singleRoomQuotaExemptReason?` · ${person.singleRoomQuotaExemptReason==='WORLD_CHAMPION'?'Weltmeister-EZ-Ausnahme':'EZ-Ausnahme'}`:''}</Fact>
    {row?.stayWindow?.eventStart&&<Fact label="Eventzeitraum / zulässige An- und Abreise">{row.stayWindow.eventStart} – {row.stayWindow.eventEnd}<br/>{row.stayWindow.allowedStart} – {row.stayWindow.allowedEnd}</Fact>}
@@ -35,8 +37,12 @@ export function PersonControlDetails({person,preview,control}:{person:FisImportP
   <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer font-bold">Technische Details und Quellen</summary><p className="mt-2">{person.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Entry List · Zeile ${person.rowNumber}`} · For_gender: {value(person.forGender)}</p>{person.sourceIdentities?.map((i,index)=><p key={index}>{sportAreaLabel(i.family)} · Staff-ID {i.staffId} · {i.function} · Quellzeile {i.row??'—'}</p>)}<p>Quotenkontexte: {row?.quotaContexts.map(c=>`${c.group} · ${c.gender}`).join('; ')||'Nicht hinterlegt'}</p><p>Unterkunft: {value(person.accommodationRequirementSource)} · Tarif: {value(person.accommodationRateSource)}</p>{rooms.map((r,i)=><p key={i}>Room List · {r.sourceRows?.map(s=>`Version ${s.version} · Zeile ${s.row??'–'}`).join('; ') || `Zeile ${r.rowNumber}`}: {r.roomType} · {value(r.checkInDate)} – {value(r.checkOutDate)} · Partnerangabe: {value(r.sharedWithRawName)}</p>)}</details>
  </div>;
 }
-export function ImportPersonDialog({person,preview,session,onClose,canWrite=false,onPeople,onQuestion}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void;canWrite?:boolean;onPeople?:()=>void;onQuestion?:()=>void}) {
- return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<>{onPeople&&<OpsButton onClick={onPeople}>In Personenliste anzeigen</OpsButton>}{onQuestion&&<OpsButton disabled={!canWrite} onClick={onQuestion}>Rückfrage dokumentieren</OpsButton>}<OpsButton onClick={onClose}>Schließen</OpsButton></>}><PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
+export function ImportPersonDialog({person,preview,session,onClose,canWrite=false,onPeople,onQuestion,onRequirement}:{person:FisImportPreviewPerson;preview:FisImportPreview;session:ImportSession|null;onClose:()=>void;canWrite?:boolean;onPeople?:()=>void;onQuestion?:()=>void;onRequirement?:(value:AccommodationRequirement|null)=>void}) {
+ return <EnterpriseDialog open title={`${person.firstname} ${person.lastname}`} size="large" onClose={onClose} actions={<>{onPeople&&<OpsButton onClick={onPeople}>In Personenliste anzeigen</OpsButton>}{onQuestion&&<OpsButton disabled={!canWrite} onClick={onQuestion}>Rückfrage dokumentieren</OpsButton>}<OpsButton onClick={onClose}>Schließen</OpsButton></>}>{onRequirement && <AccommodationRequirementField person={person}
+   disabled={!canWrite || (person.accommodationRequirement==='UNRESOLVED' && !person.unresolvedSourceAccommodation)}
+   sourceRoomType={person.entryAccommodationSource?.roomType || person.roomType}
+   onChange={onRequirement} onRelease={()=>onRequirement(null)}
+   onToggleNoDispo={checked=>onRequirement(checked ? 'NO_DISPO' : null)}/>}<PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
 export function CompetitionDistribution({grouped=false,control,preview,nation,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
  const tableRef=useRef<HTMLDivElement>(null);

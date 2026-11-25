@@ -699,6 +699,11 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         ref('personId', athlete_id)
         label = ' '.join(filter(None, [response.get('firstname') or payload.get('firstname'), response.get('lastname') or payload.get('lastname')])).strip() or 'Athlet'
         title = 'Athlet angelegt' if action == 'create' else 'Athlet bearbeitet'
+        if {'accommodationRequirement', 'roomType', 'sharedWithName', 'returnToFis'}.intersection(payload):
+            reasons = response.get('fisAccommodationDeviationReasons') or []
+            if reasons:
+                details.append('Abweichung zur FIS-Meldung · ' + ', '.join(reasons))
+
         if 'accommodationRateCategory' in payload:
             old_rate = (snapshot or {}).get('accommodationRateCategory', 'STANDARD')
             details.append(f"Unterkunftstarif: {old_rate} → {response.get('accommodationRateCategory')}")
@@ -1276,7 +1281,7 @@ def _build_partial_unit_variant(unit, occupant):
     }
 
 
-def _build_room_booking_units():
+def _build_room_booking_units(accommodation_decisions=None):
     athletes = event_query(Athlete).order_by(
         Athlete.nation_code,
         Athlete.discipline,
@@ -1286,6 +1291,9 @@ def _build_room_booking_units():
         Athlete.firstname,
         Athlete.id,
     ).all()
+    if accommodation_decisions is not None:
+        from routes.athletes import fis_accommodation_decisions
+        accommodation_decisions.update(fis_accommodation_decisions(athletes))
     bookings = event_query(RoomBooking).options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     booking_index = {}
     athlete_booking_index = {}
@@ -1373,6 +1381,7 @@ def _build_room_booking_units():
                 'gender': normalize_gender(athlete.gender),
                 **rate_projection(athlete),
                 **requirement_projection(athlete),
+                **((accommodation_decisions or {}).get(athlete.id, {})),
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
                 'roomType': athlete.room_type,
@@ -1457,7 +1466,8 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
 
 def _build_assignment_planning_view(validation_keys=None, assignment_interval=None):
     with _assignment_phase('assignment'):
-        units, bookings = _build_room_booking_units()
+        accommodation_decisions = {}
+        units, bookings = _build_room_booking_units(accommodation_decisions)
     rooms_started = time.perf_counter()
     hotels = event_query(Hotel).options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
 
@@ -1501,7 +1511,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
             'hotelId': str(hotel.id),
             'hotelName': hotel.name,
             'accommodationType': hotel.accommodation_type,
-            'externalBookings': [booking.to_dict() for booking in bookings if booking.hotel_id == hotel.id] if hotel.accommodation_type == 'EXTERNAL' else [],
+            'externalBookings': [booking.to_dict(accommodation_decisions=accommodation_decisions) for booking in bookings if booking.hotel_id == hotel.id] if hotel.accommodation_type == 'EXTERNAL' else [],
             'location': hotel.location,
             'region': hotel.region,
             'comment': hotel.comment,
@@ -1542,6 +1552,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                                     'gender': normalize_gender(occ.athlete.gender),
                                     **rate_projection(occ.athlete),
                                     **requirement_projection(occ.athlete),
+                                    **accommodation_decisions.get(occ.athlete.id, {}),
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
@@ -2503,6 +2514,18 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
                 try:verify_plan(compared,plan)
                 except ImportValidationError:preview['planStale']=True
             preview['quotaRulesChanged']=session.status!='IMPORTED' and saved.get('quotaRulesRevision',1)!=accommodation_rule_event(db.session.get(Event,session.event_id)).quota_rules_revision
+            from types import SimpleNamespace
+            from routes.athletes import accommodation_requests_from_preview, add_accommodation_decision
+            source_cache = {v.id: (v, json.loads(v.preview_json or '{}')) for v in session.versions
+                            if v.id in preview.get('submissionSources', {}).values()}
+            for person in preview.get('people', []):
+                if person.get('accommodationRequirementSource') != 'MANUAL':
+                    continue
+                fields = SimpleNamespace(accommodation_requirement=person['accommodationRequirement'],
+                    accommodation_requirement_source='MANUAL', room_type=person.get('roomType'),
+                    shared_with_name=person.get('sharedWithName'))
+                requests = accommodation_requests_from_preview(person, preview, session.current_version, source_cache)
+                add_accommodation_decision(person, fields, requests)
             payload['preview'] = preview
     if include_preview and payload.get('preview') and read_context is not None:
         from import_control import build_import_control
@@ -2551,8 +2574,16 @@ def stage_accommodation_requirement(session_id, person_key):
     read_context = ImportReadContext(session.event_id)
     existing = _find_existing_athlete(target, read_context.athlete_maps)
     old = {key: target.get(key) for key in ('accommodationRequirement', 'accommodationRequirementSource')}
-    preview.setdefault('accommodationRequirementOverrides', {})[person_key] = {
-        'requirement': data['accommodationRequirement'], 'base': requirement_projection(existing)}
+    overrides = preview.setdefault('accommodationRequirementOverrides', {})
+    previous = overrides.get(person_key, {})
+    requested = data['accommodationRequirement']
+    if requested is None and previous.get('requirement') == 'NO_DISPO':
+        requested = previous.get('beforeNoDispo')
+    override = {'requirement': requested, 'base': requirement_projection(existing)}
+    if requested == 'NO_DISPO':
+        override['beforeNoDispo'] = (previous.get('beforeNoDispo') if previous.get('requirement') == 'NO_DISPO'
+                                     else previous.get('requirement'))
+    overrides[person_key] = override
     preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
     staged_raw = deepcopy(raw) if raw else None
     try:
@@ -3182,6 +3213,11 @@ def recheck_import_session(session_id):
             return jsonify(error='STALE_PREVIEW',message='Nur aktuelle Teilmeldungen dieser Nation auswählen.'),409
         versions=[heads[str(i)] for i in identities]
         composed=merge_submission_previews(versions)
+        if session.status not in {'IMPORTED', 'REPLACED', 'CANCELLED'}:
+            previous = load_version_preview(session.current_version)
+            if (previous.get('submissionSources') == composed['submissionSources']
+                    and previous.get('submissionSourceDigests') == composed['submissionSourceDigests']):
+                composed['accommodationRequirementOverrides'].update(previous.get('accommodationRequirementOverrides', {}))
         source_version=versions[0]
     if data.get('sourceVersionId') is not None:
         from imports.workflow import submission_heads
