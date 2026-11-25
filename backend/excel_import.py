@@ -688,6 +688,10 @@ def parse_room_list(df, imported_people):
             'person2Name': f"{person2['firstname']} {person2['lastname']}".strip() if person2 else None,
             'sharedWithRawName': shared_with_raw_name or None,
             'sharedWithNationCode': shared_with_nation_code or None,
+            **{key: value for key, column in (
+                ('sharedArrivalSource', 'Shared with Arrival_date'),
+                ('sharedDepartureSource', 'Shared with Departure_date'),
+            ) if (value := normalize_whitespace(row.get(column)))},
             'checkInDate': arrival_date,
             'checkOutDate': departure_date,
             'daySnapshot': day_snapshot,
@@ -1306,6 +1310,7 @@ def _serialize_room_preview(room):
     return {
         'rowNumber': room['rowNumber'],
         'sourceRowKey': room['sourceRowKey'],
+        **({'sourceOnlyPartner': True} if room.get('sourceOnlyPartner') else {}),
         'roomType': room['roomType'],
         'person1Key': room['person1Key'],
         'person2Key': room['person2Key'],
@@ -1313,6 +1318,7 @@ def _serialize_room_preview(room):
         'person2Name': room['person2Name'],
         'sharedWithRawName': room['sharedWithRawName'],
         'sharedWithNationCode': room['sharedWithNationCode'],
+        **{key: room[key] for key in ('sharedArrivalSource', 'sharedDepartureSource') if key in room},
         'checkInDate': _iso_date(room['checkInDate']),
         'checkOutDate': _iso_date(room['checkOutDate']),
         'daySnapshot': room['daySnapshot'],
@@ -1781,7 +1787,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
     # A missing request inherits the person's existing accommodation, never an
     # invented No room. Preserve the absent source evidence separately.
     for person in people_result['people']:
-        if person.get('importAccommodationRequirement') is None and not person.get('roomType') and not any(r.get('roomType') for r in room_result['rooms'] if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}):
+        if person.get('importAccommodationRequirement') is None and not (person.get('entryAccommodationSource') or person).get('roomType') and not any(r.get('roomType') for r in room_result['rooms'] if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}):
             person['sourceAccommodationEvidence']=dict(requirement=None,roomType=person.get('roomType'),arrivalDate=person.get('arrivalDate').isoformat() if person.get('arrivalDate') else None,departureDate=person.get('departureDate').isoformat() if person.get('departureDate') else None)
             existing=_find_existing_athlete(person,athlete_maps)
             if existing:
@@ -2135,7 +2141,7 @@ def _apply_person_record(athlete, person, now, *, rate_override=None, preserve_m
     athlete.departure_need_transportation = person.get('departureNeedTransportation', False)
     if not preserve_missing_roomlist or person.get('roomType'):
         athlete.room_type = person.get('roomType')
-    if not preserve_missing_roomlist or person.get('sharedWithName'):
+    if not person.get('sourceOnlyPartner') and (not preserve_missing_roomlist or person.get('sharedWithName')):
         athlete.shared_with_name = person.get('sharedWithName')
     athlete.late_checkout = person.get('lateCheckout', False)
     athlete.first_meal = person.get('firstMeal')

@@ -3,10 +3,11 @@ from accommodation_requirements import NO_BOOKABLE_DEMAND
 from accommodation_scope import event_query, event_get
 
 from datetime import datetime
+import json
 
 from flask import Blueprint, jsonify, request
 
-from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
+from models import db, Athlete, ImportRun, ImportSession, ImportSessionVersion, ImportSessionEvent, RoomBooking, RoomBookingOccupant
 from stay_window import assess_stay, assess_booked_stay, load_stay_schedule
 from accommodation_scope import accommodation_event_id
 from accommodation_coverage import person_accommodation_coverage
@@ -181,6 +182,44 @@ def get_athlete(athlete_id):
     data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND and coverage == 'CONFLICT' else
         'NO_ROOM' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND else
         'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
+    identity = athlete.fis_code or athlete.competitor_id
+    if identity:
+        reviews = (ImportSessionVersion.query.join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
+            .join(ImportSessionEvent, ImportSessionEvent.version_id == ImportSessionVersion.id)
+            .filter(ImportSession.event_id == athlete.event_id, ImportSession.nation == athlete.nation_code,
+                    ImportSessionEvent.event_type == 'IMPORTED')
+            .order_by(ImportSessionEvent.id.desc()))
+        for review in reviews.yield_per(10):
+            preview = json.loads(review.preview_json or '{}')
+            person = next((p for p in preview.get('people', []) if p.get('matchKey') == identity), None)
+            if not person:
+                continue
+            if person.get('sourceOnlyPartner'):
+                requests = []
+                families = {version_id: family for family, version_id in preview.get('submissionSources', {}).items()}
+                for row in person.get('sourceRows', []):
+                    source = db.session.get(ImportSessionVersion, row['versionId'])
+                    if not source or source.session_id != review.session_id:
+                        continue
+                    original = next((p for p in json.loads(source.preview_json or '{}').get('people', [])
+                                     if p.get('sourceRowNumber', p.get('rowNumber')) == row.get('row')), None)
+                    if original is None:
+                        continue
+                    evidence = original.get('entryAccommodationSource') or original
+                    rooms = [(room, ref.get('row')) for room in preview.get('rooms', [])
+                             if identity in (room.get('person1Key'), room.get('person2Key'))
+                             for ref in room.get('sourceRows', []) if ref.get('versionId') == source.id]
+                    partner = evidence.get('sharedWithName')
+                    if not partner and len(rooms) == 1:
+                        room = rooms[0][0]
+                        partner = room.get('person2Name') if identity == room.get('person1Key') else room.get('person1Name')
+                    requests.append(dict(family=families.get(source.id), version=source.version, entryRow=row.get('row'),
+                        roomType=evidence.get('roomType'), partner=partner,
+                        arrivalDate=evidence.get('arrivalDate') or original.get('arrivalDate'),
+                        departureDate=evidence.get('departureDate') or original.get('departureDate'),
+                        roomRows=[number for _, number in rooms if number is not None]))
+                data['reportedAccommodationRequests'] = requests
+            break
     return jsonify(data)
 
 

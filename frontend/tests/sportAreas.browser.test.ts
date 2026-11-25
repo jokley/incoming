@@ -196,6 +196,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
    people[2].accommodationRequirement='NO_DISPO';
    return route.fulfill({json:session});
   }
+  if(path==='/athletes/3' && req.method()==='GET') return route.fulfill({json:people[2]});
   if(path==='/athletes/3' && req.method()==='PATCH'){
    assert.equal(req.postDataJSON().accommodationRequirement,'REQUIRED');
    people[2].accommodationRequirement='REQUIRED';
@@ -317,10 +318,18 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await page.getByText('Historical decision',{exact:true}).waitFor();
  await page.getByText(/FIN –/).waitFor({state:'attached'});
  assert.deepEqual(detailRequests,['/import/sessions/1']);
- people[2].accommodationRequirement='UNRESOLVED';
+ Object.assign(people[2], {
+  accommodationRequirement:'UNRESOLVED',
+  reportedAccommodationRequests:[{family:'Freestyle',version:1,entryRow:17,roomType:'Double shared',
+    partner:'Beispiel Partner',arrivalDate:'2027-03-13',departureDate:'2027-03-22',roomRows:[12]},
+  {family:'Snowboard',version:2,entryRow:39,roomType:'No room',roomRows:[]}],
+ });
  await page.goto(`${origin}/athletes`);
  await personRow.getByText('Unterkunftsbedarf offen',{exact:true}).first().waitFor();
  await personRow.click();
+ await personDialog.getByText(/Double shared · Beispiel Partner/).waitFor();
+ await personDialog.getByText(/Snowboard · No room/).waitFor();
+ await personDialog.getByText(/Room List Zeile 12/).waitFor();
  const unresolved = personDialog.getByRole('combobox').filter({hasText:'Unterkunftsbedarf offen'});
  await unresolved.click();
  assert.equal(await page.getByRole('option',{name:'Unterkunftsbedarf offen',exact:true}).getAttribute('aria-disabled'),'true');

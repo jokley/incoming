@@ -167,6 +167,11 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
         effective, proposed, review = resolve_requirement(existing, values, (overrides or {}).get(person.get('matchKey')))
         person.update(effective)
         if effective['accommodationRequirement'] == 'UNRESOLVED':
+            if person.get('roomType') or person.get('sharedWithName'):
+                person.setdefault('entryAccommodationSource', {
+                    'row': person.get('rowNumber'), 'roomType': person.get('roomType'),
+                    'sharedWithName': person.get('sharedWithName'),
+                })
             person.update(roomType=None, sharedWithName=None)
         person['importAccommodationRequirement'] = proposed
         person['accommodationRequirementReviewRequired'] = review

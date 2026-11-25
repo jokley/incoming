@@ -114,3 +114,19 @@ anschließende explizite Entscheidung die Person wieder disponierbar macht.
 Bei bereits vorhandener Buchung bleibt die bisherige Importblockade bestehen.
 Sichere unabhängige Teilmeldungen sind weiterhin über den bestehenden
 Teilimport verfügbar.
+
+## Personenimport bei offenen Unterkunftsentscheidungen
+
+Lieber sicher importieren und vorerst nicht disponieren, als den gesamten
+Nationsimport an einem Unterkunftswunsch zu sperren. Personenidentität,
+fachliche Unterkunftsklärung und operative Disposition werden getrennt
+geprüft. Ein eindeutiger Quellkonflikt kann als `UNRESOLVED` übernommen
+werden. Ein expliziter Zimmerpartner setzt dafür eine eindeutige Zuordnung
+und passende Aufenthaltsdaten voraus.
+
+Die importierten Quellversionen halten beide Wünsche und Room-List-Zeilen
+nachvollziehbar. Diese Paarung bleibt ein Quellwunsch. Auch die spätere Wahl
+von `REQUIRED` erzeugt daraus keinen gemeinsamen Buchungsvorschlag. Ein
+regulärer Partner behält seinen eigenen Bedarf. Mehrdeutige Identitäten,
+abweichende Paarungen oder gefährdete Buchungen und Genehmigungen bleiben
+unter den bestehenden Schutzprüfungen.
