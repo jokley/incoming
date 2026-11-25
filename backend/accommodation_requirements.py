@@ -49,6 +49,16 @@ def source_requirement(values):
     return next(iter(evidence)) if len(evidence) == 1 else None, len(evidence) > 1
 
 
+def accommodation_wish(requirement, room_type, partner):
+    """Comparable operative wish; inactive room details have no meaning."""
+    room = ' '.join((room_type or '').casefold().split())
+    name = ' '.join((partner or '').replace(',', ' ').casefold().split())
+    if partner and ',' in partner:
+        last, first = partner.split(',', 1)
+        name = ' '.join(f'{first} {last}'.casefold().split())
+    return (requirement, room, name) if requirement == 'REQUIRED' else (requirement, '', '')
+
+
 def resolve_requirement(existing, values, override=None):
     from imports.event_context import ImportValidationError
     current = requirement_projection(existing)

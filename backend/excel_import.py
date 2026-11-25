@@ -2139,10 +2139,11 @@ def _apply_person_record(athlete, person, now, *, rate_override=None, preserve_m
     athlete.departure_airport_name = person.get('departureAirportName')
     athlete.departure_flight_no = person.get('departureFlightno')
     athlete.departure_need_transportation = person.get('departureNeedTransportation', False)
-    if not preserve_missing_roomlist or person.get('roomType'):
-        athlete.room_type = person.get('roomType')
-    if not person.get('sourceOnlyPartner') and (not preserve_missing_roomlist or person.get('sharedWithName')):
-        athlete.shared_with_name = person.get('sharedWithName')
+    if athlete.accommodation_requirement_source != 'MANUAL':
+        if not preserve_missing_roomlist or person.get('roomType'):
+            athlete.room_type = person.get('roomType')
+        if not person.get('sourceOnlyPartner') and (not preserve_missing_roomlist or person.get('sharedWithName')):
+            athlete.shared_with_name = person.get('sharedWithName')
     athlete.late_checkout = person.get('lateCheckout', False)
     athlete.first_meal = person.get('firstMeal')
     athlete.last_meal = person.get('lastMeal')

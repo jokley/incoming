@@ -178,8 +178,9 @@ export interface StayWindow {
 }
 
 export interface Athlete extends AccommodationRateFields, AccommodationRequirementFields {
+  accommodationDecisionLabel?: string;
   reportedAccommodationRequests?: Array<{family?: string; version: number; entryRow?: number;
-    roomType?: string; partner?: string; arrivalDate?: string; departureDate?: string; roomRows: number[]}>;
+    roomType?: string; partner?: string; arrivalDate?: string; departureDate?: string; roomRows: number[]; matchesDecision?: boolean}>;
   stayWindow?:StayWindow;
   accommodationCoverage?: AccommodationCoverage;
   id: string;

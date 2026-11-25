@@ -1,6 +1,6 @@
 import type { Athlete } from '../types';
 
-export type WorkCategory = 'new' | 'open' | 'review' | 'conflict' | 'current' | 'no-room';
+export type WorkCategory = 'new' | 'open' | 'review' | 'conflict' | 'current' | 'no-room' | 'accommodation-clarification';
 
 const API_WORK_CATEGORY: Record<NonNullable<Athlete['workflowStatus']>, WorkCategory> = {
   NO_ROOM: 'no-room',
@@ -21,6 +21,7 @@ const API_WORK_CATEGORY: Record<NonNullable<Athlete['workflowStatus']>, WorkCate
  * workflow precedence as the backend.
  */
 export function athleteWorkCategory(athlete: Athlete): WorkCategory {
+  if (athlete.accommodationRequirement === 'UNRESOLVED') return 'accommodation-clarification';
   if (athlete.accommodationRequirement==='NO_ROOM') return athlete.accommodationCoverage?.coverageStatus==='CONFLICT' ? 'conflict' : 'no-room';
   if (athlete.workflowStatus) return API_WORK_CATEGORY[athlete.workflowStatus];
   if (athlete.hasPendingRoomlistReview && athlete.assignment?.hasAssignment) return 'review';
@@ -30,6 +31,7 @@ export function athleteWorkCategory(athlete: Athlete): WorkCategory {
 }
 
 export const WORK_CATEGORY_LABELS: Record<WorkCategory, string> = {
+  'accommodation-clarification': 'Unterkunft klären',
   'no-room': 'Kein Zimmer benötigt',
   new: 'Neu',
   open: 'Offen',

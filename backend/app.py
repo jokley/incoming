@@ -796,9 +796,14 @@ def audit_successful_mutation(response):
                        if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
         if payload and entity_type == 'athlete-arrival-forecast':
             payload={**payload,'previousForecast':getattr(g,'audit_snapshot',None),'newRevision':(response.get_json(silent=True) or {}).get('revision')}
-        if payload and 'accommodationRequirement' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
+        if payload and {'accommodationRequirement', 'roomType', 'sharedWithName', 'returnToFis'}.intersection(payload) and isinstance(getattr(g, 'audit_snapshot', None), dict):
             payload = {**payload, 'accommodation_requirement': {'old': g.audit_snapshot.get('accommodationRequirement', 'REQUIRED'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirement')},
                 'accommodation_requirement_source': {'old': g.audit_snapshot.get('accommodationRequirementSource', 'DEFAULT'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirementSource')}}
+        if payload and entity_type == 'athletes' and isinstance(getattr(g, 'audit_snapshot', None), dict):
+            updated = response.get_json(silent=True) or {}
+            for field, audit_key in (('roomType', 'room_type'), ('sharedWithName', 'shared_with_name')):
+                if field in updated and g.audit_snapshot.get(field) != updated[field]:
+                    payload[audit_key] = {'old': g.audit_snapshot.get(field), 'new': updated[field]}
         if payload and 'accommodationRateCategory' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
             payload = {**payload, 'accommodation_rate_category': {
                 'old': g.audit_snapshot.get('accommodationRateCategory', 'STANDARD'),
@@ -3528,18 +3533,65 @@ def _update_athlete_operations(athlete, data):
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
     requirement_change = None
-    if 'accommodationRequirement' in data:
+    room_fields = {'roomType': ('room_type', 50), 'sharedWithName': ('shared_with_name', 200)}
+    room_changes = {}
+    restore_source = data.get('returnToFis') is True
+    if restore_source or {'accommodationRequirement', *room_fields}.intersection(data):
+        from accommodation_requirements import accommodation_wish, ensure_no_bookings, source_requirement
         lock_accommodation_writes()
         db.session.refresh(athlete)
         g.audit_snapshot = athlete.to_dict()
-        value = data['accommodationRequirement']
-        if value is not None and (not isinstance(value, str) or value not in REQUIREMENTS):
-            return jsonify(error=INVALID_REQUIREMENT), 400
-        requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
-            {'requirement': value, 'base': requirement_projection(athlete)})
+        value = data.get('accommodationRequirement', athlete.accommodation_requirement)
+        requests = []
+        if restore_source or (value is None and athlete.accommodation_requirement_source == 'MANUAL'):
+            from routes.athletes import reported_accommodation_requests
+            requests = reported_accommodation_requests(athlete)
+        if restore_source or requests:
+            wishes = {accommodation_wish(source_requirement([r['roomType']])[0], r['roomType'], r['partner']) for r in requests}
+            if len(wishes) != 1 or next(iter(wishes))[0] not in {'REQUIRED', 'NO_ROOM'}:
+                return jsonify(error='FIS_ACCOMMODATION_AMBIGUOUS', message='Die FIS-Meldung ist nicht eindeutig. Bitte den Unterkunftsbedarf ausdrücklich entscheiden.'), 409
+            value = next(iter(wishes))[0]
+            room_changes = {'room_type': requests[0]['roomType'] if value == 'REQUIRED' else None,
+                            'shared_with_name': requests[0]['partner'] if value == 'REQUIRED' else None}
+            requirement_change = {'accommodationRequirement': value, 'accommodationRequirementSource': 'IMPORT'}
+        else:
+            if value is not None and (not isinstance(value, str) or value not in REQUIREMENTS):
+                return jsonify(error=INVALID_REQUIREMENT), 400
+            requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
+                {'requirement': value, 'base': requirement_projection(athlete)})
+            for key, (attribute, limit) in room_fields.items():
+                if key not in data:
+                    continue
+                text = data[key]
+                if text is not None and (not isinstance(text, str) or len(text.strip()) > limit):
+                    return jsonify(error='INVALID_ACCOMMODATION_WISH', message='Zimmertyp oder Zimmerpartner ist ungültig.'), 400
+                room_changes[attribute] = text.strip() or None if text is not None else None
+            if room_changes and value != 'REQUIRED':
+                return jsonify(error='ACCOMMODATION_WISH_REQUIRES_ROOM', message='Bitte zuerst „Unterkunft benötigt“ wählen.'), 400
+            room_type = room_changes.get('room_type', athlete.room_type)
+            if value == 'REQUIRED' and source_requirement([room_type])[0] == 'NO_ROOM':
+                if 'room_type' in room_changes:
+                    return jsonify(error='INVALID_ACCOMMODATION_WISH', message='„Kein Zimmer“ ist kein Zimmertyp.'), 400
+                if athlete.accommodation_requirement != 'REQUIRED':
+                    room_changes.update(room_type=None, shared_with_name=None)
+                    room_type = None
+            if room_changes.get('shared_with_name') and not room_type:
+                return jsonify(error='ACCOMMODATION_WISH_REQUIRES_SHARED_ROOM', message='Bitte einen gemeinsamen Zimmertyp wählen.'), 400
+            if room_type and 'shared' not in room_type.casefold():
+                if room_changes.get('shared_with_name'):
+                    return jsonify(error='ACCOMMODATION_WISH_REQUIRES_SHARED_ROOM', message='Ein Wunschpartner ist nur bei gemeinsamer Zimmernutzung möglich.'), 400
+                if 'room_type' in room_changes:
+                    room_changes['shared_with_name'] = None
+            if room_changes.get('shared_with_name'):
+                from excel_import import _match_room_partner
+                candidates = [{'firstname': a.firstname, 'lastname': a.lastname, 'nationCode': a.nation_code}
+                              for a in event_query(Athlete).filter(Athlete.nation_code == athlete.nation_code, Athlete.id != athlete.id)]
+                if not _match_room_partner(room_changes['shared_with_name'], athlete.nation_code, candidates):
+                    return jsonify(error='ACCOMMODATION_PARTNER_UNCLEAR', message='Der Wunschpartner ist in dieser Nation nicht eindeutig zugeordnet.'), 409
         if requirement_change['accommodationRequirement'] == 'NO_ROOM':
-            from accommodation_requirements import ensure_no_bookings
-            ensure_no_bookings(athlete, requirement_change['accommodationRequirement'])
+            ensure_no_bookings(athlete, 'NO_ROOM')
+        if any(getattr(athlete, key) != value for key, value in room_changes.items()):
+            ensure_no_bookings(athlete, 'ACCOMMODATION_WISH')
     previous_exempt_reason = athlete.single_room_quota_exempt_reason
     protected = {'additionalItems', 'additional_items'}
     if protected.intersection(data):
@@ -3596,6 +3648,8 @@ def _update_athlete_operations(athlete, data):
         return jsonify({'error': 'departureDate must not be before arrivalDate'}), 400
     if requirement_change:
         set_requirement(athlete, requirement_change['accommodationRequirement'], requirement_change['accommodationRequirementSource'])
+    for attribute, value in room_changes.items():
+        setattr(athlete, attribute, value)
     if 'accommodationRateCategory' in data:
         athlete.accommodation_rate_category = category
         athlete.accommodation_rate_source = 'MANUAL'
