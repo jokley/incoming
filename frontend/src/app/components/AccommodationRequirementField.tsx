@@ -7,7 +7,7 @@ export function AccommodationRequirementField({person,onChange,onRelease,disable
   const unresolved = person.accommodationRequirement === 'UNRESOLVED';
   return <div className="space-y-1">
     {onToggleNoDispo && <FormControlLabel sx={{ display: 'flex', width: 'fit-content', ml: 0, mr: 0, mb: 1 }} label={<span className="text-xs">Nicht disponieren</span>}
-      control={<Checkbox size="small" sx={{ p: 0.5 }} checked={excluded} disabled={disabled}
+      control={<Checkbox size="small" sx={{ p: 0.5 }} checked={excluded} disabled={disabled || unresolved}
         inputProps={{ 'aria-label': `Nicht disponieren · ${label}` }} onChange={event=>onToggleNoDispo(event.target.checked)} />} />}
     <TextField title={!requiresAccommodation(person)?'Erzeugt keinen offenen Unterkunftsbedarf.':undefined} select fullWidth size="small" label={compact?'Unterkunftsbedarf':label} slotProps={{select:{inputProps:{'aria-label':label}}}} sx={{'& .MuiSelect-nativeInput':{display:'none'},...(compact?{'& .MuiInputBase-root':{minHeight:32,fontSize:12},'& .MuiSelect-select':{py:0.75},'& .MuiInputLabel-root':{fontSize:12}}:{})}} value={person.accommodationRequirement||'REQUIRED'} disabled={disabled || Boolean(onToggleNoDispo && (excluded || unresolved))} onChange={e=>onChange(e.target.value as AccommodationRequirement)}>
     {person.accommodationRequirement === 'UNRESOLVED' && <MenuItem value="UNRESOLVED" disabled>Unterkunftsbedarf offen</MenuItem>}

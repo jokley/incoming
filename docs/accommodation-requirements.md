@@ -54,9 +54,8 @@ Der bestehende Herkunftswert MANUAL schützt den gesamten operativen Wunsch
 beim Reimport. Der gespeicherte Originalwunsch bleibt die Vergleichsbasis für
 „FIS-Meldung bestätigt“ und „Abweichung FIS“. Bei Konflikten zeigt der Dialog
 die Übereinstimmung je Quelle. NO_DISPO erhält vorhandene Buchungen. Beim
-Abwählen der Checkbox im selben Entwurf wird die vorherige Entscheidung
-wiederhergestellt. Nach erneutem Öffnen ist eine ausdrückliche Entscheidung
-erforderlich, wenn kein vorheriger Entwurf vorliegt.
+Abwählen der Checkbox wird „Unterkunft benötigt“ ausdrücklich ausgewählt.
+Bei offenem Bedarf bleibt die Checkbox gesperrt.
 
 „Speichern & weiter“ öffnet nach erfolgreicher Speicherung die nächste offene
 Person derselben Nation in der sichtbaren Auswahl. „Unterkunft klären“ und
@@ -131,10 +130,8 @@ never converted. Apply the schema migration before application deployment.
 In der Personenliste und im Personendetail des Import Centers lässt sich
 „Nicht disponieren“ für eine bearbeitbare Prüfversion ein- und ausschalten.
 „Bedarf bestätigen“ speichert den gewählten Bedarf als ausdrückliche
-Entscheidung. Beim Abwählen von No Dispo kehrt ein zuvor im Entwurf gesetzter
-Bedarf zurück. Ohne eine solche Entscheidung greift die vorhandene
-Quellauflösung. Bei einem für die Übernahme freigegebenen offenen
-Quellkonflikt bleibt der Bedarf nach dem Abwählen offen.
+Entscheidung. Das Abwählen von No Dispo speichert ausdrücklich „Unterkunft
+benötigt“. Bei offenem Unterkunftsbedarf bleibt die Checkbox gesperrt.
 
 Der Vergleich mit der FIS-Meldung wird aus den Quellrevisionen berechnet.
 Bestätigte, unveränderte Wünsche und noch offene Entscheidungen ergeben
