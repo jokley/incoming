@@ -581,7 +581,9 @@ export function SessionPrimaryAction({canWrite=true,session,preview,files,loadin
   const canApprove=!session.nationClarifications?.items.some(i=>i.required&&i.state==='OPEN'&&i.relevant!==false)&&Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
   if(files.length) return <OpsButton onClick={onPreview} disabled={!canWrite||files.length<2||loading||confirming}>Dateien prüfen</OpsButton>;
   const multipleSources=(session.submissions?.length??0)>1;
-  const needsJointReview=multipleSources&&Boolean(nationReviewSelection({...session,preview:preview??undefined}));
+  const hasSharedHousingConflict=preview?.errors.some(issue=>issue.code==='IMPORT_SHARED_ACCOMMODATION_CONFLICT');
+  const needsJointReview=multipleSources&&
+    (hasSharedHousingConflict||Boolean(nationReviewSelection({...session,preview:preview??undefined})));
   if(session.status==='IMPORTED'&&!hasOpenSubmissions(session)&&!pending.length&&!preview?.planStale&&!preview?.quotaRulesChanged) return null;
   if(needsJointReview)return <OpsButton onClick={onRecheck} disabled={!canWrite||loading||confirming}>Gemeinsame Prüfung fortsetzen</OpsButton>;
   if(!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan) return <OpsButton onClick={onRecheck} disabled={!canWrite||loading||confirming}>Prüfung fortsetzen</OpsButton>;

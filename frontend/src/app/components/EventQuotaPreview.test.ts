@@ -100,12 +100,13 @@ test('exactly one next action; stale approval never offers import',()=>{
   {label:'Importieren',status:'APPROVED'},
   {label:'Gemeinsame Prüfung fortsetzen',status:'IMPORTED',joint:true},
   {label:'Gemeinsame Prüfung fortsetzen',status:'APPROVED',joint:true},
+  {label:'Gemeinsame Prüfung fortsetzen',status:'DRAFT',joint:true,sharedConflict:true},
   {label:null,status:'IMPORTED',completed:true},
   {label:'Dateien aktualisieren',status:'PROFESSIONALLY_REVIEWED',invalid:true},
   {label:'Entscheidungen bearbeiten',status:'WAITING_FOR_NATION',pending:true},
  ];
  for(const item of cases){
-  const props={session:{...sourceSession,status:item.status,submissions:item.completed?[]:item.joint?sourceSession.submissions:[{status:'DRAFT'}],approvals:item.pending?[{decision:'PENDING',description:'EZ prüfen',type:'QUOTA_SINGLE_ROOMS_EXCEEDED',quotaDetails:{}}]:[]},preview:item.missing?null:{...preview,isValid:!item.invalid,errors:item.invalid?[{code:'ENTRY_INVALID_ARRIVAL_DATE'}]:[],changePlan:{digest:'current'},planStale:item.stale,quotaRulesChanged:item.quotaChanged},files:item.files??[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
+  const props={session:{...sourceSession,status:item.status,submissions:item.completed?[]:item.joint?sourceSession.submissions:[{status:'DRAFT'}],approvals:item.pending?[{decision:'PENDING',description:'EZ prüfen',type:'QUOTA_SINGLE_ROOMS_EXCEEDED',quotaDetails:{}}]:[]},preview:item.missing?null:{...preview,isValid:!(item.invalid||item.sharedConflict),errors:item.sharedConflict?[{code:'IMPORT_SHARED_ACCOMMODATION_CONFLICT'}]:item.invalid?[{code:'ENTRY_INVALID_ARRIVAL_DATE'}]:[],submissionSources:item.sharedConflict?{Snowboard:1,Freestyle:2}:undefined,changePlan:{digest:'current'},planStale:item.stale,quotaRulesChanged:item.quotaChanged},files:item.files??[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
   const html=renderToStaticMarkup(createElement(PrimaryAction,props));
   assert.equal((html.match(/<button/g)||[]).length,item.completed?0:1,item.label??'completed');if(item.label)assert.ok(html.includes(item.label),item.label);
   if(item.stale||item.missing||item.quotaChanged)assert.ok(!html.includes('Importieren'));
