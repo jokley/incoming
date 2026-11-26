@@ -450,6 +450,13 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
     staged = next(p for p in excluded.json['preview']['people'] if p['matchKey'] == target['matchKey'])
     assert staged['accommodationRequirement'] == 'NO_DISPO'
     assert staged['fisAccommodationDeviationReasons'] == ['No Dispo']
+    # The PATCH response uses its prepared plan. Independent readers still
+    # resolve the current state, and must get the same reviewed values.
+    independent = client.get(f"/api/import/sessions/{joint.json['id']}?eventId={owner.id}")
+    assert independent.status_code == 200, independent.json
+    for field in ('people', 'rooms', 'changePlan', 'planStale'):
+        assert excluded.json['preview'][field] == independent.json['preview'][field]
+    assert excluded.json['preview']['planStale'] is False
     rechecked = compose(second.json, owner)
     assert rechecked.status_code == 200, rechecked.json
     assert next(p for p in rechecked.json['preview']['people'] if p['matchKey'] == target['matchKey'])['accommodationRequirement'] == 'NO_DISPO'

@@ -808,7 +808,9 @@ def test_requirement_patch_reuses_calculated_preview_and_rolls_back_failed_plan(
             target = next(p for p in result.json['preview']['people'] if p['fisCode'] == '9300953')
             assert target['accommodationRequirement'] == requirement
         assert plan_calculation.call_count == 0
-        assert route_calculation.call_count == (6 if warm_cache else 4)
+        # Each PATCH calculates the saved preview once and also updates the
+        # raw compatibility cache when present. The response reuses its plan.
+        assert route_calculation.call_count == (4 if warm_cache else 2)
 
     session = db.session.get(ImportSession, int(sid))
     pending = ImportApproval(session_id=session.id, version_id=session.current_version_id,

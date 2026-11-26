@@ -140,3 +140,15 @@ Der Vergleich gehört zur Person und bleibt bei einer Zimmerbuchung bestehen.
 Personen- und Hotelansichten sowie Excel zeigen die Ursachen auch bei
 mehreren Buchungssegmenten. Die Quellrevisionen werden je Anfrage gesammelt
 gelesen.
+
+In der Import-Personenliste zählt die Bedarfsübersicht die wirksamen
+Personenwerte der gewählten Anzeige. Die EZ-/DZ-Spitze verwendet den
+bestehenden Zimmerbedarf des gesamten Prüfentwurfs und kennzeichnet
+Unsicherheit weiterhin als vorläufig. „Gesamt“, „Freestyle / Freeski“ und
+„Snowboard“ filtern die Anzeige lokal. Erst die bewusste Auswahl eines
+anderen Prüfumfangs führt eine neue Prüfung aus.
+
+Ein eindeutiger Quellbedarf wird automatisch übernommen. „Bedarf manuell
+festlegen“ im Personendetail speichert bewusst den aktuellen Wert mit
+Herkunft `MANUAL` und schützt ihn dadurch beim Reimport. Eine
+Nationenbestätigung erfolgt weiterhin über den bestehenden Freigabeschritt.

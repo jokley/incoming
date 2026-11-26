@@ -2487,13 +2487,15 @@ def _current_session_preview(session, *, read_context=None):
     return preview
 
 
-def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True, share_detail_context=False):
+def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True, share_detail_context=False, freshly_planned=False):
     if include_preview and resolve_preview and session.status not in {'REPLACED','ARCHIVED','CANCELLED'}:
         from imports.read_context import ImportReadContext
         read_context=read_context or ImportReadContext(session.event_id)
     payload = session.to_dict(include_preview=include_preview, read_context=read_context if share_detail_context else None)
     if resolve_preview and session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
-        preview = _current_session_preview(session, read_context=read_context)
+        # The requirement PATCH can serialize its freshly saved plan while still
+        # holding the same write lock and read context that produced it.
+        preview = payload['preview'] if freshly_planned else _current_session_preview(session, read_context=read_context)
         payload['errors'] = len(preview.get('errors', []))
         payload['warnings'] = len(preview.get('warnings', []))
         if preview.get('errors') and session.status != 'IMPORTED':
@@ -2624,10 +2626,12 @@ def stage_accommodation_requirement(session_id, person_key):
     approval_ids = {a.id for a in review_approvals(session, preview)}
     refresh_plan(session, preview, read_context=read_context,
                  recalculate=approval_ids != set(preview['_currentApprovalIds']))
+    payload = _current_session_payload(session, include_preview=True, read_context=read_context,
+                                       share_detail_context=True, freshly_planned=True)
     db.session.commit()
     if staged_raw:
         PREVIEW_STORE[session.current_version.preview_token] = staged_raw
-    return jsonify(_current_session_payload(session, include_preview=True))
+    return jsonify(payload)
 
 
 @app.route('/api/import/sessions/<int:session_id>/accommodation-rates/<path:person_key>', methods=['PATCH'])
