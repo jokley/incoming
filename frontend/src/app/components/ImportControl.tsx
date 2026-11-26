@@ -42,7 +42,7 @@ export function ImportPersonDialog({person,preview,session,onClose,canWrite=fals
    disabled={!canWrite || (person.accommodationRequirement==='UNRESOLVED' && !person.unresolvedSourceAccommodation)}
    sourceRoomType={person.entryAccommodationSource?.roomType || person.roomType}
    onChange={onRequirement} onRelease={()=>onRequirement(null)}
-   onToggleNoDispo={checked=>onRequirement(checked ? 'NO_DISPO' : null)}/>}<PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
+   onToggleNoDispo={checked=>onRequirement(checked ? 'NO_DISPO' : 'REQUIRED')}/>}<PersonControlDetails person={person} preview={preview} control={session?.importControl}/></EnterpriseDialog>;
 }
 export function CompetitionDistribution({grouped=false,control,preview,nation,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;control?:ImportControl;preview?:FisImportPreview;nation?:string;onPeople?:(filter:QuotaPeopleFilter)=>void;focusSport?:boolean}) {
  const tableRef=useRef<HTMLDivElement>(null);

@@ -188,6 +188,10 @@ test('automatic person selection is shared by athlete and Officials quota views 
   if(path==='/import/sessions/2')return route.fulfill({json:{...session,id:'2',nation:'ITA',status:'ARCHIVED',preview:null}});
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
+  if(path==='/import/sessions/1/recheck' && req.method()==='POST'){
+   preview.planStale=false;
+   return route.fulfill({json:session});
+  }
   if(/^\/import\/sessions\/1\/accommodation-requirements\/p[25]$/.test(path) && req.method()==='PATCH'){
    const payload=req.postDataJSON();
    const i=Number(path.at(-1));
@@ -195,7 +199,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
     rejectRequirement=false;
     return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
    }
-   Object.assign(people[i], {accommodationRequirement:payload.accommodationRequirement || 'REQUIRED',
+   Object.assign(people[i], {accommodationRequirement:payload.accommodationRequirement || 'NO_ROOM',
      hasFisAccommodationDeviation:payload.accommodationRequirement==='NO_DISPO',
      fisAccommodationDeviationReasons:payload.accommodationRequirement==='NO_DISPO'?['No Dispo']:[]});
    return route.fulfill({json:session});
@@ -227,12 +231,12 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const openPeople=async()=>{await page.getByRole('button',{name:/^Personen/}).first().click();await page.getByRole('dialog',{name:'Personen der Importvorschau'}).waitFor();};
  await openPeople();let list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
- assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),5);
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),0);
  await page.keyboard.press('Escape');await page.getByRole('group',{name:'Gruppieren:'}).getByRole('button',{name:'Ein',exact:true}).click();await openPeople();
- assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),5);assert.match(await list.locator('th[scope="rowgroup"]').innerText(),/9 Personen/);
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),0);assert.match(await list.locator('th[scope="rowgroup"]').innerText(),/9 Personen/);
  const excluded=list.getByRole('button',{name:'Importdetails Athlete4 Synthetic',exact:true});assert.equal(await excluded.isEnabled(),true);
  await excluded.click();await page.getByRole('dialog',{name:'Athlete4 Synthetic',exact:true}).waitFor();assert.equal(await page.locator('[role="dialog"]').count(),2);await page.keyboard.press('Escape');
- await list.getByLabel('Person suchen').fill('Athlete4');assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),1);
+ await list.getByLabel('Person suchen').fill('Athlete4');assert.equal(await list.getByText('Außerhalb der Planungsempfehlung',{exact:true}).count(),1);
  await list.getByLabel('Person suchen').fill('');
  await page.screenshot({path:'/workspace/artifacts/preview-person-selection-dark.png',animations:'disabled'});
  await page.keyboard.press('Escape');
@@ -308,10 +312,22 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await importDetail.getByText(/Abweichung zur FIS-Meldung/).waitFor();
  await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).click();
  await importDetail.getByText(/Abweichung zur FIS-Meldung/).waitFor({state:'detached'});
+ assert.equal(people[5].accommodationRequirement,'REQUIRED');
+ assert.equal(await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).isChecked(),false);
  await importDetail.getByRole('button',{name:'Schließen',exact:true}).click();
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
  assert.equal(listRequests,beforeSaveListRequests);
  assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5')]);
+ await page.keyboard.press('Escape');
+ preview.planStale=true;
+ await page.reload();
+ await page.getByRole('button',{name:'Prüfung fortsetzen',exact:true}).click();
+ await openPeople();
+ assert.equal(await toggle.isChecked(),true);
+ const released=list.getByRole('row').filter({hasText:'Athlete5 Synthetic'});
+ assert.equal(await released.getAttribute('data-provisional-planning'),null);
+ assert.equal(await released.getByRole('checkbox').isChecked(),false);
+ assert.match(await released.innerText(),/Unterkunft benötigt/);
  await page.goto(`${origin}/athletes`);
  const personRow=page.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
  await personRow.getByText('Nicht einplanen',{exact:true}).first().waitFor();
@@ -319,12 +335,11 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await personRow.click();
  const personDialog=page.getByRole('dialog');
  await personDialog.getByRole('checkbox',{name:'Nicht disponieren (No Dispo)'}).uncheck();
- await personDialog.locator('#athlete-accommodation-requirement').click();
- await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
+ assert.match(await personDialog.locator('#athlete-accommodation-requirement').innerText(),/Unterkunft benötigt/);
  await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
  assert.doesNotMatch((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
- assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5'),'/athletes/3']);
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5'),'/import/sessions/1/recheck','/athletes/3']);
  detailRequests.length=0;
  await page.goto(`${origin}/import`);
  await page.getByText('Geschlossene Importsessions (1)',{exact:true}).waitFor();
@@ -356,9 +371,8 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await page.setViewportSize({width:780,height:740});
  await page.screenshot({path:'/workspace/artifacts/unterkunft-entscheidung-kompakt.png',animations:'disabled'});
  const noDispo = personDialog.getByRole('checkbox',{name:'Nicht disponieren (No Dispo)'});
- await noDispo.check();
- assert.equal(await personDialog.locator('#athlete-accommodation-room-type').getAttribute('aria-disabled'),'true');
- await noDispo.uncheck();
+ assert.equal(await noDispo.isChecked(),false);
+ assert.equal(await noDispo.isDisabled(),true);
  await personDialog.getByRole('button',{name:'Zimmerwunsch übernehmen'}).first().click();
  assert.equal(await personDialog.getByRole('textbox',{name:'Gewünschter Zimmerpartner'}).inputValue(),'Beispiel Partner');
  await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();

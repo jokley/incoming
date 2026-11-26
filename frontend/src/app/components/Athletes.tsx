@@ -131,7 +131,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate, onNex
 }) {
   const permissions = usePermissions();
   const navigate = useNavigate();
-  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false, roomType:'', partner:'', beforeNoDispo:undefined as AccommodationRequirement | undefined });
+  const [stay, setStay] = useState({ arrivalDate: '', departureDate: '', note: '', exemptReason: '', rate: 'STANDARD' as AccommodationRateCategory, requirement: 'REQUIRED' as AccommodationRequirement, requirementTouched:false, releaseRequirement:false, roomType:'', partner:'' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -143,7 +143,7 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate, onNex
       requirement: athlete?.accommodationRequirement || 'REQUIRED', requirementTouched:false, releaseRequirement:false,
       rate: athlete?.accommodationRateCategory || 'STANDARD',
       exemptReason: athlete?.singleRoomQuotaExemptReason || '',
-      roomType: athlete?.roomType?.toLowerCase() === 'no room' ? '' : athlete?.roomType || '', partner: athlete?.sharedWithName || '', beforeNoDispo: undefined,
+      roomType: athlete?.roomType?.toLowerCase() === 'no room' ? '' : athlete?.roomType || '', partner: athlete?.sharedWithName || '',
     });
     setSaveError(null);
   }, [athlete]);
@@ -255,10 +255,9 @@ function AthleteDialog({ athlete, open, onClose, onShowDecision, onUpdate, onNex
           {athlete?.accommodationDecisionLabel && <StatusChip tone={athlete.accommodationDecisionLabel === 'Abweichung FIS' || athlete.accommodationRequirement === 'UNRESOLVED' ? 'warning' : 'neutral'}>{athlete.accommodationDecisionLabel}</StatusChip>}
           {athlete && <FisDeviationBadge person={athlete} expanded/>}
           {stay.requirement === 'UNRESOLVED' && <Alert severity="warning" sx={{ my: 1 }}>Unterkunftsbedarf offen. Bitte eine Entscheidung treffen. Bis dahin bleibt die Person von der Disposition ausgeschlossen.</Alert>}
-          <FormControlLabel label="Nicht disponieren (No Dispo)" control={<Checkbox checked={stay.requirement === 'NO_DISPO'} disabled={!permissions.canEdit || saving}
+          <FormControlLabel label="Nicht disponieren (No Dispo)" control={<Checkbox checked={stay.requirement === 'NO_DISPO'} disabled={!permissions.canEdit || saving || stay.requirement === 'UNRESOLVED'}
             onChange={event => setStay(current => ({...current, requirementTouched: true, releaseRequirement: false,
-              beforeNoDispo: event.target.checked ? current.requirement : undefined,
-              requirement: event.target.checked ? 'NO_DISPO' : current.beforeNoDispo || 'UNRESOLVED'}))} />} />
+              requirement: event.target.checked ? 'NO_DISPO' : 'REQUIRED'}))} />} />
           {stay.requirement === 'NO_DISPO' && booked && <Typography variant="body2" color="warning.main">Bestehende Buchung bleibt erhalten.</Typography>}
           <FieldGrid>
             <TextField id="athlete-accommodation-requirement" select size="small" label="Unterkunftsbedarf" slotProps={{select: {SelectDisplayProps: {'aria-label': 'Unterkunftsbedarf'}}}} value={stay.requirement === 'NO_DISPO' ? 'NO_DISPO' : stay.requirement}
