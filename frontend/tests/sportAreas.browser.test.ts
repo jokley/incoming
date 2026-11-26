@@ -89,6 +89,19 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  const rooms=[{sourceRowKey:'joint',rowNumber:2,checkInDate:'2027-03-02',checkOutDate:'2027-03-04',person1Key:'snow',person1Name:'Snow Synthetic',person2Key:'ski',person2Name:'Ski Synthetic',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2},{versionId:20,version:2,row:2}]},{sourceRowKey:'unknown',rowNumber:3,person1Key:'both',person1Name:'Both Synthetic',person2Key:null,roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:3}]}];
  const preview={eventId:'1',people,rooms,errors:[{code:'ROOM_PERSON_NOT_FOUND',message:'Unresolved original Room List row',details:{row:9}}],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:false,submissionSources:{Snowboard:10,Freestyle:20},replacementScope:{kind:'SPORT_FAMILY'},changePlan:{digest:'frozen-plan',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
  const session={id:'1',nation:'AUT',status:'PROFESSIONALLY_REVIEWED',errors:1,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,submissions:[{family:'Snowboard',versionId:'10',people:2,status:'DRAFT'},{family:'Freestyle',versionId:'20',people:2,status:'DRAFT'}],importControl:{people:people.map(p=>({personKey:p.matchKey,competitions:[],quotaContexts:[]})),issues:[],competitions:[]}};
+ const context=(discipline:string,pending:number)=>({discipline,gender:'M',athletes:2,expectedAthletes:2,
+   officials:3,officialQuota:4,singleRoomsPending:pending,singleRoomsAllowed:2,singleRoomsRequested:2+pending,singleRoomsApproved:0});
+ const snow=context('Configured Snow Group',2), ski=context('Configured Ski Group',0);
+ const family=(topLevelDiscipline:string,athleteQuotaUsed:number)=>({topLevelDiscipline,athleteQuotaUsed,
+   athleteQuotaLimit:10,athleteGenderUsed:{M:athleteQuotaUsed,F:0},athleteGenderLimit:8,athleteQuotaStatus:'WITHIN',decisionStatus:'NONE'});
+ const families=[family('Snowboard',2),family('Freestyle',3)];
+ Object.assign(preview,{quotaChecks:[snow,ski],athleteQuotaChecks:families,quotaOverview:{
+   event:{name:'Synthetic grouping event',rulesFixed:true,rulesRevision:1},nations:[{
+    nationCode:'AUT',officials:4,ezDecisionsOpen:1,athleteFamilies:families,
+    groups:[snow,ski].map(row=>({name:row.discipline,officials:3,contexts:[row],totals:row})),
+   }],
+ }});
+ Object.assign(session.importControl,{quotaGroups:[{name:snow.discipline,family:'Snowboard'},{name:ski.discipline,family:'Freestyle'}]});
  const event={id:'1',name:'Synthetic grouping event',active:true,year:2027,planningPeriods:[]};
  const requests:string[]=[],errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname.slice(4);requests.push(`${route.request().method()} ${path}`);const bodies:Record<string,unknown>={'/auth/me':{username:'local-admin',displayName:'local-admin',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session};await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});});
@@ -128,6 +141,42 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});assert.equal(await grouping.getByRole('button',{name:'Ein',exact:true}).getAttribute('aria-pressed'),'true');assert.equal(await page.getByRole('button',{name:'Freigeben',exact:true}).count(),0);
  await grouping.getByRole('button',{name:'Aus',exact:true}).click();await card.getByRole('button',{name:/^Personen/}).first().click();dialog=page.getByRole('dialog');await dialog.waitFor();assert.equal(await dialog.getByRole('button',{name:/^Importdetails /}).count(),3);assert.equal(await dialog.locator('th[scope="rowgroup"]').count(),0);
  await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
+ const sport=page.getByRole('group',{name:'Sportfamilie anzeigen'});
+ await grouping.getByRole('button',{name:'Ein',exact:true}).click();
+ for(const [label,rooms,open,used,context] of [
+  ['Freestyle / Freeski',1,0,3,ski.discipline],['Snowboard',2,1,2,snow.discipline],
+ ] as const){
+  await sport.getByRole('button',{name:label,exact:true}).click();
+  assert.match(await page.getByRole('button',{name:/^Personen/}).first().innerText(),/2 Personen/);
+  assert.match(await page.getByRole('button',{name:/^Zimmerzuordnungen/}).innerText(),new RegExp(`${rooms} Zimmerangaben`));
+  const officials=page.getByRole('button',{name:/^Officials & EZ-Quote/});
+  assert.match(await officials.innerText(),new RegExp(`${open} EZ-Kontexte offen`));
+  const athletes=page.getByRole('button',{name:/^Athleten-\/Disziplinquote/});
+  assert.match(await athletes.innerText(),new RegExp(`${used} / 10`));
+  assert.doesNotMatch(await athletes.innerText(),new RegExp(`${5-used} / 10`));
+  await officials.click();
+  const quotaDialog=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
+  assert.match(await quotaDialog.getByLabel('Officials-Gesamtergebnis').innerText(),/4 eindeutige Officials · Gesamt-Nation/);
+  assert.ok((await quotaDialog.locator('th[scope="rowgroup"]').filter({hasText:context}).count())>0);
+  const other=context===snow.discipline?ski.discipline:snow.discipline;
+  assert.equal(await quotaDialog.locator('th[scope="rowgroup"]').filter({hasText:other}).count(),0);
+  await quotaDialog.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+  await quotaDialog.waitFor({state:'hidden'});
+  await athletes.click();
+  const athleteDialog=page.getByRole('dialog',{name:'Athleten-/Disziplinquote'});
+  assert.equal(await athleteDialog.getByRole('rowheader',{name:new RegExp(label)}).count(),1);
+  await athleteDialog.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+  await athleteDialog.waitFor({state:'hidden'});
+  await page.getByRole('button',{name:/^Zimmerzuordnungen/}).click();
+  const roomDialog=page.getByRole('dialog',{name:'Zimmer der Importvorschau'});
+  assert.equal(await roomDialog.locator('tbody tr:has(td)').count(),rooms);
+  await roomDialog.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+  await roomDialog.waitFor({state:'hidden'});
+  assert.equal(await page.getByText(/Weitere Importfehler im Prüfstand/).count(),1);
+ }
+ await sport.getByRole('button',{name:'Gesamt',exact:true}).click();
+ assert.match(await page.getByRole('button',{name:/^Personen/}).first().innerText(),/3 Personen/);
+ assert.match(await page.getByRole('button',{name:/^Zimmerzuordnungen/}).innerText(),/2 Zimmerangaben/);
  await page.setViewportSize({width:390,height:844});
  await page.evaluate(()=>document.documentElement.classList.add('dark'));
  await grouping.getByRole('button',{name:'Ein',exact:true}).click();

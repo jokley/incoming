@@ -26,7 +26,7 @@ import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, F
 import { api } from '../services/api';
 import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
 import { archiveImportSessionChecked, importConfirmationMessage } from '../services/importConfirmation';
-import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel, sportAreaLabel } from '../services/competitionPresentation';
+import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel, sportAreaLabel, sportAreaValue } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange } from '../types';
 import { closedImportStatuses, hasOpenSubmissions, importQueueSession, IMPORT_SESSION_STATUS, type ImportQueueSession, type ImportSession, type NationClarification } from '../data/importSessions';
 import { ContentCard, EmptyState, EnterpriseDialog, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
@@ -300,6 +300,52 @@ export function DataImport() {
     return families.includes(displayFamily)
       || (!families.length && preview.replacementScope?.kind==='SPORT_FAMILY' && preview.replacementScope.family===displayFamily);
   })),[preview,displayFamily]);
+  const roomsInView=useMemo(()=>new Set(preview?.rooms.filter(room=>{
+    if(displayFamily==='all')return true;
+    const families=room.sourceRows?.map(row=>sportAreaValue(sourceFamily(preview,row.versionId,selected??undefined))).filter(Boolean);
+    if(families?.length)return families.includes(displayFamily);
+    if(preview.replacementScope?.kind==='SPORT_FAMILY'&&preview.replacementScope.family===displayFamily)return true;
+    return [room.person1Key,room.person2Key].some(key=>{
+      const person=key?peopleByKey.get(key):undefined;
+      return person&&peopleInView.has(person);
+    });
+  })),[preview,selected,displayFamily,peopleByKey,peopleInView]);
+  const scopedFindings=useMemo(()=>{
+    if(displayFamily==='all'||!preview)return findings;
+    return findings.filter(finding=>{
+      const version=finding.details?.sourceVersionId;
+      const family=typeof version==='string'||typeof version==='number'
+        ? sportAreaValue(sourceFamily(preview,version,selected??undefined)) : null;
+      if(family)return family===displayFamily;
+      return finding.personKeys.some(key=>{
+        const person=peopleByKey.get(key);
+        return person&&peopleInView.has(person);
+      });
+    });
+  },[preview,selected,displayFamily,findings,peopleByKey,peopleInView]);
+  const viewControl=useMemo(()=>{
+    if(!control||displayFamily==='all')return control;
+    return {...control,
+      people:control.people.filter(row=>{
+        const person=peopleByKey.get(row.personKey);
+        return person&&peopleInView.has(person);
+      }),
+      issues:control.issues.filter(issue=>scopedFindings.some(finding=>finding.code===issue.code&&finding.row===(issue.row??undefined)
+        && (!issue.personKeys.length||issue.personKeys.some(key=>finding.personKeys.includes(key))))),
+      competitions:control.competitions.filter(competition=>sportAreaValue(competition.family)===displayFamily),
+    };
+  },[control,displayFamily,peopleByKey,peopleInView,scopedFindings]);
+  const viewPreview=useMemo(()=>{
+    if(!preview||displayFamily==='all')return preview;
+    const groupNames=new Set(control?.quotaGroups?.filter(group=>sportAreaValue(group.family)===displayFamily).map(group=>group.name));
+    return {...preview,people:[...peopleInView],rooms:[...roomsInView],
+      errors:scopedFindings.filter(finding=>finding.kind==='error').map(finding=>({
+        code:finding.code,message:finding.message,details:{...finding.details,row:finding.row},
+      })),
+      quotaChecks:preview.quotaChecks?.filter(row=>groupNames.has(row.discipline)),
+      athleteQuotaChecks:preview.athleteQuotaChecks?.filter(row=>sportAreaValue(row.topLevelDiscipline)===displayFamily),
+    };
+  },[preview,displayFamily,control,peopleInView,roomsInView,scopedFindings]);
   const accommodationCounts={REQUIRED:0,NO_ROOM:0,NO_DISPO:0,UNRESOLVED:0};
   for (const person of peopleInView) accommodationCounts[person.accommodationRequirement??'REQUIRED']++;
   const roomDemandLabel=usePreviewRoomDemand(preview,selected?.nnPlanning);
@@ -335,7 +381,7 @@ export function DataImport() {
     if(!p)return displayFamily==='all'&&!quotaPeopleFilter&&personFilter==='all'&&!personSearch;
     if(!peopleInView.has(p))return false;
     return (`${p.firstname} ${p.lastname} ${p.function || ''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')))
-      && personMatchesImportFilter(p,personFilter,preview!,selected?.importControl,findings)&&personMatchesQuotaFilter(p,quotaPeopleFilter);
+      && personMatchesImportFilter(p,personFilter,viewPreview!,viewControl,scopedFindings)&&personMatchesQuotaFilter(p,quotaPeopleFilter);
   });
   const filteredPeopleRows=visiblePeopleIndices.map(index=>peopleRows[index]);
   const activePerson=personKey ? peopleByKey.get(personKey) : undefined;
@@ -355,7 +401,7 @@ export function DataImport() {
     roomRows.push([String(record.athlete??'—'),Array.isArray(record.roommates)?record.roommates.join(', '):'—',String(record.roomType??'—'),'—',importStatuses(['Zimmer entfernt'])]);
   });
 
-  const visibleRoomIndices=roomRows.map((_,index)=>index).filter(index=>{const room=preview?.rooms[index];return room?(displayFamily==='all'||room.sourceRows?.some(row=>sourceFamily(preview!,row.versionId,selected??undefined)===displayFamily)||[room.person1Key,room.person2Key].some(key=>{const person=peopleByKey.get(key??undefined);return person&&peopleInView.has(person);}))&&roomMatchesImportFilter(room,personFilter,preview!,selected?.importControl)&&`${room.person1Name} ${room.person2Name??''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')):displayFamily==='all'&&personFilter==='all'&&!personSearch;});
+  const visibleRoomIndices=roomRows.map((_,index)=>index).filter(index=>{const room=preview?.rooms[index];return room?roomsInView.has(room)&&roomMatchesImportFilter(room,personFilter,viewPreview!,viewControl)&&`${room.person1Name} ${room.person2Name??''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')):displayFamily==='all'&&personFilter==='all'&&!personSearch;});
   const filteredRoomRows=visibleRoomIndices.map(index=>roomRows[index]);
   const groupedRows=grouped&&preview&&detail?.title==='Personen der Importvorschau'
     ?groupImportItems(visiblePeopleIndices,index=>personImportPlacement(preview.people[index])).map(section=>({...section,items:section.items.map(index=>peopleRows[index])}))
@@ -407,18 +453,19 @@ export function DataImport() {
 
               <CompletedDecisions grouped={grouped} session={selected} onOpen={setActiveTask}/>
               {preview?.cancelledPeople?.length? <details className="rounded-xl border border-[var(--ops-border)] p-3 text-sm"><summary>{preview.cancelledPeople.length} stornierte Meldung(en) · im betroffenen Sportbereich inaktiv</summary><p className="mt-2 text-xs">Bestehende Personen und Competition-Zuordnungen werden ausschließlich über den geprüften Änderungsplan entfernt. Andere Sportbereiche bleiben geschützt.</p><ul className="mt-2 space-y-1">{preview.cancelledPeople.map((p,index)=><li key={index}>{p.firstname} {p.lastname} · {p.sourceFamily?sportAreaLabel(p.sourceFamily):'Nationsmeldung'} · Present = CANCELLED · Entry-Zeile {p.rowNumber}</li>)}</ul></details>:null}
-              {preview&&<ImportClarifications preview={preview} session={selected} findings={findings} canWrite={canEditPreview&&!questionBusy} onPerson={showPerson} onPeople={showPeople} onQuestion={askAbout} onDecision={id=>{const a=selected.approvals.find(a=>a.id===id);if(a)setActiveTask(buildOperationsTask(selected,a));}} onExistingQuestion={id=>{document.getElementById(`clarification-${id}`)?.scrollIntoView({block:'center'});}}/>}
+              {displayFamily!=='all'&&findings.some(issue=>issue.kind==='error'&&!scopedFindings.includes(issue))&&
+                <p className="text-sm text-[var(--ops-warning)]">Gesamte Nation: Weitere Importfehler im Prüfstand. In „Gesamt“ anzeigen.</p>}
+              {preview&&<ImportClarifications familyScoped={displayFamily!=='all'} preview={preview} session={selected} findings={scopedFindings} canWrite={canEditPreview&&!questionBusy} onPerson={showPerson} onPeople={showPeople} onQuestion={askAbout} onDecision={id=>{const a=selected.approvals.find(a=>a.id===id);if(a)setActiveTask(buildOperationsTask(selected,a));}} onExistingQuestion={id=>{document.getElementById(`clarification-${id}`)?.scrollIntoView({block:'center'});}}/>}
               <ImportChangePlan plan={preview?.changePlan} stale={preview?.planStale} editable={selected.status!=='IMPORTED' && selected.status!=='APPROVED'} destructiveConfirmed={destructiveConfirmed} onDestructive={setDestructiveConfirmed} busy={confirming || loading}/>
 
-              {preview&&<PreviewCard roomDemandLabel={roomDemandLabel} displayControl={<>
+              {preview&&<PreviewCard roomDemandLabel={roomDemandLabel} displayFamily={displayFamily} displayControl={<>
                 <ToggleButtonGroup size="small" exclusive value={displayFamily} aria-label="Sportfamilie anzeigen"
                   onChange={(_,value:typeof displayFamily|null)=>{if(value!==null)setDisplayFamily(value);}}>
                   <ToggleButton value="all">Gesamt</ToggleButton>
                   <ToggleButton value="Freestyle">Freestyle / Freeski</ToggleButton>
                   <ToggleButton value="Snowboard">Snowboard</ToggleButton>
                 </ToggleButtonGroup>
-                <span className="text-xs text-[var(--ops-text-muted)]">Prüf- und Importumfang · {reviewScopeLabel}</span>
-              </>} operational={selected.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} onGrouped={setGrouped} onPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} control={selected.importControl} onFilter={(area,filter)=>{setQuotaPeopleFilter(null);setPersonFilter(filter);setPersonSearch('');setDetail({title:area==='people'?'Personen der Importvorschau':'Zimmer der Importvorschau',headers:area==='people'?PEOPLE_HEADERS:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});}} preview={preview} peopleRows={peopleRows} roomRows={roomRows} onOpen={d=>{if(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(d.title)){setQuotaPeopleFilter(null);setPersonFilter('all');setPersonSearch('');}setDetail(d);}}/>}
+              </>} scopeLabel={reviewScopeLabel} viewFindings={scopedFindings} operational={selected.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} onGrouped={setGrouped} onPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} control={viewControl} onFilter={(area,filter)=>{setQuotaPeopleFilter(null);setPersonFilter(filter);setPersonSearch('');setDetail({title:area==='people'?'Personen der Importvorschau':'Zimmer der Importvorschau',headers:area==='people'?PEOPLE_HEADERS:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});}} preview={viewPreview} peopleRows={filteredPeopleRows} roomRows={filteredRoomRows} onOpen={d=>{if(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(d.title)){setQuotaPeopleFilter(null);setPersonFilter('all');setPersonSearch('');}setDetail(d);}}/>}
               {selected.nationClarifications&&<section id="nation-clarifications" aria-label="Abklärung mit Nation" className="space-y-2 border-t border-[var(--ops-divider)] pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Abklärung mit Nation"/><OpsButton disabled={!importAllowed||loading||confirming||savingTask||questionBusy||['APPROVED','IMPORTED','REPLACED','ARCHIVED','CANCELLED'].includes(selected.status)} onClick={()=>openQuestion('OPEN')}>Abklärung dokumentieren</OpsButton></div>
                 {(grouped?groupImportItems(selected.nationClarifications.items.filter(i=>i.state==='OPEN'),item=>familyImportPlacement(item.subject.coverage?.families)):[{area:'',items:selected.nationClarifications.items.filter(i=>i.state==='OPEN')}]).map(section=><Fragment key={section.area}>{grouped&&<h4 className="pt-2 text-sm font-bold">{section.area}</h4>}{section.items.map(item=><div id={`clarification-${item.id}`} key={item.id} className="space-y-1 border-b border-[var(--ops-divider)] py-2 text-sm">
@@ -440,7 +487,7 @@ export function DataImport() {
         </ContentCard>
       </div>
     </SplitPageLayout>
-    <DetailDialog displayFamily={displayFamily} accommodationCounts={accommodationCounts} roomDemandLabel={roomDemandLabel} error={error} deferredRows={deferredRows} hasDeferredPeople={deferredKeys.size>0} nn={selected?.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} groupedRows={groupedRows} detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:filteredRoomRows, quota:quotaRows(preview),athleteQuota:athleteQuotaRows(preview)})} preview={preview??(selected?.status==='ARCHIVED'?selected.preview??null:null)} control={selected?.importControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
+    <DetailDialog quotaPreview={preview} displayFamily={displayFamily} accommodationCounts={accommodationCounts} roomDemandLabel={roomDemandLabel} error={error} deferredRows={deferredRows} hasDeferredPeople={deferredKeys.size>0} nn={selected?.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} groupedRows={groupedRows} detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:filteredRoomRows, quota:quotaRows(viewPreview),athleteQuota:athleteQuotaRows(viewPreview)})} preview={viewPreview??(selected?.status==='ARCHIVED'?selected.preview??null:null)} control={viewControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
     {activePerson&&preview&&<ImportPersonDialog key={activePerson.matchKey} person={activePerson} pending={pendingRequirement?.key===activePerson.matchKey?pendingRequirement:undefined} requirementError={error} preview={preview} session={selected} canWrite={canEditPreview} onRequirement={value=>void setPreviewRequirement(activePerson.matchKey,value)} onClose={()=>setPersonKey(null)} />}
     {closingSession&&<EnterpriseDialog open title="Importsession schließen?" size="medium" onClose={()=>{if(!confirming)setClosingSession(null);}} actions={<><OpsButton disabled={confirming} onClick={()=>setClosingSession(null)}>Abbrechen</OpsButton><OpsButton disabled={confirming} onClick={()=>void closeSession()}>Importsession schließen</OpsButton></>}>
       <p className="text-sm">Der aktuelle Importworkflow und alle offenen Prüfungen dieser Nation werden beendet. Die Nationsmeldung verschwindet aus der aktiven Importwarteschlange. Bereits importierte Personen, Zimmer und Genehmigungen bleiben unverändert.</p>
@@ -596,23 +643,35 @@ function usePreviewRoomDemand(preview:FisImportPreview|null,planning?:NNPlanning
     {demand?.unknownDates?` · ${demand.unknownDates} ohne Zeitraum`:''}</>;
 }
 
-export function PreviewCard({displayControl,roomDemandLabel,operational,preview,peopleRows,roomRows,onOpen,control,onFilter,onPeople,grouped=false,onGrouped}:{displayControl?:ReactNode;roomDemandLabel?:ReactNode;operational?:Pick<NNPlanningControls,'planning'|'busy'|'error'>;grouped?:boolean;onGrouped?:(value:boolean)=>void;preview:FisImportPreview|null;peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void;control?:ImportControl;onFilter?:(area:'people'|'rooms',filter:ImportListFilter)=>void;onPeople?:(filter:QuotaPeopleFilter)=>void}) {
+export function PreviewCard({displayFamily='all',displayControl,scopeLabel,viewFindings,roomDemandLabel,operational,preview,peopleRows,roomRows,onOpen,control,onFilter,onPeople,grouped=false,onGrouped}:{displayFamily?:string;displayControl?:ReactNode;scopeLabel?:string;viewFindings?:ReturnType<typeof importFindings>;roomDemandLabel?:ReactNode;operational?:Pick<NNPlanningControls,'planning'|'busy'|'error'>;grouped?:boolean;onGrouped?:(value:boolean)=>void;preview:FisImportPreview|null;peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void;control?:ImportControl;onFilter?:(area:'people'|'rooms',filter:ImportListFilter)=>void;onPeople?:(filter:QuotaPeopleFilter)=>void}) {
  const tile='flex min-h-40 flex-col rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4';
  const openPeople=()=>onOpen({title:'Personen der Importvorschau',rows:peopleRows,headers:PEOPLE_HEADERS});
  const openRooms=()=>onOpen({title:'Zimmer der Importvorschau',rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});
- const findings=preview?importFindings(preview,control):[];
+ const findings=viewFindings??(preview?importFindings(preview,control):[]);
  const personFilters=(['error','clarification','noRoom','stay','stayUnclear','singleRoom','special'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>!i.code.startsWith('ROOM_')).length??0):(preview?.people.filter(p=>personMatchesImportFilter(p,filter,preview,control,findings)).length??0)})).filter(h=>h.count);
  const planning=operational?.planning;
  const calculatedRoomDemandLabel=usePreviewRoomDemand(roomDemandLabel===undefined?preview:null,planning);
  const demandText=roomDemandLabel??calculatedRoomDemandLabel;
  const sportIssues=sportClarifications(control);
  const ez=preview?singleRoomSummary(preview):null;
+ const operative=planning?.operationalQuota;
+ const groupNames=new Set(control?.quotaGroups?.filter(group=>sportAreaValue(group.family)===displayFamily).map(group=>group.name));
+ const operativeRows=displayFamily==='all'?operative?.rows:operative?.rows.filter(row=>groupNames.has(row.discipline));
+ const operativeStatus=operational?.busy?'wird berechnet …':operational?.error||!operative?'Bewertung nicht verfügbar'
+   : displayFamily!=='all'&&!operativeRows?.length?'Keine zugeordneten Kontexte'
+   : (displayFamily==='all'&&operative.conflict)||operativeRows?.some(row=>row.officialsExceeded||row.singleRoomsPending>0||row.coverageChanged)
+     ?'Klärungsbedarf':'aktuell bewertet';
  const roomFilters=(['error','clarification','partner'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>i.code.startsWith('ROOM_')).length??0):(preview?.rooms.filter(r=>roomMatchesImportFilter(r,filter,preview,control)).length??0)})).filter(h=>h.count);
 
- return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle={importScopeLabel(preview) || undefined}/>{displayControl&&<div className="mt-3 flex flex-wrap items-center gap-3">{displayControl}</div>}{onGrouped&&<div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span id="import-group-label">Gruppieren:</span><ToggleButtonGroup size="small" exclusive value={grouped} aria-labelledby="import-group-label" onChange={(_,value:boolean|null)=>{if(value!==null)onGrouped(value);}}><ToggleButton value={false}>Aus</ToggleButton><ToggleButton value={true}>Ein</ToggleButton></ToggleButtonGroup></div>}<div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+ return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle={importScopeLabel(preview) || undefined}/>{(displayControl||onGrouped)&&<div className="mt-3 flex flex-wrap items-center justify-between gap-3">{displayControl}{onGrouped&&<div className="flex flex-wrap items-center gap-2 text-sm sm:ml-auto"><span id="import-group-label">Gruppieren:</span><ToggleButtonGroup size="small" exclusive value={grouped} aria-labelledby="import-group-label" onChange={(_,value:boolean|null)=>{if(value!==null)onGrouped(value);}}><ToggleButton value={false}>Aus</ToggleButton><ToggleButton value={true}>Ein</ToggleButton></ToggleButtonGroup></div>}</div>}{scopeLabel&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Prüf- und Importumfang · {scopeLabel}</p>}<div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
   <div className={tile}><button type="button" onClick={openPeople} className="text-left"><strong>Personen</strong><p>{preview?.people.length??0} Personen{preview?.replacementScope?.kind==='SPORT_FAMILY'&&!preview?.submissionSources ? ' aus diesen Dateien' : ''}</p></button>{personFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('people',h.filter):openPeople()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {importListFilters[h.filter]}</button>)}{preview&&!personFilters.some(h=>h.filter==='error'||h.filter==='clarification'||h.filter==='stay'||h.filter==='stayUnclear')&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
-  <div className={tile}><button type="button" onClick={openRooms} className="text-left"><strong>Zimmerzuordnungen</strong><p>{preview?.rooms.length??0} Zimmerangaben</p></button>{roomFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('rooms',h.filter):openRooms()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {h.filter==='partner'?'Partner ungeklärt':importListFilters[h.filter]}</button>)}{preview&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">{demandText}</p>}{preview&&!roomFilters.length&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
-  <div className={tile}><button type="button" onClick={()=>onOpen({title:'Officials & EZ-Quote'})} className="text-left"><strong>Officials & EZ-Quote</strong>{operational&&<span className="block text-xs">Operativ: {operational.busy?'wird berechnet …':operational.error||!operational.planning.operationalQuota?'Bewertung nicht verfügbar':operational.planning.operationalQuota?.conflict||operational.planning.operationalQuota?.rows.some(row=>row.officialsExceeded||row.singleRoomsPending>0||row.coverageChanged)?'Klärungsbedarf':'aktuell bewertet'}</span>}<span className="block">{preview?.quotaOverview?.nations.reduce((sum,n)=>sum+n.ezDecisionsOpen,0)??0} EZ-Kontexte offen · Importprüfung</span><span className="block pt-2">{ez&&!ez.complete||preview?.quotaOverview?.nations.some(n=>n.coverageReviewRequired||n.incomplete)?'Abdeckung prüfen':ez?.counts.PENDING?'EZ-Entscheidung offen':'OK'}</span></button>{ez&&ez.counts.PENDING>0&&<button type="button" className="mt-2 text-left text-sm text-[var(--ops-primary)]" onClick={()=>onPeople?.({role:'people',personKeys:ez.personKeys.PENDING})}>{ez.counts.PENDING} EZ-Personen offen</button>}</div>
+  <div className={tile}><button type="button" onClick={openRooms} className="text-left"><strong>Zimmerzuordnungen</strong><p>{preview?.rooms.length??0} Zimmerangaben</p></button>{roomFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('rooms',h.filter):openRooms()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {h.filter==='partner'?'Partner ungeklärt':importListFilters[h.filter]}</button>)}{preview&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">{demandText}{displayFamily!=='all'?' · Gesamt-Nation (Prüfentwurf)':''}</p>}{preview&&!roomFilters.length&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
+  <div className={tile}><button type="button" onClick={()=>onOpen({title:'Officials & EZ-Quote'})} className="text-left"><strong>Officials & EZ-Quote</strong>{displayFamily!=='all'?<span className="block">
+    {preview?.quotaChecks?.length
+      ? `${preview.quotaChecks.filter(row=>row.singleRoomsPending>0).length} EZ-Kontexte offen · Importprüfung`
+      : 'Keine zugeordneten Officials-/EZ-Kontexte'}
+    {operational&&<span className="block text-xs">Operativ: {operativeStatus}{operative?.conflict?' · Auswahlkonflikt Gesamt-Nation':''}</span>}
+  </span>:<>{operational&&<span className="block text-xs">Operativ: {operativeStatus}</span>}<span className="block">{preview?.quotaOverview?.nations.reduce((sum,n)=>sum+n.ezDecisionsOpen,0)??0} EZ-Kontexte offen · Importprüfung</span><span className="block pt-2">{ez&&!ez.complete||preview?.quotaOverview?.nations.some(n=>n.coverageReviewRequired||n.incomplete)?'Abdeckung prüfen':ez?.counts.PENDING?'EZ-Entscheidung offen':'OK'}</span></>}</button>{displayFamily==='all'&&ez&&ez.counts.PENDING>0&&<button type="button" className="mt-2 text-left text-sm text-[var(--ops-primary)]" onClick={()=>onPeople?.({role:'people',personKeys:ez.personKeys.PENDING})}>{ez.counts.PENDING} EZ-Personen offen</button>}</div>
   <div className={tile}><button type="button" onClick={()=>onOpen({title:'Athleten-/Disziplinquote'})} className="flex flex-col gap-1 text-left"><strong>Athleten-/Disziplinquote</strong>{preview?.athleteQuotaChecks?.map(q=><span key={`${q.nationCode}/${q.topLevelDiscipline}`}>{sportAreaLabel(q.topLevelDiscipline)}: {q.athleteQuotaUsed} / {q.athleteQuotaLimit} · Familienquote</span>)}<span>{preview?<AthleteQuotaPreviewStatus preview={preview}/>: 'Noch keine Vorschau'}</span></button>{sportIssues.length>0&&<button type="button" onClick={()=>onOpen({title:'Athleten-/Disziplinquote',focusSport:true})} title={sportIssues.map(row=>`${row.nation} · ${row.name}`).join('; ')} className="mt-2 text-left text-sm font-bold text-[var(--ops-warning)]">{sportIssues.length} {sportIssues.length===1?'Sportliche Prüfung offen':'Wettbewerbspositionen prüfen'}<span className="block text-xs font-normal">{sportIssues.map(row=>`${competitionDisplayName(row.name)} ${row.gender==='M'?'Männer':['F','W'].includes(row.gender??'')?'Frauen':row.gender??''}`).join(' · ')}</span></button>}</div>
  </div></ContentCard>;
 }
@@ -642,7 +701,7 @@ const detailLabels:Record<string,string>={firstname:'Vorname',lastname:'Nachname
 function displayValue(value:unknown):string { if(value===null||value===undefined||value==='')return 'Noch zu ermitteln'; if(Array.isArray(value))return value.map(displayValue).join(', '); if(typeof value==='object')return Object.entries(value as Record<string,unknown>).map(([key,item])=>`${detailLabels[key]??key}: ${displayValue(item)}`).join(' · '); return String(value); }
 function RecordSection({title,children}:{title:string;children:ReactNode}) { return <section><h3 className="mb-2 text-xs font-extrabold uppercase tracking-wider text-[var(--ops-text-subtle)]">{title}</h3><div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4">{children}</div></section>; }
 function IssueRecord({issue,isInformation,isDecision}:{issue:FisImportIssue;isInformation:boolean;isDecision:boolean}) { const copy=issueCopy[issue.code]; const detected=/discipline/i.test(issue.code); return <article className="space-y-4"><RecordSection title="1. Was ist passiert?"><p className="font-bold">{detected?'Disziplin automatisch erkannt':copy?.message??issue.message}</p>{detected&&<p className="mt-2 text-sm text-[var(--ops-text-muted)]">Erkannt: {displayValue(issue.details?.discipline??issue.details?.value)} · Quelle: Dateiname</p>}</RecordSection>{Object.keys(issue.details??{}).length>0&&<RecordSection title="2. Betroffene Daten"><div className="grid gap-3 sm:grid-cols-2">{Object.entries(issue.details??{}).map(([key,value])=><div key={key}><div className="text-xs font-bold text-[var(--ops-text-subtle)]">{detailLabels[key]??key}</div><div className="font-semibold">{displayValue(value)}</div></div>)}</div></RecordSection>}<RecordSection title="3. Auswirkung"><div className="flex gap-2 font-bold">{isInformation?<CheckCircle className="h-5 w-5 text-[var(--ops-success)]"/>:<AlertTriangle className="h-5 w-5 text-[var(--ops-warning)]"/>}{isInformation?'Information · keine zusätzliche Importsperre':isDecision?'Fachlich klären · keine zusätzliche Importsperre':'Import ist bis zur Korrektur blockiert'}</div></RecordSection><InfoPanel tone={isInformation?'success':'info'} title="Was ist jetzt zu tun?">{isInformation?'Hinweis anhand der Quelldaten nachvollziehen.':isDecision?'Sachverhalt bei Bedarf mit Nation oder FIS klären. Bestehende Genehmigungsfälle bleiben unverändert.':copy?.action??'Bitte die fehlerhaften Quelldaten korrigieren.'}</InfoPanel></article>; }
-function DetailDialog({displayFamily,accommodationCounts,roomDemandLabel,error,deferredRows,hasDeferredPeople,nn,grouped=false,groupedRows,detail,onClose,preview,control,personFilter,onFilter,search,onSearch,quotaPeopleFilter,onQuotaPeople}:{displayFamily:string;accommodationCounts:Record<AccommodationRequirement,number>;roomDemandLabel:ReactNode;error?:string|null;deferredRows?:Set<ReactNode[]>;hasDeferredPeople?:boolean;nn?:NNPlanningControls;grouped?:boolean;groupedRows?:Array<{area:string;group?:string;items:ReactNode[][]}>;detail:Detail|null;onClose:()=>void;preview:FisImportPreview|null;control?:ImportControl;personFilter:ImportListFilter;onFilter:(kind:ImportListFilter)=>void;search:string;onSearch:(value:string)=>void;quotaPeopleFilter:QuotaPeopleFilter|null;onQuotaPeople:(filter:QuotaPeopleFilter|null)=>void}) {
+function DetailDialog({quotaPreview,displayFamily,accommodationCounts,roomDemandLabel,error,deferredRows,hasDeferredPeople,nn,grouped=false,groupedRows,detail,onClose,preview,control,personFilter,onFilter,search,onSearch,quotaPeopleFilter,onQuotaPeople}:{quotaPreview:FisImportPreview|null;displayFamily:string;accommodationCounts:Record<AccommodationRequirement,number>;roomDemandLabel:ReactNode;error?:string|null;deferredRows?:Set<ReactNode[]>;hasDeferredPeople?:boolean;nn?:NNPlanningControls;grouped?:boolean;groupedRows?:Array<{area:string;group?:string;items:ReactNode[][]}>;detail:Detail|null;onClose:()=>void;preview:FisImportPreview|null;control?:ImportControl;personFilter:ImportListFilter;onFilter:(kind:ImportListFilter)=>void;search:string;onSearch:(value:string)=>void;quotaPeopleFilter:QuotaPeopleFilter|null;onQuotaPeople:(filter:QuotaPeopleFilter|null)=>void}) {
   const [page,setPage]=useState(0);
   useEffect(()=>setPage(0),[detail?.title,displayFamily,personFilter,search,quotaPeopleFilter]);
   const pageSize=25;
@@ -656,7 +715,7 @@ function DetailDialog({displayFamily,accommodationCounts,roomDemandLabel,error,d
     return paginate?{...section,items:section.items.slice(Math.max(0,currentPage*pageSize-start),
       Math.max(0,(currentPage+1)*pageSize-start))}:section;
   }).filter(section=>section.items.length);
-  if(detail && ['Officials & EZ-Quote','Quota & EZ','Athleten-/Disziplinquote'].includes(detail.title))return <QuotaOverviewDialog nn={nn} grouped={grouped} preview={preview} control={control} kind={detail.title==='Athleten-/Disziplinquote'?'athlete':'officials'} onPeople={onQuotaPeople} focusSport={detail.focusSport} onClose={onClose}/>;
+  if(detail && ['Officials & EZ-Quote','Quota & EZ','Athleten-/Disziplinquote'].includes(detail.title))return <QuotaOverviewDialog displayFamily={displayFamily} nn={nn} grouped={grouped} preview={quotaPreview} control={control} kind={detail.title==='Athleten-/Disziplinquote'?'athlete':'officials'} onPeople={onQuotaPeople} focusSport={detail.focusSport} onClose={onClose}/>;
   const isQuota=detail?.title === 'Officials & EZ-Quote';
   const wide= isQuota || detail?.title === 'Personen der Importvorschau';
   const uncheckable=detail?.title==='Personen der Importvorschau'
@@ -667,7 +726,7 @@ function DetailDialog({displayFamily,accommodationCounts,roomDemandLabel,error,d
     <EnterpriseDialog open={Boolean(detail)} onClose={onClose} size={wide?'table':'large'} title={<>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></>}>
         {paginate&&<div className="mb-3 text-sm" aria-label="Unterkunftsbedarf der Anzeige">
           <p>{displayFamily!=='all'?`${sportAreaLabel(displayFamily)} · `:''}{Object.values(accommodationCounts).reduce((total,count)=>total+count,0)} Personen · {accommodationCounts.REQUIRED} Unterkunft benötigt · {accommodationCounts.NO_ROOM} No Room · {accommodationCounts.NO_DISPO} No Dispo · {accommodationCounts.UNRESOLVED} ungeklärt</p>
-          <p className="text-xs text-[var(--ops-text-muted)]">{roomDemandLabel}{displayFamily!=='all'?' · gesamter Prüfentwurf':''}</p>
+          <p className="text-xs text-[var(--ops-text-muted)]">{roomDemandLabel}{displayFamily!=='all'?' · Gesamt-Nation (Prüfentwurf)':''}</p>
         </div>}
         {detail?.title==='Personen der Importvorschau' && error && <div role="alert" className="mb-3">
           <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>
