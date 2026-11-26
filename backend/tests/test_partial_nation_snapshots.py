@@ -223,6 +223,17 @@ def test_collect_select_and_cancel_drafts_before_any_import(owner,first,second):
     assert cancel.status_code==200,cancel.json
     assert len(cancel.json['preview']['people'])==len(rows(second))
     assert Athlete.query.count()==0
+    chosen = select_submission(b, owner, a['session']['currentVersionId'])
+    assert chosen.status_code == 200, chosen.json
+    person = chosen.json['preview']['people'][0]
+    staged = app.test_client().patch(
+        f"/api/import/sessions/{sid}/accommodation-requirements/{person['matchKey']}?eventId={owner.id}",
+        json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged.status_code == 200, staged.json
+    chosen = select_submission(b, owner, chosen.json['currentVersionId'])
+    assert chosen.status_code == 200, chosen.json
+    assert next(p for p in chosen.json['preview']['people'] if p['matchKey'] == person['matchKey'])['accommodationRequirement'] == 'NO_DISPO'
+    assert Athlete.query.count()==0
 
 
 def test_new_invalid_correction_is_visible_and_superseded_source_cannot_be_selected(owner):
