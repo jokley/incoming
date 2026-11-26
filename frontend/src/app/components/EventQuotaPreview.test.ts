@@ -73,7 +73,7 @@ test('combined nation uses the same four tiles and keeps a partial imported sess
 });
 
 const sourceSession={id:'nation',status:'PROFESSIONALLY_REVIEWED',approvals:[],submissions:[{family:'Snowboard',versionId:'1'},{family:'Freestyle',versionId:'2'}]};
-test('nation opening collects all latest sources without a manual selection',()=>{
+test('upload and explicit review can collect all current sources',()=>{
  assert.deepEqual(nationReviewSelection({...sourceSession,preview:{submissionSources:{Freestyle:2}}}),{sourceVersionIds:['1','2']});
  assert.deepEqual(nationReviewSelection({...sourceSession,submissions:[{family:'Snowboard',versionId:'1'}]}),{sourceVersionIds:['1']});
 });
@@ -95,17 +95,19 @@ test('exactly one next action; stale approval never offers import',()=>{
   {files:[{},{}],label:'Dateien prüfen',status:'APPROVED'},
   {stale:true,label:'Prüfung fortsetzen',status:'APPROVED'},
   {missing:true,label:'Prüfung fortsetzen',status:'APPROVED'},
+  {quotaChanged:true,label:'Prüfung fortsetzen',status:'APPROVED'},
   {label:'Freigeben',status:'PROFESSIONALLY_REVIEWED'},
   {label:'Importieren',status:'APPROVED'},
   {label:'Erneut prüfen',status:'IMPORTED'},
+  {label:null,status:'IMPORTED',completed:true},
   {label:'Dateien aktualisieren',status:'PROFESSIONALLY_REVIEWED',invalid:true},
   {label:'Entscheidungen bearbeiten',status:'WAITING_FOR_NATION',pending:true},
  ];
  for(const item of cases){
-  const props={session:{...sourceSession,status:item.status,approvals:item.pending?[{decision:'PENDING',description:'EZ prüfen',type:'QUOTA_SINGLE_ROOMS_EXCEEDED',quotaDetails:{}}]:[]},preview:item.missing?null:{...preview,isValid:!item.invalid,errors:item.invalid?[{code:'ENTRY_INVALID_ARRIVAL_DATE'}]:[],changePlan:{digest:'current'},planStale:item.stale},files:item.files??[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
+  const props={session:{...sourceSession,status:item.status,submissions:item.completed?[]:sourceSession.submissions,approvals:item.pending?[{decision:'PENDING',description:'EZ prüfen',type:'QUOTA_SINGLE_ROOMS_EXCEEDED',quotaDetails:{}}]:[]},preview:item.missing?null:{...preview,isValid:!item.invalid,errors:item.invalid?[{code:'ENTRY_INVALID_ARRIVAL_DATE'}]:[],changePlan:{digest:'current'},planStale:item.stale,quotaRulesChanged:item.quotaChanged},files:item.files??[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
   const html=renderToStaticMarkup(createElement(PrimaryAction,props));
-  assert.equal((html.match(/<button/g)||[]).length,1,item.label);assert.ok(html.includes(item.label),item.label);
-  if(item.stale||item.missing)assert.ok(!html.includes('Importieren'));
+  assert.equal((html.match(/<button/g)||[]).length,item.completed?0:1,item.label??'completed');if(item.label)assert.ok(html.includes(item.label),item.label);
+  if(item.stale||item.missing||item.quotaChanged)assert.ok(!html.includes('Importieren'));
  }
 });
 
