@@ -188,6 +188,28 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  // Planning is embedded in the import workspace, never linked to Athletes.
  assert.equal(await page.getByRole('link',{name:'Athletenprognose nach Import bearbeiten'}).count(),0);
  assert.ok(requests.every(request=>request.startsWith('GET ')||request==='POST /auth/me'));
+
+ // Only a blocking server finding activates the shared-accommodation warning.
+ Object.assign(people[2],{accommodationRequirement:'UNRESOLVED'});
+ Object.assign(preview,{errors:[],isValid:true});
+ await page.reload();
+ await page.getByText('Unterkunft nach dem Import klären',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Gemeinsame Unterkunft klären',{exact:true}).count(),0);
+
+ for(const code of ['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS']){
+  Object.assign(preview,{isValid:false,errors:[{code,message:'Gemeinsamer Konflikt in den Quelldaten',
+    sourceVersionId:10,details:{personKey:'both'}}]});
+  await page.reload();
+  await page.getByText('Gemeinsame Unterkunft klären',{exact:true}).waitFor();
+  const findings=page.getByRole('region',{name:'Klärungsübersicht'});
+  await findings.getByText('Gemeinsamer Konflikt in den Quelldaten',{exact:true}).waitFor();
+  await page.getByRole('group',{name:'Sportfamilie anzeigen'}).getByRole('button',{name:'Freestyle / Freeski',exact:true}).click();
+  await page.getByText('Gemeinsame Unterkunft klären',{exact:true}).waitFor();
+  assert.equal(await findings.getByText('Gemeinsamer Konflikt in den Quelldaten',{exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Freigeben',exact:true}).count(),0);
+ }
+ assert.ok(requests.every(request=>request.startsWith('GET ')||request==='POST /auth/me'));
+ assert.deepEqual(errors,[]);
 });
 
 

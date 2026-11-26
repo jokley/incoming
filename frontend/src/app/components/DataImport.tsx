@@ -276,6 +276,8 @@ export function DataImport() {
     ? 'Gesamte Nation' : reviewFamilies.length ? `Teilmeldung · ${reviewFamilies.map(sportAreaLabel).join(' / ')}` : 'Noch nicht festgelegt';
   const control=selected?.importControl;
   const findings=useMemo(()=>preview?importFindings(preview,control):[],[preview,control]);
+  const sharedAccommodationBlocked=findings.some(issue=>issue.kind==='error'
+    && ['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'].includes(issue.code));
   const controlPeople=useMemo(()=>new Map(control?.people.map(person=>[person.personKey,person])),[control]);
   const visibleIssuesByPerson=useMemo(()=>{
     const byPerson=new Map<string,ImportControl['issues']>();
@@ -453,6 +455,11 @@ export function DataImport() {
 
               <CompletedDecisions grouped={grouped} session={selected} onOpen={setActiveTask}/>
               {preview?.cancelledPeople?.length? <details className="rounded-xl border border-[var(--ops-border)] p-3 text-sm"><summary>{preview.cancelledPeople.length} stornierte Meldung(en) · im betroffenen Sportbereich inaktiv</summary><p className="mt-2 text-xs">Bestehende Personen und Competition-Zuordnungen werden ausschließlich über den geprüften Änderungsplan entfernt. Andere Sportbereiche bleiben geschützt.</p><ul className="mt-2 space-y-1">{preview.cancelledPeople.map((p,index)=><li key={index}>{p.firstname} {p.lastname} · {p.sourceFamily?sportAreaLabel(p.sourceFamily):'Nationsmeldung'} · Present = CANCELLED · Entry-Zeile {p.rowNumber}</li>)}</ul></details>:null}
+              {sharedAccommodationBlocked&&<InfoPanel tone="warning" title="Gemeinsame Unterkunft klären">
+                Die Personenzuordnung allein klärt keine widersprüchlichen Zimmer- oder Aufenthaltsangaben.
+                Der gemeinsame Prüfstand bleibt bis zur Klärung gesperrt.
+                Die betroffenen Personen und Quellangaben stehen in der Klärungsübersicht.
+              </InfoPanel>}
               {displayFamily!=='all'&&findings.some(issue=>issue.kind==='error'&&!scopedFindings.includes(issue))&&
                 <p className="text-sm text-[var(--ops-warning)]">Gesamte Nation: Weitere Importfehler im Prüfstand. In „Gesamt“ anzeigen.</p>}
               {preview&&<ImportClarifications familyScoped={displayFamily!=='all'} preview={preview} session={selected} findings={scopedFindings} canWrite={canEditPreview&&!questionBusy} onPerson={showPerson} onPeople={showPeople} onQuestion={askAbout} onDecision={id=>{const a=selected.approvals.find(a=>a.id===id);if(a)setActiveTask(buildOperationsTask(selected,a));}} onExistingQuestion={id=>{document.getElementById(`clarification-${id}`)?.scrollIntoView({block:'center'});}}/>}

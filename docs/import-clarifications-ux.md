@@ -130,3 +130,21 @@ von `REQUIRED` erzeugt daraus keinen gemeinsamen Buchungsvorschlag. Ein
 regulärer Partner behält seinen eigenen Bedarf. Mehrdeutige Identitäten,
 abweichende Paarungen oder gefährdete Buchungen und Genehmigungen bleiben
 unter den bestehenden Schutzprüfungen.
+
+## Abgleich mit dem Main-Hotfix `27feefb`
+
+Die Warnung „Gemeinsame Unterkunft klären“ bleibt bei den serverseitig
+blockierenden Befunden `IMPORT_SHARED_ACCOMMODATION_CONFLICT` und
+`IMPORT_SHARED_STAY_SECTIONS` auch bei gefilterter Sportfamilienansicht
+sichtbar. Die Klärungsübersicht liefert dazu Personenlinks,
+Quellvergleiche und die vorhandenen Rückfrageaktionen. Fälle, die der
+Server als übernehmbaren offenen Bedarf `UNRESOLVED` einstuft, erhalten
+weiterhin den eigenen Hinweis und bleiben von der Disposition ausgeschlossen.
+
+Der separate MUI-Dialog des Hotfixes wird durch den responsiven
+EnterpriseDialog mit zugänglichem Titel, Schließen-Schaltfläche,
+horizontaler Tabellenfläche und Pagination abgedeckt. Die gemeinsame
+Befundprojektion behält ihre Fehler- und Klärungsfilter. Die strengeren
+Bearbeitungsgrenzen von `dev` und die Übergabe betroffener Personen an
+Nationenrückfragen bleiben bestehen. Es ändern sich weder
+Backend-Freigaberegeln noch Quoten- oder Reimport-Berechnungen.
