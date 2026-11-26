@@ -193,6 +193,18 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                 break
         return keys
 
+    def protected_accommodation(existing, start, end):
+        """True when this review can retain, but must not rewrite, live housing."""
+        return bool(existing and existing.arrival_date == start and existing.departure_date == end and (
+            existing.accommodation_requirement_source == 'MANUAL'
+            or existing.room_booking_memberships
+            or existing.single_room_decision_id
+            or existing.accommodation_rate_approval_id
+            or existing.accommodation_rate_source == 'MANUAL'
+            or existing.single_room_status == 'APPROVED_EXTRA'
+            or existing.single_room_quota_exempt_reason
+        ))
+
     def compatible_partner(person, source, start, end, *, identical=False, importing_remaining=False):
         key = person['matchKey']
         rooms = [r for r in source.get('rooms', []) if key in (r.get('person1Key'), r.get('person2Key'))]
@@ -228,7 +240,8 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
             if existing and not (
                     (identical and not existing.room_booking_memberships and not existing.single_room_decision_id
                      and not existing.accommodation_rate_approval_id)
-                    or (importing_remaining and member['matchKey'] in imported_keys and can_defer_imported_requirement(existing))):
+                    or (importing_remaining and member['matchKey'] in imported_keys and can_defer_imported_requirement(existing))
+                    or protected_accommodation(existing, start, end)):
                 return False
         return True
 
@@ -307,19 +320,23 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                             and can_defer_imported_requirement(existing)
                             and existing.arrival_date == agreed_start and existing.departure_date == agreed_end
                         )
-                        safe_conflict = all(
-                            p['matchKey'] not in facts.get('accommodationRequirementOverrides', {})
-                            and compatible_partner(p, facts, agreed_start, agreed_end, identical=identical, importing_remaining=importing_remaining)
-                            for p, facts in ((target, prior_source), (incoming, source))
-                        )
-                        can_defer = safe_conflict and ((existing is None and other is None) or importing_remaining)
-                        if can_defer and importing_remaining:
-                            deferred_imported_id = existing.id
-                        if safe_conflict and identical and (
-                            (existing.accommodation_requirement_source == 'MANUAL' and existing.accommodation_requirement in REQUIREMENTS)
-                            or existing.accommodation_requirement == 'UNRESOLVED'
-                        ):
+                        protected = same_person and protected_accommodation(existing, agreed_start, agreed_end)
+                        if protected:
                             retained_decision = existing
+                        else:
+                            safe_conflict = all(
+                                p['matchKey'] not in facts.get('accommodationRequirementOverrides', {})
+                                and compatible_partner(p, facts, agreed_start, agreed_end, identical=identical, importing_remaining=importing_remaining)
+                                for p, facts in ((target, prior_source), (incoming, source))
+                            )
+                            can_defer = safe_conflict and ((existing is None and other is None) or importing_remaining)
+                            if can_defer and importing_remaining:
+                                deferred_imported_id = existing.id
+                            if safe_conflict and identical and existing and (
+                                (existing.accommodation_requirement_source == 'MANUAL' and existing.accommodation_requirement in REQUIREMENTS)
+                                or existing.accommodation_requirement == 'UNRESOLVED'
+                            ):
+                                retained_decision = existing
                 if can_defer or retained_decision is not None:
                     source_only_keys.add(target['matchKey'])
                 if can_defer or (retained_decision is not None and retained_decision.accommodation_requirement == 'UNRESOLVED'):
@@ -334,7 +351,9 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                         roomType=None, sharedWithName=None,
                     )
                 elif retained_decision is not None:
-                    target.update(roomType=retained_decision.room_type, sharedWithName=retained_decision.shared_with_name)
+                    target.update(accommodationRequirement=retained_decision.accommodation_requirement,
+                        accommodationRequirementSource=retained_decision.accommodation_requirement_source,
+                        roomType=retained_decision.room_type, sharedWithName=retained_decision.shared_with_name)
                 elif conflicts and linked and set(conflicts)<=housing:
                     shared_issues.append(issue(target,incoming,conflicts,left,right))
                 elif conflicts:
