@@ -2240,6 +2240,37 @@ def preview_fis_import():
             if not session:
                 # There is exactly one durable workflow per nation, including completed workflows.
                 session = ImportSession.query.filter_by(event_id=event_context.id, nation=nation).first()
+            if (session and session.status not in {'ARCHIVED', 'CANCELLED', 'REPLACED'}
+                    and request.form.get('reuseKnownFiles') == 'true'
+                    and request.form.get('snapshotScope') == 'AUTO'):
+                from imports.workflow import submission_heads, imported_submission_ids
+                from imports.change_plan import digest, state
+                scope = result.get('replacementScope') or {}
+                heads = submission_heads(session)
+                known = heads.get(scope.get('family')) if scope.get('kind') == 'SPORT_FAMILY' else None
+                if known and known.source_hash == source_hash:
+                    imported = imported_submission_ids(session)
+                    payload = _current_session_payload(session, include_preview=True, read_context=read_context,
+                                                       share_detail_context=True)
+                    current = load_version_preview(session.current_version)
+                    stored_context = (current.get('_workflow') or {}).get('importedStateFingerprint')
+                    rules_changed = any(current.get(key) != result.get(key) for key in ('quotaRulesRevision', 'quotaRulesDigest'))
+                    context_changed = rules_changed or (
+                        digest(state(session.event_id, session.nation)) != stored_context if stored_context else
+                        session.status != 'IMPORTED' and bool((payload.get('preview') or {}).get('planStale')))
+                    complete = session.status == 'IMPORTED' and all(version.id in imported for version in heads.values())
+                    if context_changed:
+                        message = 'Dateien unverändert. Der Prüfkontext hat sich geändert. Gemeinsame Prüfung erforderlich.'
+                    elif complete:
+                        message = 'Dateien unverändert und bereits importiert.'
+                        if not stored_context:
+                            message += ' Für diese frühere Importversion ist kein vollständiger Kontextvergleich verfügbar.'
+                    else:
+                        message = 'Dateien unverändert. Die vorhandene Prüfung kann fortgesetzt werden.'
+                    PREVIEW_STORE.pop(result['previewToken'], None)
+                    return jsonify({**(payload.get('preview') or {}), 'session': payload, 'knownFiles': True,
+                                    'reusedKnownFiles': True, 'alreadyImported': complete and not context_changed,
+                                    'knownFilesRequiresReview': context_changed, 'message': message})
             if session and session.status == 'ARCHIVED' and not any(h.event_type == 'ARCHIVED' for h in session.history):
                 # Older archive calls had no history marker. Preserve their source boundary on first reuse.
                 boundary = max(session.versions, key=lambda v: v.version, default=None)
@@ -3127,6 +3158,10 @@ def import_approved_session(session_id):
             action='import',entity_type='import',entity_id=str(session.id),request_id=getattr(g,'request_id',str(uuid.uuid4())),
             method='POST',path=request.path,activity='Import durchgeführt',category='Import',entity_label=session.nation,
             details_json=encoded(result['summary']),entity_refs_json=event_audit_refs({'importSessionId':str(session.id),'eventId':str(session.event_id)}, session.event_id)))
+        from imports.change_plan import digest, state
+        db.session.flush()
+        workflow['importedStateFingerprint'] = digest(state(session.event_id, session.nation))
+        session.current_version.preview_json = encoded(preview)
         db.session.commit()
         g.atomic_import_audit=True
         PREVIEW_STORE.pop(token,None)

@@ -98,13 +98,14 @@ test('exactly one next action; stale approval never offers import',()=>{
   {quotaChanged:true,label:'Prüfung fortsetzen',status:'APPROVED'},
   {label:'Freigeben',status:'PROFESSIONALLY_REVIEWED'},
   {label:'Importieren',status:'APPROVED'},
-  {label:'Erneut prüfen',status:'IMPORTED'},
+  {label:'Gemeinsame Prüfung fortsetzen',status:'IMPORTED',joint:true},
+  {label:'Gemeinsame Prüfung fortsetzen',status:'APPROVED',joint:true},
   {label:null,status:'IMPORTED',completed:true},
   {label:'Dateien aktualisieren',status:'PROFESSIONALLY_REVIEWED',invalid:true},
   {label:'Entscheidungen bearbeiten',status:'WAITING_FOR_NATION',pending:true},
  ];
  for(const item of cases){
-  const props={session:{...sourceSession,status:item.status,submissions:item.completed?[]:sourceSession.submissions,approvals:item.pending?[{decision:'PENDING',description:'EZ prüfen',type:'QUOTA_SINGLE_ROOMS_EXCEEDED',quotaDetails:{}}]:[]},preview:item.missing?null:{...preview,isValid:!item.invalid,errors:item.invalid?[{code:'ENTRY_INVALID_ARRIVAL_DATE'}]:[],changePlan:{digest:'current'},planStale:item.stale,quotaRulesChanged:item.quotaChanged},files:item.files??[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
+  const props={session:{...sourceSession,status:item.status,submissions:item.completed?[]:item.joint?sourceSession.submissions:[{status:'DRAFT'}],approvals:item.pending?[{decision:'PENDING',description:'EZ prüfen',type:'QUOTA_SINGLE_ROOMS_EXCEEDED',quotaDetails:{}}]:[]},preview:item.missing?null:{...preview,isValid:!item.invalid,errors:item.invalid?[{code:'ENTRY_INVALID_ARRIVAL_DATE'}]:[],changePlan:{digest:'current'},planStale:item.stale,quotaRulesChanged:item.quotaChanged},files:item.files??[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}};
   const html=renderToStaticMarkup(createElement(PrimaryAction,props));
   assert.equal((html.match(/<button/g)||[]).length,item.completed?0:1,item.label??'completed');if(item.label)assert.ok(html.includes(item.label),item.label);
   if(item.stale||item.missing||item.quotaChanged)assert.ok(!html.includes('Importieren'));
@@ -114,7 +115,7 @@ test('exactly one next action; stale approval never offers import',()=>{
 test('mandatory questions guide only the relevant review; unrelated and optional questions preserve release',()=>{
  const data={...preview,isValid:true,errors:[],changePlan:{digest:'current'}};
  for(const [required,relevant,expected] of [[true,true,'Rückfrage klären'],[true,false,'Freigeben'],[false,true,'Freigeben']] as const){
-  const session={...sourceSession,status:'PROFESSIONALLY_REVIEWED',approvals:[],nationClarifications:{subjects:[],items:[{id:'q',required,relevant,state:'OPEN'}]}};
+  const session={...sourceSession,status:'PROFESSIONALLY_REVIEWED',approvals:[],submissions:[],nationClarifications:{subjects:[],items:[{id:'q',required,relevant,state:'OPEN'}]}};
   const output=renderToStaticMarkup(createElement(PrimaryAction,{session,preview:data,files:[],loading:false,confirming:false,reviewConfirmed:true,onPreview:()=>{},onRecheck:()=>{},onOpenTask:()=>{},onApprove:()=>{},onImport:()=>{}}));
   assert.ok(output.includes(expected));assert.ok(!output.includes('disabled=""'));assert.equal((output.match(/<button/g)||[]).length,1);
  }

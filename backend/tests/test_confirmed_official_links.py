@@ -7,7 +7,7 @@ from test_import_event_identity import events
 from test_partial_nation_snapshots import owner,upload,rows,compose,shared_fs
 from test_safe_reimport import run,review
 from app import app
-from models import db,Athlete,ImportSessionEvent,ImportSession,EventAccess,ImportApproval
+from models import db,Athlete,ImportSessionEvent,ImportSession,EventAccess,ImportApproval,ImportSessionVersion
 
 pytestmark=[pytest.mark.explicit_event_ownership,pytest.mark.quota_rule_lifecycle]
 
@@ -168,10 +168,11 @@ def aut_files():
     return {'SB':values[:2],'FS':values[2:]}
 
 
-def aut_upload(owner,files):
+def aut_upload(owner,files,*,reuse=False):
     entries,rooms=files
     return app.test_client().post('/api/import/fis/preview',data={'eventId':str(owner.id),'createSession':'true',
-        'entriesList':(io.BytesIO(entries.read_bytes()),entries.name),'roomListDetailed':(io.BytesIO(rooms.read_bytes()),rooms.name)})
+        'entriesList':(io.BytesIO(entries.read_bytes()),entries.name),'roomListDetailed':(io.BytesIO(rooms.read_bytes()),rooms.name),
+        **({'reuseKnownFiles':'true','snapshotScope':'AUTO'} if reuse else {})})
 
 
 @pytest.mark.parametrize('first,second',[('SB','FS'),('FS','SB')])
@@ -557,8 +558,10 @@ def test_ita_originals_import_shared_requests_as_source_evidence(owner):
         'eventId': str(owner.id), 'createSession': 'true',
         'entriesList': (io.BytesIO(files['SB'][0].read_bytes()), files['SB'][0].name),
         'roomListDetailed': (changed_rooms, files['SB'][1].name),
+        'reuseKnownFiles': 'true', 'snapshotScope': 'AUTO',
     })
     assert changed.status_code == 200, changed.json
+    assert not changed.json.get('reusedKnownFiles')
     changed_joint = compose(changed.json, owner)
     assert changed_joint.status_code == 200, changed_joint.json
     assert review({'session': changed_joint.json}, owner).status_code == 409
@@ -615,3 +618,64 @@ def test_no_dispo_without_comparable_fis_source_is_not_a_deviation():
 
     add_accommodation_decision(result, athlete, [{'roomType': 'Single', 'partner': 'Reported Partner'}])
     assert result['fisAccommodationDeviationReasons'] == ['Zimmerpartner', 'Zimmertyp']
+
+
+@pytest.mark.parametrize('first,second', [('SB', 'FS'), ('FS', 'SB')])
+def test_ita_originals_after_one_sport_was_imported(owner, first, second):
+    files = {}
+    for part in ('FS', 'SB'):
+        pair = [os.environ.get(f'ITA_{part}_{suffix}') for suffix in ('ENTRIES', 'ROOMS')]
+        if not all(path and Path(path).is_file() for path in pair):
+            pytest.skip('ITA originals supplied via ITA_SB/FS_ENTRIES/ROOMS')
+        files[part] = tuple(map(Path, pair))
+
+    initial = aut_upload(owner, files[first])
+    assert initial.status_code == 200, initial.json
+    run(initial.json, owner)
+    original_ids = {p.id for p in Athlete.query.all()}
+    upload_second = aut_upload(owner, files[second])
+    assert upload_second.status_code == 422, upload_second.json
+    assert len(upload_second.json['details']['candidates']) == 5
+    assert confirm(upload_second.json).status_code == 201
+    next_source = aut_upload(owner, files[second])
+    assert next_source.status_code == 200, next_source.json
+    duplicate = aut_upload(owner, files[second], reuse=True)
+    assert duplicate.status_code == 200 and duplicate.json["reusedKnownFiles"]
+    assert not duplicate.json["alreadyImported"]
+    assert duplicate.json["session"]["currentVersionId"] == next_source.json["session"]["currentVersionId"]
+    joint = compose(next_source.json, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert not preview['errors'], [e['code'] for e in preview['errors']]
+    assert len(preview['people']) == 69
+    assert sum(p['accommodationRequirement'] == 'UNRESOLVED' for p in preview['people']) == 5
+    run({'session': joint.json}, owner)
+    people = Athlete.query.all()
+    assert len(people) == 69 and original_ids <= {p.id for p in people}
+    assert sum(p.accommodation_requirement == 'UNRESOLVED' for p in people) == 5
+    version_count = ImportSessionVersion.query.count()
+    for part in (first, second):
+        duplicate = aut_upload(owner, files[part], reuse=True)
+        assert duplicate.status_code == 200, duplicate.json
+        assert duplicate.json["reusedKnownFiles"] and duplicate.json["alreadyImported"]
+        assert not duplicate.json["knownFilesRequiresReview"]
+        assert ImportSessionVersion.query.count() == version_count
+    # Same bytes after a change to the existing review context still require review.
+    owner.name = 'Isolation fixture with updated event context'
+    db.session.commit()
+    duplicate = aut_upload(owner, files[first], reuse=True)
+    assert duplicate.status_code == 200, duplicate.json
+    assert duplicate.json["reusedKnownFiles"] and duplicate.json["knownFilesRequiresReview"]
+    assert not duplicate.json["alreadyImported"]
+    assert ImportSessionVersion.query.count() == version_count
+
+def test_partial_import_protects_manual_requirement(owner):
+    _, draft, _ = paired(owner, 'FS', 'SB', left=staff('FS', 'Double shared'),
+                         right=staff('SB', 'No room'), import_first=True)
+    person_id = Athlete.query.one().id
+    manual = app.test_client().patch(f'/api/athletes/{person_id}', json={'accommodationRequirement': 'NO_DISPO'})
+    assert manual.status_code == 200, manual.json
+    joint = compose(draft, owner)
+    assert joint.status_code == 200, joint.json
+    assert review({'session': joint.json}, owner).status_code == 409
+    assert Athlete.query.one().accommodation_requirement == 'NO_DISPO'
