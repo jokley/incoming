@@ -152,3 +152,5 @@ Ein eindeutiger Quellbedarf wird automatisch übernommen. „Bedarf manuell
 festlegen“ im Personendetail speichert bewusst den aktuellen Wert mit
 Herkunft `MANUAL` und schützt ihn dadurch beim Reimport. Eine
 Nationenbestätigung erfolgt weiterhin über den bestehenden Freigabeschritt.
+
+Eine gemeinsame Prüfung darf eine bereits importierte, eindeutig zugeordnete Person bei widersprüchlichen Zimmerwünschen als offen übernehmen, wenn genau eine der beiden aktuellen Quellen bereits importiert wurde, die Aufenthaltsdaten übereinstimmen und der wirksame Bedarf weiterhin dem Import gehört. Explizite Zimmerzuordnungen bleiben Quellbelege. Geschützte Buchungen, manuelle Entscheidungen, Genehmigungen und Ausnahmen verhindern diese automatische Einstufung.

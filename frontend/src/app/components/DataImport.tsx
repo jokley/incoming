@@ -156,7 +156,11 @@ export function DataImport() {
     if(input)input.value=''; // The same file pair may be selected again for a reimport.
   };
   const cancel = () => { setFiles([]); setPreview(selected?.preview ?? null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); updateQueue(uploaded);
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result.session.preview ?? result}; setSelected(uploaded); setFiles([]); updateQueue(uploaded);
+      if(result.reusedKnownFiles){
+        setPreview(uploaded.preview ? {...uploaded.preview,planStale:uploaded.preview.planStale||result.knownFilesRequiresReview} : null);
+        return;
+      }
       const selection = !fullReplacement && (uploaded.submissions?.length??0)>1 ? nationReviewSelection(uploaded) : undefined;
       const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : await api.getImportSession(uploaded.id);
       setSelected(draft); setPreview(draft.preview ?? null); updateQueue(draft); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
@@ -180,24 +184,13 @@ export function DataImport() {
     try {
       // Another browser may have uploaded a correction since this view was opened.
       const current=await api.getImportSession(selected.id);
-      const family=!preview?.submissionSources&&preview?.replacementScope?.kind==='SPORT_FAMILY'?preview.replacementScope.family:undefined;
-      const source=family?current.submissions?.find(part=>part.family===family):undefined;
-      const selection=source?{sourceVersionId:source.versionId}:nationReviewSelection(current,true);
+      const selection=nationReviewSelection(current,true);
       const updated=await api.recheckImportSession(selected.id,selection);
       setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);
     } catch(e){reportImportError(e,'Erneute Prüfung fehlgeschlagen');}
     finally{setConfirming(false);}
   };
 
-  const prepareSubmissions = async (sourceVersionId?:string) => {
-    if(!selected)return;
-    setConfirming(true);setError(null);setSuccess(null);
-    try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);updateQueue(updated);
-      setDisplayFamily('all');
-    }
-    catch(e){reportImportError(e,'Teilmeldungen konnten nicht geprüft werden.');}
-    finally{setConfirming(false);}
-  };
   const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[];tariffEffect?:'NONE'|'SPECIAL_SELECTED';approvedExtent?:import('../types').QuotaExtent}) => {
     if (!selected || !activeTask) return;
     setSavingTask(true); setError(null);
@@ -428,20 +421,13 @@ export function DataImport() {
               {closedImportStatuses.has(selected.status)?<><InfoPanel tone="info" title="Importsession geschlossen">Historische Entscheidungen bleiben erhalten. Für eine neue Prüfung Dateien erneut hochladen.</InfoPanel><NewSessionWorkspace canWrite={importAllowed} files={files} preview={preview} loading={loading} error={error} success={success} onFiles={handleFiles} onPreview={runPreview} onCancel={cancel}/></>:<>
               {Boolean(selected.submissions?.length)&&<section aria-label="Erfasste Meldungen" className="text-sm">
                 <div className="flex flex-wrap gap-x-5 gap-y-1">{selected.submissions?.map(part=><span key={part.versionId}>{sportAreaLabel(part.family)} · {part.people} Personen · {IMPORT_SESSION_STATUS[part.status]}</span>)}</div>
-                {importAllowed&&submissions.length>1&&<details className="mt-2">
-                  <summary className="cursor-pointer">Prüfumfang ändern</summary>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {submissions.map(part=><OpsButton key={part.versionId} disabled={confirming||loading||savingTask||files.length>0} onClick={()=>void prepareSubmissions(part.versionId)}>{sportAreaLabel(part.family)} separat prüfen</OpsButton>)}
-                    {nationDraftNeedsPreparation&&<OpsButton disabled={confirming||loading||savingTask||files.length>0} onClick={()=>void prepareSubmissions()}>Teilmeldungen gemeinsam prüfen</OpsButton>}
-                  </div>
-                </details>}
                 {selected.submissionTotal?.conflict&&<p className="mt-1 text-[var(--ops-warning)]">{selected.submissionTotal.conflict}</p>}
               </section>}
               <Workflow session={selected} actionStep={primaryActionStep(selected, files, preview)} upload={<UploadWorkspace files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction canWrite={importAllowed} session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onRecheck={recheck} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm} reviewConfirmed={canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)}/>} secondaryAction={!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)&&<details className="w-full text-sm"><summary className="cursor-pointer">Weitere Aktionen</summary><div className="mt-2 flex flex-wrap gap-2">
                 <OpsButton onClick={abortSession} disabled={!importAllowed||confirming||loading} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Aktuelle Prüfung abbrechen</OpsButton>
               </div></details>} />
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
-              {success && selected.status!=='IMPORTED' && <InfoPanel tone="info" title="Prüfstand">{success}</InfoPanel>}
+              {success && (selected.status!=='IMPORTED'||preview?.planStale||preview?.quotaRulesChanged) && <InfoPanel tone="info" title="Prüfstand">{success}</InfoPanel>}
               {preview?.quotaRulesChanged&&<InfoPanel tone="warning" title="Quotenregeln wurden geändert – bitte erneut prüfen">Die ursprüngliche Review-Version bleibt erhalten. Vor der Freigabe erneut prüfen.</InfoPanel>}
               <NextAction session={selected} preview={preview} success={success}/>
               {selected.status==='IMPORTED'&&<Link className="text-sm font-semibold text-[var(--ops-primary)] underline"
@@ -582,7 +568,7 @@ function ActiveWorkflowStep({step,session,upload,action}:{step:WorkflowStep;sess
 }
 
 function primaryActionStep(session:ImportSession, files:File[], preview:FisImportPreview|null):WorkflowStep['id'] {
-  if(files.length||!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan||preview.errors.length)return 'validation';
+  if(files.length||(session.submissions?.length??0)>1&&nationReviewSelection({...session,preview:preview??undefined})||!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan||preview.errors.length)return 'validation';
   if(session.approvals.some(approval=>approval.decision==='PENDING')) return 'decision';
   if(['APPROVED','IMPORTED'].includes(session.status)) return 'import';
   if(files.length>=2 || session.status==='IMPORTED' || ['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status)) return 'validation';
@@ -594,7 +580,12 @@ export function SessionPrimaryAction({canWrite=true,session,preview,files,loadin
   const needsFiles=['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status);
   const canApprove=!session.nationClarifications?.items.some(i=>i.required&&i.state==='OPEN'&&i.relevant!==false)&&Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
   if(files.length) return <OpsButton onClick={onPreview} disabled={!canWrite||files.length<2||loading||confirming}>Dateien prüfen</OpsButton>;
-  if(session.status==='IMPORTED'&&!hasOpenSubmissions(session)&&!pending.length) return null;
+  const multipleSources=(session.submissions?.length??0)>1;
+  const hasSharedHousingConflict=preview?.errors.some(issue=>issue.code==='IMPORT_SHARED_ACCOMMODATION_CONFLICT');
+  const needsJointReview=multipleSources&&
+    (hasSharedHousingConflict||Boolean(nationReviewSelection({...session,preview:preview??undefined})));
+  if(session.status==='IMPORTED'&&!hasOpenSubmissions(session)&&!pending.length&&!preview?.planStale&&!preview?.quotaRulesChanged) return null;
+  if(needsJointReview)return <OpsButton onClick={onRecheck} disabled={!canWrite||loading||confirming}>Gemeinsame Prüfung fortsetzen</OpsButton>;
   if(!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan) return <OpsButton onClick={onRecheck} disabled={!canWrite||loading||confirming}>Prüfung fortsetzen</OpsButton>;
   if(preview.errors.length) return <OpsButton disabled={!canWrite||loading||confirming} onClick={()=>document.getElementById('fis-files-input')?.click()}>Dateien aktualisieren</OpsButton>;
   if(pending.length) return <OpsButton disabled={!canWrite||loading||confirming}  onClick={()=>onOpenTask(pending[0])}>Entscheidungen bearbeiten</OpsButton>;

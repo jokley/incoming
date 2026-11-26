@@ -3,7 +3,7 @@ import json
 from copy import deepcopy
 from datetime import date, datetime
 from models import db, ImportSessionVersion
-from accommodation_requirements import REQUIREMENTS
+from accommodation_requirements import REQUIREMENTS, can_defer_imported_requirement
 from .event_context import ImportValidationError, validate_session_event
 from .read_context import ImportReadContext
 from .change_plan import build_plan, verify_plan, encoded
@@ -193,7 +193,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                 break
         return keys
 
-    def compatible_partner(person, source, start, end, *, identical=False):
+    def compatible_partner(person, source, start, end, *, identical=False, importing_remaining=False):
         key = person['matchKey']
         rooms = [r for r in source.get('rooms', []) if key in (r.get('person1Key'), r.get('person2Key'))]
         if any(parse_date(r.get('checkInDate')) != start or parse_date(r.get('checkOutDate')) != end for r in rooms):
@@ -225,8 +225,10 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                     or any(r is not room and member['matchKey'] in (r.get('person1Key'), r.get('person2Key')) for r in source['rooms'])):
                 return False
             existing = _find_existing_athlete(member, context.athlete_maps)
-            if existing and (not identical or existing.room_booking_memberships or existing.single_room_decision_id
-                             or existing.accommodation_rate_approval_id):
+            if existing and not (
+                    (identical and not existing.room_booking_memberships and not existing.single_room_decision_id
+                     and not existing.accommodation_rate_approval_id)
+                    or (importing_remaining and member['matchKey'] in imported_keys and can_defer_imported_requirement(existing))):
                 return False
         return True
 
@@ -245,6 +247,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
         apply_single_room_quota_exemptions(people,event_id=context.event_id,read_context=context)
     if not consistency_only:
         for version,source in sources:project_source(source['people'],version,source)
+    imported_keys = {p['matchKey'] for version, source in sources if version.id in imported for p in source['people']}
     result = deepcopy(sources[0][1])
     people, rooms, aliases, records, partner_checks = [], [], {}, [], []
     source_only_keys = set()
@@ -277,6 +280,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                 housing={'roomType','accommodationRequirement','arrivalDate','departureDate'}
                 can_defer = False
                 retained_decision = None
+                deferred_imported_id = None
                 if (allow_unresolved and conflicts and set(conflicts) <= {'roomType', 'accommodationRequirement'}
                         and {left, right} == {'REQUIRED', 'NO_ROOM'}
                         and {comparable(p, 'roomType') for p in (target, incoming)} == {'double shared', 'no room'}):
@@ -291,12 +295,26 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                                 prior_unresolved_keys = unchanged_unresolved_keys()
                         identical = bool(same_person and prior_unresolved_keys and target['matchKey'] in prior_unresolved_keys
                                          and not existing.room_booking_memberships)
+                        imported_requirement = (left if prior_version.id in imported and version.id not in imported
+                                                else right if version.id in imported and prior_version.id not in imported else None)
+                        importing_remaining = bool(
+                            same_person and not identical and imported_requirement
+                            and (
+                                existing.accommodation_requirement == existing.accommodation_requirement_import_value == imported_requirement
+                                or (existing.accommodation_requirement == 'UNRESOLVED'
+                                    and existing.accommodation_requirement_import_value is None)
+                            )
+                            and can_defer_imported_requirement(existing)
+                            and existing.arrival_date == agreed_start and existing.departure_date == agreed_end
+                        )
                         safe_conflict = all(
                             p['matchKey'] not in facts.get('accommodationRequirementOverrides', {})
-                            and compatible_partner(p, facts, agreed_start, agreed_end, identical=identical)
+                            and compatible_partner(p, facts, agreed_start, agreed_end, identical=identical, importing_remaining=importing_remaining)
                             for p, facts in ((target, prior_source), (incoming, source))
                         )
-                        can_defer = safe_conflict and existing is None and other is None
+                        can_defer = safe_conflict and ((existing is None and other is None) or importing_remaining)
+                        if can_defer and importing_remaining:
+                            deferred_imported_id = existing.id
                         if safe_conflict and identical and (
                             (existing.accommodation_requirement_source == 'MANUAL' and existing.accommodation_requirement in REQUIREMENTS)
                             or existing.accommodation_requirement == 'UNRESOLVED'
@@ -309,6 +327,8 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                     warning['code'] = 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED'
                     warning['message'] = 'Person kann importiert werden. Unterkunftsbedarf bleibt offen; Disposition erst nach Entscheidung im Athletendetail.'
                     unresolved_warnings.append(warning)
+                    if deferred_imported_id is not None:
+                        target['deferredImportedPersonId'] = deferred_imported_id
                     target.update(
                         unresolvedSourceAccommodation=can_defer, accommodationRequirement="UNRESOLVED",
                         roomType=None, sharedWithName=None,

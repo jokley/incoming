@@ -516,10 +516,10 @@ test('automatic person selection is shared by athlete and Officials quota views 
  preview.planStale=true;
  session.status='APPROVED';
  await page.reload();
- await page.getByRole('button',{name:'Prüfung fortsetzen',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Gemeinsame Prüfung fortsetzen',exact:true}).waitFor();
  assert.equal(await page.getByRole('button',{name:'Importieren',exact:true}).count(),0);
- await page.getByText('Prüfumfang ändern',{exact:true}).click();
- await page.getByRole('button',{name:'Snowboard separat prüfen',exact:true}).waitFor();
+ assert.equal(await page.getByText('Prüfumfang ändern',{exact:true}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Snowboard separat prüfen',exact:true}).count(),0);
  await openPeople();
  assert.match(await counts.innerText(),/69 Personen/);
  assert.equal(writes.length,writesBeforeView);

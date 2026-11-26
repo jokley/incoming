@@ -97,3 +97,9 @@ und EZ-Gesamtsummen sowie offene Nationenentscheidungen und Rückfragen
 bleiben als Gesamt-Nationswerte gekennzeichnet. Nicht eindeutig zuordenbare
 Importfehler bleiben unter „Gesamt“ sichtbar und weiterhin für die Freigabe
 maßgeblich. Der Anzeigewechsel löst keinen Recheck aus.
+
+### Gemeinsame Prüfung und erneuter Upload
+
+Die reguläre Aktion prüft alle aktuellen Sportfamilien einer Nation. Die Sportfamilienfilter ändern nur die Anzeige. Ein fachlich geprüfter Einzelsport-Stand kann bei inzwischen mehreren Meldungen erst nach der gemeinsamen Prüfung freigegeben werden. Die bestehende API für Teilimporte bleibt verfügbar.
+
+Der normale Upload vergleicht den Inhalt der Dateien mit der aktuellen Quellrevision der erkannten Sportfamilie. Bei Übereinstimmung bleibt die bestehende Revision erhalten. Vollständig importierte Meldungen werden entsprechend gekennzeichnet, offene Prüfungen bleiben fortsetzbar. Ein veränderter Prüfstand verlangt eine gemeinsame Aktualisierung. Bei älteren Imports ohne Bestandsfingerprint ist rückwirkend nur der gespeicherte Quotenstand vergleichbar.

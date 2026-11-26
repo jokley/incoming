@@ -135,6 +135,18 @@ def _stay_review(person, rooms):
     return None
 
 
+def can_defer_imported_requirement(person):
+    """A joint review may defer a source-owned decision without touching protected housing."""
+    return (person.accommodation_requirement_source == 'IMPORT'
+            and person.accommodation_requirement in {'REQUIRED', 'NO_ROOM', 'UNRESOLVED'}
+            and not person.room_booking_memberships
+            and not person.single_room_decision_id
+            and not person.accommodation_rate_approval_id
+            and person.accommodation_rate_source != 'MANUAL'
+            and person.single_room_status != 'APPROVED_EXTRA'
+            and not person.single_room_quota_exempt_reason)
+
+
 def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context=None):
     from imports.identity import _build_existing_athlete_maps, _find_existing_athlete
     maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps()
@@ -150,7 +162,8 @@ def apply_preview_requirements(people, rooms=(), overrides=None, *, read_context
             raise ImportValidationError('ACCOMMODATION_REQUIREMENT_UNRESOLVED',
                 'Der Unterkunftsbedarf dieser Person wird nach dem Import im Athletendetail entschieden.')
         if person.get('unresolvedSourceAccommodation'):
-            if existing is not None:
+            if existing is not None and not (person.get('deferredImportedPersonId') == existing.id
+                                             and can_defer_imported_requirement(existing)):
                 person.update(current)
                 issues.append({'code': 'ACCOMMODATION_REQUIREMENT_EXISTING_PERSON',
                                'message': 'Offener Unterkunftsbedarf darf bestehende Personen nicht überschreiben.',
