@@ -14,8 +14,8 @@ export function FindingEvidence({finding,preview,session}:{finding:ImportFinding
  </div>;
 }
 
-export function ImportClarifications({preview,session,findings,canWrite,onPerson,onPeople,onDecision,onQuestion,onExistingQuestion}:{
- preview:FisImportPreview;session:ImportSession;findings:ImportFinding[];canWrite:boolean;
+export function ImportClarifications({familyScoped=false,preview,session,findings,canWrite,onPerson,onPeople,onDecision,onQuestion,onExistingQuestion}:{
+ familyScoped?:boolean;preview:FisImportPreview;session:ImportSession;findings:ImportFinding[];canWrite:boolean;
  onPerson:(key:string)=>void;onPeople:(keys:string[])=>void;onDecision:(id:string)=>void;
  onQuestion:(keys:string[])=>void;onExistingQuestion:(id:string)=>void;
 }){
@@ -24,8 +24,9 @@ export function ImportClarifications({preview,session,findings,canWrite,onPerson
  const groups=[['Importfehler',findings.filter(i=>i.kind==='error')],['Klärungsbedarf',findings.filter(i=>i.kind==='clarification')],['Informative Hinweise',findings.filter(i=>i.kind==='info')]] as const;
  return <div role="region" aria-label="Klärungsübersicht"><ContentCard className="space-y-3 p-3">
   <SectionHeader title="Klärungsübersicht" subtitle="Vorhandene Prüfungen und passende nächste Schritte"/>
-  <p className="text-sm">{groups[0][1].length} Importfehler · {pending.length} offene Entscheidungen · {questions.length} offene Rückfragen · {groups[2][1].length} informative Hinweise</p>
-  {!findings.length&&!pending.length&&!questions.length&&<p className="text-sm text-[var(--ops-success)]">Keine offenen Befunde in diesem Prüfstand.</p>}
+  <p className="text-sm">{groups[0][1].length} Importfehler · {groups[1][1].length} Klärungen · {groups[2][1].length} informative Hinweise{familyScoped?' · Sportfamilienansicht':''}</p>
+  <p className="text-sm">{pending.length} offene Entscheidungen · {questions.length} offene Rückfragen{familyScoped?' · Gesamt-Nation':''}</p>
+  {!findings.length&&!pending.length&&!questions.length&&<p className="text-sm text-[var(--ops-success)]">Keine offenen Befunde {familyScoped?'in dieser Ansicht.':'in diesem Prüfstand.'}</p>}
   {groups.filter(([,items])=>items.length).map(([title,items])=><details key={title} open={title==='Importfehler'} className="rounded border border-[var(--ops-border)] p-2">
    <summary className="cursor-pointer font-bold">{title} ({items.length})</summary>
    <div className="mt-2 space-y-2">{items.map(f=><details key={f.id} data-finding-code={f.code} data-finding-kind={f.kind} className="rounded border border-[var(--ops-divider)] p-2 text-sm [overflow-wrap:anywhere]">

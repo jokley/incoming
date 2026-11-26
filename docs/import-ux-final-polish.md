@@ -82,3 +82,18 @@ Wird dieselbe aktuelle Teilmeldung erneut geprüft, bleiben die im zugehörigen
 Entwurf ausdrücklich gesetzten Unterkunftsentscheidungen samt ursprünglichem
 Bestandsfingerprint erhalten. Bei einer anderen Quellrevision gilt weiterhin
 die bisherige Reimport-Prüfung.
+
+### Geltungsbereich der Kennzahlen
+
+Sportfamilien- und Gruppierungswahl stehen in der Importvorschau auf einer
+Zeile. Der Sportfamilienfilter begrenzt Personen, Zimmerangaben sowie
+zuordenbare Fehler und Klärungen auf dieselbe Auswahl. Zimmer folgen ihrer
+bekannten Quellzuordnung, ansonsten den eindeutig verknüpften Personen.
+Offene sportliche Prüfpositionen und die Quotenzeilen folgen den vorhandenen
+Sportfamilien- und Event-Group-Zuordnungen.
+
+Die gemeinsam belegbare EZ-/DZ-Spitze, die eindeutigen nationalen Officials-
+und EZ-Gesamtsummen sowie offene Nationenentscheidungen und Rückfragen
+bleiben als Gesamt-Nationswerte gekennzeichnet. Nicht eindeutig zuordenbare
+Importfehler bleiben unter „Gesamt“ sichtbar und weiterhin für die Freigabe
+maßgeblich. Der Anzeigewechsel löst keinen Recheck aus.
