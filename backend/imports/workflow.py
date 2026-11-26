@@ -299,8 +299,11 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                                                 else right if version.id in imported and prior_version.id not in imported else None)
                         importing_remaining = bool(
                             same_person and imported_requirement
-                            and existing.accommodation_requirement == existing.accommodation_requirement_import_value
-                            and existing.accommodation_requirement in {imported_requirement, 'UNRESOLVED'}
+                            and (
+                                existing.accommodation_requirement == existing.accommodation_requirement_import_value == imported_requirement
+                                or (existing.accommodation_requirement == 'UNRESOLVED'
+                                    and existing.accommodation_requirement_import_value is None)
+                            )
                             and can_defer_imported_requirement(existing)
                             and existing.arrival_date == agreed_start and existing.departure_date == agreed_end
                         )
