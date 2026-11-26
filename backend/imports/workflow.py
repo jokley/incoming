@@ -298,7 +298,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                         imported_requirement = (left if prior_version.id in imported and version.id not in imported
                                                 else right if version.id in imported and prior_version.id not in imported else None)
                         importing_remaining = bool(
-                            same_person and imported_requirement
+                            same_person and not identical and imported_requirement
                             and (
                                 existing.accommodation_requirement == existing.accommodation_requirement_import_value == imported_requirement
                                 or (existing.accommodation_requirement == 'UNRESOLVED'
