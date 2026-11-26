@@ -255,8 +255,60 @@ def test_missing_room_information_does_not_hide_known_disjoint_source_periods(ow
     assert review({'session':joint.json},owner).status_code==409
 
 
-@pytest.mark.parametrize('already_booked', [False, True])
-def test_italy_official_with_conflicting_room_requirements_imports_without_assignment(owner, already_booked):
+def protected_housing_snapshot(person_id):
+    from models import RoomBooking, RoomBookingOccupant
+
+    db.session.expire_all()
+    person = db.session.get(Athlete, person_id)
+    protected_fields = (
+        'event_id', 'arrival_date', 'departure_date', 'room_type', 'shared_with_name',
+        'accommodation_requirement', 'accommodation_requirement_source',
+        'accommodation_rate_category', 'accommodation_rate_source',
+        'accommodation_rate_approval_id', 'single_room_status',
+        'single_room_decision_id', 'single_room_quota_exempt_reason',
+    )
+
+    def table_rows(model):
+        return [tuple(getattr(row, column.key) for column in model.__table__.columns)
+                for row in model.query.order_by(*model.__table__.primary_key).all()]
+    return (tuple(getattr(person, field) for field in protected_fields),
+            table_rows(RoomBooking), table_rows(RoomBookingOccupant))
+
+
+def confirm_with_protected_housing(session, owner, person_id, before):
+    client = app.test_client()
+    sid = session['id']
+    plan = session['preview']['changePlan']
+    assert plan['people']['remove'] == []
+    assert plan['operations']['bookingIds'] == []
+    assert plan['operations']['deleteEmptyBookingIds'] == []
+    assert protected_housing_snapshot(person_id) == before
+
+    approved = review({'session': session}, owner)
+    assert approved.status_code == 200, approved.json
+    assert protected_housing_snapshot(person_id) == before
+
+    imported = client.post(f'/api/import/sessions/{sid}/import?eventId={owner.id}',
+                           json={'versionId': session['currentVersionId']})
+    assert imported.status_code == 200, imported.json
+    assert imported.json['session']['status'] == 'IMPORTED'
+    assert protected_housing_snapshot(person_id) == before
+    assert Athlete.query.count() == 1
+    assert len(db.session.get(Athlete, person_id).competitions) == 2
+
+    detail = client.get(f'/api/athletes/{person_id}')
+    assert detail.status_code == 200, detail.json
+    assert {request['roomType'] for request in detail.json['reportedAccommodationRequests']} == {
+        'Double shared', 'No room',
+    }
+    return detail.json
+
+
+@pytest.mark.parametrize(('already_booked', 'explicit_decision'), [
+    (False, False), (True, False), (True, True),
+])
+def test_italy_official_with_conflicting_room_requirements_imports_without_assignment(
+        owner, already_booked, explicit_decision):
     from models import ImportSessionVersion, RoomBooking, RoomBookingOccupant
     from test_safe_reimport import booking
 
@@ -267,7 +319,16 @@ def test_italy_official_with_conflicting_room_requirements_imports_without_assig
     _, draft, _ = paired(owner, 'FS', 'SB', left=freestyle, right=snowboard,
                          import_first=already_booked)
     existing = Athlete.query.one() if already_booked else None
-    retained = booking([existing]) if existing else None
+    if existing:
+        if explicit_decision:
+            manual = app.test_client().patch(f'/api/athletes/{existing.id}',
+                                             json={'accommodationRequirement': 'REQUIRED'})
+            assert manual.status_code == 200, manual.json
+        retained = booking([existing])
+        retained.check_in_date = existing.arrival_date
+        retained.check_out_date = existing.departure_date
+        db.session.commit()
+        before = protected_housing_snapshot(existing.id)
     source_ids = [int(row['versionId']) for row in draft['session']['submissions']]
     source_json = {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
                    for source_id in source_ids}
@@ -279,10 +340,13 @@ def test_italy_official_with_conflicting_room_requirements_imports_without_assig
     assert len(person['competitionIds']) == 2
     assert {int(row['versionId']) for row in person['sourceRows']} == set(source_ids)
     if existing:
-        conflict = next(e for e in preview['errors'] if e['code'] == 'IMPORT_SHARED_ACCOMMODATION_CONFLICT')
-        assert set(conflict['details']['requirements']) == {'REQUIRED', 'NO_ROOM'}
-        assert review({'session': joint.json}, owner).status_code == 409
-        assert existing.accommodation_requirement == 'REQUIRED'
+        assert not preview['errors']
+        assert person['accommodationRequirement'] == 'REQUIRED'
+        assert person.get('sharedWithName') is None
+        detail = confirm_with_protected_housing(joint.json, owner, existing.id, before)
+        if explicit_decision:
+            assert detail['accommodationDecisionLabel'] == 'Abweichung FIS'
+            assert 'Unterkunftsbedarf' in detail['fisAccommodationDeviationReasons']
         assert RoomBooking.query.one().id == retained.id
         assert RoomBookingOccupant.query.one().athlete_id == existing.id
     else:
@@ -735,13 +799,56 @@ def test_ita_originals_after_one_sport_was_imported(owner, first, second):
     assert not duplicate.json["alreadyImported"]
     assert ImportSessionVersion.query.count() == version_count
 
-def test_partial_import_protects_manual_requirement(owner):
+@pytest.mark.parametrize('booked', [False, True])
+def test_partial_import_protects_manual_requirement(owner, booked):
+    from test_safe_reimport import booking
+    from app import _build_room_booking_units
+
     _, draft, _ = paired(owner, 'FS', 'SB', left=staff('FS', 'Double shared'),
                          right=staff('SB', 'No room'), import_first=True)
-    person_id = Athlete.query.one().id
+    person = Athlete.query.one()
+    person_id = person.id
+    booking_id = booking([person]).id if booked else None
     manual = app.test_client().patch(f'/api/athletes/{person_id}', json={'accommodationRequirement': 'NO_DISPO'})
     assert manual.status_code == 200, manual.json
+    before = protected_housing_snapshot(person_id)
     joint = compose(draft, owner)
     assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert not preview['errors']
+    assert preview['people'][0]['accommodationRequirement'] == 'NO_DISPO'
+
+    detail = confirm_with_protected_housing(joint.json, owner, person_id, before)
+    assert detail['accommodationRequirement'] == 'NO_DISPO'
+    assert detail['accommodationRequirementSource'] == 'MANUAL'
+    assert 'No Dispo' in detail['fisAccommodationDeviationReasons']
+    assert detail['accommodationCoverage']['openIntervals'] == []
+    assert {segment['bookingId'] for segment in detail['accommodationCoverage']['segments']} == (
+        {str(booking_id)} if booked else set())
+    units, _ = _build_room_booking_units()
+    assert str(person_id) not in {p['athleteId'] for unit in units for p in unit['occupants']}
+
+
+def test_joint_import_blocks_changed_protected_stay(owner):
+    from test_safe_reimport import booking
+
+    _, draft, _ = paired(owner, 'FS', 'SB', left=staff('FS', 'Double shared'),
+                         right=staff('SB', 'No room', departure='23.03.2027'), import_first=True)
+    person = Athlete.query.one()
+    person_id = person.id
+    booking([person])
+    before = protected_housing_snapshot(person_id)
+
+    corrected = upload(owner, 'FS', data=staff('FS', 'Double shared', departure='23.03.2027'))
+    assert corrected['session']['id'] == draft['session']['id']
+    joint = compose(corrected, owner)
+    assert joint.status_code == 200, joint.json
+    assert any(error['code'] == 'IMPORT_SHARED_ACCOMMODATION_CONFLICT'
+               for error in joint.json['preview']['errors'])
     assert review({'session': joint.json}, owner).status_code == 409
-    assert Athlete.query.one().accommodation_requirement == 'NO_DISPO'
+    sid = joint.json['id']
+    response = app.test_client().post(f'/api/import/sessions/{sid}/import?eventId={owner.id}',
+                                      json={'versionId': joint.json['currentVersionId']})
+    assert response.status_code == 409
+    assert protected_housing_snapshot(person_id) == before
+    assert len(db.session.get(Athlete, person_id).competitions) == 1
