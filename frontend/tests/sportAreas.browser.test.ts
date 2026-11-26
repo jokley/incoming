@@ -170,6 +170,8 @@ test('automatic person selection is shared by athlete and Officials quota views 
  let listRequests=0;
  const detailRequests:string[]=[];
  let rejectRequirement=true;
+ let finishRejectedPatch:()=>void=()=>{};
+ const rejectedPatchGate=new Promise<void>(resolve=>{finishRejectedPatch=resolve;});
  let guidedRetry=false;
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
@@ -197,6 +199,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
    const i=Number(path.at(-1));
    if(i===2 && rejectRequirement){
     rejectRequirement=false;
+    await rejectedPatchGate;
     return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
    }
    Object.assign(people[i], {accommodationRequirement:payload.accommodationRequirement || 'NO_ROOM',
@@ -297,8 +300,11 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const beforeSaveListRequests=listRequests;
  const toggle = list.getByRole('checkbox',{name:'Nicht disponieren · Unterkunftsbedarf Athlete2 Synthetic'});
  await toggle.click();
+ await list.getByRole('status').filter({hasText:'Bedarf wird gespeichert'}).waitFor();
+ assert.equal(await toggle.isChecked(),true);
+ finishRejectedPatch();
  await list.getByRole('alert').filter({hasText:'Änderungsplan erneut prüfen.'}).waitFor();
- assert.equal(await toggle.isChecked(),false);
+ await toggle.and(page.locator('input:not(:checked)')).waitFor();
  await toggle.click();
  const skipped=list.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
  await skipped.getByRole('img',{name:/Abweichung zur FIS-Meldung.*No Dispo/}).waitFor();
@@ -397,6 +403,39 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await personRow.click();
  await personDialog.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
 
+ const writesBeforeView=writes.length;
+ session.submissions=[{family:'Freestyle',versionId:'11'},{family:'Snowboard',versionId:'12'}];
+ preview.submissionSources={Freestyle:11,Snowboard:12};
+ people[0].accommodationRequirement='NO_ROOM';
+ people[8].accommodationRequirement='UNRESOLVED';
+ for(let i=9;i<69;i++) people.push({...people[1],matchKey:'p'+i,id:String(i+1),firstname:'Additional'+i,
+   athleteQuotaFamilies:i<39?['Freestyle']:['Snowboard']});
+ await page.goto(`${origin}/import?sessionId=1`);
+ const display=page.getByLabel('Anzeigeauswahl');
+ await display.selectOption('Snowboard');
+ await openPeople();
+ const counts=list.getByLabel('Unterkunftsbedarf der Anzeige');
+ assert.match(await counts.innerText(),/30 Personen · 30 Unterkunft benötigt · 0 No Room · 0 No Dispo · 0 ungeklärt/);
+ assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),25);
+ await list.getByRole('navigation',{name:'Seiten der Personenliste'}).getByRole('button',{name:'Weiter'}).click();
+ assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),5);
+ await list.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+ await list.waitFor({state:'hidden'});
+ await display.selectOption('Freestyle');
+ await openPeople();
+ assert.match(await counts.innerText(),/39 Personen/);
+ assert.equal(await list.getByRole('checkbox',{name:/Athlete8 Synthetic/}).isDisabled(),true);
+ await list.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+ await list.waitFor({state:'hidden'});
+ await display.selectOption('all');
+ for(let i=0;i<2;i++){
+  await page.getByRole('button',{name:'Nationsentwurf öffnen',exact:true}).click();
+  await list.waitFor();
+  assert.match(await counts.innerText(),/69 Personen · 64 Unterkunft benötigt · 2 No Room · 2 No Dispo · 1 ungeklärt/);
+  await list.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+ await list.waitFor({state:'hidden'});
+ }
+ assert.equal(writes.length,writesBeforeView);
  assert.deepEqual(errors,[]);
 });
 
