@@ -152,11 +152,16 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     from .change_plan import digest
     if not versions:
         raise ImportValidationError('IMPORT_REVIEW_REQUIRED', 'Mindestens eine aktuelle Teilmeldung auswählen.')
-    sources = [(v, load_version_preview(v)) for v in sorted(versions,key=lambda v:(json.loads(v.preview_json).get('replacementScope',{}).get('family',''),v.id))]
-    from excel_import import apply_preview_rates, apply_preview_requirements, apply_single_room_quota_exemptions, _match_room_partner
     context=read_context or ImportReadContext(versions[0].session.event_id)
     if context.event_id!=versions[0].session.event_id:
         raise ImportValidationError('IMPORT_EVENT_MISMATCH','Fremder Kontext für die Teilmeldungen.')
+    cache_key = (tuple(sorted((v.id, v.preview_json) for v in versions)), consistency_only,
+                 read_only, allow_unresolved)
+    if cache_key in context.merged_previews:
+        return deepcopy(context.merged_previews[cache_key])
+    sources = [(v, load_version_preview(v, read_context=context)) for v in sorted(
+        versions,key=lambda v:(json.loads(v.preview_json).get('replacementScope',{}).get('family',''),v.id))]
+    from excel_import import apply_preview_rates, apply_preview_requirements, apply_single_room_quota_exemptions, _match_room_partner
     from .official_links import source_view, proposals, issue_proposal
     for version,source in sources:
         candidates=proposals(source.get('people',[]),(source.get('replacementScope') or {}).get('family'),version.session,context)
@@ -461,6 +466,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     result['summary']['people']['total']=len(people)
     result.pop('_workflow',None)
     result.pop('reviewSourceVersionId',None)
+    context.merged_previews[cache_key] = deepcopy(result)
     return result
 
 
@@ -525,9 +531,14 @@ def restore_preview(value):
     return preview
 
 
-def load_version_preview(version):
+def load_version_preview(version, *, read_context=None):
+    cache_key = (version.id, version.preview_json)
+    if read_context is not None and cache_key in read_context.version_previews:
+        return deepcopy(read_context.version_previews[cache_key])
     preview=restore_preview(json.loads(version.preview_json or '{}'))
     validate_session_event(version.session,preview)
+    if read_context is not None:
+        read_context.version_previews[cache_key] = deepcopy(preview)
     return preview
 
 

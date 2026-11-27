@@ -29,7 +29,7 @@ def forecast_values(row):
 
 
 
-def imported_entry_rows(nation=None):
+def imported_entry_rows(nation=None, *, read_context=None):
     """Replay only committed source replacements, not the current review draft.
 
     Each family keeps its own file order. Cross-family people are subsequently
@@ -37,18 +37,29 @@ def imported_entry_rows(nation=None):
     Archived sessions retain their successfully imported evidence.
     """
     from models import ImportSession, ImportSessionEvent, ImportSessionVersion
-    owner = accommodation_event_id()
-    query = (db.session.query(ImportSessionEvent, ImportSessionVersion)
+    owner = read_context.event_id if read_context is not None else accommodation_event_id()
+    query = (db.session.query(ImportSessionEvent, ImportSessionVersion, ImportSession)
         .join(ImportSessionVersion, ImportSessionEvent.version_id == ImportSessionVersion.id)
         .join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
         .filter(ImportSession.event_id == owner, ImportSessionEvent.session_id == ImportSessionVersion.session_id, ImportSessionEvent.event_type == 'IMPORTED'))
     if nation:
         query = query.filter(ImportSession.nation == nation)
-    sources = {}
-    for history, version in query.order_by(ImportSessionEvent.created_at, ImportSessionEvent.id):
+    records = []
+    source_ids = set()
+    for history, version, session in query.order_by(ImportSessionEvent.created_at, ImportSessionEvent.id):
         preview = json.loads(version.preview_json or '{}')
+        records.append((history, version, session, preview))
+        source_ids.update((preview.get('submissionSources') or {}).values())
+    source_versions = {version.id: version for _, version, _, _ in records}
+    missing = source_ids - source_versions.keys()
+    if missing:
+        source_versions.update({version.id: version for version in ImportSessionVersion.query.join(
+            ImportSession, ImportSessionVersion.session_id == ImportSession.id).filter(
+                ImportSession.event_id == owner, ImportSessionVersion.id.in_(missing))})
+    sources = {}
+    for history, version, session, preview in records:
         scope = preview.get('replacementScope') or {}
-        code = version.session.nation
+        code = session.nation
         if scope.get('kind') == 'FULL_NATION':
             sources[code] = {'FULL': preview.get('people', [])}
         elif scope.get('kind') == 'SPORT_FAMILY':
@@ -64,7 +75,7 @@ def imported_entry_rows(nation=None):
                         previous.setdefault(family, []).append(record)
             for family in families:
                 source_id = (preview.get('submissionSources') or {}).get(family)
-                source = db.session.get(ImportSessionVersion, source_id) if source_id else None
+                source = source_versions.get(source_id)
                 previous[family] = json.loads(source.preview_json).get('people', []) if source else preview.get('people', [])
     return [p for code in sorted(sources) for family in sorted(sources[code]) for p in sources[code][family]]
 
@@ -156,7 +167,7 @@ def provisional_selection(people, event, entry_rows, booked):
             selectionReasons=reasons, selectionWarnings=warnings)
     return result
 
-def project(nation=None, *, people_override=None, entry_rows=None):
+def project(nation=None, *, people_override=None, entry_rows=None, read_context=None):
     owner=accommodation_event_id()
     query=event_query(Athlete).options(db.selectinload(Athlete.competitions))
     forecasts=event_query(AthleteArrivalForecast)
@@ -178,12 +189,13 @@ def project(nation=None, *, people_override=None, entry_rows=None):
             except ImportValidationError:continue
             if person and entry_position(record) is not None:incoming_ids.add(person.id)
         retained=[]
-        for record in imported_entry_rows(nation):
+        for record in imported_entry_rows(nation, read_context=read_context):
             try:person=_find_existing_athlete(record,maps)
             except ImportValidationError:continue  # Removed historical identities are not current preview people.
             if person and person.id not in incoming_ids:retained.append(record)
         entry_rows=list(entry_rows)+retained
-    selection=provisional_selection(people,event,imported_entry_rows(nation) if entry_rows is None else entry_rows,booked)
+    selection=provisional_selection(people,event,imported_entry_rows(
+        nation, read_context=read_context) if entry_rows is None else entry_rows,booked)
     groups={}
     for person in people:
         disciplines=quota_disciplines(person.competitions)
@@ -261,7 +273,7 @@ def project_import_people(people, context, nation=None):
             nation_code=person.get('nationCode'),function=person.get('function'),firstname=person.get('firstname',''),lastname=person.get('lastname',''),
             gender=person.get('gender'),fis_code=person.get('fisCode'),accommodation_requirement=person.get('accommodationRequirement'),single_room_quota_exempt_reason=person.get('singleRoomQuotaExemptReason'),
             competitions=[context.competitions_by_id[int(cid)] for cid in ids if str(cid).isdecimal() and int(cid) in context.competitions_by_id]))
-    return project(nation,people_override=records,entry_rows=people)
+    return project(nation,people_override=records,entry_rows=people,read_context=context)
 
 
 def import_projection(session, preview, control, *, live=False, read_context=None, choices=None):

@@ -199,12 +199,14 @@ def _clarification_source_views(session, preview, control, *, read_context=None)
     for selected, combined in selections:
         data, projected = {}, {}
         try:
-            data = merge_submission_previews(list(selected.values()), read_context=context) if combined else load_version_preview(next(iter(selected.values())))
+            data = merge_submission_previews(list(selected.values()), read_context=context) if combined else load_version_preview(
+                next(iter(selected.values())), read_context=context)
             validate_session_event(session, data)
             for person in data.get('people', []):
                 resolve_saved_quota_memberships(person, read_context=context)
             projected = build_import_control(data, context)
-            valid = not data.get('errors') and all(not [e for e in load_version_preview(v).get('errors',[]) if not (combined and (e.get('details') or {}).get('singleScopeReview'))] for v in selected.values())
+            valid = not data.get('errors') and all(not [e for e in load_version_preview(
+                v, read_context=context).get('errors',[]) if not (combined and (e.get('details') or {}).get('singleScopeReview'))] for v in selected.values())
             subjects = clarification_subjects(data, projected)
             shared = {p['matchKey'] for p in data.get('people', []) if len({r['versionId'] for r in p.get('sourceRows', [])})>1}
         except (ImportValidationError, ValueError, TypeError):

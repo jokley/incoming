@@ -1,6 +1,6 @@
 """Bulk data for one import calculation; never cached across requests."""
 from sqlalchemy.orm import selectinload, joinedload, with_loader_criteria
-from models import Athlete, Competition, RoomBooking, RoomBookingOccupant, FisRoomAssignment, ImportApproval, ImportSession
+from models import db, Athlete, Competition, Event, RoomBooking, RoomBookingOccupant, FisRoomAssignment, ImportApproval, ImportSession
 from .identity import _build_existing_athlete_maps
 from .event_context import import_event_id, ImportValidationError
 from .normalization import canonical_fis_code
@@ -9,6 +9,13 @@ from .normalization import canonical_fis_code
 class ImportReadContext:
     def __init__(self, event_id=None):
         self.event_id = import_event_id(event_id)
+        # Keep request-owned ORM rows alive: SQLAlchemy's identity map uses
+        # weak references and these projections resolve the same event often.
+        self.event = db.session.get(Event, self.event_id)
+        if self.event is None:
+            raise ImportValidationError('IMPORT_EVENT_MISMATCH', 'Import-Event ist nicht vorhanden.')
+        self.version_previews = {}
+        self.merged_previews = {}
         self.competitions_by_id = {c.id: c for c in Competition.query.all()}
         owner = self.event_id
         self.athletes = Athlete.query.filter_by(event_id=owner).options(

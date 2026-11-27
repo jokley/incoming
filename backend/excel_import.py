@@ -1092,10 +1092,18 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
 
 
 def apply_single_room_quota_exemptions(people, overrides=None, event_id=None, carried_keys=(), override_revisions=None, *, read_context=None):
-    from world_champions import recognize
+    from world_champions import applicable_title_references, recognize
     athlete_maps = read_context.athlete_maps if read_context is not None else _build_existing_athlete_maps(event_id=event_id)
+    title_references = None
+    if read_context is not None:
+        title_references = {}
+        fis_codes = [canonical_fis_code(person.get('fisCode')) for person in people
+                     if person.get('fisCode')]
+        for title in applicable_title_references(read_context.event, fis_codes):
+            title_references.setdefault(canonical_fis_code(title.fis_code), []).append(title)
     for person in people:
-        recognize(person, _find_existing_athlete(person, athlete_maps), overrides or {}, event_id, carried_keys, override_revisions)
+        recognize(person, _find_existing_athlete(person, athlete_maps), overrides or {}, event_id,
+                  carried_keys, override_revisions, title_references=title_references)
     return people
 
 
