@@ -85,7 +85,7 @@ def proposals(incoming, family, session, context):
     pending=[]
     for other_family,version in heads.items():
         if other_family==family:continue
-        source=load_version_preview(version)
+        source=load_version_preview(version, read_context=context)
         prior=[identity(p,other_family) for p in source.get('people',[])]
         for value in incoming:
             if not eligible(value) or matching_link(value,context.official_links):continue

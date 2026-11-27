@@ -23,7 +23,8 @@ def persisted_manual_revision(existing):
     return row.id if row else None
 
 
-def recognize(person, existing, overrides, event_id, carried_keys=(), override_revisions=None):
+def recognize(person, existing, overrides, event_id, carried_keys=(), override_revisions=None,
+              title_references=None):
     key = person.get('matchKey')
     reason = existing.single_room_quota_exempt_reason if existing else None
     source = existing.single_room_exemption_source if existing else None
@@ -44,7 +45,9 @@ def recognize(person, existing, overrides, event_id, carried_keys=(), override_r
         from models import Event
         championship = db.session.get(Event, int(event_id)) if event_id else None
         if championship and championship.is_world_championship and (person.get('function') or '').strip().lower() == 'athlete' and person.get('fisCode'):
-            references = applicable_title_references(championship, [person['fisCode']])
+            references = (applicable_title_references(championship, [person['fisCode']])
+                          if title_references is None else title_references.get(
+                              canonical_fis_code(person['fisCode']), []))
         historical = existing and reason == 'WORLD_CHAMPION' and not (championship and championship.is_world_championship)
         reason = 'WORLD_CHAMPION' if references or historical else None
         source = 'AUTO_REFERENCE' if references or source == 'AUTO_REFERENCE' else None
