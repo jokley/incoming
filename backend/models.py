@@ -148,7 +148,7 @@ class ImportSession(db.Model):
                 and item.approval_type != 'QUOTA_OFFICIALS_EXCEEDED'
                 and not item.description.startswith('Officials überschritten')]
 
-    def to_dict(self, include_preview=False):
+    def to_dict(self, include_preview=False, *, read_context=None):
         current = self.current_version
         preview = json.loads(current.preview_json) if current and current.preview_json else None
         latest_upload = current.created_at if current else self.created_at
@@ -179,7 +179,7 @@ class ImportSession(db.Model):
                     from imports.read_context import ImportReadContext
                     from imports.identity import _find_existing_athlete
                     from competitions import competition_athlete_family
-                    context=ImportReadContext(self.event_id)
+                    context=read_context or ImportReadContext(self.event_id)
                     combined=merge_submission_previews(list(heads.values()),read_context=context)
                     people=combined['people']
                     matched={a.id for p in people if (a:=_find_existing_athlete(p,context.athlete_maps))}
@@ -684,7 +684,7 @@ class Athlete(db.Model):
             name='single_room_quota_exempt_reason',
         ),
         db.CheckConstraint("accommodation_requirement_import_value IS NULL OR accommodation_requirement_import_value IN ('REQUIRED', 'NO_ROOM', 'NO_DISPO')", name='accommodation_requirement_import_value'),
-        db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM', 'NO_DISPO')", name='accommodation_requirement'),
+        db.CheckConstraint("accommodation_requirement IN ('REQUIRED', 'NO_ROOM', 'NO_DISPO', 'UNRESOLVED')", name='accommodation_requirement'),
         db.CheckConstraint("accommodation_requirement_source IN ('DEFAULT', 'IMPORT', 'MANUAL')", name='accommodation_requirement_source'),
         db.CheckConstraint("accommodation_rate_category IN ('STANDARD', 'SPECIAL')", name='accommodation_rate_category'),
         db.CheckConstraint("accommodation_rate_source IN ('DEFAULT', 'MANUAL', 'APPROVAL')", name='accommodation_rate_source'),
@@ -986,7 +986,7 @@ class RoomBooking(db.Model):
                      (count == 1) & (func.coalesce(capacity == 1, False) | cls.counts_as_single.is_(True))),
                     else_=cls.counts_as_single)
 
-    def to_dict(self):
+    def to_dict(self, *, accommodation_decisions=None):
         from accommodation_scope import validate_serialized_ownership
         validate_serialized_ownership(self)
         return {
@@ -999,7 +999,7 @@ class RoomBooking(db.Model):
             'checkInDate': self.check_in_date.isoformat() if self.check_in_date else None,
             'checkOutDate': self.check_out_date.isoformat() if self.check_out_date else None,
             'countsAsSingle': self.effective_counts_as_single,
-            'occupants': [occupant.to_dict() for occupant in self.occupants]
+            'occupants': [occupant.to_dict(accommodation_decisions=accommodation_decisions) for occupant in self.occupants]
         }
 
 
@@ -1017,13 +1017,13 @@ class RoomBookingOccupant(db.Model):
 
     athlete = db.relationship('Athlete', backref='room_booking_memberships')
 
-    def to_dict(self):
+    def to_dict(self, *, accommodation_decisions=None):
         from accommodation_scope import validate_serialized_ownership
         validate_serialized_ownership(self)
         return {
             'id': str(self.id),
             'roomBookingId': str(self.room_booking_id),
-            'athlete': self.athlete.to_dict(),
+            'athlete': {**self.athlete.to_dict(), **((accommodation_decisions or {}).get(self.athlete_id, {}))},
             'role': self.role
         }
 

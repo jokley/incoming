@@ -1,6 +1,6 @@
 from quota_rules import rules_for_event, accommodation_rule_event
 from accommodation_scope import event_query, event_get, accommodation_event_id, ownership_clause, require_event_object, event_audit_refs
-from accommodation_requirements import BOOKING_MESSAGE, NO_ACCOMMODATION, REQUIREMENTS, INVALID_REQUIREMENT, requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
+from accommodation_requirements import BOOKING_MESSAGE, NO_BOOKABLE_DEMAND, REQUIREMENTS, INVALID_REQUIREMENT, requirement_projection, RequirementConflict, set_requirement, resolve_requirement, apply_preview_requirements, require_assignable, accommodation_metrics
 from flask import Flask, g, request, jsonify, has_request_context
 from flask_cors import CORS
 from models import db, AuditEvent, RoomType, Hotel, HotelRoomInventory, AccommodationEvent, Event, EventCompetition, EventRoomDemand, Athlete, Competition, RoomAssignment, RoomBooking, RoomBookingOccupant, ImportRun, FisRoomAssignment, ImportSession, ImportSessionVersion, ImportSessionEvent, ImportApproval
@@ -699,6 +699,11 @@ def _business_activity(entity_type, entity_id, action, payload, response):
         ref('personId', athlete_id)
         label = ' '.join(filter(None, [response.get('firstname') or payload.get('firstname'), response.get('lastname') or payload.get('lastname')])).strip() or 'Athlet'
         title = 'Athlet angelegt' if action == 'create' else 'Athlet bearbeitet'
+        if {'accommodationRequirement', 'roomType', 'sharedWithName', 'returnToFis'}.intersection(payload):
+            reasons = response.get('fisAccommodationDeviationReasons') or []
+            if reasons:
+                details.append('Abweichung zur FIS-Meldung · ' + ', '.join(reasons))
+
         if 'accommodationRateCategory' in payload:
             old_rate = (snapshot or {}).get('accommodationRateCategory', 'STANDARD')
             details.append(f"Unterkunftstarif: {old_rate} → {response.get('accommodationRateCategory')}")
@@ -796,9 +801,14 @@ def audit_successful_mutation(response):
                        if key.lower() not in {'password', 'token', 'previewtoken', 'secret'}}
         if payload and entity_type == 'athlete-arrival-forecast':
             payload={**payload,'previousForecast':getattr(g,'audit_snapshot',None),'newRevision':(response.get_json(silent=True) or {}).get('revision')}
-        if payload and 'accommodationRequirement' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
+        if payload and {'accommodationRequirement', 'roomType', 'sharedWithName', 'returnToFis'}.intersection(payload) and isinstance(getattr(g, 'audit_snapshot', None), dict):
             payload = {**payload, 'accommodation_requirement': {'old': g.audit_snapshot.get('accommodationRequirement', 'REQUIRED'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirement')},
                 'accommodation_requirement_source': {'old': g.audit_snapshot.get('accommodationRequirementSource', 'DEFAULT'), 'new': (response.get_json(silent=True) or {}).get('accommodationRequirementSource')}}
+        if payload and entity_type == 'athletes' and isinstance(getattr(g, 'audit_snapshot', None), dict):
+            updated = response.get_json(silent=True) or {}
+            for field, audit_key in (('roomType', 'room_type'), ('sharedWithName', 'shared_with_name')):
+                if field in updated and g.audit_snapshot.get(field) != updated[field]:
+                    payload[audit_key] = {'old': g.audit_snapshot.get(field), 'new': updated[field]}
         if payload and 'accommodationRateCategory' in payload and isinstance(getattr(g, 'audit_snapshot', None), dict):
             payload = {**payload, 'accommodation_rate_category': {
                 'old': g.audit_snapshot.get('accommodationRateCategory', 'STANDARD'),
@@ -1271,7 +1281,7 @@ def _build_partial_unit_variant(unit, occupant):
     }
 
 
-def _build_room_booking_units():
+def _build_room_booking_units(accommodation_decisions=None):
     athletes = event_query(Athlete).order_by(
         Athlete.nation_code,
         Athlete.discipline,
@@ -1281,6 +1291,9 @@ def _build_room_booking_units():
         Athlete.firstname,
         Athlete.id,
     ).all()
+    if accommodation_decisions is not None:
+        from routes.athletes import fis_accommodation_decisions
+        accommodation_decisions.update(fis_accommodation_decisions(athletes))
     bookings = event_query(RoomBooking).options(db.joinedload(RoomBooking.occupants).joinedload(RoomBookingOccupant.athlete), db.joinedload(RoomBooking.hotel), db.joinedload(RoomBooking.room_type)).all()
     booking_index = {}
     athlete_booking_index = {}
@@ -1316,9 +1329,9 @@ def _build_room_booking_units():
         candidates = [candidate for candidate in candidates if candidate.id != athlete.id]
         return candidates[0] if len(candidates) == 1 else None
 
-    athletes = [a for a in athletes if a.accommodation_requirement not in NO_ACCOMMODATION]
-    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name_and_nation.items()}
-    athletes_by_name = {k: [a for a in values if a.accommodation_requirement not in NO_ACCOMMODATION] for k, values in athletes_by_name.items()}
+    athletes = [a for a in athletes if a.accommodation_requirement not in NO_BOOKABLE_DEMAND]
+    athletes_by_name_and_nation = {k: [a for a in values if a.accommodation_requirement not in NO_BOOKABLE_DEMAND] for k, values in athletes_by_name_and_nation.items()}
+    athletes_by_name = {k: [a for a in values if a.accommodation_requirement not in NO_BOOKABLE_DEMAND] for k, values in athletes_by_name.items()}
     consumed_ids = set()
     projected_groups = []
     for athlete in athletes:
@@ -1368,6 +1381,7 @@ def _build_room_booking_units():
                 'gender': normalize_gender(athlete.gender),
                 **rate_projection(athlete),
                 **requirement_projection(athlete),
+                **((accommodation_decisions or {}).get(athlete.id, {})),
                 'function': athlete.function,
                 'specialMeal': athlete.special_meal,
                 'roomType': athlete.room_type,
@@ -1452,7 +1466,8 @@ def _build_unit_validations(unit, hotel_sections, bookings_by_slot):
 
 def _build_assignment_planning_view(validation_keys=None, assignment_interval=None):
     with _assignment_phase('assignment'):
-        units, bookings = _build_room_booking_units()
+        accommodation_decisions = {}
+        units, bookings = _build_room_booking_units(accommodation_decisions)
     rooms_started = time.perf_counter()
     hotels = event_query(Hotel).options(db.joinedload(Hotel.room_inventories).joinedload(HotelRoomInventory.room_type)).all()
 
@@ -1496,7 +1511,7 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
             'hotelId': str(hotel.id),
             'hotelName': hotel.name,
             'accommodationType': hotel.accommodation_type,
-            'externalBookings': [booking.to_dict() for booking in bookings if booking.hotel_id == hotel.id] if hotel.accommodation_type == 'EXTERNAL' else [],
+            'externalBookings': [booking.to_dict(accommodation_decisions=accommodation_decisions) for booking in bookings if booking.hotel_id == hotel.id] if hotel.accommodation_type == 'EXTERNAL' else [],
             'location': hotel.location,
             'region': hotel.region,
             'comment': hotel.comment,
@@ -1537,10 +1552,11 @@ def _build_assignment_planning_view(validation_keys=None, assignment_interval=No
                                     'gender': normalize_gender(occ.athlete.gender),
                                     **rate_projection(occ.athlete),
                                     **requirement_projection(occ.athlete),
+                                    **accommodation_decisions.get(occ.athlete.id, {}),
                                     'function': occ.athlete.function,
                                     'arrivalDate': occ.athlete.arrival_date.isoformat() if occ.athlete.arrival_date else None,
                                     'departureDate': occ.athlete.departure_date.isoformat() if occ.athlete.departure_date else None,
-                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement in NO_ACCOMMODATION,
+                                    'hasPendingReview': _has_pending_roomlist_review(occ.athlete) or occ.athlete.accommodation_requirement in NO_BOOKABLE_DEMAND,
                                     'importChangeTypes': json.loads(occ.athlete.import_change_types_json) if occ.athlete.import_change_types_json else [],
                                     'importChangeDetails': json.loads(occ.athlete.import_change_details_json) if occ.athlete.import_change_details_json else [],
                                     'single_room_status': occ.athlete.single_room_status or 'NONE',
@@ -2224,6 +2240,37 @@ def preview_fis_import():
             if not session:
                 # There is exactly one durable workflow per nation, including completed workflows.
                 session = ImportSession.query.filter_by(event_id=event_context.id, nation=nation).first()
+            if (session and session.status not in {'ARCHIVED', 'CANCELLED', 'REPLACED'}
+                    and request.form.get('reuseKnownFiles') == 'true'
+                    and request.form.get('snapshotScope') == 'AUTO'):
+                from imports.workflow import submission_heads, imported_submission_ids
+                from imports.change_plan import digest, state
+                scope = result.get('replacementScope') or {}
+                heads = submission_heads(session)
+                known = heads.get(scope.get('family')) if scope.get('kind') == 'SPORT_FAMILY' else None
+                if known and known.source_hash == source_hash:
+                    imported = imported_submission_ids(session)
+                    payload = _current_session_payload(session, include_preview=True, read_context=read_context,
+                                                       share_detail_context=True)
+                    current = load_version_preview(session.current_version)
+                    stored_context = (current.get('_workflow') or {}).get('importedStateFingerprint')
+                    rules_changed = any(current.get(key) != result.get(key) for key in ('quotaRulesRevision', 'quotaRulesDigest'))
+                    context_changed = rules_changed or (
+                        digest(state(session.event_id, session.nation)) != stored_context if stored_context else
+                        session.status != 'IMPORTED' and bool((payload.get('preview') or {}).get('planStale')))
+                    complete = session.status == 'IMPORTED' and all(version.id in imported for version in heads.values())
+                    if context_changed:
+                        message = 'Dateien unverändert. Der Prüfkontext hat sich geändert. Gemeinsame Prüfung erforderlich.'
+                    elif complete:
+                        message = 'Dateien unverändert und bereits importiert.'
+                        if not stored_context:
+                            message += ' Für diese frühere Importversion ist kein vollständiger Kontextvergleich verfügbar.'
+                    else:
+                        message = 'Dateien unverändert. Die vorhandene Prüfung kann fortgesetzt werden.'
+                    PREVIEW_STORE.pop(result['previewToken'], None)
+                    return jsonify({**(payload.get('preview') or {}), 'session': payload, 'knownFiles': True,
+                                    'reusedKnownFiles': True, 'alreadyImported': complete and not context_changed,
+                                    'knownFilesRequiresReview': context_changed, 'message': message})
             if session and session.status == 'ARCHIVED' and not any(h.event_type == 'ARCHIVED' for h in session.history):
                 # Older archive calls had no history marker. Preserve their source boundary on first reuse.
                 boundary = max(session.versions, key=lambda v: v.version, default=None)
@@ -2445,6 +2492,8 @@ def _current_session_preview(session, *, read_context=None):
             # person state rather than replaying an obsolete manual override.
             preview.pop('accommodationRateOverrides', None)
             preview.pop('accommodationRequirementOverrides', None)
+            for person in preview.get('people', []):
+                person.pop('unresolvedSourceAccommodation', None)
             preview['carriedSingleRoomQuotaExemptKeys'] = list(preview.get('singleRoomQuotaExemptOverrides', {}))
         try:
             if preview.get('eventId') is None and (any(str(column).upper().startswith('WSC_')
@@ -2469,13 +2518,15 @@ def _current_session_preview(session, *, read_context=None):
     return preview
 
 
-def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True):
+def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True, share_detail_context=False, freshly_planned=False):
     if include_preview and resolve_preview and session.status not in {'REPLACED','ARCHIVED','CANCELLED'}:
         from imports.read_context import ImportReadContext
         read_context=read_context or ImportReadContext(session.event_id)
-    payload = session.to_dict(include_preview=include_preview)
+    payload = session.to_dict(include_preview=include_preview, read_context=read_context if share_detail_context else None)
     if resolve_preview and session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
-        preview = _current_session_preview(session, read_context=read_context)
+        # The requirement PATCH can serialize its freshly saved plan while still
+        # holding the same write lock and read context that produced it.
+        preview = payload['preview'] if freshly_planned else _current_session_preview(session, read_context=read_context)
         payload['errors'] = len(preview.get('errors', []))
         payload['warnings'] = len(preview.get('warnings', []))
         if preview.get('errors') and session.status != 'IMPORTED':
@@ -2496,12 +2547,26 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
                 try:verify_plan(compared,plan)
                 except ImportValidationError:preview['planStale']=True
             preview['quotaRulesChanged']=session.status!='IMPORTED' and saved.get('quotaRulesRevision',1)!=accommodation_rule_event(db.session.get(Event,session.event_id)).quota_rules_revision
+            from types import SimpleNamespace
+            from routes.athletes import accommodation_requests_from_preview, add_accommodation_decision
+            source_cache = {v.id: (v, json.loads(v.preview_json or '{}')) for v in session.versions
+                            if v.id in preview.get('submissionSources', {}).values()}
+            for person in preview.get('people', []):
+                if person.get('accommodationRequirementSource') != 'MANUAL':
+                    continue
+                fields = SimpleNamespace(accommodation_requirement=person['accommodationRequirement'],
+                    accommodation_requirement_source='MANUAL', room_type=person.get('roomType'),
+                    shared_with_name=person.get('sharedWithName'))
+                requests = accommodation_requests_from_preview(person, preview, session.current_version, source_cache)
+                add_accommodation_decision(person, fields, requests)
             payload['preview'] = preview
     if include_preview and payload.get('preview') and read_context is not None:
         from import_control import build_import_control
         payload['importControl'] = build_import_control(payload['preview'],read_context)
         from import_control import nation_clarifications
-        payload['nationClarifications'] = nation_clarifications(session, payload['preview'], payload['importControl'])
+        payload['nationClarifications'] = nation_clarifications(
+            session, payload['preview'], payload['importControl'],
+            read_context=read_context if share_detail_context else None)
         from arrival_planning import import_projection
         payload['nnPlanning']=import_projection(session,payload['preview'],payload['importControl'],live=session.status in {'IMPORTED','ARCHIVED'},read_context=read_context)
     if include_preview and session.status=='ARCHIVED':
@@ -2517,7 +2582,7 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
 @app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
 def get_import_session(session_id):
     configured_event_id()
-    return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True))
+    return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True, share_detail_context=True))
 
 
 @app.route('/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>', methods=['PATCH'])
@@ -2542,8 +2607,16 @@ def stage_accommodation_requirement(session_id, person_key):
     read_context = ImportReadContext(session.event_id)
     existing = _find_existing_athlete(target, read_context.athlete_maps)
     old = {key: target.get(key) for key in ('accommodationRequirement', 'accommodationRequirementSource')}
-    preview.setdefault('accommodationRequirementOverrides', {})[person_key] = {
-        'requirement': data['accommodationRequirement'], 'base': requirement_projection(existing)}
+    overrides = preview.setdefault('accommodationRequirementOverrides', {})
+    previous = overrides.get(person_key, {})
+    requested = data['accommodationRequirement']
+    if requested is None and previous.get('requirement') == 'NO_DISPO':
+        requested = previous.get('beforeNoDispo')
+    override = {'requirement': requested, 'base': requirement_projection(existing)}
+    if requested == 'NO_DISPO':
+        override['beforeNoDispo'] = (previous.get('beforeNoDispo') if previous.get('requirement') == 'NO_DISPO'
+                                     else previous.get('requirement'))
+    overrides[person_key] = override
     preview['_currentApprovalIds'] = [a.id for a in session.current_approvals]
     staged_raw = deepcopy(raw) if raw else None
     try:
@@ -2584,10 +2657,12 @@ def stage_accommodation_requirement(session_id, person_key):
     approval_ids = {a.id for a in review_approvals(session, preview)}
     refresh_plan(session, preview, read_context=read_context,
                  recalculate=approval_ids != set(preview['_currentApprovalIds']))
+    payload = _current_session_payload(session, include_preview=True, read_context=read_context,
+                                       share_detail_context=True, freshly_planned=True)
     db.session.commit()
     if staged_raw:
         PREVIEW_STORE[session.current_version.preview_token] = staged_raw
-    return jsonify(_current_session_payload(session, include_preview=True))
+    return jsonify(payload)
 
 
 @app.route('/api/import/sessions/<int:session_id>/accommodation-rates/<path:person_key>', methods=['PATCH'])
@@ -3083,6 +3158,10 @@ def import_approved_session(session_id):
             action='import',entity_type='import',entity_id=str(session.id),request_id=getattr(g,'request_id',str(uuid.uuid4())),
             method='POST',path=request.path,activity='Import durchgeführt',category='Import',entity_label=session.nation,
             details_json=encoded(result['summary']),entity_refs_json=event_audit_refs({'importSessionId':str(session.id),'eventId':str(session.event_id)}, session.event_id)))
+        from imports.change_plan import digest, state
+        db.session.flush()
+        workflow['importedStateFingerprint'] = digest(state(session.event_id, session.nation))
+        session.current_version.preview_json = encoded(preview)
         db.session.commit()
         g.atomic_import_audit=True
         PREVIEW_STORE.pop(token,None)
@@ -3173,6 +3252,11 @@ def recheck_import_session(session_id):
             return jsonify(error='STALE_PREVIEW',message='Nur aktuelle Teilmeldungen dieser Nation auswählen.'),409
         versions=[heads[str(i)] for i in identities]
         composed=merge_submission_previews(versions)
+        if session.status not in {'IMPORTED', 'REPLACED', 'CANCELLED'}:
+            previous = load_version_preview(session.current_version)
+            if (previous.get('submissionSources') == composed['submissionSources']
+                    and previous.get('submissionSourceDigests') == composed['submissionSourceDigests']):
+                composed['accommodationRequirementOverrides'].update(previous.get('accommodationRequirementOverrides', {}))
         source_version=versions[0]
     if data.get('sourceVersionId') is not None:
         from imports.workflow import submission_heads
@@ -3524,18 +3608,65 @@ def _update_athlete_operations(athlete, data):
         except ValueError as exc:
             return jsonify({'error': str(exc)}), 400
     requirement_change = None
-    if 'accommodationRequirement' in data:
+    room_fields = {'roomType': ('room_type', 50), 'sharedWithName': ('shared_with_name', 200)}
+    room_changes = {}
+    restore_source = data.get('returnToFis') is True
+    if restore_source or {'accommodationRequirement', *room_fields}.intersection(data):
+        from accommodation_requirements import accommodation_wish, ensure_no_bookings, source_requirement
         lock_accommodation_writes()
         db.session.refresh(athlete)
         g.audit_snapshot = athlete.to_dict()
-        value = data['accommodationRequirement']
-        if value is not None and (not isinstance(value, str) or value not in REQUIREMENTS):
-            return jsonify(error=INVALID_REQUIREMENT), 400
-        requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
-            {'requirement': value, 'base': requirement_projection(athlete)})
+        value = data.get('accommodationRequirement', athlete.accommodation_requirement)
+        requests = []
+        if restore_source or (value is None and athlete.accommodation_requirement_source == 'MANUAL'):
+            from routes.athletes import reported_accommodation_requests
+            requests = reported_accommodation_requests(athlete)
+        if restore_source or requests:
+            wishes = {accommodation_wish(source_requirement([r['roomType']])[0], r['roomType'], r['partner']) for r in requests}
+            if len(wishes) != 1 or next(iter(wishes))[0] not in {'REQUIRED', 'NO_ROOM'}:
+                return jsonify(error='FIS_ACCOMMODATION_AMBIGUOUS', message='Die FIS-Meldung ist nicht eindeutig. Bitte den Unterkunftsbedarf ausdrücklich entscheiden.'), 409
+            value = next(iter(wishes))[0]
+            room_changes = {'room_type': requests[0]['roomType'] if value == 'REQUIRED' else None,
+                            'shared_with_name': requests[0]['partner'] if value == 'REQUIRED' else None}
+            requirement_change = {'accommodationRequirement': value, 'accommodationRequirementSource': 'IMPORT'}
+        else:
+            if value is not None and (not isinstance(value, str) or value not in REQUIREMENTS):
+                return jsonify(error=INVALID_REQUIREMENT), 400
+            requirement_change, _, _ = resolve_requirement(athlete, [athlete.room_type],
+                {'requirement': value, 'base': requirement_projection(athlete)})
+            for key, (attribute, limit) in room_fields.items():
+                if key not in data:
+                    continue
+                text = data[key]
+                if text is not None and (not isinstance(text, str) or len(text.strip()) > limit):
+                    return jsonify(error='INVALID_ACCOMMODATION_WISH', message='Zimmertyp oder Zimmerpartner ist ungültig.'), 400
+                room_changes[attribute] = text.strip() or None if text is not None else None
+            if room_changes and value != 'REQUIRED':
+                return jsonify(error='ACCOMMODATION_WISH_REQUIRES_ROOM', message='Bitte zuerst „Unterkunft benötigt“ wählen.'), 400
+            room_type = room_changes.get('room_type', athlete.room_type)
+            if value == 'REQUIRED' and source_requirement([room_type])[0] == 'NO_ROOM':
+                if 'room_type' in room_changes:
+                    return jsonify(error='INVALID_ACCOMMODATION_WISH', message='„Kein Zimmer“ ist kein Zimmertyp.'), 400
+                if athlete.accommodation_requirement != 'REQUIRED':
+                    room_changes.update(room_type=None, shared_with_name=None)
+                    room_type = None
+            if room_changes.get('shared_with_name') and not room_type:
+                return jsonify(error='ACCOMMODATION_WISH_REQUIRES_SHARED_ROOM', message='Bitte einen gemeinsamen Zimmertyp wählen.'), 400
+            if room_type and 'shared' not in room_type.casefold():
+                if room_changes.get('shared_with_name'):
+                    return jsonify(error='ACCOMMODATION_WISH_REQUIRES_SHARED_ROOM', message='Ein Wunschpartner ist nur bei gemeinsamer Zimmernutzung möglich.'), 400
+                if 'room_type' in room_changes:
+                    room_changes['shared_with_name'] = None
+            if room_changes.get('shared_with_name'):
+                from excel_import import _match_room_partner
+                candidates = [{'firstname': a.firstname, 'lastname': a.lastname, 'nationCode': a.nation_code}
+                              for a in event_query(Athlete).filter(Athlete.nation_code == athlete.nation_code, Athlete.id != athlete.id)]
+                if not _match_room_partner(room_changes['shared_with_name'], athlete.nation_code, candidates):
+                    return jsonify(error='ACCOMMODATION_PARTNER_UNCLEAR', message='Der Wunschpartner ist in dieser Nation nicht eindeutig zugeordnet.'), 409
         if requirement_change['accommodationRequirement'] == 'NO_ROOM':
-            from accommodation_requirements import ensure_no_bookings
-            ensure_no_bookings(athlete, requirement_change['accommodationRequirement'])
+            ensure_no_bookings(athlete, 'NO_ROOM')
+        if any(getattr(athlete, key) != value for key, value in room_changes.items()):
+            ensure_no_bookings(athlete, 'ACCOMMODATION_WISH')
     previous_exempt_reason = athlete.single_room_quota_exempt_reason
     protected = {'additionalItems', 'additional_items'}
     if protected.intersection(data):
@@ -3592,6 +3723,8 @@ def _update_athlete_operations(athlete, data):
         return jsonify({'error': 'departureDate must not be before arrivalDate'}), 400
     if requirement_change:
         set_requirement(athlete, requirement_change['accommodationRequirement'], requirement_change['accommodationRequirementSource'])
+    for attribute, value in room_changes.items():
+        setattr(athlete, attribute, value)
     if 'accommodationRateCategory' in data:
         athlete.accommodation_rate_category = category
         athlete.accommodation_rate_source = 'MANUAL'

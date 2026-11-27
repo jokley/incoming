@@ -33,6 +33,9 @@ test('person overview drills into assigned people, refreshes after persistence, 
  };
  const planning=()=>{
   const occupants=people().map(p=>({athleteId:p.personId,name:p.name,firstname:p.name,lastname:'Synthetic',nationCode:p.nationCode,function:p.function,gender:p.personalGender,quotaDisciplines:p.quotaDisciplines,roomType:p.personId==='open'&&singleWish?'Single':'Double shared',accommodationRequirement:'REQUIRED',accommodationRateCategory:'STANDARD',accommodationRateSource:'DEFAULT',arrivalDate:interval.checkInDate,departureDate:interval.checkOutDate,accommodationCoverage:p.accommodation,hasPendingReview:false,importChangeTypes:[],importChangeDetails:[],single_room_status:'NONE',single_room_decision_id:p.singleRoom.storedApprovalId}));
+  for (const person of occupants.filter(item=>['open','full'].includes(item.athleteId))) Object.assign(person,{
+    hasFisAccommodationDeviation:true, fisAccommodationDeviationReasons:['Zimmertyp'],
+  });
   const units=occupants.map(p=>({unitId:`unit-${p.athleteId}`,sourceRowKey:p.athleteId,nationCode:p.nationCode,occupants:[p],roomType:'Double shared',roomTypeLabel:'double',roomCategoryLabel:'dz',occupantCount:1,...interval,specialMealFlags:[],statusBadges:[],assignmentWarnings:[],isFullyAssigned:p.accommodationCoverage.coverageStatus==='FULLY_ASSIGNED'}));
   const slots=people().flatMap(p=>p.accommodation.segments.map((s,index)=>({slotId:`h:r:${s.bookingId}`,slotIndex:index+1,hotelId:'h',hotelName:'Synthetic Hotel',roomTypeId:'r',roomTypeName:'DZ',capacity:2,roomNumber:s.roomNumber,inventoryRoomCount:6,dateCoverage:{availableFrom:interval.checkInDate,availableUntil:interval.checkOutDate,coversRequestedRange:true},bookings:[{bookingId:s.bookingId,hotelId:'h',roomTypeId:'r',roomNumber:s.roomNumber,capacity:2,checkInDate:s.checkInDate,checkOutDate:s.checkOutDate,countsAsSingle:s.countsAsSingle,occupants:[occupants.find(o=>o.athleteId===p.personId)]}]})));
   const coverage = (availableFrom:string,availableUntil:string) => ({availableFrom,availableUntil,coversRequestedRange:true,intervals:[{availableFrom,availableUntil}]});
@@ -155,6 +158,9 @@ test('person overview drills into assigned people, refreshes after persistence, 
  assert.match(await openCard.innerText(),/AUT · M · Athlete · (Snowboard Cross|Ski Cross)/);
  const assignedCards=page.locator('.ops-occupant-card');
  assert.ok((await assignedCards.allTextContents()).some(label=>/EST · M · Official · (Snowboard Cross|Ski Cross)/.test(label)));
+ await openCard.getByRole('img',{name:/Abweichung zur FIS-Meldung/}).waitFor();
+ await assignedCards.filter({hasText:'Vollständig'}).first().getByRole('img',{name:/Abweichung zur FIS-Meldung/}).waitFor();
+ await page.screenshot({path:'/workspace/artifacts/disposition-fis-abweichung.png',animations:'disabled'});
  const join=openCard.getByRole('button',{name:'Person hier zuweisen',exact:true});
  await join.waitFor();
  await page.waitForFunction(()=>Array.from(document.querySelectorAll('button')).some(b=>b.textContent==='Person hier zuweisen'&&!b.disabled));

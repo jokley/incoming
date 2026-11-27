@@ -1,5 +1,5 @@
 from quota_rules import rules_for_event
-from accommodation_requirements import apply_preview_requirements, set_requirement, accommodation_room_requests, source_requirement, NO_ACCOMMODATION
+from accommodation_requirements import apply_preview_requirements, set_requirement, accommodation_room_requests, source_requirement, NO_BOOKABLE_DEMAND
 import json
 import re
 import uuid
@@ -280,7 +280,7 @@ def single_room_context_errors(people, rooms):
              'details': {'personKey': person.get('matchKey'),
                          'personName': f"{person.get('firstname', '')} {person.get('lastname', '')}".strip(),
                          'quotaDisciplines': person.get('quotaDisciplines', [])}}
-            for person in people if person.get('accommodationRequirement') not in NO_ACCOMMODATION and person.get('matchKey') in singles
+            for person in people if person.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND and person.get('matchKey') in singles
             and not person.get('singleRoomQuotaExemptReason') and not quota_keys(person, people)]
 
 
@@ -688,6 +688,10 @@ def parse_room_list(df, imported_people):
             'person2Name': f"{person2['firstname']} {person2['lastname']}".strip() if person2 else None,
             'sharedWithRawName': shared_with_raw_name or None,
             'sharedWithNationCode': shared_with_nation_code or None,
+            **{key: value for key, column in (
+                ('sharedArrivalSource', 'Shared with Arrival_date'),
+                ('sharedDepartureSource', 'Shared with Departure_date'),
+            ) if (value := normalize_whitespace(row.get(column)))},
             'checkInDate': arrival_date,
             'checkOutDate': departure_date,
             'daySnapshot': day_snapshot,
@@ -924,7 +928,7 @@ def build_quota_warnings(people, rooms, quota_checks=None, *, read_context=None)
     for person in roster:
         room = room_by_person.get(person.get('matchKey'))
         requested.append({**person, 'countsAsSingle': bool(
-            person.get('accommodationRequirement') not in NO_ACCOMMODATION and room and normalize_string(room.get('roomType')) == 'single')})
+            person.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND and room and normalize_string(room.get('roomType')) == 'single')})
         existing = _find_existing_athlete(person, athlete_maps)
         if existing:
             imported_by_existing_id[existing.id] = person
@@ -1121,7 +1125,7 @@ def preserved_single_room_approvals(people, rooms, *, read_context=None):
             continue
         room = room_by_person.get(person.get('matchKey'))
         existing = _find_existing_athlete(person, athlete_maps)
-        incoming_single = bool(person.get('accommodationRequirement') not in NO_ACCOMMODATION and room and normalize_string(room.get('roomType')) == 'single')
+        incoming_single = bool(person.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND and room and normalize_string(room.get('roomType')) == 'single')
         retained_single = bool(existing and existing.id in retained_ids)
         if not incoming_single and not retained_single:
             continue
@@ -1194,8 +1198,11 @@ def apply_active_single_room_decision(details, approved_person_keys, decision_id
                    _find_existing_athlete({'fisCode': person_key}, athlete_maps))
         if not athlete:
             continue
-        if athlete.accommodation_requirement in NO_ACCOMMODATION or (incoming and incoming.get('accommodationRequirement') in NO_ACCOMMODATION):
+        if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND or (incoming and incoming.get('accommodationRequirement') in NO_BOOKABLE_DEMAND):
             if person_key in selected:
+                if 'UNRESOLVED' in {athlete.accommodation_requirement, (incoming or {}).get('accommodationRequirement')}:
+                    raise ImportValidationError('UNRESOLVED_SINGLE_ROOM_APPROVAL_FORBIDDEN',
+                        'Unterkunftsbedarf offen. Keine aktive EZ-Genehmigung möglich.')
                 raise ImportValidationError('NO_ROOM_SINGLE_ROOM_APPROVAL_FORBIDDEN', 'Kein Zimmer benötigt. Keine aktive EZ-Genehmigung möglich.')
             continue  # Keep historical approval evidence unchanged.
         if person_key in selected:
@@ -1239,7 +1246,7 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved
         person['singleRoomAllocation'] = None
         room = room_by_person.get(person.get('matchKey'))
         evidence = preserved.get(person.get('matchKey'))
-        requested.append({**person, 'countsAsSingle': bool(person.get('accommodationRequirement') not in NO_ACCOMMODATION and room and normalize_string(room.get('roomType')) == 'single'),
+        requested.append({**person, 'countsAsSingle': bool(person.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND and room and normalize_string(room.get('roomType')) == 'single'),
             'singleRoomStatus': 'APPROVED_EXTRA' if evidence else None,
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence['groups'])] if evidence else []})
@@ -1250,7 +1257,7 @@ def apply_single_room_entitlement_preview(people, rooms, quota_checks, preserved
         allocation = allocate_single_rooms(requested, allowances, valid)
     by_identity = {p['identity']: p for p in allocation}
     for index, person in enumerate(people):
-        if person.get('accommodationRequirement') in NO_ACCOMMODATION:
+        if person.get('accommodationRequirement') in NO_BOOKABLE_DEMAND:
             person['singleRoomAllocation'] = None
             person['singleRoomEntitlement'] = None
             continue
@@ -1303,6 +1310,7 @@ def _serialize_room_preview(room):
     return {
         'rowNumber': room['rowNumber'],
         'sourceRowKey': room['sourceRowKey'],
+        **({'sourceOnlyPartner': True} if room.get('sourceOnlyPartner') else {}),
         'roomType': room['roomType'],
         'person1Key': room['person1Key'],
         'person2Key': room['person2Key'],
@@ -1310,6 +1318,7 @@ def _serialize_room_preview(room):
         'person2Name': room['person2Name'],
         'sharedWithRawName': room['sharedWithRawName'],
         'sharedWithNationCode': room['sharedWithNationCode'],
+        **{key: room[key] for key in ('sharedArrivalSource', 'sharedDepartureSource') if key in room},
         'checkInDate': _iso_date(room['checkInDate']),
         'checkOutDate': _iso_date(room['checkOutDate']),
         'daySnapshot': room['daySnapshot'],
@@ -1778,7 +1787,7 @@ def create_fis_import_preview(entries_path, roomlist_path, event=None, *, read_c
     # A missing request inherits the person's existing accommodation, never an
     # invented No room. Preserve the absent source evidence separately.
     for person in people_result['people']:
-        if person.get('importAccommodationRequirement') is None and not person.get('roomType') and not any(r.get('roomType') for r in room_result['rooms'] if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}):
+        if person.get('importAccommodationRequirement') is None and not (person.get('entryAccommodationSource') or person).get('roomType') and not any(r.get('roomType') for r in room_result['rooms'] if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}):
             person['sourceAccommodationEvidence']=dict(requirement=None,roomType=person.get('roomType'),arrivalDate=person.get('arrivalDate').isoformat() if person.get('arrivalDate') else None,departureDate=person.get('departureDate').isoformat() if person.get('departureDate') else None)
             existing=_find_existing_athlete(person,athlete_maps)
             if existing:
@@ -2130,10 +2139,11 @@ def _apply_person_record(athlete, person, now, *, rate_override=None, preserve_m
     athlete.departure_airport_name = person.get('departureAirportName')
     athlete.departure_flight_no = person.get('departureFlightno')
     athlete.departure_need_transportation = person.get('departureNeedTransportation', False)
-    if not preserve_missing_roomlist or person.get('roomType'):
-        athlete.room_type = person.get('roomType')
-    if not preserve_missing_roomlist or person.get('sharedWithName'):
-        athlete.shared_with_name = person.get('sharedWithName')
+    if athlete.accommodation_requirement_source != 'MANUAL':
+        if not preserve_missing_roomlist or person.get('roomType'):
+            athlete.room_type = person.get('roomType')
+        if not person.get('sourceOnlyPartner') and (not preserve_missing_roomlist or person.get('sharedWithName')):
+            athlete.shared_with_name = person.get('sharedWithName')
     athlete.late_checkout = person.get('lateCheckout', False)
     athlete.first_meal = person.get('firstMeal')
     athlete.last_meal = person.get('lastMeal')
@@ -2331,7 +2341,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
     for person in preview.get('evaluationPeople',preview['people']):
         room = room_by_person.get(person.get('matchKey'))
         evidence = confirmed_preserved.get(person.get('matchKey'))
-        request_records.append({**person, 'countsAsSingle': bool(person.get('accommodationRequirement') not in NO_ACCOMMODATION and room and normalize_string(room.get('roomType')) == 'single'),
+        request_records.append({**person, 'countsAsSingle': bool(person.get('accommodationRequirement') not in NO_BOOKABLE_DEMAND and room and normalize_string(room.get('roomType')) == 'single'),
             'approvedQuotaContexts': [{'nationCode': n, 'discipline': d, 'gender': g}
                 for n, d, g in sorted(evidence['groups'])] if evidence else [],
             'singleRoomStatus': 'APPROVED_EXTRA' if evidence else None})
@@ -2418,7 +2428,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
                     version.session_id if version else None)
             athlete.single_room_quota_exempt_reason = new_reason
             athlete.single_room_exemption_source = new_source
-            if athlete.single_room_quota_exempt_reason and athlete.accommodation_requirement not in NO_ACCOMMODATION:
+            if athlete.single_room_quota_exempt_reason and athlete.accommodation_requirement not in NO_BOOKABLE_DEMAND:
                 if athlete.single_room_decision:
                     decision = athlete.single_room_decision
                     db.session.add(ImportSessionEvent(
@@ -2437,7 +2447,7 @@ def confirm_fis_import(preview_token, approved_extra_single_room_decisions=None,
             room = room_by_person.get(person.get('matchKey'))
             requests_single = bool((room and normalize_string(room.get('roomType')) == 'single')
                 or person.get('singleRoomAllocation') is not None)
-            if missing_roomlist or athlete.accommodation_requirement in NO_ACCOMMODATION:
+            if missing_roomlist or athlete.accommodation_requirement in NO_BOOKABLE_DEMAND:
                 pass  # Missing request evidence and NO_ROOM must not revoke historical decisions.
             elif requests_single and athlete.single_room_quota_exempt_reason:
                 athlete.single_room_entitlement = None

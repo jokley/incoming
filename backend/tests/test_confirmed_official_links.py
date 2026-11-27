@@ -4,10 +4,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from test_import_event_identity import events
-from test_partial_nation_snapshots import owner,upload,rows,compose
+from test_partial_nation_snapshots import owner,upload,rows,compose,shared_fs
 from test_safe_reimport import run,review
 from app import app
-from models import db,Athlete,ImportSessionEvent,ImportSession,EventAccess,ImportApproval
+from models import db,Athlete,ImportSessionEvent,ImportSession,EventAccess,ImportApproval,ImportSessionVersion
 
 pytestmark=[pytest.mark.explicit_event_ownership,pytest.mark.quota_rule_lifecycle]
 
@@ -25,14 +25,14 @@ def confirm(proposal,keys=None):
         'officialLinkAction':'CONFIRM','token':details['token'],'candidateKeys':keys if keys is not None else [p['key'] for p in details['candidates']],'confirmed':True})
 
 
-def paired(owner,first='SB',second='FS',left=None,right=None,import_first=False):
-    a=upload(owner,first,data=left or staff(first))
+def paired(owner,first='SB',second='FS',left=None,right=None,import_first=False,workbooks=None):
+    a=upload(owner,first,data=left or staff(first),workbooks=workbooks)
     if import_first:run(a,owner)
-    proposal=upload(owner,second,data=right or staff(second),expected=422)
+    proposal=upload(owner,second,data=right or staff(second),expected=422,workbooks=workbooks)
     assert proposal['error']=='OFFICIAL_IDENTITY_REVIEW_REQUIRED'
     assert len(proposal['details']['candidates'])==1
     accepted=confirm(proposal);assert accepted.status_code==201,accepted.json
-    return a,upload(owner,second,data=right or staff(second)),proposal
+    return a,upload(owner,second,data=right or staff(second),workbooks=workbooks),proposal
 
 
 @pytest.mark.parametrize('first,second',[('SB','FS'),('FS','SB')])
@@ -74,10 +74,9 @@ def test_explicit_no_room_conflict_is_not_treated_as_missing(owner,first,second)
     _,b,_=paired(owner,first,second,left=data[first],right=data[second])
     combined=compose(b,owner);assert combined.status_code==200
     preview=combined.json['preview']
-    assert len(preview['people'])==1 and not preview['isValid']
-    assert any(e['code']=='IMPORT_SHARED_ACCOMMODATION_CONFLICT' for e in preview['errors'])
-    assert review({'session':combined.json},owner).status_code==409
-    assert Athlete.query.count()==0
+    assert len(preview['people'])==1 and preview['isValid']
+    assert any(e['code']=='IMPORT_SHARED_ACCOMMODATION_UNRESOLVED' for e in preview['warnings'])
+    assert preview['people'][0]['accommodationRequirement'] == 'UNRESOLVED'
 
 
 def test_disjoint_stays_are_flagged_not_stretched_into_a_contiguous_need(owner):
@@ -169,10 +168,11 @@ def aut_files():
     return {'SB':values[:2],'FS':values[2:]}
 
 
-def aut_upload(owner,files):
+def aut_upload(owner,files,*,reuse=False):
     entries,rooms=files
     return app.test_client().post('/api/import/fis/preview',data={'eventId':str(owner.id),'createSession':'true',
-        'entriesList':(io.BytesIO(entries.read_bytes()),entries.name),'roomListDetailed':(io.BytesIO(rooms.read_bytes()),rooms.name)})
+        'entriesList':(io.BytesIO(entries.read_bytes()),entries.name),'roomListDetailed':(io.BytesIO(rooms.read_bytes()),rooms.name),
+        **({'reuseKnownFiles':'true','snapshotScope':'AUTO'} if reuse else {})})
 
 
 @pytest.mark.parametrize('first,second',[('SB','FS'),('FS','SB')])
@@ -253,3 +253,602 @@ def test_missing_room_information_does_not_hide_known_disjoint_source_periods(ow
     joint=compose(b,owner);assert joint.status_code==200
     assert any(e['code']=='IMPORT_SHARED_STAY_SECTIONS' for e in joint.json['preview']['errors'])
     assert review({'session':joint.json},owner).status_code==409
+
+
+def protected_housing_snapshot(person_id):
+    from models import RoomBooking, RoomBookingOccupant
+
+    db.session.expire_all()
+    person = db.session.get(Athlete, person_id)
+    protected_fields = (
+        'event_id', 'arrival_date', 'departure_date', 'room_type', 'shared_with_name',
+        'accommodation_requirement', 'accommodation_requirement_source',
+        'accommodation_rate_category', 'accommodation_rate_source',
+        'accommodation_rate_approval_id', 'single_room_status',
+        'single_room_decision_id', 'single_room_quota_exempt_reason',
+    )
+
+    def table_rows(model):
+        return [tuple(getattr(row, column.key) for column in model.__table__.columns)
+                for row in model.query.order_by(*model.__table__.primary_key).all()]
+    return (tuple(getattr(person, field) for field in protected_fields),
+            table_rows(RoomBooking), table_rows(RoomBookingOccupant))
+
+
+def confirm_with_protected_housing(session, owner, person_id, before):
+    client = app.test_client()
+    sid = session['id']
+    plan = session['preview']['changePlan']
+    assert plan['people']['remove'] == []
+    assert plan['operations']['bookingIds'] == []
+    assert plan['operations']['deleteEmptyBookingIds'] == []
+    assert protected_housing_snapshot(person_id) == before
+
+    approved = review({'session': session}, owner)
+    assert approved.status_code == 200, approved.json
+    assert protected_housing_snapshot(person_id) == before
+
+    imported = client.post(f'/api/import/sessions/{sid}/import?eventId={owner.id}',
+                           json={'versionId': session['currentVersionId']})
+    assert imported.status_code == 200, imported.json
+    assert imported.json['session']['status'] == 'IMPORTED'
+    assert protected_housing_snapshot(person_id) == before
+    assert Athlete.query.count() == 1
+    assert len(db.session.get(Athlete, person_id).competitions) == 2
+
+    detail = client.get(f'/api/athletes/{person_id}')
+    assert detail.status_code == 200, detail.json
+    assert {request['roomType'] for request in detail.json['reportedAccommodationRequests']} == {
+        'Double shared', 'No room',
+    }
+    return detail.json
+
+
+@pytest.mark.parametrize(('already_booked', 'explicit_decision'), [
+    (False, False), (True, False), (True, True),
+])
+def test_italy_official_with_conflicting_room_requirements_imports_without_assignment(
+        owner, already_booked, explicit_decision):
+    from models import ImportSessionVersion, RoomBooking, RoomBookingOccupant
+    from test_safe_reimport import booking
+
+    freestyle = staff('FS', 'Double shared')
+    snowboard = staff('SB', 'No room')
+    for entry in freestyle + snowboard:
+        entry['Nationcode'] = 'ITA'
+    _, draft, _ = paired(owner, 'FS', 'SB', left=freestyle, right=snowboard,
+                         import_first=already_booked)
+    existing = Athlete.query.one() if already_booked else None
+    if existing:
+        if explicit_decision:
+            manual = app.test_client().patch(f'/api/athletes/{existing.id}',
+                                             json={'accommodationRequirement': 'REQUIRED'})
+            assert manual.status_code == 200, manual.json
+        retained = booking([existing])
+        retained.check_in_date = existing.arrival_date
+        retained.check_out_date = existing.departure_date
+        db.session.commit()
+        before = protected_housing_snapshot(existing.id)
+    source_ids = [int(row['versionId']) for row in draft['session']['submissions']]
+    source_json = {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+                   for source_id in source_ids}
+
+    joint = compose(draft, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    person, = preview['people']
+    assert len(person['competitionIds']) == 2
+    assert {int(row['versionId']) for row in person['sourceRows']} == set(source_ids)
+    if existing:
+        assert not preview['errors']
+        assert person['accommodationRequirement'] == 'REQUIRED'
+        assert person.get('sharedWithName') is None
+        detail = confirm_with_protected_housing(joint.json, owner, existing.id, before)
+        if explicit_decision:
+            assert detail['accommodationDecisionLabel'] == 'Abweichung FIS'
+            assert 'Unterkunftsbedarf' in detail['fisAccommodationDeviationReasons']
+        assert RoomBooking.query.one().id == retained.id
+        assert RoomBookingOccupant.query.one().athlete_id == existing.id
+    else:
+        conflict = next(e for e in preview['warnings'] if e['code'] == 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED')
+        assert set(conflict['details']['requirements']) == {'REQUIRED', 'NO_ROOM'}
+        assert person['accommodationRequirement'] == 'UNRESOLVED'
+        run({'session': joint.json}, owner)
+        saved = Athlete.query.one()
+        assert saved.accommodation_requirement == 'UNRESOLVED'
+        assert saved.accommodation_requirement_import_value is None
+        assert saved.room_type is None and saved.shared_with_name is None
+        assert len(saved.competitions) == 2 and RoomBooking.query.count() == 0
+        client = app.test_client()
+        detail = client.get(f'/api/athletes/{saved.id}').json
+        assert detail['accommodationCoverage']['openIntervals'] == []
+        assert detail['workflowStatus'] == 'CONFLICT'
+        from app import _build_room_booking_units
+        units, _ = _build_room_booking_units()
+        assert str(saved.id) not in {p['athleteId'] for u in units for p in u['occupants']}
+        from accommodation_requirements import require_assignable
+        from accommodation_split import SplitError
+        with pytest.raises(SplitError, match='Unterkunftsbedarf offen'):
+            require_assignable(saved)
+        rejected = client.post(f'/api/assignments/persons/{saved.id}/segments', json={
+            'checkInDate': '2027-03-04', 'checkOutDate': '2027-03-22',
+        })
+        assert rejected.status_code == 400
+        assert rejected.json['reasonCode'] == 'UNRESOLVED_ASSIGNMENT_FORBIDDEN'
+        unchanged = client.patch(f'/api/athletes/{saved.id}', json={'accommodationRequirement': None})
+        assert unchanged.status_code == 200 and unchanged.json['accommodationRequirement'] == 'UNRESOLVED'
+        change = client.patch(f'/api/athletes/{saved.id}', json={'accommodationRequirement': 'REQUIRED'})
+        assert change.status_code == 200, change.json
+        assert change.json['accommodationCoverage']['openIntervals']
+    assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+            for source_id in source_ids} == source_json
+
+
+def test_unresolved_athlete_remains_reported_without_operational_demand(owner):
+    snowboard = rows('SB')[:1]
+    freestyle = shared_fs()[:1]
+    snowboard[0]['Room_type'] = 'No room'
+    upload(owner, 'FS', freestyle)
+    draft = upload(owner, 'SB', snowboard)
+    joint = compose(draft, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert preview['people'][0]['accommodationRequirement'] == 'UNRESOLVED'
+    assert {r['topLevelDiscipline']: r['athleteQuotaUsed'] for r in preview['athleteQuotaChecks']} == {
+        'Freestyle': 1, 'Snowboard': 1,
+    }
+    run({'session': joint.json}, owner)
+    athlete = Athlete.query.one()
+    client = app.test_client()
+    planning = client.get('/api/athletes/arrival-planning').json
+    assert planning['reportedCount'] == 1
+    area, = planning['rows']
+    assert [p['personId'] for p in area['people']] == [str(athlete.id)]
+    assert area['selectedPersonIds'] == []
+    quotas = client.get('/api/official-quotas?nationCode=ARG&includeOperational=true').json
+    assert quotas['rows'] and all(r['athletesEntered'] == 1 for r in quotas['rows'])
+    assert quotas['operationalQuota']['rows']
+    for row in quotas['operationalQuota']['rows']:
+        assert row['expectedAthletes'] == 0
+        assert row['singleRoomsRequested'] == row['singleRoomsUsed'] == 0
+    assert client.get(f'/api/athletes/{athlete.id}').json['accommodationCoverage']['openIntervals'] == []
+
+
+@pytest.mark.parametrize('manual_requirement', ['REQUIRED', 'NO_ROOM', 'NO_DISPO', None])
+def test_identical_shared_reimport_preserves_explicit_accommodation_decision(owner, manual_requirement):
+    from models import ImportSessionVersion
+
+    freestyle = staff('FS', 'Double shared')
+    snowboard = staff('SB', 'No room')
+    workbooks = {}
+    _, draft, _ = paired(owner, 'FS', 'SB', left=freestyle, right=snowboard, workbooks=workbooks)
+    source_ids = [int(row['versionId']) for row in draft['session']['submissions']]
+    source_json = {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+                   for source_id in source_ids}
+    joint = compose(draft, owner)
+    run({'session': joint.json}, owner)
+    athlete = Athlete.query.one()
+    assert athlete.accommodation_requirement == 'UNRESOLVED'
+    original_id = athlete.id
+    memberships = {comp.id for comp in athlete.competitions}
+    if manual_requirement is not None:
+        changed = app.test_client().patch(
+            f'/api/athletes/{original_id}', json={'accommodationRequirement': manual_requirement})
+        assert changed.status_code == 200, changed.json
+        assert changed.json['accommodationRequirement'] == manual_requirement
+        assert changed.json['accommodationRequirementSource'] == 'MANUAL'
+
+    same = upload(owner, 'SB', snowboard, workbooks=workbooks)
+    assert same['knownFiles']
+    joint = compose(same, owner)
+    assert joint.status_code == 200, joint.json
+    person, = joint.json['preview']['people']
+    assert person['accommodationRequirement'] == (manual_requirement or 'UNRESOLVED')
+    if manual_requirement is None:
+        assert person['accommodationRequirementReviewRequired']
+        assert person['roomType'] is None
+    run({'session': joint.json}, owner)
+    retained = Athlete.query.one()
+    assert retained.id == original_id
+    assert retained.accommodation_requirement == (manual_requirement or 'UNRESOLVED')
+    assert retained.accommodation_requirement_source == ('MANUAL' if manual_requirement else 'IMPORT')
+    assert {comp.id for comp in retained.competitions} == memberships
+    assert {source_id: db.session.get(ImportSessionVersion, source_id).preview_json
+            for source_id in source_ids} == source_json
+
+    if manual_requirement != 'REQUIRED':
+        return
+    # A new source revision may retain protected live housing while preserving
+    # both contradictory source wishes for the existing FIS deviation view.
+    changed_source = upload(owner, 'SB', [{**snowboard[0], 'Lastupdate': '02.11.2026 12:00'}])
+    changed_joint = compose(changed_source, owner)
+    assert changed_joint.status_code == 200, changed_joint.json
+    assert not changed_joint.json['preview']['errors']
+    run({'session': changed_joint.json}, owner)
+    retained = Athlete.query.one()
+    assert retained.id == original_id
+    assert (retained.accommodation_requirement, retained.accommodation_requirement_source) == ('REQUIRED', 'MANUAL')
+
+    from models import RoomBooking, RoomBookingOccupant
+    from test_safe_reimport import booking
+    booking_id = booking([retained]).id
+    same_again = upload(owner, 'SB', snowboard, workbooks=workbooks)
+    booked_joint = compose(same_again, owner)
+    assert booked_joint.status_code == 200, booked_joint.json
+    assert not booked_joint.json['preview']['errors']
+    run({'session': booked_joint.json}, owner)
+    assert RoomBooking.query.one().id == booking_id
+    assert RoomBookingOccupant.query.one().athlete_id == original_id
+    assert Athlete.query.one().accommodation_requirement == 'REQUIRED'
+
+
+def test_changed_source_retains_booked_manual_person_and_defers_source_partner(owner):
+    from models import RoomBooking, RoomBookingOccupant
+    from test_safe_reimport import booking
+
+    def pair(part, room_type, revision=None):
+        people = []
+        for index, (firstname, staff_id, fis_code) in enumerate((
+                ('Protected', 'protected', '9901001'), ('Dependent', 'dependent', '9901002'))):
+            person = rows(part)[index]
+            person.update(Firstname=firstname, Lastname='Official', Nationcode='ITA', Function='NSA Coach',
+                Fiscode=fis_code, Room_type=room_type, Arrival_date='13.03.2027', Departure_date='22.03.2027')
+            person['Competitorid/Staff ID'] = staff_id
+            if revision:
+                person['Lastupdate'] = revision
+            people.append(person)
+        room = [] if room_type == 'No room' else [dict(Firstname='Protected', Lastname='Official', Nationcode='ITA',
+            Room_type='Double shared', Arrival_date='13.03.2027', Departure_date='22.03.2027',
+            **{'Shared with Name': 'Official, Dependent'})]
+        return people, room
+
+    fs_people, fs_room = pair('FS', 'Double shared')
+    sb_people, sb_room = pair('SB', 'No room')
+    upload(owner, 'FS', data=fs_people, room_data=fs_room)
+    sb = upload(owner, 'SB', data=sb_people, room_data=sb_room)
+    initial = compose(sb, owner)
+    assert initial.status_code == 200, initial.json
+    assert len([i for i in initial.json['preview']['warnings']
+                if i['code'] == 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED']) == 2
+    run({'session': initial.json}, owner)
+
+    protected = Athlete.query.filter_by(competitor_id='protected').one()
+    dependent = Athlete.query.filter_by(competitor_id='dependent').one()
+    protected.accommodation_requirement = 'REQUIRED'
+    protected.accommodation_requirement_source = 'MANUAL'
+    db.session.commit()
+    booking_id = booking([protected]).id
+
+    changed_people, changed_room = pair('FS', 'Double shared', '02.11.2026 12:00')
+    changed = upload(owner, 'FS', data=changed_people, room_data=changed_room)
+    joint = compose(changed, owner)
+    assert joint.status_code == 200, joint.json
+    assert not joint.json['preview']['errors']
+    warning_keys = {i['details']['personKey'] for i in joint.json['preview']['warnings']
+                    if i['code'] == 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED'}
+    dependent_key = next(p['matchKey'] for p in joint.json['preview']['people']
+                         if p['competitorId'] == 'dependent')
+    assert warning_keys == {dependent_key}
+    run({'session': joint.json}, owner)
+
+    db.session.expire_all()
+    assert RoomBooking.query.one().id == booking_id
+    assert RoomBookingOccupant.query.one().athlete_id == protected.id
+    assert (protected.accommodation_requirement, protected.accommodation_requirement_source) == ('REQUIRED', 'MANUAL')
+    assert dependent.accommodation_requirement == 'UNRESOLVED'
+    assert dependent.shared_with_name is None
+
+
+def test_ita_originals_import_shared_requests_as_source_evidence(owner):
+    from app import _build_room_booking_units
+    from models import ImportSessionVersion, RoomBooking
+
+    files = {}
+    for part in ('FS', 'SB'):
+        pair = [os.environ.get(f'ITA_{part}_{suffix}') for suffix in ('ENTRIES', 'ROOMS')]
+        if not all(path and Path(path).is_file() for path in pair):
+            pytest.skip('ITA originals supplied via ITA_SB/FS_ENTRIES/ROOMS')
+        files[part] = tuple(map(Path, pair))
+
+    first = aut_upload(owner, files['FS'])
+    assert first.status_code == 200, first.json
+    proposal = aut_upload(owner, files['SB'])
+    assert proposal.status_code == 422, proposal.json
+    assert len(proposal.json['details']['candidates']) == 5
+    assert confirm(proposal.json).status_code == 201
+    second = aut_upload(owner, files['SB'])
+    assert second.status_code == 200, second.json
+    assert review(second.json, owner).status_code == 409
+    source_ids = [int(row['versionId']) for row in second.json['session']['submissions']]
+    sources_before = {i: db.session.get(ImportSessionVersion, i).preview_json for i in source_ids}
+    joint = compose(second.json, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert preview['errors'] == []
+    quotas = lambda data: {row['topLevelDiscipline']: row['athleteQuotaUsed'] for row in data['athleteQuotaChecks']}
+    assert quotas(preview) == {**quotas(first.json), **quotas(second.json)}
+    assert len(preview['people']) == 69
+    assert sum(p['function'].lower() == 'athlete' for p in preview['people']) == 35
+    assert sum(p['accommodationRequirement'] == 'UNRESOLVED' for p in preview['people']) == 5
+    assert len([r for r in preview['rooms'] if r.get('sourceOnlyPartner')]) == 3
+    client = app.test_client()
+    target = next(p for p in preview['people'] if p['lastname'] == 'PALA')
+    url = f"/api/import/sessions/{joint.json['id']}/accommodation-requirements/{target['matchKey']}"
+    excluded = client.patch(url, json={'accommodationRequirement': 'NO_DISPO'})
+    assert excluded.status_code == 200, excluded.json
+    staged = next(p for p in excluded.json['preview']['people'] if p['matchKey'] == target['matchKey'])
+    assert staged['accommodationRequirement'] == 'NO_DISPO'
+    assert staged['fisAccommodationDeviationReasons'] == ['No Dispo']
+    # The PATCH response uses its prepared plan. Independent readers still
+    # resolve the current state, and must get the same reviewed values.
+    independent = client.get(f"/api/import/sessions/{joint.json['id']}?eventId={owner.id}")
+    assert independent.status_code == 200, independent.json
+    for field in ('people', 'rooms', 'changePlan', 'planStale'):
+        assert excluded.json['preview'][field] == independent.json['preview'][field]
+    assert excluded.json['preview']['planStale'] is False
+    rechecked = compose(second.json, owner)
+    assert rechecked.status_code == 200, rechecked.json
+    assert next(p for p in rechecked.json['preview']['people'] if p['matchKey'] == target['matchKey'])['accommodationRequirement'] == 'NO_DISPO'
+    restored = client.patch(url, json={'accommodationRequirement': None})
+    assert restored.status_code == 200, restored.json
+    assert next(p for p in restored.json['preview']['people'] if p['matchKey'] == target['matchKey'])['accommodationRequirement'] == 'UNRESOLVED'
+    athlete_to_exclude = next(p for p in restored.json['preview']['people'] if p['function'].lower() == 'athlete')
+    athlete_path = f"/api/import/sessions/{joint.json['id']}/accommodation-requirements/{athlete_to_exclude['matchKey']}"
+    joint = client.patch(athlete_path, json={'accommodationRequirement': 'NO_DISPO'})
+    assert joint.status_code == 200, joint.json
+    assert quotas(joint.json['preview']) == quotas(preview)
+    memberships = {p['matchKey']: set(map(str, p['competitionIds'])) for p in preview['people']}
+    run({'session': joint.json}, owner)
+
+    people = Athlete.query.all()
+    assert len(people) == 69
+    assert {p.fis_code or p.competitor_id: {str(c.id) for c in p.competitions} for p in people} == memberships
+    unresolved = {str(p.id) for p in people if p.accommodation_requirement == 'UNRESOLVED'}
+    excluded_athlete = Athlete.query.filter_by(fis_code=athlete_to_exclude['fisCode']).one()
+    assert excluded_athlete.accommodation_requirement == 'NO_DISPO'
+    assert excluded_athlete.accommodation_requirement_source == 'MANUAL'
+    assert len(unresolved) == 5
+    klotz = Athlete.query.filter_by(lastname='KLOTZ', firstname='Siegmar').one()
+    pala = Athlete.query.filter_by(lastname='PALA', firstname='Bartolomeo').one()
+    assert klotz.accommodation_requirement == 'REQUIRED'
+    assert klotz.shared_with_name is None
+    client = app.test_client()
+    detail = client.get(f'/api/athletes/{pala.id}').json
+    assert len(detail['reportedAccommodationRequests']) == 2
+    assert {r['partner'] for r in detail['reportedAccommodationRequests'] if r['partner']} == {'KLOTZ, Siegmar'}
+    assert not detail['accommodationCoverage']['openIntervals']
+    units, _ = _build_room_booking_units()
+    occupants = [{p['athleteId'] for p in u['occupants']} for u in units]
+    assert {str(klotz.id)} in occupants
+    assert not any(group & unresolved for group in occupants)
+    assert RoomBooking.query.count() == 0
+
+    def repeat_original():
+        again = aut_upload(owner, files['SB'])
+        assert again.status_code == 200, again.json
+        recomposed = compose(again.json, owner)
+        assert recomposed.status_code == 200, recomposed.json
+        assert recomposed.json['preview']['errors'] == []
+        assert len([r for r in recomposed.json['preview']['rooms'] if r.get('sourceOnlyPartner')]) == 3
+        run({'session': recomposed.json}, owner)
+
+    repeat_original()
+    assert excluded_athlete.accommodation_requirement == 'NO_DISPO'
+    assert excluded_athlete.accommodation_requirement_source == 'MANUAL'
+    assert pala.accommodation_requirement == 'UNRESOLVED'
+    for value in ('REQUIRED', 'NO_ROOM', 'NO_DISPO'):
+        edited = client.patch(f'/api/athletes/{pala.id}', json={'accommodationRequirement': value})
+        assert edited.status_code == 200, edited.json
+        repeat_original()
+        assert pala.accommodation_requirement == value
+        assert pala.accommodation_requirement_source == 'MANUAL'
+        units, _ = _build_room_booking_units()
+        assert not any({str(pala.id), str(klotz.id)} <= {p['athleteId'] for p in u['occupants']} for u in units)
+
+    patch_url = f'/api/athletes/{pala.id}'
+    departure = pala.departure_date
+    selected = client.patch(patch_url, json={
+        'accommodationRequirement': 'REQUIRED', 'roomType': 'Double shared', 'sharedWithName': 'KLOTZ, Siegmar',
+    })
+    assert selected.status_code == 200, selected.json
+    assert selected.json['accommodationDecisionLabel'] == 'Abweichung FIS'
+    assert pala.departure_date == departure
+    assert client.patch(patch_url, json={'returnToFis': True}).status_code == 409
+    repeat_original()
+    assert (pala.accommodation_requirement, pala.room_type, pala.shared_with_name) == ('REQUIRED', 'Double shared', 'KLOTZ, Siegmar')
+    assert next(row for row in client.get('/api/athletes').json if row['id'] == str(pala.id))['accommodationDecisionLabel'] == 'Abweichung FIS'
+    no_dispo = client.patch(patch_url, json={'accommodationRequirement': 'NO_DISPO'})
+    assert no_dispo.status_code == 200
+    assert no_dispo.json['accommodationDecisionLabel'] == 'Nicht disponieren'
+    assert no_dispo.json['hasFisAccommodationDeviation'] is True
+    listed = next(row for row in client.get('/api/athletes').json if row['id'] == str(pala.id))
+    assert listed['accommodationDecisionLabel'] == 'Nicht disponieren'
+    assert listed['hasFisAccommodationDeviation'] is True
+    assert client.patch(patch_url, json={'accommodationRequirement': 'REQUIRED'}).status_code == 200
+    assert pala.shared_with_name == 'KLOTZ, Siegmar'
+
+    regular_url = f'/api/athletes/{klotz.id}'
+    confirmed_wish = client.patch(regular_url, json={
+        'accommodationRequirement': 'REQUIRED', 'roomType': 'Double shared', 'sharedWithName': 'PALA, Bartolomeo',
+    })
+    assert confirmed_wish.status_code == 200, confirmed_wish.json
+    assert confirmed_wish.json['accommodationDecisionLabel'] == 'FIS-Meldung bestätigt'
+    assert confirmed_wish.json['hasFisAccommodationDeviation'] is False
+    assert client.patch(regular_url, json={'returnToFis': True}).json['accommodationDecisionLabel'] == 'FIS-Meldung'
+
+    # A changed partner date in the Room List cannot inherit clearance from the prior snapshot.
+    changed_rooms = io.BytesIO()
+    source = pd.read_excel(files['SB'][1])
+    source.loc[source['Lastname'] == 'THIEBAT', 'Shared with\nDeparture_date'] = '14.03.2027'
+    source.to_excel(changed_rooms, index=False, sheet_name='Data')
+    changed_rooms.seek(0)
+    changed = client.post('/api/import/fis/preview', data={
+        'eventId': str(owner.id), 'createSession': 'true',
+        'entriesList': (io.BytesIO(files['SB'][0].read_bytes()), files['SB'][0].name),
+        'roomListDetailed': (changed_rooms, files['SB'][1].name),
+        'reuseKnownFiles': 'true', 'snapshotScope': 'AUTO',
+    })
+    assert changed.status_code == 200, changed.json
+    assert not changed.json.get('reusedKnownFiles')
+    changed_joint = compose(changed.json, owner)
+    assert changed_joint.status_code == 200, changed_joint.json
+    assert review({'session': changed_joint.json}, owner).status_code == 409
+
+    from test_safe_reimport import booking
+    booking_id = booking([klotz]).id
+    assert client.patch(regular_url, json={'roomType': 'Single'}).status_code == 409
+    assert klotz.room_type == 'Double shared'
+    same = aut_upload(owner, files['SB'])
+    restored = compose(same.json, owner)
+    assert restored.status_code == 200, restored.json
+    assert not restored.json['preview']['errors']
+    run({'session': restored.json}, owner)
+    assert RoomBooking.query.one().id == booking_id
+    booked_no_dispo = client.patch(regular_url, json={'accommodationRequirement': 'NO_DISPO'})
+    assert booked_no_dispo.status_code == 200
+    assert booked_no_dispo.json['accommodationCoverage']['segments']
+    grouped = client.get('/api/room-bookings/grouped')
+    assert grouped.status_code == 200
+    occupant, = grouped.json[0]['occupants']
+    assert occupant['athlete']['fisAccommodationDeviationReasons'] == ['No Dispo']
+    from test_import_performance import sql_count
+    from routes.athletes import fis_accommodation_decisions
+    # Measure the projection with loaded people, as on the production read paths.
+    loaded = Athlete.query.filter(Athlete.id.in_([klotz.id, pala.id, excluded_athlete.id])).all()
+    with sql_count() as queries:
+        single = fis_accommodation_decisions([klotz])
+    with sql_count() as many_queries:
+        multiple = fis_accommodation_decisions(loaded)
+    assert single[klotz.id] == multiple[klotz.id]
+    assert len(queries) == len(many_queries) <= 2
+
+    assert RoomBooking.query.one().id == booking_id
+
+    assert {i: db.session.get(ImportSessionVersion, i).preview_json for i in source_ids} == sources_before
+
+def test_no_dispo_without_comparable_fis_source_is_not_a_deviation():
+    from types import SimpleNamespace
+    from routes.athletes import add_accommodation_decision
+
+    athlete = SimpleNamespace(accommodation_requirement='NO_DISPO', accommodation_requirement_source='MANUAL',
+                              room_type=None, shared_with_name=None)
+    for requests in ([], [{'roomType': 'keine Angabe', 'partner': None}]):
+        result = {}
+        add_accommodation_decision(result, athlete, requests)
+        assert result == {'accommodationDecisionLabel': 'Nicht disponieren', 'hasFisAccommodationDeviation': False}
+
+    athlete.accommodation_requirement = 'REQUIRED'
+    athlete.room_type = 'Double shared'
+    athlete.shared_with_name = 'Current Partner'
+    request = {'roomType': 'Double shared', 'partner': None}
+    result = {}
+    add_accommodation_decision(result, athlete, [request])
+    assert result['hasFisAccommodationDeviation'] is False
+    assert 'matchesDecision' not in request
+
+    add_accommodation_decision(result, athlete, [{'roomType': 'Single', 'partner': 'Reported Partner'}])
+    assert result['fisAccommodationDeviationReasons'] == ['Zimmerpartner', 'Zimmertyp']
+
+
+@pytest.mark.parametrize('first,second', [('SB', 'FS'), ('FS', 'SB')])
+def test_ita_originals_after_one_sport_was_imported(owner, first, second):
+    files = {}
+    for part in ('FS', 'SB'):
+        pair = [os.environ.get(f'ITA_{part}_{suffix}') for suffix in ('ENTRIES', 'ROOMS')]
+        if not all(path and Path(path).is_file() for path in pair):
+            pytest.skip('ITA originals supplied via ITA_SB/FS_ENTRIES/ROOMS')
+        files[part] = tuple(map(Path, pair))
+
+    initial = aut_upload(owner, files[first])
+    assert initial.status_code == 200, initial.json
+    run(initial.json, owner)
+    original_ids = {p.id for p in Athlete.query.all()}
+    upload_second = aut_upload(owner, files[second])
+    assert upload_second.status_code == 422, upload_second.json
+    assert len(upload_second.json['details']['candidates']) == 5
+    assert confirm(upload_second.json).status_code == 201
+    next_source = aut_upload(owner, files[second])
+    assert next_source.status_code == 200, next_source.json
+    duplicate = aut_upload(owner, files[second], reuse=True)
+    assert duplicate.status_code == 200 and duplicate.json["reusedKnownFiles"]
+    assert not duplicate.json["alreadyImported"]
+    assert duplicate.json["session"]["currentVersionId"] == next_source.json["session"]["currentVersionId"]
+    joint = compose(next_source.json, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert not preview['errors'], [e['code'] for e in preview['errors']]
+    assert len(preview['people']) == 69
+    assert sum(p['accommodationRequirement'] == 'UNRESOLVED' for p in preview['people']) == 5
+    run({'session': joint.json}, owner)
+    people = Athlete.query.all()
+    assert len(people) == 69 and original_ids <= {p.id for p in people}
+    assert sum(p.accommodation_requirement == 'UNRESOLVED' for p in people) == 5
+    version_count = ImportSessionVersion.query.count()
+    for part in (first, second):
+        duplicate = aut_upload(owner, files[part], reuse=True)
+        assert duplicate.status_code == 200, duplicate.json
+        assert duplicate.json["reusedKnownFiles"] and duplicate.json["alreadyImported"]
+        assert not duplicate.json["knownFilesRequiresReview"]
+        assert ImportSessionVersion.query.count() == version_count
+    # Same bytes after a change to the existing review context still require review.
+    owner.name = 'Isolation fixture with updated event context'
+    db.session.commit()
+    duplicate = aut_upload(owner, files[first], reuse=True)
+    assert duplicate.status_code == 200, duplicate.json
+    assert duplicate.json["reusedKnownFiles"] and duplicate.json["knownFilesRequiresReview"]
+    assert not duplicate.json["alreadyImported"]
+    assert ImportSessionVersion.query.count() == version_count
+
+@pytest.mark.parametrize('booked', [False, True])
+def test_partial_import_protects_manual_requirement(owner, booked):
+    from test_safe_reimport import booking
+    from app import _build_room_booking_units
+
+    _, draft, _ = paired(owner, 'FS', 'SB', left=staff('FS', 'Double shared'),
+                         right=staff('SB', 'No room'), import_first=True)
+    person = Athlete.query.one()
+    person_id = person.id
+    booking_id = booking([person]).id if booked else None
+    manual = app.test_client().patch(f'/api/athletes/{person_id}', json={'accommodationRequirement': 'NO_DISPO'})
+    assert manual.status_code == 200, manual.json
+    before = protected_housing_snapshot(person_id)
+    joint = compose(draft, owner)
+    assert joint.status_code == 200, joint.json
+    preview = joint.json['preview']
+    assert not preview['errors']
+    assert preview['people'][0]['accommodationRequirement'] == 'NO_DISPO'
+
+    detail = confirm_with_protected_housing(joint.json, owner, person_id, before)
+    assert detail['accommodationRequirement'] == 'NO_DISPO'
+    assert detail['accommodationRequirementSource'] == 'MANUAL'
+    assert 'No Dispo' in detail['fisAccommodationDeviationReasons']
+    assert detail['accommodationCoverage']['openIntervals'] == []
+    assert {segment['bookingId'] for segment in detail['accommodationCoverage']['segments']} == (
+        {str(booking_id)} if booked else set())
+    units, _ = _build_room_booking_units()
+    assert str(person_id) not in {p['athleteId'] for unit in units for p in unit['occupants']}
+
+
+def test_joint_import_blocks_changed_protected_stay(owner):
+    from test_safe_reimport import booking
+
+    _, draft, _ = paired(owner, 'FS', 'SB', left=staff('FS', 'Double shared'),
+                         right=staff('SB', 'No room', departure='23.03.2027'), import_first=True)
+    person = Athlete.query.one()
+    person_id = person.id
+    booking([person])
+    before = protected_housing_snapshot(person_id)
+
+    corrected = upload(owner, 'FS', data=staff('FS', 'Double shared', departure='23.03.2027'))
+    assert corrected['session']['id'] == draft['session']['id']
+    joint = compose(corrected, owner)
+    assert joint.status_code == 200, joint.json
+    assert any(error['code'] == 'IMPORT_SHARED_ACCOMMODATION_CONFLICT'
+               for error in joint.json['preview']['errors'])
+    assert review({'session': joint.json}, owner).status_code == 409
+    sid = joint.json['id']
+    response = app.test_client().post(f'/api/import/sessions/{sid}/import?eventId={owner.id}',
+                                      json={'versionId': joint.json['currentVersionId']})
+    assert response.status_code == 409
+    assert protected_housing_snapshot(person_id) == before
+    assert len(db.session.get(Athlete, person_id).competitions) == 1

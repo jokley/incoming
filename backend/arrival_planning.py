@@ -7,7 +7,7 @@ from collections import defaultdict
 import hashlib
 import json
 
-from accommodation_requirements import NO_ACCOMMODATION
+from accommodation_requirements import NO_BOOKABLE_DEMAND
 from accommodation_scope import accommodation_event_id, event_query
 from competitions import quota_disciplines, competition_athlete_family
 from imports.normalization import canonical_fis_code
@@ -117,7 +117,7 @@ def provisional_selection(people, event, entry_rows, booked):
     result = {}
     booked_ids = {str(identity) for identity in booked}
     for key, ids in groups.items():
-        skipped = {identity for identity in ids if by_id[identity].accommodation_requirement == 'NO_DISPO'}
+        skipped = {identity for identity in ids if by_id[identity].accommodation_requirement in {'NO_DISPO', 'UNRESOLVED'}}
         eligible_ids = set(ids) - skipped
         retained = eligible_ids & booked_ids
         limit=athlete_housing_limit(json.loads(event.quota_rules_json or '{}'),key[1])
@@ -288,7 +288,7 @@ def import_projection(session, preview, control, *, live=False, read_context=Non
                 gender=person.gender,quotaDisciplines=quota_disciplines(person.competitions),accommodationRequirement=person.accommodation_requirement,singleRoomQuotaExemptReason=person.single_room_quota_exempt_reason)
             roster.append(record)
             groups=projected_approval_groups(person.single_room_decision,person,roster=context.athletes)
-            demands.append(dict(record,countsAsSingle=any(m.room_booking.effective_counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_ACCOMMODATION and str(person.room_type or '').strip().lower()=='single'),
+            demands.append(dict(record,countsAsSingle=any(m.room_booking.effective_counts_as_single for m in person.room_booking_memberships) or (person.accommodation_requirement not in NO_BOOKABLE_DEMAND and str(person.room_type or '').strip().lower()=='single'),
                 singleRoomStatus=person.single_room_status,approvedQuotaContexts=[dict(nationCode=n,discipline=d,gender=g) for n,d,g in groups]))
     else:
         allocations={item['personKey']:item for check in preview.get('quotaChecks',[]) for item in check.get('singleRoomAllocations',[])}
@@ -319,7 +319,7 @@ def operational_quota_projection(overview, roster, demands, rules, *, event=None
     errors=quota_gender_errors(roster)
     if errors:return dict(rows=[],conflict=True,reasons=[e['message'] for e in errors])
     excluded={i for row in overview['rows'] for i in row['replacedPersonIds']}
-    demands=[p for p in demands if p.get('accommodationRequirement') != 'NO_DISPO' and str(p.get('existingAthleteId') or p.get('personId') or 'preview:'+str(p.get('matchKey'))) not in excluded]
+    demands=[p for p in demands if p.get('accommodationRequirement') not in {'NO_DISPO', 'UNRESOLVED'} and str(p.get('existingAthleteId') or p.get('personId') or 'preview:'+str(p.get('matchKey'))) not in excluded]
     bases=operational_athlete_basis(overview)
     official=evaluate_quota_usage(roster,demands,rules)
     operative=evaluate_quota_usage(roster,demands,rules,operational_athletes=bases,include_unallocated=True,include_allocations=True)

@@ -3,6 +3,7 @@ import json
 from copy import deepcopy
 from datetime import date, datetime
 from models import db, ImportSessionVersion
+from accommodation_requirements import REQUIREMENTS, can_defer_imported_requirement
 from .event_context import ImportValidationError, validate_session_event
 from .read_context import ImportReadContext
 from .change_plan import build_plan, verify_plan, encoded
@@ -138,7 +139,7 @@ def import_queue_rows(event_id, decision_id=None):
     return result
 
 
-def merge_submission_previews(versions, *, consistency_only=False, read_context=None, read_only=False):
+def merge_submission_previews(versions, *, consistency_only=False, read_context=None, read_only=False, allow_unresolved=None):
     """Compose parsed sources; reuse the existing exact identity matcher.
 
     No live writes, quota decisions or date/room guessing happen here. Source
@@ -146,13 +147,13 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     """
     from types import SimpleNamespace
     from .identity import _build_existing_athlete_maps, _find_existing_athlete
-    from .normalization import normalize_string
+    from .normalization import normalize_string, parse_date
     from quota_service import normalize_gender
     from .change_plan import digest
     if not versions:
         raise ImportValidationError('IMPORT_REVIEW_REQUIRED', 'Mindestens eine aktuelle Teilmeldung auswählen.')
     sources = [(v, load_version_preview(v)) for v in sorted(versions,key=lambda v:(json.loads(v.preview_json).get('replacementScope',{}).get('family',''),v.id))]
-    from excel_import import apply_preview_rates, apply_preview_requirements, apply_single_room_quota_exemptions
+    from excel_import import apply_preview_rates, apply_preview_requirements, apply_single_room_quota_exemptions, _match_room_partner
     context=read_context or ImportReadContext(versions[0].session.event_id)
     if context.event_id!=versions[0].session.event_id:
         raise ImportValidationError('IMPORT_EVENT_MISMATCH','Fremder Kontext für die Teilmeldungen.')
@@ -166,19 +167,103 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
             issue_proposal(version.session,candidates)
     sources=[(v,source_view(s,(s.get('replacementScope') or {}).get('family'),context)) for v,s in sources]
     shared_issues=[]
+    unresolved_warnings=[]
+    allow_unresolved = not consistency_only if allow_unresolved is None else allow_unresolved
     imported=imported_submission_ids(versions[0].session)
+    prior_unresolved_keys = None
+
+    def unchanged_unresolved_keys():
+        # Only a previously imported joint snapshot can establish that these
+        # exact files carried the same exception for this person.
+        by_id = {v.id: v for v in versions_after_archive(versions[0].session)}
+        current_hashes = {v.source_hash for v, _ in sources}
+        if None in current_hashes or len(current_hashes) != len(sources):
+            return set()
+        keys = set()
+        for version_id in sorted(imported & by_id.keys(), reverse=True):
+            facts = json.loads(by_id[version_id].preview_json or '{}')
+            if (facts.get('_workflow') or {}).get('state') != 'IMPORTED':
+                continue
+            source_ids = list((facts.get('submissionSources') or {}).values())
+            if (len(source_ids) != len(sources) or any(i not in by_id for i in source_ids)
+                    or {by_id[i].source_hash for i in source_ids} != current_hashes):
+                break
+            keys.update(p['matchKey'] for p in facts.get('people', []) if p.get('unresolvedSourceAccommodation'))
+            if keys:
+                break
+        return keys
+
+    def protected_accommodation(existing, start, end):
+        """True when this review can retain, but must not rewrite, live housing."""
+        return bool(existing and existing.arrival_date == start and existing.departure_date == end and (
+            existing.accommodation_requirement_source == 'MANUAL'
+            or existing.room_booking_memberships
+            or existing.single_room_decision_id
+            or existing.accommodation_rate_approval_id
+            or existing.accommodation_rate_source == 'MANUAL'
+            or existing.single_room_status == 'APPROVED_EXTRA'
+            or existing.single_room_quota_exempt_reason
+        ))
+
+    def compatible_partner(person, source, start, end, *, identical=False, importing_remaining=False):
+        key = person['matchKey']
+        rooms = [r for r in source.get('rooms', []) if key in (r.get('person1Key'), r.get('person2Key'))]
+        if any(parse_date(r.get('checkInDate')) != start or parse_date(r.get('checkOutDate')) != end for r in rooms):
+            return False
+        paired = [r for r in rooms if r.get('person2Key') or r.get('sharedWithRawName')]
+        if not paired:
+            return not person.get('sharedWithName')
+        if len(rooms) != 1 or normalize_string(person.get('roomType')) != 'double shared':
+            return False
+        room = paired[0]
+        if (normalize_string(room.get('roomType')) != 'double shared'
+                or any(room.get(field) and parse_date(room[field]) != expected
+                       for field, expected in (('sharedArrivalSource', start), ('sharedDepartureSource', end)))):
+            return False
+        members = [next((p for p in source['people'] if p['matchKey'] == room.get(field)), None)
+                   for field in ('person1Key', 'person2Key')]
+        if (not all(members) or members[0]['matchKey'] == members[1]['matchKey']
+                or _match_room_partner(room.get('sharedWithRawName'), person['nationCode'], source['people']) is not members[1]):
+            return False
+        for member, other in (members, members[::-1]):
+            evidence = member.get('entryAccommodationSource') or member
+            named = evidence.get('sharedWithName')
+            if (member['nationCode'] != person['nationCode']
+                    or not (member.get('fisCode') or member.get('competitorId'))
+                    or parse_date(member.get('arrivalDate')) != start or parse_date(member.get('departureDate')) != end
+                    or normalize_string(evidence.get('roomType')) != 'double shared'
+                    or (named and _match_room_partner(named, person['nationCode'], source['people']) is not other)
+                    or member['matchKey'] in source.get('accommodationRequirementOverrides', {})
+                    or any(r is not room and member['matchKey'] in (r.get('person1Key'), r.get('person2Key')) for r in source['rooms'])):
+                return False
+            existing = _find_existing_athlete(member, context.athlete_maps)
+            if existing and not (
+                    (identical and not existing.room_booking_memberships and not existing.single_room_decision_id
+                     and not existing.accommodation_rate_approval_id)
+                    or (importing_remaining and member['matchKey'] in imported_keys and can_defer_imported_requirement(existing))
+                    or protected_accommodation(existing, start, end)):
+                return False
+        return True
+
     def project_source(people,version,source):
         if version.id in imported:
             source.pop('accommodationRateOverrides',None)
             source.pop('accommodationRequirementOverrides',None)
         imported_source=version.id in imported
         apply_preview_rates(people,None if imported_source else source.get('accommodationRateOverrides'),read_context=context)
+        original_rooms = [(evidence.get('roomType'), evidence.get('sharedWithName'))
+                          for p in people for evidence in (p.get('entryAccommodationSource') or p,)]
         apply_preview_requirements(people,source['rooms'],None if imported_source else source.get('accommodationRequirementOverrides'),read_context=context)
+        for p, (room_type, partner_name) in zip(people, original_rooms):
+            if p['accommodationRequirement'] == 'UNRESOLVED':
+                p.update(roomType=room_type, sharedWithName=partner_name)
         apply_single_room_quota_exemptions(people,event_id=context.event_id,read_context=context)
     if not consistency_only:
         for version,source in sources:project_source(source['people'],version,source)
+    imported_keys = {p['matchKey'] for version, source in sources if version.id in imported for p in source['people']}
     result = deepcopy(sources[0][1])
     people, rooms, aliases, records, partner_checks = [], [], {}, [], []
+    source_only_keys = set()
     critical = ('firstname','lastname','nationCode','gender','function','arrivalDate','departureDate',
                 'roomType','accommodationRequirement','accommodationRateCategory','singleRoomQuotaExemptReason')
     def comparable(person, field):
@@ -206,13 +291,77 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
                 if left and right and left!=right and 'accommodationRequirement' not in conflicts:conflicts.append('accommodationRequirement')
                 linked=target.get('confirmedOfficialLinkId') or incoming.get('confirmedOfficialLinkId')
                 housing={'roomType','accommodationRequirement','arrivalDate','departureDate'}
-                if conflicts and linked and set(conflicts)<=housing:
+                can_defer = False
+                retained_decision = None
+                deferred_imported_id = None
+                if (allow_unresolved and conflicts and set(conflicts) <= {'roomType', 'accommodationRequirement'}
+                        and {left, right} == {'REQUIRED', 'NO_ROOM'}
+                        and {comparable(p, 'roomType') for p in (target, incoming)} == {'double shared', 'no room'}):
+                    strong_identity = linked or any(target.get(key) and target[key] == incoming.get(key)
+                                                    for key in ('fisCode', 'competitorId'))
+                    agreed_start, agreed_end = parse_date(target.get('arrivalDate')), parse_date(target.get('departureDate'))
+                    if strong_identity and agreed_start and agreed_end and agreed_start < agreed_end:
+                        existing, other = (_find_existing_athlete(p, context.athlete_maps) for p in (target, incoming))
+                        same_person = existing is not None and other is not None and existing.id == other.id
+                        if same_person and not existing.room_booking_memberships:
+                            if prior_unresolved_keys is None:
+                                prior_unresolved_keys = unchanged_unresolved_keys()
+                        identical = bool(same_person and prior_unresolved_keys and target['matchKey'] in prior_unresolved_keys
+                                         and not existing.room_booking_memberships)
+                        imported_requirement = (left if prior_version.id in imported and version.id not in imported
+                                                else right if version.id in imported and prior_version.id not in imported else None)
+                        importing_remaining = bool(
+                            same_person and not identical and imported_requirement
+                            and (
+                                existing.accommodation_requirement == existing.accommodation_requirement_import_value == imported_requirement
+                                or (existing.accommodation_requirement == 'UNRESOLVED'
+                                    and existing.accommodation_requirement_import_value is None)
+                            )
+                            and can_defer_imported_requirement(existing)
+                            and existing.arrival_date == agreed_start and existing.departure_date == agreed_end
+                        )
+                        protected = same_person and protected_accommodation(existing, agreed_start, agreed_end)
+                        if protected:
+                            retained_decision = existing
+                        else:
+                            safe_conflict = all(
+                                p['matchKey'] not in facts.get('accommodationRequirementOverrides', {})
+                                and compatible_partner(p, facts, agreed_start, agreed_end, identical=identical, importing_remaining=importing_remaining)
+                                for p, facts in ((target, prior_source), (incoming, source))
+                            )
+                            can_defer = safe_conflict and ((existing is None and other is None) or importing_remaining)
+                            if can_defer and importing_remaining:
+                                deferred_imported_id = existing.id
+                            if safe_conflict and identical and existing and (
+                                (existing.accommodation_requirement_source == 'MANUAL' and existing.accommodation_requirement in REQUIREMENTS)
+                                or existing.accommodation_requirement == 'UNRESOLVED'
+                            ):
+                                retained_decision = existing
+                if can_defer or retained_decision is not None:
+                    source_only_keys.add(target['matchKey'])
+                if can_defer or (retained_decision is not None and retained_decision.accommodation_requirement == 'UNRESOLVED'):
+                    warning = issue(target, incoming, conflicts, left, right)
+                    warning['code'] = 'IMPORT_SHARED_ACCOMMODATION_UNRESOLVED'
+                    warning['message'] = 'Person kann importiert werden. Unterkunftsbedarf bleibt offen; Disposition erst nach Entscheidung im Athletendetail.'
+                    unresolved_warnings.append(warning)
+                    if deferred_imported_id is not None:
+                        target['deferredImportedPersonId'] = deferred_imported_id
+                    target.update(
+                        unresolvedSourceAccommodation=can_defer, accommodationRequirement="UNRESOLVED",
+                        roomType=None, sharedWithName=None,
+                    )
+                elif retained_decision is not None:
+                    target.update(accommodationRequirement=retained_decision.accommodation_requirement,
+                        accommodationRequirementSource=retained_decision.accommodation_requirement_source,
+                        roomType=retained_decision.room_type, sharedWithName=retained_decision.shared_with_name)
+                elif conflicts and linked and set(conflicts)<=housing:
                     shared_issues.append(issue(target,incoming,conflicts,left,right))
                 elif conflicts:
                     raise ImportValidationError('IMPORT_SHARED_PERSON_CONFLICT', 'Widersprüchliche Personen-, Aufenthalts- oder Zimmerangaben in den Teilmeldungen.',
                         details={'fields':conflicts,'sourceRows':target['sourceRows']+incoming['sourceRows']})
                 for field in ('fisCode','competitorId','roomType','sharedWithName'):
-                    if not target.get(field):target[field]=incoming.get(field)
+                    if not target.get(field) and not ((can_defer or retained_decision is not None) and field in {'roomType', 'sharedWithName'}):
+                        target[field]=incoming.get(field)
                 for field in ('competitionIds','competitionImportCodes','affirmativeWscColumns'):
                     target[field]=sorted(set(target.get(field,[]))|set(incoming.get(field,[])),key=str)
                 target['sourceRows'] += incoming['sourceRows']
@@ -273,6 +422,16 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
             for key in keys:room_for_person.setdefault(key,[]).append(item)
             by_signature[signature]=item
             rooms.append(room)
+    source_only_participants = set()
+    for room in rooms:
+        members = {room.get('person1Key'), room.get('person2Key')}
+        if room.get('person2Key') and members & source_only_keys:
+            room['sourceOnlyPartner'] = True
+            source_only_participants.update(members)
+    for person in people:
+        if person['matchKey'] in source_only_participants:
+            person['sourceOnlyPartner'] = True
+            person['sharedWithName'] = None
     cancellations = [{**p, 'sourceVersionId': v.id} for v, source in sources for p in source.get('cancelledPeople', [])]
     if cancellations:
         result['cancelledPeople'] = cancellations
@@ -281,6 +440,7 @@ def merge_submission_previews(versions, *, consistency_only=False, read_context=
     result.update(people=people,rooms=rooms,roomListHasNoData=all(p.get('roomListHasNoData') for p in people))
     for field in ('errors','warnings'):
         result[field]=[{**item,'sourceVersionId':v.id} for v,s in sources for item in s.get(field,[]) if not (field=='errors' and len(sources)>1 and (item.get('details') or {}).get('singleScopeReview'))]
+    result['warnings'] += unresolved_warnings
     result['errors'] += shared_issues
     if shared_issues:result['isValid']=False
     for field in ('entriesColumns','roomColumns','dayColumns'):
@@ -315,7 +475,8 @@ def require_submission_sources(session, preview):
 
 def require_submission_consistency(session, preview):
     if (preview.get('replacementScope') or {}).get('kind')=='SPORT_FAMILY':
-        merged=merge_submission_previews(list(submission_heads(session).values()),consistency_only=True)
+        merged=merge_submission_previews(list(submission_heads(session).values()), consistency_only=True,
+            allow_unresolved=bool(preview.get('submissionSources')))
         conflicts=[e for e in merged.get('errors',[]) if e.get('code') in {'IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'}]
         if conflicts:raise ImportValidationError(conflicts[0]['code'],conflicts[0]['message'],details={'issues':conflicts})
 

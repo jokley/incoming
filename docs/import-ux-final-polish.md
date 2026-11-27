@@ -53,3 +53,53 @@ Implementierung aus #347 muss separat auf main integriert werden; dieser PR füh
 keinen Merge durch. Die beiden Änderungen lassen sich unabhängig prüfen.
 
 Originalmeldungen und personenbezogene Prüfpayloads bleiben ausschließlich lokal.
+
+## Nation anzeigen und Prüfumfang wählen
+
+Das Import Center öffnet die gewählte Nation über den bestehenden lesenden
+Session-Abruf. Dieser liefert die aktuelle Quoten- und Unterkunftsprojektion,
+ohne eine Prüfversion oder Genehmigung zu schreiben. Ein veralteter
+Änderungsplan bleibt sichtbar und muss vor Freigabe oder Import ausdrücklich
+neu geprüft werden. Nach operativen Änderungen nutzen die Ansichten die
+bestehende Schreibantwort oder den nächsten lesenden Abruf.
+
+Die Importvorschau zeigt Personen standardmäßig gruppiert und in Seiten à 25.
+Gesamt, Freestyle / Freeski und Snowboard filtern lokal. Bei vorhandenen
+Wettbewerbszuordnungen bestimmen deren Sportfamilien die Einzelansichten.
+Gemeinsame Personen erscheinen in beiden Einzelansichten und einmal in Gesamt.
+Die EZ-/DZ-Spitze gilt für den gesamten aktuellen Prüfentwurf.
+
+Der Upload verwendet die bestehende automatische Teilmeldungserkennung und
+bereitet mehrere erfasste Quellen gemeinsam vor. Die separate Prüfung bleibt
+bei mehreren Quellen unter „Prüfumfang ändern“ erreichbar, etwa wenn die
+andere Teilmeldung Fehler enthält. Importierte Personen werden über die
+bestehende Athletenansicht operativ bearbeitet. Das vollständige Zurückziehen
+einer Sportfamilie wäre ein ausdrücklicher, separat zu prüfender Auftrag
+mit Vorschau der Auswirkungen auf Memberships, Buchungen und Genehmigungen.
+Eine fehlende Datei zieht keine Sportfamilie zurück.
+
+Wird dieselbe aktuelle Teilmeldung erneut geprüft, bleiben die im zugehörigen
+Entwurf ausdrücklich gesetzten Unterkunftsentscheidungen samt ursprünglichem
+Bestandsfingerprint erhalten. Bei einer anderen Quellrevision gilt weiterhin
+die bisherige Reimport-Prüfung.
+
+### Geltungsbereich der Kennzahlen
+
+Sportfamilien- und Gruppierungswahl stehen in der Importvorschau auf einer
+Zeile. Der Sportfamilienfilter begrenzt Personen, Zimmerangaben sowie
+zuordenbare Fehler und Klärungen auf dieselbe Auswahl. Zimmer folgen ihrer
+bekannten Quellzuordnung, ansonsten den eindeutig verknüpften Personen.
+Offene sportliche Prüfpositionen und die Quotenzeilen folgen den vorhandenen
+Sportfamilien- und Event-Group-Zuordnungen.
+
+Die gemeinsam belegbare EZ-/DZ-Spitze, die eindeutigen nationalen Officials-
+und EZ-Gesamtsummen sowie offene Nationenentscheidungen und Rückfragen
+bleiben als Gesamt-Nationswerte gekennzeichnet. Nicht eindeutig zuordenbare
+Importfehler bleiben unter „Gesamt“ sichtbar und weiterhin für die Freigabe
+maßgeblich. Der Anzeigewechsel löst keinen Recheck aus.
+
+### Gemeinsame Prüfung und erneuter Upload
+
+Die reguläre Aktion prüft alle aktuellen Sportfamilien einer Nation. Die Sportfamilienfilter ändern nur die Anzeige. Ein fachlich geprüfter Einzelsport-Stand kann bei inzwischen mehreren Meldungen erst nach der gemeinsamen Prüfung freigegeben werden. Die bestehende API für Teilimporte bleibt verfügbar.
+
+Der normale Upload vergleicht den Inhalt der Dateien mit der aktuellen Quellrevision der erkannten Sportfamilie. Bei Übereinstimmung bleibt die bestehende Revision erhalten. Vollständig importierte Meldungen werden entsprechend gekennzeichnet, offene Prüfungen bleiben fortsetzbar. Ein veränderter Prüfstand verlangt eine gemeinsame Aktualisierung. Bei älteren Imports ohne Bestandsfingerprint ist rückwirkend nur der gespeicherte Quotenstand vergleichbar.

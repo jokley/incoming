@@ -76,6 +76,28 @@ class PostgresMigrationTest(unittest.TestCase):
             self.assertEqual(tuple(conn.execute(text('SELECT room_number,bedroom_index,apartment_exception FROM room_booking')).one()),
                              ('Legacy 001',None,None))
 
+        statement = text("""INSERT INTO athlete(event_id, firstname, lastname, nation_code, single_room_status,
+                accommodation_requirement, accommodation_requirement_import_value)
+            SELECT min(id), :name, 'Constraint fixture', 'ITA', 'NONE', :requirement, :source
+            FROM championship_event""")
+        with engine.begin() as conn:
+            for value in ('REQUIRED', 'NO_ROOM', 'NO_DISPO', 'UNRESOLVED'):
+                conn.execute(statement, dict(name=value, requirement=value, source=None))
+        for requirement, source in [('INVALID', None), ('REQUIRED', 'UNRESOLVED')]:
+            with self.assertRaises(IntegrityError), engine.begin() as conn:
+                conn.execute(statement, dict(name='Rejected', requirement=requirement, source=source))
+        failed = subprocess.run([sys.executable, '-m', 'alembic', 'downgrade', '20261124_01'],
+                                cwd=BACKEND, env=environment, capture_output=True, text=True)
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertIn('ck_athlete_accommodation_requirement', failed.stderr)
+        with engine.begin() as conn:
+            self.assertEqual(conn.execute(text("SELECT count(*) FROM athlete WHERE accommodation_requirement='UNRESOLVED'")).scalar_one(), 1)
+            conn.execute(text("UPDATE athlete SET accommodation_requirement='REQUIRED' WHERE firstname='UNRESOLVED'"))
+        migrate('downgrade', '20261124_01')
+        with self.assertRaises(IntegrityError), engine.begin() as conn:
+            conn.execute(statement, dict(name='Rejected after downgrade', requirement='UNRESOLVED', source=None))
+        migrate('upgrade', 'head')
+
     def test_rendered_sql_matches_online_empty_and_legacy_catalogues(self):
         url = postgres_test_url()
         engine = create_engine(url)

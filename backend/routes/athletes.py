@@ -1,12 +1,13 @@
 """Person HTTP routes; updates, authentication and mutation auditing remain in app."""
-from accommodation_requirements import NO_ACCOMMODATION
+from accommodation_requirements import NO_BOOKABLE_DEMAND
 from accommodation_scope import event_query, event_get
 
 from datetime import datetime
+import json
 
 from flask import Blueprint, jsonify, request
 
-from models import db, Athlete, ImportRun, RoomBooking, RoomBookingOccupant
+from models import db, Athlete, ImportRun, ImportSession, ImportSessionVersion, ImportSessionEvent, RoomBooking, RoomBookingOccupant
 from stay_window import assess_stay, assess_booked_stay, load_stay_schedule
 from accommodation_scope import accommodation_event_id
 from accommodation_coverage import person_accommodation_coverage
@@ -72,6 +73,7 @@ def get_athletes():
         identity = ('fis', athlete.fis_code.strip().upper()) if athlete.fis_code else ('legacy', athlete.id)
         people.setdefault(identity, []).append(athlete)
 
+    accommodation_decisions = fis_accommodation_decisions(athletes)
     result = []
     for identity, records in people.items():
         a = max(records, key=lambda row: (row.updated_at or row.created_at or datetime.min, row.id))
@@ -151,17 +153,156 @@ def get_athletes():
         # not master-data integrity failures. CONFLICT is intentionally reserved
         # for explicit integrity validation and must never be inferred from them.
         data['workflowStatus'] = (
-            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement in NO_ACCOMMODATION else
-            'NO_ROOM' if a.accommodation_requirement in NO_ACCOMMODATION else
+            'CONFLICT' if data['accommodationCoverage']['coverageStatus'] == 'CONFLICT' and a.accommodation_requirement in NO_BOOKABLE_DEMAND else
+            'NO_ROOM' if a.accommodation_requirement in NO_BOOKABLE_DEMAND else
             'REVIEW_ASSIGNMENT' if data['hasPendingRoomlistReview'] else
             'NEW_PERSON' if 'NEW_ATHLETE' in import_types and not data['assignment']['hasAssignment'] else
             'OPEN_ASSIGNMENT' if not data['assignment']['hasAssignment'] else
             'CURRENT'
         )
 
+        data.update(accommodation_decisions.get(a.id, {}))
         result.append(data)
 
     return jsonify(result)
+
+
+def fis_accommodation_decisions(athletes):
+    """Bulk read of imported reviews and their source snapshots for a person read model."""
+    manual = [a for a in athletes if a.accommodation_requirement_source == 'MANUAL']
+    manual_nations = {a.nation_code for a in manual}
+    reviews_by_nation = {}
+    if manual_nations:
+        for nation, review in (db.session.query(ImportSession.nation, ImportSessionVersion)
+                .join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
+                .join(ImportSessionEvent, ImportSessionEvent.version_id == ImportSessionVersion.id)
+                .filter(ImportSession.event_id == accommodation_event_id(), ImportSession.nation.in_(manual_nations),
+                        ImportSessionEvent.event_type == 'IMPORTED').order_by(ImportSessionEvent.id.desc())):
+            reviews_by_nation.setdefault(nation, []).append(review)
+
+    source_cache = {}
+    sources = set()
+    for reviews in reviews_by_nation.values():
+        for review in reviews:
+            preview = json.loads(review.preview_json or '{}')
+            source_cache[review.id] = (review, preview)
+            sources.update(preview.get('submissionSources', {}).values())
+    missing = sources - source_cache.keys()
+    if missing:
+        for source in ImportSessionVersion.query.filter(ImportSessionVersion.id.in_(missing)):
+            source_cache[source.id] = (source, json.loads(source.preview_json or '{}'))
+        for source_id in missing - source_cache.keys():
+            source_cache[source_id] = (None, {})
+    result = {}
+    for athlete in manual:
+        data = {}
+        add_accommodation_decision(data, athlete, reported_accommodation_requests(
+            athlete, reviews_by_nation.get(athlete.nation_code, []), source_cache))
+        result[athlete.id] = data
+    return result
+
+
+def reported_accommodation_requests(athlete, reviews=None, cache=None):
+    cache = {} if cache is None else cache
+    identity = athlete.fis_code or athlete.competitor_id
+    if identity:
+        if reviews is None:
+            reviews = (ImportSessionVersion.query.join(ImportSession, ImportSessionVersion.session_id == ImportSession.id)
+            .join(ImportSessionEvent, ImportSessionEvent.version_id == ImportSessionVersion.id)
+            .filter(ImportSession.event_id == athlete.event_id, ImportSession.nation == athlete.nation_code,
+                    ImportSessionEvent.event_type == 'IMPORTED')
+            .order_by(ImportSessionEvent.id.desc()))
+        for review in reviews:
+            if review.id not in cache:
+                cache[review.id] = (review, json.loads(review.preview_json or '{}'))
+            _, preview = cache[review.id]
+            person = next((p for p in preview.get('people', []) if p.get('matchKey') == identity), None)
+            if not person:
+                continue
+            return accommodation_requests_from_preview(person, preview, review, cache)
+    return []
+
+
+def accommodation_requests_from_preview(person, preview, review, cache):
+    identity = person['matchKey']
+    if person.get('sourceRows') and preview.get('submissionSources'):
+        requests = []
+        families = {version_id: family for family, version_id in preview.get('submissionSources', {}).items()}
+        for row in person.get('sourceRows', []):
+            source_id = row['versionId']
+            if source_id not in families:
+                continue
+            if source_id not in cache:
+                source = db.session.get(ImportSessionVersion, source_id)
+                cache[source_id] = (source, json.loads(source.preview_json or '{}') if source else {})
+            source, source_preview = cache[source_id]
+            if not source or source.session_id != review.session_id:
+                continue
+            original = next((p for p in source_preview.get('people', [])
+                             if p.get('sourceRowNumber', p.get('rowNumber')) == row.get('row')), None)
+            if original is None:
+                continue
+            evidence = original.get('entryAccommodationSource') or original
+            rooms = [(room, ref.get('row')) for room in preview.get('rooms', [])
+                     if identity in (room.get('person1Key'), room.get('person2Key'))
+                     for ref in room.get('sourceRows', []) if ref.get('versionId') == source.id]
+            partner = evidence.get('sharedWithName')
+            if not partner and len(rooms) == 1:
+                room = rooms[0][0]
+                partner = room.get('person2Name') if identity == room.get('person1Key') else room.get('person1Name')
+            requests.append(dict(family=families.get(source.id), version=source.version, entryRow=row.get('row'),
+                roomType=evidence.get('roomType'), partner=partner,
+                arrivalDate=evidence.get('arrivalDate') or original.get('arrivalDate'),
+                departureDate=evidence.get('departureDate') or original.get('departureDate'),
+                roomRows=[number for _, number in rooms if number is not None]))
+        return requests
+    evidence = person.get('entryAccommodationSource') or person
+    return [dict(family=(preview.get('replacementScope') or {}).get('family'), version=review.version,
+        entryRow=evidence.get('row', person.get('rowNumber')), roomType=evidence.get('roomType'),
+        partner=evidence.get('sharedWithName'), arrivalDate=person.get('arrivalDate'),
+        departureDate=person.get('departureDate'), roomRows=[])]
+
+
+def add_accommodation_decision(data, athlete, requests):
+    from accommodation_requirements import source_requirement, accommodation_wish
+
+    requirement = athlete.accommodation_requirement
+    manual = athlete.accommodation_requirement_source == 'MANUAL'
+    current = accommodation_wish(requirement, athlete.room_type, athlete.shared_with_name)
+    matches = []
+    reasons = set()
+    if manual and requirement != 'UNRESOLVED':
+        for reported in requests:
+            source = source_requirement([reported['roomType']])[0]
+            if source:
+                wish = accommodation_wish(source, reported['roomType'], reported['partner'])
+                differences = set()
+                if requirement == 'NO_DISPO':
+                    differences.add('No Dispo')
+                elif requirement != source:
+                    differences.add('Unterkunftsbedarf')
+                elif requirement == 'REQUIRED':
+                    if current[1] != wish[1]:
+                        differences.add('Zimmertyp')
+                    if wish[2] and current[2] != wish[2]:
+                        differences.add('Zimmerpartner')
+                reasons.update(differences)
+                if differences or current == wish:
+                    matches.append(not differences)
+                    reported['matchesDecision'] = matches[-1]
+
+    deviation = False in matches
+    if requirement == 'UNRESOLVED':
+        label = 'Unterkunft klären'
+    elif requirement == 'NO_DISPO':
+        label = 'Nicht disponieren'
+    elif manual:
+        label = 'Abweichung FIS' if deviation else 'FIS-Meldung bestätigt' if matches else 'Manuell festgelegt'
+    else:
+        label = 'FIS-Meldung' if requests else None
+    data.update(accommodationDecisionLabel=label, hasFisAccommodationDeviation=deviation)
+    if reasons:
+        data['fisAccommodationDeviationReasons'] = sorted(reasons)
 
 
 @athletes.route('/api/athletes/<int:athlete_id>', methods=['GET'])
@@ -178,9 +319,11 @@ def get_athlete(athlete_id):
     data['accommodationCoverage'] = person_accommodation_coverage(
         athlete.arrival_date, athlete.departure_date, bookings, athlete.accommodation_requirement)
     coverage = data['accommodationCoverage']['coverageStatus']
-    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_ACCOMMODATION and coverage == 'CONFLICT' else
-        'NO_ROOM' if athlete.accommodation_requirement in NO_ACCOMMODATION else
+    data['workflowStatus'] = ('CONFLICT' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND and coverage == 'CONFLICT' else
+        'NO_ROOM' if athlete.accommodation_requirement in NO_BOOKABLE_DEMAND else
         'CURRENT' if coverage == 'FULLY_ASSIGNED' else 'OPEN_ASSIGNMENT')
+    data['reportedAccommodationRequests'] = reported_accommodation_requests(athlete)
+    add_accommodation_decision(data, athlete, data['reportedAccommodationRequests'])
     return jsonify(data)
 
 

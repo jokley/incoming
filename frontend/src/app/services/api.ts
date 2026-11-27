@@ -584,7 +584,7 @@ class ApiService {
 
   async getAthlete(id: string): Promise<Athlete> { return this.request(`/athletes/${id}`); }
 
-  async updateAthlete(id: string, data: { accommodationRequirement?: AccommodationRequirement | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
+  async updateAthlete(id: string, data: { returnToFis?: boolean; roomType?: string | null; sharedWithName?: string | null; accommodationRequirement?: AccommodationRequirement | null; accommodationRateCategory?: 'STANDARD' | 'SPECIAL'; arrivalDate?: string | null; departureDate?: string | null; internalNote?: string | null; singleRoomQuotaExemptReason?: SingleRoomQuotaExemptReason }): Promise<Athlete> {
     return this.request(`/athletes/${id}`, { method: 'PATCH', body: JSON.stringify(data) });
   }
 
@@ -978,11 +978,12 @@ class ApiService {
     return this.request(`/admin/world-champions${value.id ? '/' + value.id : ''}`, { method: value.id ? 'PUT' : 'POST', body: JSON.stringify(value) });
   }
 
-  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string, snapshotScope:'AUTO'|'FULL_NATION'='AUTO'): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; message?: string }> {
+  async previewFisImport(files: File[], createSession = false, sessionId?: string, eventId?: string, snapshotScope:'AUTO'|'FULL_NATION'='AUTO'): Promise<FisImportPreview & { session?: ImportSession; alreadyImported?: boolean; knownFiles?:boolean; reusedKnownFiles?:boolean; knownFilesRequiresReview?:boolean; message?: string }> {
     const selected = this.eventScope.eventId;
     if (!selected || (eventId && eventId !== selected)) throw new Error('Importsession und aktiver Eventkontext müssen übereinstimmen.');
     const formData = new FormData();
     formData.append('snapshotScope',snapshotScope);
+    if (createSession && snapshotScope === 'AUTO') formData.append('reuseKnownFiles','true');
     files.forEach((file) => formData.append('files', file));
     if (createSession) formData.append('createSession', 'true');
     if (sessionId) formData.append('sessionId', sessionId);

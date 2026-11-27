@@ -6,8 +6,9 @@ FIELDS=('accommodationRequirement','accommodationRequirementSource','importAccom
 
 
 def evidence(person, source):
-    if 'sourceAccommodationEvidence' in person:return person['sourceAccommodationEvidence'].get('requirement')
-    values=[person.get('roomType')]+[r.get('roomType') for r in source.get('rooms',[]) if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}]
+    if 'sourceAccommodationEvidence' in person and not person.get('entryAccommodationSource'):
+        return person['sourceAccommodationEvidence'].get('requirement')
+    values=[(person.get('entryAccommodationSource') or person).get('roomType')]+[r.get('roomType') for r in source.get('rooms',[]) if person['matchKey'] in {r.get('person1Key'),r.get('person2Key')}]
     proposed=source_requirement(values)[0]
     return proposed or ('UNRESOLVED' if any(str(v or '').strip() for v in values) else None)
 

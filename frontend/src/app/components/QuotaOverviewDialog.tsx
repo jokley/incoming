@@ -1,5 +1,5 @@
 import type {NNPlanningControls} from '../types';
-import { sportAreaLabel } from '../services/competitionPresentation';
+import { sportAreaLabel, sportAreaValue } from '../services/competitionPresentation';
 import {Fragment} from 'react';
 import {CompetitionDistribution} from './ImportControl';
 import type {ImportControl,FisImportPreview,QuotaOverview} from '../types';
@@ -55,7 +55,7 @@ function AthleteOverview({nn,grouped=false,nation,fixed,control,preview,onPeople
   {!nation.athleteFamilies.length&&<p className="text-sm">Keine aktive Athletenquote · Fachlich prüfen</p>}
  </div>;
 }
-function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,control}: {nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
+function OfficialsOverview({displayFamily,nn,grouped=false,nation,fixed,onPeople,preview,control}: {displayFamily?:string;nn?:NNPlanningControls;grouped?:boolean;nation:Nation;fixed:boolean;onPeople?:Navigate;preview?:FisImportPreview;control?:ImportControl}) {
  const operative=nn?.planning.operationalQuota;
  if(nn?.busy)return <p role="status">Operative Vorschau wird berechnet …</p>;
  if(nn&&(nn.error||!operative?.overview||!operative.people))return <p role="alert" className="text-[var(--ops-error)]">{nn.error??`Operative Bewertung nicht verfügbar. ${operative?.reasons.join(' ')??'Keine veralteten Quotenwerte.'}`}</p>;
@@ -64,6 +64,8 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
   if(!projected)return <p>Keine gültigen operativen Quotenkontexte. Zuordnung klären.</p>;
   nation=projected;
  }
+ const scoped=Boolean(displayFamily&&displayFamily!=='all');
+ const groups=scoped?nation.groups.filter(group=>sportAreaValue(control?.quotaGroups?.find(item=>item.name===group.name)?.family)===displayFamily):nation.groups;
  const summaryPreview=nn?{people:operative!.people!,rooms:[]}:preview;
  const incomplete=nation.incomplete||!fixed;
 
@@ -92,14 +94,15 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
   {nn&&<p className="text-xs text-[var(--ops-text-muted)]">Operative Unterkunftsbewertung · Originalmeldungen bleiben erhalten. Automatische vorläufige Personenauswahl aus der bestätigten Entry List.</p>}
   {nn&&operative?.conflict&&<p className="text-xs text-[var(--ops-warning)]">Personenauswahl klären · normale Athletenbasis. {operative.reasons.join(' ')}</p>}
   <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm" aria-label="Officials-Gesamtergebnis">
-   <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials</span>
+   <span><PeopleCount count={nation.officials} filter={{nation:nation.nationCode,role:'officials'}} onPeople={scoped?undefined:onPeople} label={`Alle Officials ${nation.nationCode} anzeigen`}/> eindeutige Officials{scoped?' · Gesamt-Nation':''}</span>
 
   </div>
-  <p className="text-sm" aria-label="EZ-Gesamtbewertung">EZ · Erlaubt: <span title="Reguläre Ansprüche gelten ausschließlich im jeweiligen Event-Group-/Gender-Kontext.">kontextgebunden</span> · Angefragt: {ez?.available?<PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={onPeople} label="Angeforderte EZ-Personen anzeigen"/>:'—'} · Abweichung: <strong className={ez?.counts.PENDING?'text-[var(--ops-warning)]':'text-[var(--ops-text)]'}>{ez?.available?(ez.counts.PENDING?`+${ez.counts.PENDING}`:'0'):'—'}</strong>{(!ez?.complete||incomplete)&&<span className="ml-2 text-[var(--ops-warning)]">Zuordnung oder Evidenz unvollständig</span>}</p>
+  <p className="text-sm" aria-label="EZ-Gesamtbewertung">EZ{scoped?' · Gesamt-Nation':''} · Erlaubt: <span title="Reguläre Ansprüche gelten ausschließlich im jeweiligen Event-Group-/Gender-Kontext.">kontextgebunden</span> · Angefragt: {ez?.available?<PeopleCount count={ez.requested} filter={{nation:nation.nationCode,role:'people',personKeys:ez.allPersonKeys}} onPeople={scoped?undefined:onPeople} label="Angeforderte EZ-Personen anzeigen"/>:'—'} · Abweichung: <strong className={ez?.counts.PENDING?'text-[var(--ops-warning)]':'text-[var(--ops-text)]'}>{ez?.available?(ez.counts.PENDING?`+${ez.counts.PENDING}`:'0'):'—'}</strong>{(!ez?.complete||incomplete)&&<span className="ml-2 text-[var(--ops-warning)]">Zuordnung oder Evidenz unvollständig</span>}</p>
+  {scoped&&!groups.length&&<p>Keine zugeordneten Officials-/EZ-Kontexte für diese Sportfamilie.</p>}
   <div className="overflow-x-auto" role="region" tabIndex={0} aria-label="Officials und EZ je Event Group"><table className="w-full text-xs sm:text-sm">
    <caption className="sr-only">Kontextgebundene Officials- und EZ-Bewertung</caption>
    <thead><tr><th rowSpan={2} scope="col" className="p-2 text-left">Event Group / Gender</th><th rowSpan={2} scope="col" className="p-2 text-right">Athleten eingeplant</th><th colSpan={3} scope="colgroup" className="p-2">Officials</th><th colSpan={3} scope="colgroup" className="p-2">Einzelzimmer</th></tr><tr>{['Erlaubt','Vorhanden','Abweichung','Erlaubt','Angefragt','Abweichung'].map((label,index)=><th scope="col" key={index} className="p-2 text-right">{label}</th>)}</tr></thead>
-   <tbody>{(grouped?groupImportItems(nation.groups,group=>({area:quotaImportPlacement(group.name,control).area})):[{area:'',items:nation.groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={8} className="bg-[var(--ops-surface-elevated)] p-2 text-left">{section.area}</th></tr>}{section.items.map(group=>{
+   <tbody>{(grouped?groupImportItems(groups,group=>({area:quotaImportPlacement(group.name,control).area})):[{area:'',items:groups}]).map(section=><Fragment key={section.area}>{grouped&&<tr><th scope="rowgroup" colSpan={8} className="bg-[var(--ops-surface-elevated)] p-2 text-left">{section.area}</th></tr>}{section.items.map(group=>{
     const groupEZ=summaryPreview?singleRoomSummary({...summaryPreview,people:summaryPreview.people.filter(p=>p.singleRoomAllocation?.context?.[1]===group.name),rooms:[]},nation.nationCode):null;
     const officialsDeviations=group.contexts.filter(row=>(row.officialsDeviation??0)>0);
     const officialsKnown=group.contexts.length>0&&group.contexts.every(row=>row.officialsDeviation!=null)&&!incomplete;
@@ -123,28 +126,28 @@ function OfficialsOverview({nn,grouped=false,nation,fixed,onPeople,preview,contr
    </Fragment>;})}</Fragment>)}</tbody>
   </table></div>
 
-  <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer">Zuordnungen und Bewertungsgrundlage</summary><div className="mt-2 space-y-1">
+  <details className="text-xs text-[var(--ops-text-muted)]"><summary className="cursor-pointer">Zuordnungen und Bewertungsgrundlage{scoped?' · Gesamt-Nation':''}</summary><div className="mt-2 space-y-1">
    <p>Officials national und je Event Group sind eindeutige Personen. Kontextzahlen nicht als Personen addieren. EZ-Ansprüche sind nicht pauschal zwischen Gruppen oder Gendern übertragbar.</p>
-   {breakdown(ez)}
+   {!scoped&&breakdown(ez)}
    {(nation.otherPeople??0)>0&&<p>{nation.otherPeople} weitere / unzugeordnete Personen</p>}
-   {nation.officialsInMultipleGroups>0&&(onPeople?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten · Personen anzeigen</button>:<p>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</p>)}
+   {nation.officialsInMultipleGroups>0&&(onPeople&&!scoped?<button type="button" onClick={()=>onPeople({nation:nation.nationCode,role:'officials',multipleGroups:true})} className="text-[var(--ops-primary)] underline">{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten · Personen anzeigen</button>:<p>{nation.officialsInMultipleGroups} Mehrfachzugehörigkeiten</p>)}
    <p>{nation.ezDecisionsOpen} {nation.ezDecisionsOpen===1?'offener EZ-Kontext':'offene EZ-Kontexte'} · Kontexte sind keine Personenzahl.</p>
    {nation.coverageReviewRequired&&<p>Officials-Abdeckung nicht abschließend bewertet; keine bestätigte Quotenverletzung.</p>}
   </div></details>
 
-  {nation.officialsWithoutContext>0&&<p className="text-xs text-[var(--ops-warning)]"><PeopleCount count={nation.officialsWithoutContext} filter={{nation:nation.nationCode,role:'people',personKeys:withoutContext}} onPeople={control?onPeople:undefined} label="Officials ohne Quotenkontext anzeigen"/> Officials ohne eindeutigen Quotenkontext</p>}
+  {nation.officialsWithoutContext>0&&<p className="text-xs text-[var(--ops-warning)]"><PeopleCount count={nation.officialsWithoutContext} filter={{nation:nation.nationCode,role:'people',personKeys:withoutContext}} onPeople={control&&!scoped?onPeople:undefined} label="Officials ohne Quotenkontext anzeigen"/> Officials ohne eindeutigen Quotenkontext{scoped?' · Gesamt-Nation':''}</p>}
  </div>;
 }
-export function QuotaOverviewContent({nn,grouped=false,overview,kind,control,preview,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
+export function QuotaOverviewContent({displayFamily,nn,grouped=false,overview,kind,control,preview,onPeople,focusSport}:{displayFamily?:string;nn?:NNPlanningControls;grouped?:boolean;overview:QuotaOverview;kind:'athlete'|'officials';control?:ImportControl;preview?:FisImportPreview;onPeople?:Navigate;focusSport?:boolean}) {
  const ruleEvent=kind==='officials'?nn?.planning.operationalQuota?.overview?.event??overview.event:overview.event;
  return <div className="space-y-4"><div className="flex flex-wrap gap-2 text-xs"><span>{ruleEvent.isWorldChampionship?'WM-Quotenregel':'Event-Quotenregel (Nicht-WM)'} · Revision {ruleEvent.rulesRevision} · {ruleEvent.rulesFixed?'fixiert':'Entwurf'}</span></div>
-  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nn={nn} grouped={grouped} nation={nation} fixed={ruleEvent.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview nn={nn} grouped={grouped} nation={nation} fixed={ruleEvent.rulesFixed} onPeople={onPeople} preview={preview} control={control}/>}</section>)}
+  {overview.nations.map(nation=><section key={nation.nationCode} className="space-y-2" aria-label={`Nation ${nation.nationCode}`}><h3 className="text-sm font-extrabold">Nation {nation.nationCode||'unbekannt'}</h3>{kind==='athlete'?<AthleteOverview nn={nn} grouped={grouped} nation={displayFamily&&displayFamily!=='all'?{...nation,athleteFamilies:nation.athleteFamilies.filter(row=>sportAreaValue(row.topLevelDiscipline)===displayFamily)}:nation} fixed={ruleEvent.rulesFixed} control={control} preview={preview} onPeople={onPeople} focusSport={focusSport}/>:<OfficialsOverview displayFamily={displayFamily} nn={nn} grouped={grouped} nation={nation} fixed={ruleEvent.rulesFixed} onPeople={onPeople} preview={preview} control={control}/>}</section>)}
  </div>;
 }
-export function QuotaOverviewDialog({nn,grouped=false,preview,kind,onClose,control,onPeople,focusSport}:{nn?:NNPlanningControls;grouped?:boolean;preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate;focusSport?:boolean}) {
+export function QuotaOverviewDialog({displayFamily,nn,grouped=false,preview,kind,onClose,control,onPeople,focusSport}:{displayFamily?:string;nn?:NNPlanningControls;grouped?:boolean;preview:FisImportPreview|null;kind:'athlete'|'officials';onClose:()=>void;control?:ImportControl;onPeople?:Navigate;focusSport?:boolean}) {
  const overview=preview?.quotaOverview;
- return <EnterpriseDialog open title={kind==='athlete'?'Athleten-/Disziplinquote':'Officials & EZ-Quote'} description={overview?.event.name||'Gespeicherter Prüfstand'} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}>
-  {overview?<QuotaOverviewContent nn={nn} grouped={grouped} overview={overview} kind={kind} control={control} preview={preview??undefined} onPeople={preview?onPeople:undefined} focusSport={focusSport}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen Prüfstand ist keine Quotenübersicht verfügbar."/>}
+ return <EnterpriseDialog open title={kind==='athlete'?'Athleten-/Disziplinquote':'Officials & EZ-Quote'} description={displayFamily&&displayFamily!=='all'?sportAreaLabel(displayFamily):overview?.event.name||'Gespeicherter Prüfstand'} size="large" onClose={onClose} actions={<OpsButton onClick={onClose}>Schließen</OpsButton>}>
+  {overview?<QuotaOverviewContent displayFamily={displayFamily} nn={nn} grouped={grouped} overview={overview} kind={kind} control={control} preview={preview??undefined} onPeople={preview?onPeople:undefined} focusSport={focusSport}/>:<EmptyState title="Keine vollständigen Anzeigeaggregate gespeichert" description="Für diesen Prüfstand ist keine Quotenübersicht verfügbar."/>}
  </EnterpriseDialog>;
 }
 

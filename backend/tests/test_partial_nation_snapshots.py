@@ -21,11 +21,17 @@ def rows(part):
         Arrival_date='04.03.2027',Departure_date='22.03.2027') for i in range(count)]
 
 
-def upload(owner,part,data=None,scope=None,expected=200,session_id=None,room_data=None):
+def upload(owner,part,data=None,scope=None,expected=200,session_id=None,room_data=None,workbooks=None):
     records=rows(part) if data is None else data
-    a,b=io.BytesIO(),io.BytesIO()
-    pd.DataFrame(records,columns=list(records[0]) if records else list(rows(part)[0])).to_excel(a,index=False,sheet_name='Data')
-    (pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data');a.seek(0);b.seek(0)
+    if workbooks is not None and part in workbooks:
+        a,b=map(io.BytesIO, workbooks[part])
+    else:
+        a,b=io.BytesIO(),io.BytesIO()
+        pd.DataFrame(records,columns=list(records[0]) if records else list(rows(part)[0])).to_excel(a,index=False,sheet_name='Data')
+        (pd.DataFrame(room_data,columns=['Firstname','Lastname','Nationcode','Room_type','Arrival_date','Departure_date','Shared with Name']) if room_data is not None else pd.DataFrame(columns=['no data available'])).to_excel(b,index=False,sheet_name='Data')
+        if workbooks is not None:
+            workbooks[part] = (a.getvalue(), b.getvalue())
+        a.seek(0);b.seek(0)
     payload=dict(eventId=str(owner.id),files=[(a,'same-uninformative-name.xlsx'),(b,'rooms.xlsx')])
     payload.update({'sessionId':str(session_id)} if session_id else {'createSession':'true'})
     if scope:payload['snapshotScope']=scope
@@ -217,6 +223,17 @@ def test_collect_select_and_cancel_drafts_before_any_import(owner,first,second):
     assert cancel.status_code==200,cancel.json
     assert len(cancel.json['preview']['people'])==len(rows(second))
     assert Athlete.query.count()==0
+    chosen = select_submission(b, owner, a['session']['currentVersionId'])
+    assert chosen.status_code == 200, chosen.json
+    person = chosen.json['preview']['people'][0]
+    staged = app.test_client().patch(
+        f"/api/import/sessions/{sid}/accommodation-requirements/{person['matchKey']}?eventId={owner.id}",
+        json={'accommodationRequirement': 'NO_DISPO'})
+    assert staged.status_code == 200, staged.json
+    chosen = select_submission(b, owner, chosen.json['currentVersionId'])
+    assert chosen.status_code == 200, chosen.json
+    assert next(p for p in chosen.json['preview']['people'] if p['matchKey'] == person['matchKey'])['accommodationRequirement'] == 'NO_DISPO'
+    assert Athlete.query.count()==0
 
 
 def test_new_invalid_correction_is_visible_and_superseded_source_cannot_be_selected(owner):
@@ -285,8 +302,14 @@ def test_composed_shared_person_is_one_person_with_both_memberships(owner,female
 def test_shared_draft_conflicts_cannot_be_bypassed_by_individual_import(owner,field,value):
     upload(owner,'SB');fs=shared_fs();fs[0][field]=value
     b=upload(owner,'FS',fs)
-    assert compose(b,owner).status_code==409
     assert review(b,owner).status_code==409
+    combined=compose(b,owner)
+    if field=='Room_type':
+        assert combined.status_code==200,combined.json
+        shared=next(p for p in combined.json['preview']['people'] if p['fisCode']==fs[0]['Fiscode'])
+        assert shared['accommodationRequirement']=='UNRESOLVED'
+    else:
+        assert combined.status_code==409
     assert Athlete.query.count()==0
 
 
@@ -529,3 +552,32 @@ def test_excel_analytics_combines_current_family_heads_only(owner):
     assert {p['matchKey'] for p in nation['people']} == expected
     assert len(nation['people']) == len(expected)
     assert Athlete.query.count() == 0
+
+
+def test_detail_reuses_same_read_context_without_changing_review(owner, monkeypatch):
+    from imports.read_context import ImportReadContext
+
+    first = upload(owner, 'SB')
+    run(first, owner)
+    retained = booking(Athlete.query.filter_by(function='Athlete').all()[:1])
+    second = upload(owner, 'FS')
+    composed = compose(second, owner)
+    assert composed.status_code == 200, composed.json
+    session_id = composed.json['id']
+    session = db.session.get(ImportSession, int(session_id))
+    saved = session.current_version.preview_json
+    contexts = []
+    initialize = ImportReadContext.__init__
+
+    def count_context(context, event_id=None):
+        contexts.append(event_id)
+        initialize(context, event_id)
+
+    monkeypatch.setattr(ImportReadContext, '__init__', count_context)
+    response = app.test_client().get(f'/api/import/sessions/{session_id}')
+    assert response.status_code == 200, response.json
+    assert len(contexts) == 1
+    for key in ('preview', 'submissionTotal', 'importControl', 'nationClarifications', 'nnPlanning'):
+        assert response.json[key] == composed.json[key]
+    assert session.current_version.preview_json == saved
+    assert db.session.get(type(retained), retained.id) is not None

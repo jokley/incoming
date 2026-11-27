@@ -89,16 +89,29 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  const rooms=[{sourceRowKey:'joint',rowNumber:2,checkInDate:'2027-03-02',checkOutDate:'2027-03-04',person1Key:'snow',person1Name:'Snow Synthetic',person2Key:'ski',person2Name:'Ski Synthetic',roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:2},{versionId:20,version:2,row:2}]},{sourceRowKey:'unknown',rowNumber:3,person1Key:'both',person1Name:'Both Synthetic',person2Key:null,roomType:'Double shared',sourceRows:[{versionId:10,version:1,row:3}]}];
  const preview={eventId:'1',people,rooms,errors:[{code:'ROOM_PERSON_NOT_FOUND',message:'Unresolved original Room List row',details:{row:9}}],warnings:[],quotaChecks:[],athleteQuotaChecks:[],isValid:false,submissionSources:{Snowboard:10,Freestyle:20},replacementScope:{kind:'SPORT_FAMILY'},changePlan:{digest:'frozen-plan',people:{create:[],update:[],unchanged:[],remove:[]},memberships:{add:[],remove:[]},operations:{bookingIds:[],deleteEmptyBookingIds:[],bookings:[],partnerIds:[]},validationErrors:[]},dispositionAnalysis:{changes:[],categories:Object.fromEntries(['removedAthletes','dispositionAffected'].map(name=>[name,{records:[]}]))}};
  const session={id:'1',nation:'AUT',status:'PROFESSIONALLY_REVIEWED',errors:1,warnings:0,version:3,currentVersionId:'30',uploadedAt:'2026-11-15T12:00:00Z',uploadedBy:'Synthetic',currentVersion:null,versions:[],history:[],approvals:[],preview,submissions:[{family:'Snowboard',versionId:'10',people:2,status:'DRAFT'},{family:'Freestyle',versionId:'20',people:2,status:'DRAFT'}],importControl:{people:people.map(p=>({personKey:p.matchKey,competitions:[],quotaContexts:[]})),issues:[],competitions:[]}};
+ const context=(discipline:string,pending:number)=>({discipline,gender:'M',athletes:2,expectedAthletes:2,
+   officials:3,officialQuota:4,singleRoomsPending:pending,singleRoomsAllowed:2,singleRoomsRequested:2+pending,singleRoomsApproved:0});
+ const snow=context('Configured Snow Group',2), ski=context('Configured Ski Group',0);
+ const family=(topLevelDiscipline:string,athleteQuotaUsed:number)=>({topLevelDiscipline,athleteQuotaUsed,
+   athleteQuotaLimit:10,athleteGenderUsed:{M:athleteQuotaUsed,F:0},athleteGenderLimit:8,athleteQuotaStatus:'WITHIN',decisionStatus:'NONE'});
+ const families=[family('Snowboard',2),family('Freestyle',3)];
+ Object.assign(preview,{quotaChecks:[snow,ski],athleteQuotaChecks:families,quotaOverview:{
+   event:{name:'Synthetic grouping event',rulesFixed:true,rulesRevision:1},nations:[{
+    nationCode:'AUT',officials:4,ezDecisionsOpen:1,athleteFamilies:families,
+    groups:[snow,ski].map(row=>({name:row.discipline,officials:3,contexts:[row],totals:row})),
+   }],
+ }});
+ Object.assign(session.importControl,{quotaGroups:[{name:snow.discipline,family:'Snowboard'},{name:ski.discipline,family:'Freestyle'}]});
  const event={id:'1',name:'Synthetic grouping event',active:true,year:2027,planningPeriods:[]};
  const requests:string[]=[],errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
  await page.route('**/api/**',async route=>{const path=new URL(route.request().url()).pathname.slice(4);requests.push(`${route.request().method()} ${path}`);const bodies:Record<string,unknown>={'/auth/me':{username:'local-admin',displayName:'local-admin',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session};await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});});
  await page.goto(`${origin}/import?sessionId=1`);
  const grouping=page.getByRole('group',{name:'Gruppieren:'});await grouping.waitFor();
  await page.getByText(/Zimmerbedarf \(vorläufig\) · 02\.03\.: 1 bekannt · 1 DZ · 0 EZ/).waitFor();
- assert.equal(await grouping.getByRole('button',{name:'Aus',exact:true}).getAttribute('aria-pressed'),'true');
+ assert.equal(await grouping.getByRole('button',{name:'Ein',exact:true}).getAttribute('aria-pressed'),'true');
  const findings=page.getByRole('region',{name:'Klärungsübersicht'});
  assert.match(await findings.innerText(),/Blockierend.*Unresolved original Room List row/);
- const initialRequests=[...requests];await grouping.getByRole('button',{name:'Ein',exact:true}).click();
+ const initialRequests=[...requests];
  const card=page;
  await card.getByRole('button',{name:/^Personen/}).first().click();let dialog=page.getByRole('dialog');await dialog.waitFor();
  assert.equal(await dialog.getByRole('button',{name:/^Importdetails /}).count(),3);
@@ -128,6 +141,42 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});assert.equal(await grouping.getByRole('button',{name:'Ein',exact:true}).getAttribute('aria-pressed'),'true');assert.equal(await page.getByRole('button',{name:'Freigeben',exact:true}).count(),0);
  await grouping.getByRole('button',{name:'Aus',exact:true}).click();await card.getByRole('button',{name:/^Personen/}).first().click();dialog=page.getByRole('dialog');await dialog.waitFor();assert.equal(await dialog.getByRole('button',{name:/^Importdetails /}).count(),3);assert.equal(await dialog.locator('th[scope="rowgroup"]').count(),0);
  await page.keyboard.press('Escape');await page.getByRole('dialog').waitFor({state:'hidden'});
+ const sport=page.getByRole('group',{name:'Sportfamilie anzeigen'});
+ await grouping.getByRole('button',{name:'Ein',exact:true}).click();
+ for(const [label,rooms,open,used,context] of [
+  ['Freestyle / Freeski',1,0,3,ski.discipline],['Snowboard',2,1,2,snow.discipline],
+ ] as const){
+  await sport.getByRole('button',{name:label,exact:true}).click();
+  assert.match(await page.getByRole('button',{name:/^Personen/}).first().innerText(),/2 Personen/);
+  assert.match(await page.getByRole('button',{name:/^Zimmerzuordnungen/}).innerText(),new RegExp(`${rooms} Zimmerangaben`));
+  const officials=page.getByRole('button',{name:/^Officials & EZ-Quote/});
+  assert.match(await officials.innerText(),new RegExp(`${open} EZ-Kontexte offen`));
+  const athletes=page.getByRole('button',{name:/^Athleten-\/Disziplinquote/});
+  assert.match(await athletes.innerText(),new RegExp(`${used} / 10`));
+  assert.doesNotMatch(await athletes.innerText(),new RegExp(`${5-used} / 10`));
+  await officials.click();
+  const quotaDialog=page.getByRole('dialog',{name:'Officials & EZ-Quote'});
+  assert.match(await quotaDialog.getByLabel('Officials-Gesamtergebnis').innerText(),/4 eindeutige Officials · Gesamt-Nation/);
+  assert.ok((await quotaDialog.locator('th[scope="rowgroup"]').filter({hasText:context}).count())>0);
+  const other=context===snow.discipline?ski.discipline:snow.discipline;
+  assert.equal(await quotaDialog.locator('th[scope="rowgroup"]').filter({hasText:other}).count(),0);
+  await quotaDialog.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+  await quotaDialog.waitFor({state:'hidden'});
+  await athletes.click();
+  const athleteDialog=page.getByRole('dialog',{name:'Athleten-/Disziplinquote'});
+  assert.equal(await athleteDialog.getByRole('rowheader',{name:new RegExp(label)}).count(),1);
+  await athleteDialog.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+  await athleteDialog.waitFor({state:'hidden'});
+  await page.getByRole('button',{name:/^Zimmerzuordnungen/}).click();
+  const roomDialog=page.getByRole('dialog',{name:'Zimmer der Importvorschau'});
+  assert.equal(await roomDialog.locator('tbody tr:has(td)').count(),rooms);
+  await roomDialog.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+  await roomDialog.waitFor({state:'hidden'});
+  assert.equal(await page.getByText(/Weitere Importfehler im Prüfstand/).count(),1);
+ }
+ await sport.getByRole('button',{name:'Gesamt',exact:true}).click();
+ assert.match(await page.getByRole('button',{name:/^Personen/}).first().innerText(),/3 Personen/);
+ assert.match(await page.getByRole('button',{name:/^Zimmerzuordnungen/}).innerText(),/2 Zimmerangaben/);
  await page.setViewportSize({width:390,height:844});
  await page.evaluate(()=>document.documentElement.classList.add('dark'));
  await grouping.getByRole('button',{name:'Ein',exact:true}).click();
@@ -139,6 +188,28 @@ test('import grouping preserves the joint roster, searches, room warnings and gl
  // Planning is embedded in the import workspace, never linked to Athletes.
  assert.equal(await page.getByRole('link',{name:'Athletenprognose nach Import bearbeiten'}).count(),0);
  assert.ok(requests.every(request=>request.startsWith('GET ')||request==='POST /auth/me'));
+
+ // Only a blocking server finding activates the shared-accommodation warning.
+ Object.assign(people[2],{accommodationRequirement:'UNRESOLVED'});
+ Object.assign(preview,{errors:[],isValid:true});
+ await page.reload();
+ await page.getByText('Unterkunft nach dem Import klären',{exact:true}).waitFor();
+ assert.equal(await page.getByText('Gemeinsame Unterkunft klären',{exact:true}).count(),0);
+
+ for(const code of ['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS']){
+  Object.assign(preview,{isValid:false,errors:[{code,message:'Gemeinsamer Konflikt in den Quelldaten',
+    sourceVersionId:10,details:{personKey:'both'}}]});
+  await page.reload();
+  await page.getByText('Gemeinsame Unterkunft klären',{exact:true}).waitFor();
+  const findings=page.getByRole('region',{name:'Klärungsübersicht'});
+  await findings.getByText('Gemeinsamer Konflikt in den Quelldaten',{exact:true}).waitFor();
+  await page.getByRole('group',{name:'Sportfamilie anzeigen'}).getByRole('button',{name:'Freestyle / Freeski',exact:true}).click();
+  await page.getByText('Gemeinsame Unterkunft klären',{exact:true}).waitFor();
+  assert.equal(await findings.getByText('Gemeinsamer Konflikt in den Quelldaten',{exact:true}).count(),0);
+  assert.equal(await page.getByRole('button',{name:'Freigeben',exact:true}).count(),0);
+ }
+ assert.ok(requests.every(request=>request.startsWith('GET ')||request==='POST /auth/me'));
+ assert.deepEqual(errors,[]);
 });
 
 
@@ -170,6 +241,9 @@ test('automatic person selection is shared by athlete and Officials quota views 
  let listRequests=0;
  const detailRequests:string[]=[];
  let rejectRequirement=true;
+ let finishRejectedPatch:()=>void=()=>{};
+ const rejectedPatchGate=new Promise<void>(resolve=>{finishRejectedPatch=resolve;});
+ let guidedRetry=false;
  await page.route('**/api/**',async route=>{
   const req=route.request(),path=new URL(req.url()).pathname.slice(4);
   if(req.method()==='GET' && path==='/import/sessions'){
@@ -187,19 +261,37 @@ test('automatic person selection is shared by athlete and Officials quota views 
   if(path==='/import/sessions/2')return route.fulfill({json:{...session,id:'2',nation:'ITA',status:'ARCHIVED',preview:null}});
   if(req.method()!=='GET'&&path!=='/auth/me')writes.push(path);
   const bodies:Record<string,unknown>={'/auth/me':{username:'tester',groups:['incoming-admin'],permissions:['*']},'/active-event-context':{events:[{...event,canRead:true,canWrite:true}],selectedEventId:'1',switchingAllowed:false},'/import/sessions':[session],'/import/sessions/1':session,'/athletes':people};
-  if(path==='/import/sessions/1/accommodation-requirements/p2' && req.method()==='PATCH'){
-   assert.deepEqual(req.postDataJSON(),{accommodationRequirement:'NO_DISPO'});
-   if(rejectRequirement){
-    rejectRequirement=false;
-    return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
-   }
-   people[2].accommodationRequirement='NO_DISPO';
+  if(path==='/import/sessions/1/recheck' && req.method()==='POST'){
+   preview.planStale=false;
    return route.fulfill({json:session});
   }
+  if(/^\/import\/sessions\/1\/accommodation-requirements\/p[25]$/.test(path) && req.method()==='PATCH'){
+   const payload=req.postDataJSON();
+   const i=Number(path.at(-1));
+   if(i===2 && rejectRequirement){
+    rejectRequirement=false;
+    await rejectedPatchGate;
+    return route.fulfill({status:409,json:{error:'STALE_PREVIEW',message:'Änderungsplan erneut prüfen.'}});
+   }
+   Object.assign(people[i], {accommodationRequirement:payload.accommodationRequirement || 'NO_ROOM',
+     hasFisAccommodationDeviation:payload.accommodationRequirement==='NO_DISPO',
+     fisAccommodationDeviationReasons:payload.accommodationRequirement==='NO_DISPO'?['No Dispo']:[]});
+   return route.fulfill({json:session});
+  }
+  if(path==='/athletes/3' && req.method()==='GET') return route.fulfill({json:people[2]});
   if(path==='/athletes/3' && req.method()==='PATCH'){
-   assert.equal(req.postDataJSON().accommodationRequirement,'REQUIRED');
-   people[2].accommodationRequirement='REQUIRED';
+   const payload=req.postDataJSON();
+   assert.equal(payload.accommodationRequirement,'REQUIRED');
+   if(payload.roomType==='Double shared' && !guidedRetry){
+    guidedRetry=true;
+    return route.fulfill({status:409,json:{message:'Speichern fehlgeschlagen – erneut versuchen.'}});
+   }
+   Object.assign(people[2], payload);
    return route.fulfill({json:people[2]});
+  }
+  if(path==='/athletes/4' && req.method()==='PATCH'){
+   Object.assign(people[3], req.postDataJSON());
+   return route.fulfill({json:people[3]});
   }
   await route.fulfill({status:path in bodies?200:404,json:bodies[path]??{error:'Unexpected request'}});
  });
@@ -213,12 +305,12 @@ test('automatic person selection is shared by athlete and Officials quota views 
  const openPeople=async()=>{await page.getByRole('button',{name:/^Personen/}).first().click();await page.getByRole('dialog',{name:'Personen der Importvorschau'}).waitFor();};
  await openPeople();let list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
- assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),5);
- await page.keyboard.press('Escape');await page.getByRole('group',{name:'Gruppieren:'}).getByRole('button',{name:'Ein',exact:true}).click();await openPeople();
- assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),5);assert.match(await list.locator('th[scope="rowgroup"]').innerText(),/9 Personen/);
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),0);
+ assert.equal(await page.locator('th[scope="rowgroup"]').count(),1);
+ assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),0);assert.match(await list.locator('th[scope="rowgroup"]').innerText(),/9 Personen/);
  const excluded=list.getByRole('button',{name:'Importdetails Athlete4 Synthetic',exact:true});assert.equal(await excluded.isEnabled(),true);
  await excluded.click();await page.getByRole('dialog',{name:'Athlete4 Synthetic',exact:true}).waitFor();assert.equal(await page.locator('[role="dialog"]').count(),2);await page.keyboard.press('Escape');
- await list.getByLabel('Person suchen').fill('Athlete4');assert.equal(await list.locator('tr[data-provisional-planning="deferred"]').count(),1);
+ await list.getByLabel('Person suchen').fill('Athlete4');assert.equal(await list.getByText('Außerhalb der Planungsempfehlung',{exact:true}).count(),1);
  await list.getByLabel('Person suchen').fill('');
  await page.screenshot({path:'/workspace/artifacts/preview-person-selection-dark.png',animations:'disabled'});
  await page.keyboard.press('Escape');
@@ -276,33 +368,55 @@ test('automatic person selection is shared by athlete and Officials quota views 
  assert.deepEqual(writes,[]);
  await openPeople();
  list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
- await list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'}).click();
- assert.deepEqual(await page.getByRole('option').allTextContents(),['Unterkunft benötigt','Kein Zimmer benötigt','Nicht einplanen']);
  const beforeSaveListRequests=listRequests;
- await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ const toggle = list.getByRole('checkbox',{name:'Nicht disponieren · Unterkunftsbedarf Athlete2 Synthetic'});
+ await toggle.click();
+ await list.getByRole('status').filter({hasText:'Bedarf wird gespeichert'}).waitFor();
+ assert.equal(await toggle.isChecked(),true);
+ finishRejectedPatch();
  await list.getByRole('alert').filter({hasText:'Änderungsplan erneut prüfen.'}).waitFor();
- const requirement = list.getByRole('combobox',{name:'Unterkunftsbedarf Athlete2 Synthetic'});
- assert.equal(await requirement.innerText(),'Unterkunft benötigt');
- await requirement.click();
- await page.getByRole('option',{name:'Nicht einplanen'}).click();
+ await toggle.and(page.locator('input:not(:checked)')).waitFor();
+ await toggle.click();
  const skipped=list.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
- await skipped.getByText('Nicht einplanen',{exact:true}).first().waitFor();
+ await skipped.getByRole('img',{name:/Abweichung zur FIS-Meldung.*No Dispo/}).waitFor();
  assert.equal(await skipped.getAttribute('data-provisional-planning'),'deferred');
+ assert.equal(await skipped.locator('.MuiSelect-nativeInput').evaluateAll(inputs =>
+   inputs.length === 2 && inputs.every(input => getComputedStyle(input).display === 'none')), true);
+ await page.screenshot({path:'/workspace/artifacts/import-no-dispo-fis-abweichung.png',animations:'disabled'});
+ await list.getByRole('button',{name:'Importdetails Athlete5 Synthetic'}).click();
+ const importDetail=page.getByRole('dialog',{name:'Athlete5 Synthetic'});
+ await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).click();
+ await importDetail.getByText(/Abweichung zur FIS-Meldung/).waitFor();
+ await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).click();
+ await importDetail.getByText(/Abweichung zur FIS-Meldung/).waitFor({state:'detached'});
+ assert.equal(people[5].accommodationRequirement,'REQUIRED');
+ assert.equal(await importDetail.getByRole('checkbox',{name:/Nicht disponieren/}).isChecked(),false);
+ await importDetail.getByRole('button',{name:'Schließen',exact:true}).click();
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
  assert.equal(listRequests,beforeSaveListRequests);
- assert.deepEqual(writes,Array(2).fill('/import/sessions/1/accommodation-requirements/p2'));
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5')]);
+ await page.keyboard.press('Escape');
+ preview.planStale=true;
+ await page.reload();
+ await page.getByRole('button',{name:'Prüfung fortsetzen',exact:true}).click();
+ await openPeople();
+ assert.equal(await toggle.isChecked(),true);
+ const released=list.getByRole('row').filter({hasText:'Athlete5 Synthetic'});
+ assert.equal(await released.getAttribute('data-provisional-planning'),null);
+ assert.equal(await released.getByRole('checkbox').isChecked(),false);
+ assert.match(await released.innerText(),/Unterkunft benötigt/);
  await page.goto(`${origin}/athletes`);
  const personRow=page.getByRole('row').filter({hasText:'Athlete2 Synthetic'});
  await personRow.getByText('Nicht einplanen',{exact:true}).first().waitFor();
  assert.match((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
  await personRow.click();
  const personDialog=page.getByRole('dialog');
- await personDialog.getByRole('combobox').filter({hasText:'Nicht einplanen'}).click();
- await page.getByRole('option',{name:'Unterkunft benötigt',exact:true}).click();
+ await personDialog.getByRole('checkbox',{name:'Nicht disponieren (No Dispo)'}).uncheck();
+ assert.match(await personDialog.locator('#athlete-accommodation-requirement').innerText(),/Unterkunft benötigt/);
  await personDialog.getByRole('button',{name:'Speichern',exact:true}).click();
  await personRow.getByText('Nicht zugewiesen',{exact:true}).waitFor();
  assert.doesNotMatch((await personRow.getAttribute('class'))??'',/ops-surface-overlay/);
- assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),'/athletes/3']);
+ assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5'),'/import/sessions/1/recheck','/athletes/3']);
  detailRequests.length=0;
  await page.goto(`${origin}/import`);
  await page.getByText('Geschlossene Importsessions (1)',{exact:true}).waitFor();
@@ -317,6 +431,98 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await page.getByText('Historical decision',{exact:true}).waitFor();
  await page.getByText(/FIN –/).waitFor({state:'attached'});
  assert.deepEqual(detailRequests,['/import/sessions/1']);
+ Object.assign(people[2], {
+  accommodationRequirement:'UNRESOLVED',
+  reportedAccommodationRequests:[{family:'Freestyle',version:1,entryRow:17,roomType:'Double shared',
+    partner:'Beispiel Partner',arrivalDate:'2027-03-13',departureDate:'2027-03-22',roomRows:[12]},
+  {family:'Snowboard',version:2,entryRow:39,roomType:'No room',roomRows:[]}],
+ });
+ people[3].accommodationRequirement='UNRESOLVED';
+ await page.goto(`${origin}/athletes`);
+ await personRow.getByText('Unterkunftsbedarf offen',{exact:true}).first().waitFor();
+ await personRow.click();
+ await personDialog.getByText(/Double shared · Beispiel Partner/).waitFor();
+ await personDialog.getByText('Snowboard',{exact:true}).waitFor();
+ await personDialog.getByText(/Room List Zeile 12/).waitFor();
+ await page.screenshot({path:'/workspace/artifacts/unterkunft-entscheidung-desktop.png',animations:'disabled'});
+ await page.setViewportSize({width:780,height:740});
+ await page.screenshot({path:'/workspace/artifacts/unterkunft-entscheidung-kompakt.png',animations:'disabled'});
+ const noDispo = personDialog.getByRole('checkbox',{name:'Nicht disponieren (No Dispo)'});
+ assert.equal(await noDispo.isChecked(),false);
+ assert.equal(await noDispo.isDisabled(),true);
+ await personDialog.getByRole('button',{name:'Zimmerwunsch übernehmen'}).first().click();
+ assert.equal(await personDialog.getByRole('textbox',{name:'Gewünschter Zimmerpartner'}).inputValue(),'Beispiel Partner');
+ await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
+ await personDialog.getByText('Speichern fehlgeschlagen – erneut versuchen.').waitFor();
+ assert.equal(await personDialog.getByRole('textbox',{name:'Gewünschter Zimmerpartner'}).inputValue(),'Beispiel Partner');
+ await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
+ await personDialog.getByText(/Athlete3 Synthetic/).waitFor();
+ await personDialog.locator('#athlete-accommodation-requirement').click();
+ await page.getByRole('option',{name:'Kein Zimmer benötigt',exact:true}).click();
+ await personDialog.getByRole('button',{name:'Speichern & weiter'}).click();
+ await page.getByRole('status').filter({hasText:'alle Unterkunftsklärungen abgeschlossen'}).waitFor();
+ Object.assign(people[2], {accommodationRequirement:'NO_DISPO', accommodationDecisionLabel:'Nicht disponieren',
+   hasFisAccommodationDeviation:true, assignment:{hasAssignment:true}});
+ Object.assign(people[3], {accommodationDecisionLabel:'Abweichung FIS', hasFisAccommodationDeviation:true, nationCode:'ITA'});
+ Object.assign(people[4], {accommodationRequirement:'NO_DISPO', accommodationDecisionLabel:'Nicht disponieren',
+   hasFisAccommodationDeviation:false});
+ await page.goto(`${origin}/athletes?nation=FIN&status=fis-deviation`);
+ await page.getByRole('button',{name:'Abweichung FIS 1',exact:true}).waitFor();
+ assert.equal(await page.locator('tbody tr').count(),1);
+ await personRow.getByText('Nicht disponieren',{exact:true}).waitFor();
+ await personRow.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
+ await personRow.click();
+ await personDialog.getByText('Bestehende Buchung bleibt erhalten.',{exact:true}).waitFor();
+
+ const writesBeforeView=writes.length;
+ session.submissions=[{family:'Freestyle',versionId:'11'},{family:'Snowboard',versionId:'12'}];
+ preview.submissionSources={Freestyle:11,Snowboard:12};
+ people[1].athleteQuotaFamilies=['Freestyle','Snowboard'];
+ people[0].accommodationRequirement='NO_ROOM';
+ people[8].accommodationRequirement='UNRESOLVED';
+ for(let i=9;i<69;i++) people.push({...people[1],matchKey:'p'+i,id:String(i+1),firstname:'Additional'+i,
+   athleteQuotaFamilies:i<39?['Freestyle']:['Snowboard']});
+ await page.goto(`${origin}/import?sessionId=1`);
+ const display=page.getByRole('group',{name:'Sportfamilie anzeigen'});
+ await display.getByRole('button',{name:'Snowboard',exact:true}).click();
+ await openPeople();
+ const counts=list.getByLabel('Unterkunftsbedarf der Anzeige');
+ assert.match(await counts.innerText(),/31 Personen · 31 Unterkunft benötigt · 0 No Room · 0 No Dispo · 0 ungeklärt/);
+ const beforeDisplayReads=[listRequests,detailRequests.length];
+ assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),25);
+ await list.getByRole('navigation',{name:'Seiten der Personenliste'}).getByRole('button',{name:'Weiter'}).click();
+ assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),6);
+ await list.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+ await list.waitFor({state:'hidden'});
+ await display.getByRole('button',{name:'Freestyle / Freeski',exact:true}).click();
+ await openPeople();
+ assert.match(await counts.innerText(),/39 Personen/);
+ assert.equal(await list.getByRole('checkbox',{name:/Athlete8 Synthetic/}).isDisabled(),true);
+ await list.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+ await list.waitFor({state:'hidden'});
+ await display.getByRole('button',{name:'Gesamt',exact:true}).click();
+ for(let i=0;i<2;i++){
+  await openPeople();
+  assert.match(await counts.innerText(),/69 Personen · 64 Unterkunft benötigt · 2 No Room · 2 No Dispo · 1 ungeklärt/);
+  await list.getByRole('button',{name:'Dialog schließen',exact:true}).click();
+ await list.waitFor({state:'hidden'});
+ }
+ assert.equal(writes.length,writesBeforeView);
+ assert.deepEqual([listRequests,detailRequests.length],beforeDisplayReads);
+ assert.equal(await page.getByRole('button',{name:'Nationsentwurf öffnen',exact:true}).count(),0);
+
+ // An outdated composition stays visible without a navigation-triggered POST.
+ session.submissions[0].versionId='13';
+ preview.planStale=true;
+ session.status='APPROVED';
+ await page.reload();
+ await page.getByRole('button',{name:'Gemeinsame Prüfung fortsetzen',exact:true}).waitFor();
+ assert.equal(await page.getByRole('button',{name:'Importieren',exact:true}).count(),0);
+ assert.equal(await page.getByText('Prüfumfang ändern',{exact:true}).count(),0);
+ assert.equal(await page.getByRole('button',{name:'Snowboard separat prüfen',exact:true}).count(),0);
+ await openPeople();
+ assert.match(await counts.innerText(),/69 Personen/);
+ assert.equal(writes.length,writesBeforeView);
  assert.deepEqual(errors,[]);
 });
 

@@ -1,6 +1,8 @@
 import { concreteRoomDemand, excelDemandRecords } from '../services/planningCalculations';
 import type {AccommodationRequirement, NNPlanningControls} from '../types';
 import {OfficialLinkDialog,type OfficialLinkProposal} from './OfficialLinkDialog';
+import {ImportClarifications} from './ImportClarifications';
+import {importFindings,personFamilies,sourceFamily} from '../services/importFindings';
 import { usePermissions } from '../auth/AuthProvider';
 import { NationClarificationDialog } from './NationClarificationDialog';
 import {stayWindowText,stayWindowDetails} from '../services/stayWindow';
@@ -13,20 +15,20 @@ import { QuotaOverviewDialog, AthleteQuotaPreviewStatus } from './QuotaOverviewD
 import {stayWindowRowText,stayWindowNights} from '../services/stayWindow';
 import { ImportChangePlan } from './ImportChangePlan';
 import { canConfirmReview, importReviewRequest } from '../services/importReview';
-import { AccommodationRequirementField } from './AccommodationRequirementField';
+import { AccommodationRequirementField, FisDeviationBadge } from './AccommodationRequirementField';
 import { AccommodationRateField } from './AccommodationRate';
 import type { SingleRoomQuotaExemptReason } from '../types';
 import { Fragment, type ReactNode, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router';
-import { Dialog, DialogContent, DialogTitle, Tooltip, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Link, useSearchParams } from 'react-router';
+import { Tooltip, ToggleButton, ToggleButtonGroup } from '@mui/material';
 import { AlertTriangle, CheckCircle, ChevronDown, ChevronRight, Clock3, Crown, FileCheck2, FileText, Loader2, RefreshCcw, Upload, XCircle } from 'lucide-react';
 
 import { api } from '../services/api';
 import { canonicalSessionState, currentPreviewDetail } from '../services/importPreview';
 import { archiveImportSessionChecked, importConfirmationMessage } from '../services/importConfirmation';
-import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel, sportAreaLabel } from '../services/competitionPresentation';
+import { competitionDisplayName, competitionMembershipList, previewEventGroupLabel, sportAreaLabel, sportAreaValue } from '../services/competitionPresentation';
 import type { FisImportIssue, FisImportPreview, ImportChange } from '../types';
-import { closedImportStatuses, importQueueSession, IMPORT_SESSION_STATUS, type ImportQueueSession, type ImportSession, type NationClarification } from '../data/importSessions';
+import { closedImportStatuses, hasOpenSubmissions, importQueueSession, IMPORT_SESSION_STATUS, type ImportQueueSession, type ImportSession, type NationClarification } from '../data/importSessions';
 import { ContentCard, EmptyState, EnterpriseDialog, InfoPanel, OpsButton, PageHeader, SplitPageLayout, SectionHeader, StatusChip } from '../design-system';
 import { ImportQueue } from './ImportQueue';
 import { buildOperationsTask, OperationsDecisionDialog, OperationsTaskRow, type OperationsTask } from './OperationsDecisionDialog';
@@ -87,18 +89,21 @@ export function DataImport() {
   const [error, setError] = useState<string | null>(null), [success, setSuccess] = useState<string | null>(null);
   const [personKey,setPersonKey]=useState<string|null>(null);
   const [personFilter,setPersonFilter]=useState<ImportListFilter>('all');
-  const [grouped,setGrouped]=useState(false);
+  const [displayFamily,setDisplayFamily]=useState<'all'|'Freestyle'|'Snowboard'>('all');
+  const [grouped,setGrouped]=useState(true);
   const [personSearch,setPersonSearch]=useState('');
   const [quotaPeopleFilter,setQuotaPeopleFilter]=useState<QuotaPeopleFilter|null>(null);
-  useEffect(()=>{setGrouped(false);setPersonKey(null);setPersonFilter('all');setPersonSearch('');setQuotaPeopleFilter(null);},[selected?.id,selected?.currentVersionId]);
+  useEffect(()=>{setGrouped(true);setPersonKey(null);setPersonFilter('all');setPersonSearch('');setQuotaPeopleFilter(null);},[selected?.id,selected?.currentVersionId]);
+  useEffect(()=>setDisplayFamily('all'),[selected?.id]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [activeTask, setActiveTask] = useState<OperationsTask | null>(null);
   const [shownDecisionId, setShownDecisionId] = useState<string | null>(searchParams.get('decisionId'));
-  const [question,setQuestion]=useState<{action:'OPEN'|'REPLY'|'RESOLVE';item?:NationClarification}|null>(null);
+  const [question,setQuestion]=useState<{action:'OPEN'|'REPLY'|'RESOLVE';item?:NationClarification;initialPersonKeys?:string[]}|null>(null);
   const [questionBusy,setQuestionBusy]=useState(false);
   useEffect(()=>{setQuestion(null);},[selected?.id,selected?.currentVersionId]);
   const openQuestion=(action:'OPEN'|'REPLY'|'RESOLVE',item?:NationClarification)=>setQuestion({action,item});
   const [savingTask, setSavingTask] = useState(false);
+  const [pendingRequirement,setPendingRequirement]=useState<{key:string; value:AccommodationRequirement|null}|null>(null);
   const [destructiveConfirmed,setDestructiveConfirmed]=useState(false);
   useEffect(()=>{setDestructiveConfirmed(false);},[preview?.changePlan?.digest]);
   const { eventId, selectedEvent } = useActiveEvent();
@@ -136,11 +141,9 @@ export function DataImport() {
     try {
       const full = await api.getImportSession(session.id);
       if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
-      setSelected(full); setPreview(null); setFiles([]); setSuccess(null); setError(null);
-      const selection = importAllowed && full.status!=='IMPORTED' ? nationReviewSelection(full) : undefined;
-      const draft = selection ? await api.recheckImportSession(full.id, selection) : full;
-      setSelected(draft); setPreview(closedImportStatuses.has(draft.status)?null:draft.preview ?? null);
-      updateQueue(draft);
+      setSelected(full); setPreview(closedImportStatuses.has(full.status)?null:full.preview ?? null);
+      setFiles([]); setSuccess(null); setError(null);
+      updateQueue(full);
     } catch (e) { if (!(e instanceof DOMException && e.name === 'AbortError')) reportImportError(e,'Importsession konnte nicht geladen werden.'); }
     finally { setLoading(false); }
   };
@@ -153,9 +156,13 @@ export function DataImport() {
     if(input)input.value=''; // The same file pair may be selected again for a reimport.
   };
   const cancel = () => { setFiles([]); setPreview(selected?.preview ?? null); setError(null); setSuccess(null); const input = document.getElementById('fis-files-input') as HTMLInputElement | null; if (input) input.value = ''; };
-  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result}; setSelected(uploaded); setFiles([]); setPreview(null);
-      const selection = fullReplacement ? undefined : nationReviewSelection(uploaded);
-      const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : uploaded;
+  const runPreview = async () => { if (files.length < 2 || !eventId) return; setLoading(true); setError(null); setSuccess(null); setPreview(null); try { const result = await api.previewFisImport(files, true, undefined, eventId, fullReplacement?'FULL_NATION':'AUTO'); setPreview(result); if(result.knownFiles)setSuccess(result.message ?? 'Bekannte Dateien erneut geprüft.'); if (result.session) { const uploaded = {...result.session, preview: result.session.preview ?? result}; setSelected(uploaded); setFiles([]); updateQueue(uploaded);
+      if(result.reusedKnownFiles){
+        setPreview(uploaded.preview ? {...uploaded.preview,planStale:uploaded.preview.planStale||result.knownFilesRequiresReview} : null);
+        return;
+      }
+      const selection = !fullReplacement && (uploaded.submissions?.length??0)>1 ? nationReviewSelection(uploaded) : undefined;
+      const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : await api.getImportSession(uploaded.id);
       setSelected(draft); setPreview(draft.preview ?? null); updateQueue(draft); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const closeSession = async () => {
     if(!closingSession)return;setConfirming(true);setCloseError(null);
@@ -168,31 +175,22 @@ export function DataImport() {
     setConfirming(false);
   };
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
-      if(keep){const selection=nationReviewSelection(restored);const draft=selection?await api.recheckImportSession(restored.id,selection):restored;setSelected(draft);setPreview(draft.preview??null);updateQueue(draft);} else updateQueue(restored); setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
-  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); if (updated.selected) updateQueue(updated.selected); } catch(e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const updated = await api.getImportSession(selected.id); setSelected(updated); setPreview(updated.preview ?? null); updateQueue(updated);  } catch (e) { if(e && typeof e==='object' && 'error' in e && e.error==='STALE_PREVIEW')setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+      if(keep)setPreview(restored.preview??null);updateQueue(restored); setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
+  const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); if (updated.selected) updateQueue(updated.selected); } catch(e) { if(e && typeof e==='object' && 'error' in e && ['STALE_PREVIEW','QUOTA_RULES_CHANGED'].includes(String(e.error)))setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const updated = await api.getImportSession(selected.id); setSelected(updated); setPreview(updated.preview ?? null); updateQueue(updated);  } catch (e) { if(e && typeof e==='object' && 'error' in e && ['STALE_PREVIEW','QUOTA_RULES_CHANGED'].includes(String(e.error)))setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const recheck = async () => {
     if(!selected)return;
     setConfirming(true);setError(null);
     try {
       // Another browser may have uploaded a correction since this view was opened.
       const current=await api.getImportSession(selected.id);
-      const family=!preview?.submissionSources&&preview?.replacementScope?.kind==='SPORT_FAMILY'?preview.replacementScope.family:undefined;
-      const source=family?current.submissions?.find(part=>part.family===family):undefined;
-      const selection=source?{sourceVersionId:source.versionId}:nationReviewSelection(current,true);
+      const selection=nationReviewSelection(current,true);
       const updated=await api.recheckImportSession(selected.id,selection);
       setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);
     } catch(e){reportImportError(e,'Erneute Prüfung fehlgeschlagen');}
     finally{setConfirming(false);}
   };
 
-  const prepareSubmissions = async (sourceVersionId?:string) => {
-    if(!selected)return;
-    setConfirming(true);setError(null);setSuccess(null);
-    try {const updated=await api.recheckImportSession(selected.id,sourceVersionId?{sourceVersionId}:nationReviewSelection(selected,true));setSelected(updated);setPreview(updated.preview??null);setFiles([]);updateQueue(updated);}
-    catch(e){reportImportError(e,'Teilmeldungen konnten nicht geprüft werden.');}
-    finally{setConfirming(false);}
-  };
   const saveTask = async (payload: {decision:'APPROVED'|'NEW_LIST_ANNOUNCED'; comment:string; approvalType?:'NATION_APPROVED'|'ORGANIZER_APPROVED'; approvalMethod:'EMAIL'|'PHONE'; approvalBy:string; approvalDate:string; contactSubject?:string; costCoverage?:string; deadlineAt?:string; approvedPersonKeys?:string[];tariffEffect?:'NONE'|'SPECIAL_SELECTED';approvedExtent?:import('../types').QuotaExtent}) => {
     if (!selected || !activeTask) return;
     setSavingTask(true); setError(null);
@@ -209,8 +207,8 @@ export function DataImport() {
   };
 
   const setPreviewRequirement = async (personKey:string, accommodationRequirement:AccommodationRequirement|null) => {
-    if(!selected)return;
-    setSavingTask(true);setError(null);
+    if(!selected||savingTask)return;
+    setSavingTask(true);setPendingRequirement({key:personKey,value:accommodationRequirement});setError(null);
     try {
       const updated = await api.stageAccommodationRequirement(selected.id, personKey, accommodationRequirement);
       setSelected(updated);
@@ -218,7 +216,7 @@ export function DataImport() {
       updateQueue(updated);
     }
     catch(e){setError(e instanceof Error ? `Unterkunftsbedarf konnte nicht gespeichert werden. ${e.message}` : 'Unterkunftsbedarf konnte nicht gespeichert werden.');}
-    finally {setSavingTask(false);}
+    finally {setPendingRequirement(null);setSavingTask(false);}
   };
   const setPreviewRate = async (personKey:string, category:'STANDARD'|'SPECIAL') => {
     if(!selected)return;
@@ -261,23 +259,113 @@ export function DataImport() {
     if(matching.some(change=>['VALIDATION_ERROR','FUNCTION_CHANGED','COUNTRY_CHANGED'].includes(change.type))) statuses.push('Stammdaten prüfen');
     return statuses;
   };
+  const submissions=selected?.submissions??[];
+  const nationDraftNeedsPreparation=Boolean(preview&&submissions.length&&preview.replacementScope?.kind!=='FULL_NATION'
+    && (Object.keys(preview.submissionSources??{}).length!==submissions.length
+      || submissions.some(source=>String(preview.submissionSources?.[source.family])!==source.versionId)));
+  const reviewScope=preview?.replacementScope;
+  const reviewFamilies=reviewScope?.families??(reviewScope?.family?[reviewScope.family]:[]);
+  const reviewScopeLabel=reviewScope?.kind==='FULL_NATION'||(preview?.submissionSources&&!nationDraftNeedsPreparation)
+    ? 'Gesamte Nation' : reviewFamilies.length ? `Teilmeldung · ${reviewFamilies.map(sportAreaLabel).join(' / ')}` : 'Noch nicht festgelegt';
+  const control=selected?.importControl;
+  const findings=useMemo(()=>preview?importFindings(preview,control):[],[preview,control]);
+  const sharedAccommodationBlocked=findings.some(issue=>issue.kind==='error'
+    && ['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'].includes(issue.code));
+  const controlPeople=useMemo(()=>new Map(control?.people.map(person=>[person.personKey,person])),[control]);
+  const visibleIssuesByPerson=useMemo(()=>{
+    const byPerson=new Map<string,ImportControl['issues']>();
+    for (const issue of control?visibleControlIssues(control):[]) {
+      if (issue.kind==='info') continue;
+      for (const key of issue.personKeys) {
+        const issues=byPerson.get(key)??[];
+        issues.push(issue);
+        byPerson.set(key,issues);
+      }
+    }
+    return byPerson;
+  },[control]);
+  const peopleByKey=useMemo(()=>new Map(preview?.people.map(person=>[person.matchKey,person])),[preview]);
+  const singleRoomKeys=useMemo(()=>new Set(preview?.rooms.filter(room=>room.roomType.toLowerCase()==='single')
+    .flatMap(room=>[room.person1Key,room.person2Key])),[preview]);
+  const peopleInView=useMemo(()=>new Set(preview?.people.filter(person=>{
+    if (displayFamily==='all') return true;
+    const families=personFamilies(person,preview);
+    const memberships=person.athleteQuotaFamilies?.filter(Boolean)??[];
+    if(memberships.length) return memberships.includes(displayFamily);
+    return families.includes(displayFamily)
+      || (!families.length && preview.replacementScope?.kind==='SPORT_FAMILY' && preview.replacementScope.family===displayFamily);
+  })),[preview,displayFamily]);
+  const roomsInView=useMemo(()=>new Set(preview?.rooms.filter(room=>{
+    if(displayFamily==='all')return true;
+    const families=room.sourceRows?.map(row=>sportAreaValue(sourceFamily(preview,row.versionId,selected??undefined))).filter(Boolean);
+    if(families?.length)return families.includes(displayFamily);
+    if(preview.replacementScope?.kind==='SPORT_FAMILY'&&preview.replacementScope.family===displayFamily)return true;
+    return [room.person1Key,room.person2Key].some(key=>{
+      const person=key?peopleByKey.get(key):undefined;
+      return person&&peopleInView.has(person);
+    });
+  })),[preview,selected,displayFamily,peopleByKey,peopleInView]);
+  const scopedFindings=useMemo(()=>{
+    if(displayFamily==='all'||!preview)return findings;
+    return findings.filter(finding=>{
+      const version=finding.details?.sourceVersionId;
+      const family=typeof version==='string'||typeof version==='number'
+        ? sportAreaValue(sourceFamily(preview,version,selected??undefined)) : null;
+      if(family)return family===displayFamily;
+      return finding.personKeys.some(key=>{
+        const person=peopleByKey.get(key);
+        return person&&peopleInView.has(person);
+      });
+    });
+  },[preview,selected,displayFamily,findings,peopleByKey,peopleInView]);
+  const viewControl=useMemo(()=>{
+    if(!control||displayFamily==='all')return control;
+    return {...control,
+      people:control.people.filter(row=>{
+        const person=peopleByKey.get(row.personKey);
+        return person&&peopleInView.has(person);
+      }),
+      issues:control.issues.filter(issue=>scopedFindings.some(finding=>finding.code===issue.code&&finding.row===(issue.row??undefined)
+        && (!issue.personKeys.length||issue.personKeys.some(key=>finding.personKeys.includes(key))))),
+      competitions:control.competitions.filter(competition=>sportAreaValue(competition.family)===displayFamily),
+    };
+  },[control,displayFamily,peopleByKey,peopleInView,scopedFindings]);
+  const viewPreview=useMemo(()=>{
+    if(!preview||displayFamily==='all')return preview;
+    const groupNames=new Set(control?.quotaGroups?.filter(group=>sportAreaValue(group.family)===displayFamily).map(group=>group.name));
+    return {...preview,people:[...peopleInView],rooms:[...roomsInView],
+      errors:scopedFindings.filter(finding=>finding.kind==='error').map(finding=>({
+        code:finding.code,message:finding.message,details:{...finding.details,row:finding.row},
+      })),
+      quotaChecks:preview.quotaChecks?.filter(row=>groupNames.has(row.discipline)),
+      athleteQuotaChecks:preview.athleteQuotaChecks?.filter(row=>sportAreaValue(row.topLevelDiscipline)===displayFamily),
+    };
+  },[preview,displayFamily,control,peopleInView,roomsInView,scopedFindings]);
+  const accommodationCounts={REQUIRED:0,NO_ROOM:0,NO_DISPO:0,UNRESOLVED:0};
+  for (const person of peopleInView) accommodationCounts[person.accommodationRequirement??'REQUIRED']++;
+  const roomDemandLabel=usePreviewRoomDemand(preview,selected?.nnPlanning);
+
+  const canEditPreview=importAllowed&&!savingTask&&!loading&&!confirming&&Boolean(selected)&&!['APPROVED','IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status);
+  const showPerson=(key:string)=>{setDetail(null);setPersonKey(key);};
+  const showPeople=(keys:string[])=>{setPersonKey(null);setQuotaPeopleFilter({role:'people',personKeys:keys});setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});};
+  const askAbout=(keys:string[])=>{setDetail(null);setPersonKey(null);setQuestion({action:'OPEN',initialPersonKeys:keys});};
   const deferredKeys=preview?deferredImportPersonKeys(preview,selected?.nnPlanning):new Set<string>();
   const deferredRows=new Set<ReactNode[]>();
   const noDispoKeys = new Set(preview?.people.filter(person => person.accommodationRequirement === 'NO_DISPO').map(person => person.matchKey));
   const deferredHint='Weiterhin vollständig FIS-gemeldet. Außerhalb der Planungsempfehlung bleibt eine Disposition bei Unterkunftsbedarf möglich. Bestehende Buchungen und Wünsche bleiben unverändert.';
-  const planningLabel=(key?:string|null)=>key&&deferredKeys.has(key)?<span title={deferredHint} className="mt-1 block text-xs font-normal text-[var(--ops-text-muted)]">{noDispoKeys.has(key) ? 'Nicht einplanen' : 'Außerhalb der Planungsempfehlung'}</span>:null;
+  const planningLabel=(key?:string|null)=>key&&deferredKeys.has(key)?<span title={deferredHint} className="mt-1 block text-xs font-normal text-[var(--ops-text-muted)]">{noDispoKeys.has(key) ? 'Nicht disponieren' : 'Außerhalb der Planungsempfehlung'}</span>:null;
   const peopleRows = preview?.people.map(p => {
     const status: SingleRoomStatus = p.singleRoomEntitlement === 'APPROVED_EXTRA'
       ? 'APPROVED_EXTRA'
       : p.singleRoomEntitlement === 'IN_QUOTA' ? 'IN_QUOTA'
         : p.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? 'PENDING_APPROVAL' : 'NONE';
-    const single = preview.rooms.some(room => [room.person1Key,room.person2Key].includes(p.matchKey) && room.roomType.toLowerCase() === 'single');
+    const single = singleRoomKeys.has(p.matchKey);
     const entitlement = <span className="inline-flex flex-wrap gap-1">{single && status !== 'IN_QUOTA' && <StatusChip tone="info">Einzelzimmer</StatusChip>}{status !== 'NONE' && <SingleRoomStatusBadge status={status}/>}</span>;
     const name=`${p.firstname} ${p.lastname}`;
     const personKey=String((p as FisImportPreviewPersonWithKey).matchKey??'');
-    const exemption=p.function?.toLowerCase() === 'athlete' ? <button type="button" aria-label={`Weltmeisterstatus ${name}`} aria-pressed={p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!selected || savingTask || p.singleRoomQuotaExemptReason === 'OTHER' || ['APPROVED','IMPORTED'].includes(selected.status)} onClick={() => void setPreviewExemption(personKey,p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '' : 'WORLD_CHAMPION',true)} className="inline-flex items-center gap-1 rounded-md border px-2 py-1"><Crown className={`h-4 w-4 ${p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : '—'}</button> : p.singleRoomQuotaExemptReason === 'OTHER' ? 'Historische EZ-Ausnahme' : '—';
-    const row:ReactNode[]=[<div><button type="button" className={`text-left font-bold hover:underline ${deferredKeys.has(personKey)?'text-[var(--ops-text-muted)]':'text-[var(--ops-primary)]'}`} aria-label={`Importdetails ${name}`} onClick={()=>setPersonKey(personKey)}>{name} <span className="text-xs font-normal">Details →</span></button>{planningLabel(personKey)}<p title={stayWindowDetails(selected?.importControl?.people.find(r=>r.personKey===personKey)?.stayWindow)} className="ops-table-wrap text-xs text-[var(--ops-warning)]">{stayWindowRowText(selected?.importControl?.people.find(r=>r.personKey===personKey)?.stayWindow)}<span className="block text-[var(--ops-text-muted)]">{stayWindowNights(selected?.importControl?.people.find(r=>r.personKey===personKey)?.stayWindow)}</span></p>{selected?.importControl&&visibleControlIssues(selected.importControl).filter(i=>i.kind!=='info'&&i.personKeys.includes(personKey)).map((issue,index)=><p key={index} title={`${issue.source??''}${issue.row?` · Zeile ${issue.row}`:''}`} className="ops-table-wrap mt-1 max-w-xs text-xs text-[var(--ops-warning)]">{issue.message}</p>)}</div>, p.nationCode, <div>{previewEventGroupLabel(p.quotaDisciplines)}<span className="ops-table-wrap block text-xs text-[var(--ops-text-muted)]">{competitionMembershipList(selected?.importControl?.people.find(row=>row.personKey===personKey)?.competitions)}</span></div>, p.function || '—', <div className="w-[190px] max-w-full space-y-1"><AccommodationRequirementField compact allowNoDispo sourceRoomType={p.entryAccommodationSource?.roomType || p.roomType || "Keine Angabe"} label={`Unterkunftsbedarf ${name}`} person={p} disabled={!selected || savingTask || ['APPROVED','IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)} onChange={value=>void setPreviewRequirement(personKey,value)} onRelease={()=>void setPreviewRequirement(personKey,null)}/>{p.accommodationRequirementReviewRequired && <p className="text-xs">Unterkunftswunsch prüfen; unbekannte Werte bedeuten nicht No room.</p>}</div>, <div className="max-w-[220px] space-y-1"><AccommodationRateField dense compact label={`Unterkunftstarif ${name}`} value={p.accommodationRateCategory} disabled={!selected || savingTask || ['APPROVED','IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)} onChange={category=>void setPreviewRate(personKey,category)}/><AccommodationRateProvenance person={p}/></div>, <div key="ez" className="space-y-1">{exemption}{entitlement}</div>, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
-    if(deferredKeys.has(personKey))deferredRows.add(row);
+    const exemption=p.function?.toLowerCase() === 'athlete' ? <button type="button" aria-label={`Weltmeisterstatus ${name}`} aria-pressed={p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION'} disabled={!canEditPreview || p.singleRoomQuotaExemptReason === 'OTHER'} onClick={() => void setPreviewExemption(personKey,p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '' : 'WORLD_CHAMPION',true)} className="inline-flex items-center gap-1 rounded-md border px-2 py-1"><Crown className={`h-4 w-4 ${p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'text-amber-500 fill-amber-200' : ''}`}/>{p.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? 'Weltmeister' : '—'}</button> : p.singleRoomQuotaExemptReason === 'OTHER' ? 'Historische EZ-Ausnahme' : '—';
+    const row:ReactNode[]=[<div><button type="button" className={`text-left font-bold hover:underline ${noDispoKeys.has(personKey)?'text-[var(--ops-text-muted)]':'text-[var(--ops-primary)]'}`} aria-label={`Importdetails ${name}`} onClick={()=>setPersonKey(personKey)}>{name} <span className="text-xs font-normal">Details →</span></button>{planningLabel(personKey)} <FisDeviationBadge person={p}/><p title={stayWindowDetails(controlPeople.get(personKey)?.stayWindow)} className="ops-table-wrap text-xs text-[var(--ops-warning)]">{stayWindowRowText(controlPeople.get(personKey)?.stayWindow)}<span className="block text-[var(--ops-text-muted)]">{stayWindowNights(controlPeople.get(personKey)?.stayWindow)}</span></p>{visibleIssuesByPerson.get(personKey)?.map((issue,index)=><p key={index} title={`${issue.source??''}${issue.row?` · Zeile ${issue.row}`:''}`} className="ops-table-wrap mt-1 max-w-xs text-xs text-[var(--ops-warning)]">{issue.message}</p>)}</div>, p.nationCode, <div>{previewEventGroupLabel(p.quotaDisciplines)}<span className="ops-table-wrap block text-xs text-[var(--ops-text-muted)]">{competitionMembershipList(controlPeople.get(personKey)?.competitions)}</span></div>, p.function || '—', <div className="w-[190px] max-w-full space-y-1"><AccommodationRequirementField compact sourceRoomType={p.entryAccommodationSource?.roomType || p.roomType || "Keine Angabe"} label={`Unterkunftsbedarf ${name}`} person={p} pending={pendingRequirement?.key===personKey?pendingRequirement:undefined} disabled={!canEditPreview || (p.accommodationRequirement === 'UNRESOLVED' && !p.unresolvedSourceAccommodation)} onChange={value=>void setPreviewRequirement(personKey,value)} onRelease={()=>void setPreviewRequirement(personKey,null)} onToggleNoDispo={checked=>void setPreviewRequirement(personKey,checked ? 'NO_DISPO' : 'REQUIRED')}/>{p.accommodationRequirementReviewRequired && <p className="text-xs">Unterkunftswunsch prüfen; unbekannte Werte bedeuten nicht No room.</p>}</div>, <div className="max-w-[220px] space-y-1"><AccommodationRateField dense compact label={`Unterkunftstarif ${name}`} value={p.accommodationRateCategory} disabled={!canEditPreview || p.accommodationRequirement === 'NO_DISPO' || p.accommodationRequirement === 'NO_ROOM' || p.accommodationRequirement === 'UNRESOLVED'} onChange={category=>void setPreviewRate(personKey,category)}/><AccommodationRateProvenance person={p}/></div>, <div key="ez" className="space-y-1">{exemption}{entitlement}</div>, importStatuses(statusesFor('persons',personKey,p.rowNumber,p.operation))];
+    if(noDispoKeys.has(personKey))deferredRows.add(row);
     return row;
   }) ?? [];
   preview?.dispositionAnalysis.categories.removedAthletes.records.forEach(record => {
@@ -285,15 +373,16 @@ export function DataImport() {
   });
   const visiblePeopleIndices=peopleRows.map((_,index)=>index).filter(index=>{
     const p=preview?.people[index];
-    if(!p)return !quotaPeopleFilter&&personFilter==='all'&&!personSearch;
+    if(!p)return displayFamily==='all'&&!quotaPeopleFilter&&personFilter==='all'&&!personSearch;
+    if(!peopleInView.has(p))return false;
     return (`${p.firstname} ${p.lastname} ${p.function || ''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')))
-      && personMatchesImportFilter(p,personFilter,preview!,selected?.importControl)&&personMatchesQuotaFilter(p,quotaPeopleFilter);
+      && personMatchesImportFilter(p,personFilter,viewPreview!,viewControl,scopedFindings)&&personMatchesQuotaFilter(p,quotaPeopleFilter);
   });
   const filteredPeopleRows=visiblePeopleIndices.map(index=>peopleRows[index]);
-  const activePerson=preview?.people.find(p=>p.matchKey===personKey);
+  const activePerson=personKey ? peopleByKey.get(personKey) : undefined;
   const roomRows = preview?.rooms.map(r => {
     const statuses=statusesFor('rooms',r.sourceRowKey,r.rowNumber);
-    const markers = [r.person1Key,r.person2Key].map(key => preview.people.find(p => (p as FisImportPreviewPersonWithKey).matchKey === key)).filter(Boolean).map(p => p?.accommodationRequirement==='NO_DISPO' ? 'Nicht einplanen' : p?.accommodationRequirement==='NO_ROOM' ? 'No room · kein Unterkunftsbedarf' : p?.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '👑 Weltmeister' : p?.singleRoomEntitlement === 'APPROVED_EXTRA' ? 'Mehrpreis genehmigt' : p?.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? '+EZ offen' : '').filter(Boolean);
+    const markers = [r.person1Key,r.person2Key].map(key => peopleByKey.get(key??undefined)).filter(Boolean).map(p => p?.accommodationRequirement==='UNRESOLVED' ? 'Unterkunftsbedarf offen' : p?.accommodationRequirement==='NO_DISPO' ? 'Nicht einplanen' : p?.accommodationRequirement==='NO_ROOM' ? 'No room · kein Unterkunftsbedarf' : p?.singleRoomQuotaExemptReason === 'WORLD_CHAMPION' ? '👑 Weltmeister' : p?.singleRoomEntitlement === 'APPROVED_EXTRA' ? 'Mehrpreis genehmigt' : p?.singleRoomEntitlement === 'APPROVAL_REQUIRED' ? '+EZ offen' : '').filter(Boolean);
     const row:ReactNode[]=[<div key="person"><span className={r.person1Key&&deferredKeys.has(r.person1Key)?'text-[var(--ops-text-muted)]':undefined}>{r.person1Name}{planningLabel(r.person1Key)}</span>{roomNeedsPartner(r,selected?.importControl)&&<p className="ops-table-wrap text-xs text-[var(--ops-warning)]" title={`Room List · Zeile ${r.rowNumber}`}>Zimmerpartner ungeklärt · Zeile {r.rowNumber}</p>}{selected?.importControl?.issues.filter(i=>i.kind==='clarification'&&i.source==='Room List'&&i.row===r.rowNumber&&!/PARTNER/.test(i.code)).map((issue,index)=><p key={index} className="ops-table-wrap text-xs text-[var(--ops-warning)]">{issue.message} · Zeile {r.rowNumber}</p>)}</div>, <span className={r.person2Key&&deferredKeys.has(r.person2Key)?'text-[var(--ops-text-muted)]':undefined}>{r.person2Name || (roomNeedsPartner(r,selected?.importControl)?'Zimmerpartner fehlt':'—')}{planningLabel(r.person2Key)}</span>, <span key="room-markers">{r.roomType}{markers.map((label,i) => <span key={i} className="ml-2 text-xs">{label}</span>)}</span>, [r.checkInDate, r.checkOutDate].filter(Boolean).join(' → ') || '—', importStatuses(statuses)];
     const keys=[r.person1Key,r.person2Key].filter((key):key is string=>Boolean(key));
     if(keys.length&&keys.every(key=>deferredKeys.has(key))&&(!r.sharedWithRawName||Boolean(r.person2Key))&&!roomNeedsPartner(r,selected?.importControl))deferredRows.add(row);
@@ -307,7 +396,7 @@ export function DataImport() {
     roomRows.push([String(record.athlete??'—'),Array.isArray(record.roommates)?record.roommates.join(', '):'—',String(record.roomType??'—'),'—',importStatuses(['Zimmer entfernt'])]);
   });
 
-  const visibleRoomIndices=roomRows.map((_,index)=>index).filter(index=>{const room=preview?.rooms[index];return room?roomMatchesImportFilter(room,personFilter,preview!,selected?.importControl)&&`${room.person1Name} ${room.person2Name??''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')):personFilter==='all'&&!personSearch;});
+  const visibleRoomIndices=roomRows.map((_,index)=>index).filter(index=>{const room=preview?.rooms[index];return room?roomsInView.has(room)&&roomMatchesImportFilter(room,personFilter,viewPreview!,viewControl)&&`${room.person1Name} ${room.person2Name??''}`.toLocaleLowerCase('de').includes(personSearch.toLocaleLowerCase('de')):displayFamily==='all'&&personFilter==='all'&&!personSearch;});
   const filteredRoomRows=visibleRoomIndices.map(index=>roomRows[index]);
   const groupedRows=grouped&&preview&&detail?.title==='Personen der Importvorschau'
     ?groupImportItems(visiblePeopleIndices,index=>personImportPlacement(preview.people[index])).map(section=>({...section,items:section.items.map(index=>peopleRows[index])}))
@@ -334,24 +423,45 @@ export function DataImport() {
                 <div className="flex flex-wrap gap-x-5 gap-y-1">{selected.submissions?.map(part=><span key={part.versionId}>{sportAreaLabel(part.family)} · {part.people} Personen · {IMPORT_SESSION_STATUS[part.status]}</span>)}</div>
                 {selected.submissionTotal?.conflict&&<p className="mt-1 text-[var(--ops-warning)]">{selected.submissionTotal.conflict}</p>}
               </section>}
-              <Workflow session={selected} actionStep={primaryActionStep(selected, files, preview)} upload={<UploadWorkspace files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction canWrite={importAllowed} session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onRecheck={recheck} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm} reviewConfirmed={canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)}/>} secondaryAction={<details className="w-full text-sm"><summary className="cursor-pointer">Weitere Aktionen</summary><div className="mt-2 flex flex-wrap gap-2">
-                {selected.submissions?.map(part=><OpsButton key={part.versionId} disabled={!importAllowed||confirming||loading||savingTask||files.length>0} onClick={()=>void prepareSubmissions(part.versionId)}>Nur {sportAreaLabel(part.family)} prüfen / importieren</OpsButton>)}
-                {preview&&!preview.submissionSources&&Boolean(selected.submissions?.length)&&<OpsButton disabled={!importAllowed||confirming||loading||files.length>0} onClick={()=>void prepareSubmissions()}>Nationsentwurf öffnen</OpsButton>}
-                {!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)&&<OpsButton onClick={abortSession} disabled={!importAllowed||confirming||loading} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Aktuelle Prüfung abbrechen</OpsButton>}
+              <Workflow session={selected} actionStep={primaryActionStep(selected, files, preview)} upload={<UploadWorkspace files={files} preview={preview} onFiles={handleFiles} onCancel={cancel}/>} action={<SessionPrimaryAction canWrite={importAllowed} session={selected} preview={preview} files={files} loading={loading} confirming={confirming} onPreview={runPreview} onRecheck={recheck} onOpenTask={setActiveTask} onApprove={approve} onImport={confirm} reviewConfirmed={canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)}/>} secondaryAction={!['IMPORTED','ARCHIVED','REPLACED','CANCELLED'].includes(selected.status)&&<details className="w-full text-sm"><summary className="cursor-pointer">Weitere Aktionen</summary><div className="mt-2 flex flex-wrap gap-2">
+                <OpsButton onClick={abortSession} disabled={!importAllowed||confirming||loading} className="border-transparent bg-transparent px-2 text-[var(--ops-text-muted)] shadow-none hover:border-[var(--ops-border)] hover:bg-[var(--ops-surface)]"><XCircle className="mr-2 inline h-4 w-4"/>Aktuelle Prüfung abbrechen</OpsButton>
               </div></details>} />
               {error && <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>}
-              {success && selected.status!=='IMPORTED' && <InfoPanel tone="info" title="Prüfstand">{success}</InfoPanel>}
+              {success && (selected.status!=='IMPORTED'||preview?.planStale||preview?.quotaRulesChanged) && <InfoPanel tone="info" title="Prüfstand">{success}</InfoPanel>}
               {preview?.quotaRulesChanged&&<InfoPanel tone="warning" title="Quotenregeln wurden geändert – bitte erneut prüfen">Die ursprüngliche Review-Version bleibt erhalten. Vor der Freigabe erneut prüfen.</InfoPanel>}
               <NextAction session={selected} preview={preview} success={success}/>
+              {selected.status==='IMPORTED'&&<Link className="text-sm font-semibold text-[var(--ops-primary)] underline"
+                to={`/athletes?nation=${encodeURIComponent(selected.nation)}`}>Operative Personen bearbeiten</Link>}
+              {preview?.people.some(person => person.accommodationRequirement === 'UNRESOLVED') &&
+                <InfoPanel tone="info" title="Unterkunft nach dem Import klären">
+                  Personen mit offenem Unterkunftsbedarf bleiben bis zur Entscheidung von der Disposition ausgeschlossen.
+                  {selected.status === 'IMPORTED' ? <> <Link className="underline font-semibold" to={`/athletes?nation=${encodeURIComponent(selected.nation)}&status=accommodation-clarification`}>Unterkunft klären</Link></>
+                    : <> Der offene Bedarf verhindert die Übernahme dieser Personen nicht.</>}
+                </InfoPanel>}
+
               <CompletedDecisions grouped={grouped} session={selected} onOpen={setActiveTask}/>
               {preview?.cancelledPeople?.length? <details className="rounded-xl border border-[var(--ops-border)] p-3 text-sm"><summary>{preview.cancelledPeople.length} stornierte Meldung(en) · im betroffenen Sportbereich inaktiv</summary><p className="mt-2 text-xs">Bestehende Personen und Competition-Zuordnungen werden ausschließlich über den geprüften Änderungsplan entfernt. Andere Sportbereiche bleiben geschützt.</p><ul className="mt-2 space-y-1">{preview.cancelledPeople.map((p,index)=><li key={index}>{p.firstname} {p.lastname} · {p.sourceFamily?sportAreaLabel(p.sourceFamily):'Nationsmeldung'} · Present = CANCELLED · Entry-Zeile {p.rowNumber}</li>)}</ul></details>:null}
-              {preview?.errors.some(e=>['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'].includes(e.code))&&<InfoPanel tone="warning" title="Gemeinsame Unterkunft klären"><p>Die Personenzuordnung genehmigt keine widersprüchlichen Zimmer- oder Aufenthaltsangaben. Der gemeinsame Prüfstand bleibt bis zur Klärung gesperrt.</p><ul className="mt-2 space-y-1 text-sm">{preview.errors.filter(e=>['IMPORT_SHARED_ACCOMMODATION_CONFLICT','IMPORT_SHARED_STAY_SECTIONS'].includes(e.code)).map((e,index)=><li key={index}>{preview.people.find(p=>p.matchKey===e.details?.personKey)?.firstname} {preview.people.find(p=>p.matchKey===e.details?.personKey)?.lastname} · {e.message}</li>)}</ul></InfoPanel>}
+              {sharedAccommodationBlocked&&<InfoPanel tone="warning" title="Gemeinsame Unterkunft klären">
+                Die Personenzuordnung allein klärt keine widersprüchlichen Zimmer- oder Aufenthaltsangaben.
+                Der gemeinsame Prüfstand bleibt bis zur Klärung gesperrt.
+                Die betroffenen Personen und Quellangaben stehen in der Klärungsübersicht.
+              </InfoPanel>}
+              {displayFamily!=='all'&&findings.some(issue=>issue.kind==='error'&&!scopedFindings.includes(issue))&&
+                <p className="text-sm text-[var(--ops-warning)]">Gesamte Nation: Weitere Importfehler im Prüfstand. In „Gesamt“ anzeigen.</p>}
+              {preview&&<ImportClarifications familyScoped={displayFamily!=='all'} preview={preview} session={selected} findings={scopedFindings} canWrite={canEditPreview&&!questionBusy} onPerson={showPerson} onPeople={showPeople} onQuestion={askAbout} onDecision={id=>{const a=selected.approvals.find(a=>a.id===id);if(a)setActiveTask(buildOperationsTask(selected,a));}} onExistingQuestion={id=>{document.getElementById(`clarification-${id}`)?.scrollIntoView({block:'center'});}}/>}
               <ImportChangePlan plan={preview?.changePlan} stale={preview?.planStale} editable={selected.status!=='IMPORTED' && selected.status!=='APPROVED'} destructiveConfirmed={destructiveConfirmed} onDestructive={setDestructiveConfirmed} busy={confirming || loading}/>
 
-              {preview&&<PreviewCard operational={selected.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} onGrouped={setGrouped} onPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} control={selected.importControl} onFilter={(area,filter)=>{setQuotaPeopleFilter(null);setPersonFilter(filter);setPersonSearch('');setDetail({title:area==='people'?'Personen der Importvorschau':'Zimmer der Importvorschau',headers:area==='people'?PEOPLE_HEADERS:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});}} preview={preview} peopleRows={peopleRows} roomRows={roomRows} onOpen={d=>{if(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(d.title)){setQuotaPeopleFilter(null);setPersonFilter('all');setPersonSearch('');}setDetail(d);}}/>}
+              {preview&&<PreviewCard roomDemandLabel={roomDemandLabel} displayFamily={displayFamily} displayControl={<>
+                <ToggleButtonGroup size="small" exclusive value={displayFamily} aria-label="Sportfamilie anzeigen"
+                  onChange={(_,value:typeof displayFamily|null)=>{if(value!==null)setDisplayFamily(value);}}>
+                  <ToggleButton value="all">Gesamt</ToggleButton>
+                  <ToggleButton value="Freestyle">Freestyle / Freeski</ToggleButton>
+                  <ToggleButton value="Snowboard">Snowboard</ToggleButton>
+                </ToggleButtonGroup>
+              </>} scopeLabel={reviewScopeLabel} viewFindings={scopedFindings} operational={selected.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} onGrouped={setGrouped} onPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} control={viewControl} onFilter={(area,filter)=>{setQuotaPeopleFilter(null);setPersonFilter(filter);setPersonSearch('');setDetail({title:area==='people'?'Personen der Importvorschau':'Zimmer der Importvorschau',headers:area==='people'?PEOPLE_HEADERS:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});}} preview={viewPreview} peopleRows={filteredPeopleRows} roomRows={filteredRoomRows} onOpen={d=>{if(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(d.title)){setQuotaPeopleFilter(null);setPersonFilter('all');setPersonSearch('');}setDetail(d);}}/>}
               {selected.nationClarifications&&<section id="nation-clarifications" aria-label="Abklärung mit Nation" className="space-y-2 border-t border-[var(--ops-divider)] pt-3">
                 <div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Abklärung mit Nation"/><OpsButton disabled={!importAllowed||loading||confirming||savingTask||questionBusy||['APPROVED','IMPORTED','REPLACED','ARCHIVED','CANCELLED'].includes(selected.status)} onClick={()=>openQuestion('OPEN')}>Abklärung dokumentieren</OpsButton></div>
-                {(grouped?groupImportItems(selected.nationClarifications.items.filter(i=>i.state==='OPEN'),item=>familyImportPlacement(item.subject.coverage?.families)):[{area:'',items:selected.nationClarifications.items.filter(i=>i.state==='OPEN')}]).map(section=><Fragment key={section.area}>{grouped&&<h4 className="pt-2 text-sm font-bold">{section.area}</h4>}{section.items.map(item=><div key={item.id} className="space-y-1 border-b border-[var(--ops-divider)] py-2 text-sm">
+                {(grouped?groupImportItems(selected.nationClarifications.items.filter(i=>i.state==='OPEN'),item=>familyImportPlacement(item.subject.coverage?.families)):[{area:'',items:selected.nationClarifications.items.filter(i=>i.state==='OPEN')}]).map(section=><Fragment key={section.area}>{grouped&&<h4 className="pt-2 text-sm font-bold">{section.area}</h4>}{section.items.map(item=><div id={`clarification-${item.id}`} key={item.id} className="space-y-1 border-b border-[var(--ops-divider)] py-2 text-sm">
                   <strong>{item.subject.label}{item.subject.people.length>0?` · ${item.subject.people.length} Personen`:''}</strong><details><summary>Betroffene Personen und Details</summary><p>{item.subject.people.join(' · ')}</p></details>{item.subject.facts?.stay&&<p className="text-xs">Aufenthalt: {item.subject.facts.stay.arrivalDate??'—'} – {item.subject.facts.stay.departureDate??'—'} · Fenster: {item.subject.facts.stay.allowedStart??'—'} – {item.subject.facts.stay.allowedEnd??'—'}</p>}<StatusChip tone={item.relevant===false?'neutral':'warning'}>{['APPROVED','IMPORTED','REPLACED','ARCHIVED','CANCELLED'].includes(selected.status)?'Historisch offen':item.relevant===false?'Andere Teilmeldung · offen':item.covered===false?'Aktuelle Quellen nicht gültig geprüft':item.changed?'Fakten geändert · erneut klären':item.replies.length?'Rückmeldung dokumentiert · Erledigung offen':'Warten auf Rückmeldung'}</StatusChip>{item.required&&<span className="ml-2 text-xs font-bold">{item.relevant===false?'Vor Freigabe der betroffenen Teilmeldung klären':'Vor Freigabe klären'}</span>}
                   <p className="text-xs">{Object.entries(item.subject.coverage?.sourceVersionIds??{}).map(([family,id])=>`${family==='Snowboard'||family==='Freestyle'?sportAreaLabel(family):'Nationsmeldung'} · Version ${selected.versions.find(v=>v.id===String(id))?.version??id}`).join(' / ')}</p><p className="text-xs">{{EMAIL:'E-Mail',PHONE:'Telefon',OTHER:'Sonstiges'}[item.contactMethod??'']??item.contactMethod} · {item.contactDate} · {item.user} · Version {selected.versions.find(v=>v.id===item.versionId)?.version??item.versionId}</p><p>{item.comment}</p>{item.totalParts? <p className="text-xs">{item.correctedParts} von {item.totalParts} Hinweisen nachweislich korrigiert{item.subject.automatic===false?' · Manuelle Erledigung erforderlich':''}</p>:item.subject.targetType&&<p className="text-xs">Manuelle Erledigung erforderlich</p>}
                   {item.replies.map((reply,index)=><p key={index} className="text-xs">{reply.comment} · {reply.user} · {new Date(reply.timestamp).toLocaleString('de-AT')}</p>)}
@@ -370,13 +480,13 @@ export function DataImport() {
         </ContentCard>
       </div>
     </SplitPageLayout>
-    <DetailDialog error={error} deferredRows={deferredRows} hasDeferredPeople={deferredKeys.size>0} nn={selected?.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} groupedRows={groupedRows} detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:filteredRoomRows, quota:quotaRows(preview),athleteQuota:athleteQuotaRows(preview)})} preview={preview??(selected?.status==='ARCHIVED'?selected.preview??null:null)} control={selected?.importControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
-    {activePerson&&preview&&<ImportPersonDialog key={activePerson.matchKey} person={activePerson} preview={preview} session={selected} onClose={()=>setPersonKey(null)} />}
+    <DetailDialog quotaPreview={preview} displayFamily={displayFamily} accommodationCounts={accommodationCounts} roomDemandLabel={roomDemandLabel} error={error} deferredRows={deferredRows} hasDeferredPeople={deferredKeys.size>0} nn={selected?.nnPlanning?{planning:selected.nnPlanning,busy:false,error:null}:undefined} grouped={grouped} groupedRows={groupedRows} detail={currentPreviewDetail(detail, {people:filteredPeopleRows, rooms:filteredRoomRows, quota:quotaRows(viewPreview),athleteQuota:athleteQuotaRows(viewPreview)})} preview={viewPreview??(selected?.status==='ARCHIVED'?selected.preview??null:null)} control={viewControl} personFilter={personFilter} onFilter={setPersonFilter} search={personSearch} onSearch={setPersonSearch} quotaPeopleFilter={quotaPeopleFilter} onQuotaPeople={filter=>{setQuotaPeopleFilter(filter);setPersonFilter('all');setPersonSearch('');setDetail({title:'Personen der Importvorschau',headers:PEOPLE_HEADERS});}} onClose={() => setDetail(null)} />
+    {activePerson&&preview&&<ImportPersonDialog key={activePerson.matchKey} person={activePerson} pending={pendingRequirement?.key===activePerson.matchKey?pendingRequirement:undefined} requirementError={error} preview={preview} session={selected} canWrite={canEditPreview} onRequirement={value=>void setPreviewRequirement(activePerson.matchKey,value)} onClose={()=>setPersonKey(null)} />}
     {closingSession&&<EnterpriseDialog open title="Importsession schließen?" size="medium" onClose={()=>{if(!confirming)setClosingSession(null);}} actions={<><OpsButton disabled={confirming} onClick={()=>setClosingSession(null)}>Abbrechen</OpsButton><OpsButton disabled={confirming} onClick={()=>void closeSession()}>Importsession schließen</OpsButton></>}>
       <p className="text-sm">Der aktuelle Importworkflow und alle offenen Prüfungen dieser Nation werden beendet. Die Nationsmeldung verschwindet aus der aktiven Importwarteschlange. Bereits importierte Personen, Zimmer und Genehmigungen bleiben unverändert.</p>
       <p className="mt-3 font-bold">{closingSession.nation}</p>{closeError&&<p role="alert" className="mt-3 text-[var(--ops-error)]">{closeError}</p>}
     </EnterpriseDialog>}
-    {question&&selected&&<NationClarificationDialog session={selected} action={question.action} item={question.item}
+    {question&&selected&&<NationClarificationDialog session={selected} action={question.action} item={question.item} initialPersonKeys={question.initialPersonKeys}
       onClose={()=>setQuestion(null)} onBusy={setQuestionBusy} onSave={async data=>{
         const saved=await api.documentImportClarification(selected.id,data);
         setSelected(saved);setPreview(saved.preview??null);updateQueue(saved);
@@ -458,7 +568,7 @@ function ActiveWorkflowStep({step,session,upload,action}:{step:WorkflowStep;sess
 }
 
 function primaryActionStep(session:ImportSession, files:File[], preview:FisImportPreview|null):WorkflowStep['id'] {
-  if(files.length||!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan||preview.errors.length)return 'validation';
+  if(files.length||(session.submissions?.length??0)>1&&nationReviewSelection({...session,preview:preview??undefined})||!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan||preview.errors.length)return 'validation';
   if(session.approvals.some(approval=>approval.decision==='PENDING')) return 'decision';
   if(['APPROVED','IMPORTED'].includes(session.status)) return 'import';
   if(files.length>=2 || session.status==='IMPORTED' || ['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status)) return 'validation';
@@ -470,6 +580,12 @@ export function SessionPrimaryAction({canWrite=true,session,preview,files,loadin
   const needsFiles=['DRAFT','WAITING_FOR_NATION','NATION_CLARIFICATION','RECHECK_REQUIRED'].includes(session.status);
   const canApprove=!session.nationClarifications?.items.some(i=>i.required&&i.state==='OPEN'&&i.relevant!==false)&&Boolean(preview?.isValid)&&session.approvals.every(a=>a.decision==='APPROVED')&&['PROFESSIONALLY_REVIEWED','READY_FOR_IMPORT','WAITING_FOR_NATION','NATION_CLARIFICATION','NEW_LIST_RECEIVED','EXCEPTION_APPROVED'].includes(session.status);
   if(files.length) return <OpsButton onClick={onPreview} disabled={!canWrite||files.length<2||loading||confirming}>Dateien prüfen</OpsButton>;
+  const multipleSources=(session.submissions?.length??0)>1;
+  const hasSharedHousingConflict=preview?.errors.some(issue=>issue.code==='IMPORT_SHARED_ACCOMMODATION_CONFLICT');
+  const needsJointReview=multipleSources&&
+    (hasSharedHousingConflict||Boolean(nationReviewSelection({...session,preview:preview??undefined})));
+  if(session.status==='IMPORTED'&&!hasOpenSubmissions(session)&&!pending.length&&!preview?.planStale&&!preview?.quotaRulesChanged) return null;
+  if(needsJointReview)return <OpsButton onClick={onRecheck} disabled={!canWrite||loading||confirming}>Gemeinsame Prüfung fortsetzen</OpsButton>;
   if(!preview||preview.planStale||preview.quotaRulesChanged||!preview.changePlan) return <OpsButton onClick={onRecheck} disabled={!canWrite||loading||confirming}>Prüfung fortsetzen</OpsButton>;
   if(preview.errors.length) return <OpsButton disabled={!canWrite||loading||confirming} onClick={()=>document.getElementById('fis-files-input')?.click()}>Dateien aktualisieren</OpsButton>;
   if(pending.length) return <OpsButton disabled={!canWrite||loading||confirming}  onClick={()=>onOpenTask(pending[0])}>Entscheidungen bearbeiten</OpsButton>;
@@ -501,12 +617,7 @@ function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDe
 function UploadCard({files,onChange}:{files:File[];onChange:(f:FileList|null)=>void}) { return <ContentCard surface="elevated" className="p-2"><div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Dateien hinzufügen oder aktualisieren"/></div><label htmlFor="fis-files-input" className="mt-2 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-3 text-center hover:bg-[var(--ops-tone-primary-surface)]"><Upload className="mx-auto h-7 w-7 text-[var(--ops-primary)]"/><p className="mt-1 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
 
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };
-export function PreviewCard({operational,preview,peopleRows,roomRows,onOpen,control,onFilter,onPeople,grouped=false,onGrouped}:{operational?:Pick<NNPlanningControls,'planning'|'busy'|'error'>;grouped?:boolean;onGrouped?:(value:boolean)=>void;preview:FisImportPreview|null;peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void;control?:ImportControl;onFilter?:(area:'people'|'rooms',filter:ImportListFilter)=>void;onPeople?:(filter:QuotaPeopleFilter)=>void}) {
- const tile='flex min-h-40 flex-col rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4';
- const openPeople=()=>onOpen({title:'Personen der Importvorschau',rows:peopleRows,headers:PEOPLE_HEADERS});
- const openRooms=()=>onOpen({title:'Zimmer der Importvorschau',rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});
- const personFilters=(['error','clarification','noRoom','stay','stayUnclear','singleRoom','special'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>!i.code.startsWith('ROOM_')).length??0):(preview?.people.filter(p=>personMatchesImportFilter(p,filter,preview,control)).length??0)})).filter(h=>h.count);
- const planning=operational?.planning;
+function usePreviewRoomDemand(preview:FisImportPreview|null,planning?:NNPlanningControls['planning']) {
  const demandPeople=useMemo(()=>{
    if(!preview)return [];
    const imported=planning?.mode==='LIVE'?planning.operationalQuota?.people??[]:[];
@@ -525,16 +636,40 @@ export function PreviewCard({operational,preview,peopleRows,roomRows,onOpen,cont
  const peak=demand?.days.reduce((best,day)=>day.rooms>best.rooms?day:best,demand.days[0]);
  const provisional=demand?.provisional||Boolean(preview?.errors.length||planning?.rows.some(row=>row.conflict)
    ||!planning);
+ return <>Zimmerbedarf{provisional?' (vorläufig)':''}
+    {peak?<> · {new Date(peak.date+'T00:00:00Z').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'})}: {peak.rooms} {demand?.unknownRooms || demand?.unknownDates ? 'bekannt' : 'gesamt'} · {peak.dz} DZ · {peak.ez} EZ{demand?.unknownRooms?` · bis zu ${demand.unknownRooms} Personen ohne Zimmerart`:''}</>: !provisional ? ' · 0 gesamt · 0 DZ · 0 EZ' : ' · keine belastbaren Nachtwerte'}
+    {demand?.unknownDates?` · ${demand.unknownDates} ohne Zeitraum`:''}</>;
+}
+
+export function PreviewCard({displayFamily='all',displayControl,scopeLabel,viewFindings,roomDemandLabel,operational,preview,peopleRows,roomRows,onOpen,control,onFilter,onPeople,grouped=false,onGrouped}:{displayFamily?:string;displayControl?:ReactNode;scopeLabel?:string;viewFindings?:ReturnType<typeof importFindings>;roomDemandLabel?:ReactNode;operational?:Pick<NNPlanningControls,'planning'|'busy'|'error'>;grouped?:boolean;onGrouped?:(value:boolean)=>void;preview:FisImportPreview|null;peopleRows:ReactNode[][];roomRows:ReactNode[][];onOpen:(detail:Detail)=>void;control?:ImportControl;onFilter?:(area:'people'|'rooms',filter:ImportListFilter)=>void;onPeople?:(filter:QuotaPeopleFilter)=>void}) {
+ const tile='flex min-h-40 flex-col rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface)] p-4';
+ const openPeople=()=>onOpen({title:'Personen der Importvorschau',rows:peopleRows,headers:PEOPLE_HEADERS});
+ const openRooms=()=>onOpen({title:'Zimmer der Importvorschau',rows:roomRows,headers:['Person 1','Person 2','Zimmer','Aufenthalt','Importstatus']});
+ const findings=viewFindings??(preview?importFindings(preview,control):[]);
+ const personFilters=(['error','clarification','noRoom','stay','stayUnclear','singleRoom','special'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>!i.code.startsWith('ROOM_')).length??0):(preview?.people.filter(p=>personMatchesImportFilter(p,filter,preview,control,findings)).length??0)})).filter(h=>h.count);
+ const planning=operational?.planning;
+ const calculatedRoomDemandLabel=usePreviewRoomDemand(roomDemandLabel===undefined?preview:null,planning);
+ const demandText=roomDemandLabel??calculatedRoomDemandLabel;
  const sportIssues=sportClarifications(control);
  const ez=preview?singleRoomSummary(preview):null;
+ const operative=planning?.operationalQuota;
+ const groupNames=new Set(control?.quotaGroups?.filter(group=>sportAreaValue(group.family)===displayFamily).map(group=>group.name));
+ const operativeRows=displayFamily==='all'?operative?.rows:operative?.rows.filter(row=>groupNames.has(row.discipline));
+ const operativeStatus=operational?.busy?'wird berechnet …':operational?.error||!operative?'Bewertung nicht verfügbar'
+   : displayFamily!=='all'&&!operativeRows?.length?'Keine zugeordneten Kontexte'
+   : (displayFamily==='all'&&operative.conflict)||operativeRows?.some(row=>row.officialsExceeded||row.singleRoomsPending>0||row.coverageChanged)
+     ?'Klärungsbedarf':'aktuell bewertet';
  const roomFilters=(['error','clarification','partner'] as const).map(filter=>({filter,count:filter==='error'?(preview?.errors.filter(i=>i.code.startsWith('ROOM_')).length??0):(preview?.rooms.filter(r=>roomMatchesImportFilter(r,filter,preview,control)).length??0)})).filter(h=>h.count);
 
- return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle={importScopeLabel(preview) || undefined}/>{onGrouped&&<div className="mt-3 flex flex-wrap items-center gap-2 text-sm"><span id="import-group-label">Gruppieren:</span><ToggleButtonGroup size="small" exclusive value={grouped} aria-labelledby="import-group-label" onChange={(_,value:boolean|null)=>{if(value!==null)onGrouped(value);}}><ToggleButton value={false}>Aus</ToggleButton><ToggleButton value={true}>Ein</ToggleButton></ToggleButtonGroup></div>}<div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
+ return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Importvorschau" subtitle={importScopeLabel(preview) || undefined}/>{(displayControl||onGrouped)&&<div className="mt-3 flex flex-wrap items-center justify-between gap-3">{displayControl}{onGrouped&&<div className="flex flex-wrap items-center gap-2 text-sm sm:ml-auto"><span id="import-group-label">Gruppieren:</span><ToggleButtonGroup size="small" exclusive value={grouped} aria-labelledby="import-group-label" onChange={(_,value:boolean|null)=>{if(value!==null)onGrouped(value);}}><ToggleButton value={false}>Aus</ToggleButton><ToggleButton value={true}>Ein</ToggleButton></ToggleButtonGroup></div>}</div>}{scopeLabel&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Prüf- und Importumfang · {scopeLabel}</p>}<div className="mt-4 grid gap-3 sm:grid-cols-2 2xl:grid-cols-4">
   <div className={tile}><button type="button" onClick={openPeople} className="text-left"><strong>Personen</strong><p>{preview?.people.length??0} Personen{preview?.replacementScope?.kind==='SPORT_FAMILY'&&!preview?.submissionSources ? ' aus diesen Dateien' : ''}</p></button>{personFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('people',h.filter):openPeople()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {importListFilters[h.filter]}</button>)}{preview&&!personFilters.some(h=>h.filter==='error'||h.filter==='clarification'||h.filter==='stay'||h.filter==='stayUnclear')&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
-  <div className={tile}><button type="button" onClick={openRooms} className="text-left"><strong>Zimmerzuordnungen</strong><p>{preview?.rooms.length??0} Zimmerangaben</p></button>{roomFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('rooms',h.filter):openRooms()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {h.filter==='partner'?'Partner ungeklärt':importListFilters[h.filter]}</button>)}{preview&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Zimmerbedarf{provisional?' (vorläufig)':''}
-    {peak?<> · {new Date(peak.date+'T00:00:00Z').toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'})}: {peak.rooms} {demand?.unknownRooms || demand?.unknownDates ? 'bekannt' : 'gesamt'} · {peak.dz} DZ · {peak.ez} EZ{demand?.unknownRooms?` · bis zu ${demand.unknownRooms} Personen ohne Zimmerart`:''}</>: !provisional ? ' · 0 gesamt · 0 DZ · 0 EZ' : ' · keine belastbaren Nachtwerte'}
-    {demand?.unknownDates?` · ${demand.unknownDates} ohne Zeitraum`:''}</p>}{preview&&!roomFilters.length&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
-  <div className={tile}><button type="button" onClick={()=>onOpen({title:'Officials & EZ-Quote'})} className="text-left"><strong>Officials & EZ-Quote</strong>{operational&&<span className="block text-xs">Operativ: {operational.busy?'wird berechnet …':operational.error||!operational.planning.operationalQuota?'Bewertung nicht verfügbar':operational.planning.operationalQuota?.conflict||operational.planning.operationalQuota?.rows.some(row=>row.officialsExceeded||row.singleRoomsPending>0||row.coverageChanged)?'Klärungsbedarf':'aktuell bewertet'}</span>}<span className="block">{preview?.quotaOverview?.nations.reduce((sum,n)=>sum+n.ezDecisionsOpen,0)??0} EZ-Kontexte offen · Importprüfung</span><span className="block pt-2">{ez&&!ez.complete||preview?.quotaOverview?.nations.some(n=>n.coverageReviewRequired||n.incomplete)?'Abdeckung prüfen':ez?.counts.PENDING?'EZ-Entscheidung offen':'OK'}</span></button>{ez&&ez.counts.PENDING>0&&<button type="button" className="mt-2 text-left text-sm text-[var(--ops-primary)]" onClick={()=>onPeople?.({role:'people',personKeys:ez.personKeys.PENDING})}>{ez.counts.PENDING} EZ-Personen offen</button>}</div>
+  <div className={tile}><button type="button" onClick={openRooms} className="text-left"><strong>Zimmerzuordnungen</strong><p>{preview?.rooms.length??0} Zimmerangaben</p></button>{roomFilters.map(h=><button type="button" key={h.filter} onClick={()=>onFilter?onFilter('rooms',h.filter):openRooms()} className="mt-2 text-left text-sm text-[var(--ops-primary)]">{h.count} {h.filter==='partner'?'Partner ungeklärt':importListFilters[h.filter]}</button>)}{preview&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">{demandText}{displayFamily!=='all'?' · Gesamt-Nation (Prüfentwurf)':''}</p>}{preview&&!roomFilters.length&&<span className="mt-auto pt-2 text-sm text-[var(--ops-success)]">OK</span>}</div>
+  <div className={tile}><button type="button" onClick={()=>onOpen({title:'Officials & EZ-Quote'})} className="text-left"><strong>Officials & EZ-Quote</strong>{displayFamily!=='all'?<span className="block">
+    {preview?.quotaChecks?.length
+      ? `${preview.quotaChecks.filter(row=>row.singleRoomsPending>0).length} EZ-Kontexte offen · Importprüfung`
+      : 'Keine zugeordneten Officials-/EZ-Kontexte'}
+    {operational&&<span className="block text-xs">Operativ: {operativeStatus}{operative?.conflict?' · Auswahlkonflikt Gesamt-Nation':''}</span>}
+  </span>:<>{operational&&<span className="block text-xs">Operativ: {operativeStatus}</span>}<span className="block">{preview?.quotaOverview?.nations.reduce((sum,n)=>sum+n.ezDecisionsOpen,0)??0} EZ-Kontexte offen · Importprüfung</span><span className="block pt-2">{ez&&!ez.complete||preview?.quotaOverview?.nations.some(n=>n.coverageReviewRequired||n.incomplete)?'Abdeckung prüfen':ez?.counts.PENDING?'EZ-Entscheidung offen':'OK'}</span></>}</button>{displayFamily==='all'&&ez&&ez.counts.PENDING>0&&<button type="button" className="mt-2 text-left text-sm text-[var(--ops-primary)]" onClick={()=>onPeople?.({role:'people',personKeys:ez.personKeys.PENDING})}>{ez.counts.PENDING} EZ-Personen offen</button>}</div>
   <div className={tile}><button type="button" onClick={()=>onOpen({title:'Athleten-/Disziplinquote'})} className="flex flex-col gap-1 text-left"><strong>Athleten-/Disziplinquote</strong>{preview?.athleteQuotaChecks?.map(q=><span key={`${q.nationCode}/${q.topLevelDiscipline}`}>{sportAreaLabel(q.topLevelDiscipline)}: {q.athleteQuotaUsed} / {q.athleteQuotaLimit} · Familienquote</span>)}<span>{preview?<AthleteQuotaPreviewStatus preview={preview}/>: 'Noch keine Vorschau'}</span></button>{sportIssues.length>0&&<button type="button" onClick={()=>onOpen({title:'Athleten-/Disziplinquote',focusSport:true})} title={sportIssues.map(row=>`${row.nation} · ${row.name}`).join('; ')} className="mt-2 text-left text-sm font-bold text-[var(--ops-warning)]">{sportIssues.length} {sportIssues.length===1?'Sportliche Prüfung offen':'Wettbewerbspositionen prüfen'}<span className="block text-xs font-normal">{sportIssues.map(row=>`${competitionDisplayName(row.name)} ${row.gender==='M'?'Männer':['F','W'].includes(row.gender??'')?'Frauen':row.gender??''}`).join(' · ')}</span></button>}</div>
  </div></ContentCard>;
 }
@@ -564,16 +699,33 @@ const detailLabels:Record<string,string>={firstname:'Vorname',lastname:'Nachname
 function displayValue(value:unknown):string { if(value===null||value===undefined||value==='')return 'Noch zu ermitteln'; if(Array.isArray(value))return value.map(displayValue).join(', '); if(typeof value==='object')return Object.entries(value as Record<string,unknown>).map(([key,item])=>`${detailLabels[key]??key}: ${displayValue(item)}`).join(' · '); return String(value); }
 function RecordSection({title,children}:{title:string;children:ReactNode}) { return <section><h3 className="mb-2 text-xs font-extrabold uppercase tracking-wider text-[var(--ops-text-subtle)]">{title}</h3><div className="rounded-xl border border-[var(--ops-border)] bg-[var(--ops-surface-elevated)] p-4">{children}</div></section>; }
 function IssueRecord({issue,isInformation,isDecision}:{issue:FisImportIssue;isInformation:boolean;isDecision:boolean}) { const copy=issueCopy[issue.code]; const detected=/discipline/i.test(issue.code); return <article className="space-y-4"><RecordSection title="1. Was ist passiert?"><p className="font-bold">{detected?'Disziplin automatisch erkannt':copy?.message??issue.message}</p>{detected&&<p className="mt-2 text-sm text-[var(--ops-text-muted)]">Erkannt: {displayValue(issue.details?.discipline??issue.details?.value)} · Quelle: Dateiname</p>}</RecordSection>{Object.keys(issue.details??{}).length>0&&<RecordSection title="2. Betroffene Daten"><div className="grid gap-3 sm:grid-cols-2">{Object.entries(issue.details??{}).map(([key,value])=><div key={key}><div className="text-xs font-bold text-[var(--ops-text-subtle)]">{detailLabels[key]??key}</div><div className="font-semibold">{displayValue(value)}</div></div>)}</div></RecordSection>}<RecordSection title="3. Auswirkung"><div className="flex gap-2 font-bold">{isInformation?<CheckCircle className="h-5 w-5 text-[var(--ops-success)]"/>:<AlertTriangle className="h-5 w-5 text-[var(--ops-warning)]"/>}{isInformation?'Information · keine zusätzliche Importsperre':isDecision?'Fachlich klären · keine zusätzliche Importsperre':'Import ist bis zur Korrektur blockiert'}</div></RecordSection><InfoPanel tone={isInformation?'success':'info'} title="Was ist jetzt zu tun?">{isInformation?'Hinweis anhand der Quelldaten nachvollziehen.':isDecision?'Sachverhalt bei Bedarf mit Nation oder FIS klären. Bestehende Genehmigungsfälle bleiben unverändert.':copy?.action??'Bitte die fehlerhaften Quelldaten korrigieren.'}</InfoPanel></article>; }
-function DetailDialog({error,deferredRows,hasDeferredPeople,nn,grouped=false,groupedRows,detail,onClose,preview,control,personFilter,onFilter,search,onSearch,quotaPeopleFilter,onQuotaPeople}:{error?:string|null;deferredRows?:Set<ReactNode[]>;hasDeferredPeople?:boolean;nn?:NNPlanningControls;grouped?:boolean;groupedRows?:Array<{area:string;group?:string;items:ReactNode[][]}>;detail:Detail|null;onClose:()=>void;preview:FisImportPreview|null;control?:ImportControl;personFilter:ImportListFilter;onFilter:(kind:ImportListFilter)=>void;search:string;onSearch:(value:string)=>void;quotaPeopleFilter:QuotaPeopleFilter|null;onQuotaPeople:(filter:QuotaPeopleFilter|null)=>void}) {
-  if(detail && ['Officials & EZ-Quote','Quota & EZ','Athleten-/Disziplinquote'].includes(detail.title))return <QuotaOverviewDialog nn={nn} grouped={grouped} preview={preview} control={control} kind={detail.title==='Athleten-/Disziplinquote'?'athlete':'officials'} onPeople={onQuotaPeople} focusSport={detail.focusSport} onClose={onClose}/>;
+function DetailDialog({quotaPreview,displayFamily,accommodationCounts,roomDemandLabel,error,deferredRows,hasDeferredPeople,nn,grouped=false,groupedRows,detail,onClose,preview,control,personFilter,onFilter,search,onSearch,quotaPeopleFilter,onQuotaPeople}:{quotaPreview:FisImportPreview|null;displayFamily:string;accommodationCounts:Record<AccommodationRequirement,number>;roomDemandLabel:ReactNode;error?:string|null;deferredRows?:Set<ReactNode[]>;hasDeferredPeople?:boolean;nn?:NNPlanningControls;grouped?:boolean;groupedRows?:Array<{area:string;group?:string;items:ReactNode[][]}>;detail:Detail|null;onClose:()=>void;preview:FisImportPreview|null;control?:ImportControl;personFilter:ImportListFilter;onFilter:(kind:ImportListFilter)=>void;search:string;onSearch:(value:string)=>void;quotaPeopleFilter:QuotaPeopleFilter|null;onQuotaPeople:(filter:QuotaPeopleFilter|null)=>void}) {
+  const [page,setPage]=useState(0);
+  useEffect(()=>setPage(0),[detail?.title,displayFamily,personFilter,search,quotaPeopleFilter]);
+  const pageSize=25;
+  const paginate=detail?.title==='Personen der Importvorschau';
+  const rowCount=detail?.rows?.length??0;
+  const currentPage=Math.min(page,Math.max(0,Math.ceil(rowCount/pageSize)-1));
+  let offset=0;
+  const sections=(groupedRows??[{area:'',items:detail?.rows??[]}]).map(section=>{
+    const start=offset;
+    offset+=section.items.length;
+    return paginate?{...section,items:section.items.slice(Math.max(0,currentPage*pageSize-start),
+      Math.max(0,(currentPage+1)*pageSize-start))}:section;
+  }).filter(section=>section.items.length);
+  if(detail && ['Officials & EZ-Quote','Quota & EZ','Athleten-/Disziplinquote'].includes(detail.title))return <QuotaOverviewDialog displayFamily={displayFamily} nn={nn} grouped={grouped} preview={quotaPreview} control={control} kind={detail.title==='Athleten-/Disziplinquote'?'athlete':'officials'} onPeople={onQuotaPeople} focusSport={detail.focusSport} onClose={onClose}/>;
   const isQuota=detail?.title === 'Officials & EZ-Quote';
   const wide= isQuota || detail?.title === 'Personen der Importvorschau';
-  const uncheckable=preview?.people.filter(person=>personMatchesImportFilter(person,'stayUnclear',preview,control))??[];
-  const unavailableLabel=uncheckable.every(person=>control?.people.find(row=>row.personKey===person.matchKey)?.stayWindow?.reason==='EVENT_DATES_UNCLEAR')?stayWindowText(control?.people.find(row=>row.personKey===uncheckable[0]?.matchKey)?.stayWindow):'Event-/Aufenthaltsdaten unklar';
+  const uncheckable=detail?.title==='Personen der Importvorschau'
+    ? (control?.people??[]).filter(person=>person.stayWindow?.reason&&person.stayWindow.reason!=='NO_ROOM') : [];
+  const unavailableLabel=uncheckable.every(person=>person.stayWindow?.reason==='EVENT_DATES_UNCLEAR')
+    ? stayWindowText(uncheckable[0]?.stayWindow) : 'Event-/Aufenthaltsdaten unklar';
   return (
-    <Dialog open={Boolean(detail)} onClose={onClose} fullWidth maxWidth={wide ? false : "lg"} sx={wide ? {'& .MuiDialog-paper': {width: {xs: 'calc(100vw - 32px)', sm: '90vw'}, maxWidth: '1600px', maxHeight: 'calc(100dvh - 64px)'}} : undefined}>
-      <DialogTitle>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></DialogTitle>
-      <DialogContent dividers sx={{overflowY: 'auto'}}>
+    <EnterpriseDialog open={Boolean(detail)} onClose={onClose} size={wide?'table':'large'} title={<>{detail?.title}<div className="text-sm font-normal text-[var(--ops-text-muted)]">{detail?.subtitle}</div></>}>
+        {paginate&&<div className="mb-3 text-sm" aria-label="Unterkunftsbedarf der Anzeige">
+          <p>{displayFamily!=='all'?`${sportAreaLabel(displayFamily)} · `:''}{Object.values(accommodationCounts).reduce((total,count)=>total+count,0)} Personen · {accommodationCounts.REQUIRED} Unterkunft benötigt · {accommodationCounts.NO_ROOM} No Room · {accommodationCounts.NO_DISPO} No Dispo · {accommodationCounts.UNRESOLVED} ungeklärt</p>
+          <p className="text-xs text-[var(--ops-text-muted)]">{roomDemandLabel}{displayFamily!=='all'?' · Gesamt-Nation (Prüfentwurf)':''}</p>
+        </div>}
         {detail?.title==='Personen der Importvorschau' && error && <div role="alert" className="mb-3">
           <InfoPanel tone="error" title="Aktion fehlgeschlagen">{error}</InfoPanel>
         </div>}
@@ -582,10 +734,14 @@ function DetailDialog({error,deferredRows,hasDeferredPeople,nn,grouped=false,gro
         {personFilter==='error'&&preview&&['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&<ul className="space-y-1 text-sm text-[var(--ops-error)]">{preview.errors.filter(i=>i.code.startsWith('ROOM_')===(detail?.title==='Zimmer der Importvorschau')).map((issue,index)=><li key={index}>{issue.message}</li>)}</ul>}
         {detail?.title==='Personen der Importvorschau'&&quotaPeopleFilter&&<div className="mb-2 flex flex-wrap items-center gap-2 text-sm" aria-label="Quoten-Personenfilter"><strong>{quotaPeopleFilter.role==='officials'?'Officials':quotaPeopleFilter.role==='athletes'?'Athleten':'Personen'}{quotaPeopleFilter.nation?` · ${quotaPeopleFilter.nation}`:''}{quotaPeopleFilter.group?` · ${quotaPeopleFilter.group}`:''}{quotaPeopleFilter.multipleGroups?' · Mehrere Event Groups':''}{quotaPeopleFilter.competition?` · ${quotaPeopleFilter.competition}`:''}{quotaPeopleFilter.family?` · ${quotaPeopleFilter.family}`:''}{quotaPeopleFilter.gender?` · ${quotaPeopleFilter.gender==='M'?'Männer':'Frauen'}`:''}</strong><button type="button" className="text-[var(--ops-primary)] underline" onClick={()=>onQuotaPeople(null)}>Filter aufheben</button></div>}
         <div className="space-y-6">{(['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')?[]:detail?.issues)?.map((issue,i)=><IssueRecord key={`${issue.code}-${i}`} issue={issue} isInformation={!preview?.errors.some(e=>e.code===issue.code)&&!control?.issues.some(i=>i.code===issue.code&&i.kind==='clarification')} isDecision={!preview?.errors.some(e=>e.code===issue.code)&&Boolean(control?.issues.some(i=>i.code===issue.code&&i.kind==='clarification'))}/>)}</div>
-        {hasDeferredPeople&&['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">Grau gekennzeichnet sind Personen außerhalb der Planungsempfehlung. „Nicht einplanen“ kennzeichnet den ausdrücklich ausgeschlossenen Unterkunftsbedarf.</p>}
-        {detail?.rows&&detail.rows.length>0&&<div tabIndex={0} role="region" aria-label={`${detail.title} – Tabelle horizontal scrollbar`} className="mt-3 overflow-x-auto"><table className={`w-full text-sm ${wide ? 'min-w-[1050px]' : ''}`}><thead><tr>{detail.headers?.map(h=><th key={h} className={`border-b border-[var(--ops-divider)] px-3 py-2 whitespace-nowrap text-xs uppercase text-[var(--ops-text-subtle)] ${isQuota && quotaHeaders.indexOf(h) >= 2 && quotaHeaders.indexOf(h) <= 6 ? 'text-right' : 'text-left'}`}>{h}</th>)}</tr></thead><tbody>{(groupedRows??[{area:'',items:detail.rows}]).map((section,index)=><Fragment key={index}>{groupedRows&&<tr><th scope="rowgroup" colSpan={detail.headers?.length} className="bg-[var(--ops-surface-elevated)] px-3 py-2 text-left">{section.area}<span className="ml-2 text-xs font-normal">{section.items.length} {detail.title==='Personen der Importvorschau'?'Personen':'Zimmerangaben'}</span></th></tr>}{section.items.map((r,i)=><tr key={i} data-provisional-planning={deferredRows?.has(r)?'deferred':undefined} className={`border-b border-[var(--ops-divider)] ${deferredRows?.has(r)?'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-muted)]':''}`}>{r.map((c,j)=><td key={j} className={`px-3 py-2 ${isQuota && j >= 2 && j <= 6 ? 'text-right tabular-nums' : ''}`}>{c}</td>)}</tr>)}</Fragment>)}</tbody></table></div>}
+        {hasDeferredPeople&&['Personen der Importvorschau','Zimmer der Importvorschau'].includes(detail?.title??'')&&<p className="mt-2 text-xs text-[var(--ops-text-muted)]">„Nicht disponieren“ kennzeichnet den ausdrücklich ausgeschlossenen Unterkunftsbedarf. Die Planungsempfehlung wird separat angezeigt.</p>}
+        {detail?.rows&&detail.rows.length>0&&<div tabIndex={0} role="region" aria-label={`${detail.title} – Tabelle horizontal scrollbar`} className="mt-3 overflow-x-auto"><table className={`w-full text-sm ${wide ? 'min-w-[1050px]' : ''}`}><thead><tr>{detail.headers?.map(h=><th key={h} className={`border-b border-[var(--ops-divider)] px-3 py-2 whitespace-nowrap text-xs uppercase text-[var(--ops-text-subtle)] ${isQuota && quotaHeaders.indexOf(h) >= 2 && quotaHeaders.indexOf(h) <= 6 ? 'text-right' : 'text-left'}`}>{h}</th>)}</tr></thead><tbody>{sections.map((section,index)=><Fragment key={index}>{groupedRows&&<tr><th scope="rowgroup" colSpan={detail.headers?.length} className="bg-[var(--ops-surface-elevated)] px-3 py-2 text-left">{section.area}<span className="ml-2 text-xs font-normal">{section.items.length} {detail.title==='Personen der Importvorschau'?'Personen':'Zimmerangaben'}</span></th></tr>}{section.items.map((r,i)=><tr key={i} data-provisional-planning={deferredRows?.has(r)?'deferred':undefined} className={`border-b border-[var(--ops-divider)] ${deferredRows?.has(r)?'bg-[var(--ops-surface-elevated)] text-[var(--ops-text-muted)]':''}`}>{r.map((c,j)=><td key={j} className={`px-3 py-2 ${isQuota && j >= 2 && j <= 6 ? 'text-right tabular-nums' : ''}`}>{c}</td>)}</tr>)}</Fragment>)}</tbody></table></div>}
+        {paginate&&rowCount>pageSize&&<nav aria-label="Seiten der Personenliste" className="mt-3 flex items-center gap-3 text-sm">
+          <OpsButton disabled={currentPage===0} onClick={()=>setPage(currentPage-1)}>Zurück</OpsButton>
+          <span>{currentPage*pageSize+1}–{Math.min(rowCount,(currentPage+1)*pageSize)} von {rowCount}</span>
+          <OpsButton disabled={(currentPage+1)*pageSize>=rowCount} onClick={()=>setPage(currentPage+1)}>Weiter</OpsButton>
+        </nav>}
         {detail&&!detail.issues?.length&&!detail.rows?.length&&<EmptyState title="Keine betroffenen Datensätze" description="Für diese Session liegen keine Detailänderungen vor."/>}
-      </DialogContent>
-    </Dialog>
+    </EnterpriseDialog>
   );
 }
