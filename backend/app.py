@@ -2518,11 +2518,12 @@ def _current_session_preview(session, *, read_context=None):
     return preview
 
 
-def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True, share_detail_context=False, freshly_planned=False):
+def _current_session_payload(session, include_preview=False, *, read_context=None, resolve_preview=True, share_detail_context=False, freshly_planned=False, include_history=True):
     if include_preview and resolve_preview and session.status not in {'REPLACED','ARCHIVED','CANCELLED'}:
         from imports.read_context import ImportReadContext
         read_context=read_context or ImportReadContext(session.event_id)
-    payload = session.to_dict(include_preview=include_preview, read_context=read_context if share_detail_context else None)
+    payload = session.to_dict(include_preview=include_preview, read_context=read_context if share_detail_context else None,
+                              include_history=include_history)
     if resolve_preview and session.status not in {'REPLACED', 'ARCHIVED', 'CANCELLED'}:
         # The requirement PATCH can serialize its freshly saved plan while still
         # holding the same write lock and read context that produced it.
@@ -2582,7 +2583,12 @@ def _current_session_payload(session, include_preview=False, *, read_context=Non
 @app.route('/api/import/sessions/<int:session_id>', methods=['GET'])
 def get_import_session(session_id):
     configured_event_id()
-    return jsonify(_current_session_payload(ImportSession.query.get_or_404(session_id), include_preview=True, share_detail_context=True))
+    session = ImportSession.query.get_or_404(session_id)
+    view = request.args.get('view')
+    if view == 'history':
+        return jsonify(history=[event.to_dict() for event in session.history])
+    return jsonify(_current_session_payload(session, include_preview=True, share_detail_context=True,
+                                            include_history=view != 'workspace'))
 
 
 @app.route('/api/import/sessions/<int:session_id>/accommodation-requirements/<path:person_key>', methods=['PATCH'])
@@ -2658,7 +2664,8 @@ def stage_accommodation_requirement(session_id, person_key):
     refresh_plan(session, preview, read_context=read_context,
                  recalculate=approval_ids != set(preview['_currentApprovalIds']))
     payload = _current_session_payload(session, include_preview=True, read_context=read_context,
-                                       share_detail_context=True, freshly_planned=True)
+                                       share_detail_context=True, freshly_planned=True,
+                                       include_history=request.args.get('view') != 'workspace')
     db.session.commit()
     if staged_raw:
         PREVIEW_STORE[session.current_version.preview_token] = staged_raw

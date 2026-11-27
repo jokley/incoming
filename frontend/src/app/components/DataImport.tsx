@@ -139,7 +139,7 @@ export function DataImport() {
   const selectSession = async (session: Pick<ImportQueueSession, 'id'>) => {
     setLoading(true);
     try {
-      const full = await api.getImportSession(session.id);
+      const full = await api.getImportSession(session.id, 'workspace');
       if (full.preview?.eventId && String(full.preview.eventId) !== eventId) throw new Error('Importsession gehört zu einem anderen Event.');
       setSelected(full); setPreview(closedImportStatuses.has(full.status)?null:full.preview ?? null);
       setFiles([]); setSuccess(null); setError(null);
@@ -162,7 +162,7 @@ export function DataImport() {
         return;
       }
       const selection = !fullReplacement && (uploaded.submissions?.length??0)>1 ? nationReviewSelection(uploaded) : undefined;
-      const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : await api.getImportSession(uploaded.id);
+      const draft = selection ? await api.recheckImportSession(uploaded.id, selection) : await api.getImportSession(uploaded.id, 'workspace');
       setSelected(draft); setPreview(draft.preview ?? null); updateQueue(draft); } } catch (e) { reportImportError(e,'Preview fehlgeschlagen'); } finally { setLoading(false); } };
   const closeSession = async () => {
     if(!closingSession)return;setConfirming(true);setCloseError(null);
@@ -177,13 +177,13 @@ export function DataImport() {
   const abortSession = async () => { if (!selected) return; setConfirming(true); setError(null); try { const restored=await api.cancelImportSession(selected.id,selected.currentVersionId); const keep=restored.status!=='CANCELLED'||Boolean(restored.submissions?.length);setSelected(keep?restored:null); setPreview(null);
       if(keep)setPreview(restored.preview??null);updateQueue(restored); setFiles([]); setSuccess('Aktuelle Prüfversion abgebrochen. Frühere Imports, Personen und Genehmigungen bleiben erhalten.'); } catch(e) { setError(e instanceof Error ? e.message : 'Importsession konnte nicht abgebrochen werden'); } finally { setConfirming(false); } };
   const approve = async () => { if (!selected || !canConfirmReview(preview?.changePlan,destructiveConfirmed,preview?.planStale)) return; setConfirming(true); setError(null); try { const updated = canonicalSessionState(await api.approveImportSession(selected.id, {...importReviewRequest(preview?.changePlan,destructiveConfirmed,preview?.planStale)})); setSelected(updated.selected); setPreview(updated.preview); if (updated.selected) updateQueue(updated.selected); } catch(e) { if(e && typeof e==='object' && 'error' in e && ['STALE_PREVIEW','QUOTA_RULES_CHANGED'].includes(String(e.error)))setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Freigabe fehlgeschlagen'); } finally { setConfirming(false); } };
-  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const updated = await api.getImportSession(selected.id); setSelected(updated); setPreview(updated.preview ?? null); updateQueue(updated);  } catch (e) { if(e && typeof e==='object' && 'error' in e && ['STALE_PREVIEW','QUOTA_RULES_CHANGED'].includes(String(e.error)))setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
+  const confirm = async () => { if (!selected || selected.status !== 'APPROVED') return; setConfirming(true); setError(null); setSuccess(null); try { const result = await api.importSession(selected.id,selected.currentVersionId); setSuccess(importConfirmationMessage(result)); const updated = await api.getImportSession(selected.id, 'workspace'); setSelected(updated); setPreview(updated.preview ?? null); updateQueue(updated);  } catch (e) { if(e && typeof e==='object' && 'error' in e && ['STALE_PREVIEW','QUOTA_RULES_CHANGED'].includes(String(e.error)))setPreview(p=>p?{...p,planStale:true}:p); setError(e instanceof Error ? e.message : 'Import fehlgeschlagen'); } finally { setConfirming(false); } };
   const recheck = async () => {
     if(!selected)return;
     setConfirming(true);setError(null);
     try {
       // Another browser may have uploaded a correction since this view was opened.
-      const current=await api.getImportSession(selected.id);
+      const current=await api.getImportSession(selected.id, 'workspace');
       const selection=nationReviewSelection(current,true);
       const updated=await api.recheckImportSession(selected.id,selection);
       setSelected(updated);setPreview(updated.preview??null);updateQueue(updated);
@@ -472,7 +472,7 @@ export function DataImport() {
 
               </>}
               {selected.status==='ARCHIVED'&&selected.nnPlanning&&<div className="flex flex-wrap gap-2"><OpsButton onClick={()=>setDetail({title:'Athleten-/Disziplinquote'})}>Athleten-/Disziplinquote prüfen</OpsButton><OpsButton onClick={()=>setDetail({title:'Officials & EZ-Quote'})}>Officials &amp; EZ-Quote prüfen</OpsButton></div>}
-              <SessionHistory session={selected} onShowDecision={setShownDecisionId}/>
+              <SessionHistory key={selected.id} session={selected} onShowDecision={setShownDecisionId}/>
               <ActivitySummaryCard entityType="import" entityId={selected.id} createdAt={selected.uploadedAt} updatedAt={selected.currentVersion?.uploadedAt}/>
             </div>
             </>}
@@ -613,7 +613,24 @@ function CompletedDecisions({session,onOpen,grouped=false}:{grouped?:boolean;ses
   if(!completed.length) return null;
   return <ContentCard surface="elevated" className="p-4"><SectionHeader title="Abgeschlossene Entscheidungen" subtitle="Bestehende Genehmigungen bleiben erledigt und können ausdrücklich geändert werden."/><div className="mt-3 space-y-2">{(grouped?groupImportItems(completed,approval=>approval.quotaDetails?.family?familyImportPlacement([approval.quotaDetails.family]):approval.quotaDetails?.discipline?quotaImportPlacement(approval.quotaDetails.discipline,session.importControl):familyImportPlacement()):[{area:'',items:completed}]).map(section=><Fragment key={section.area}>{grouped&&<h4 className="pt-2 text-sm font-bold">{section.area}</h4>}{section.items.map(approval=><OperationsTaskRow key={approval.id} task={buildOperationsTask(session,approval)} onOpen={()=>onOpen(buildOperationsTask(session,approval))}/>)}</Fragment>)}</div></ContentCard>;
 }
-function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) { return <ContentCard surface="elevated" className="p-4"><details className="group"><summary className="flex cursor-pointer list-none items-center justify-between gap-3"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · bei Bedarf aufklappen`}/><ChevronDown className="h-5 w-5 shrink-0 text-[var(--ops-text-subtle)] transition-transform group-open:rotate-180"/></summary><div className="mt-4 space-y-3">{session.history?.length ? [...session.history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}{event.versionId?` · Version ${session.versions.find(v=>v.id===event.versionId)?.version??event.versionId}`:''}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>}</div></details></ContentCard>; }
+function SessionHistory({session,onShowDecision}:{session:ImportSession;onShowDecision:(id:string)=>void}) {
+  const [open, setOpen] = useState(false);
+  const [history, setHistory] = useState<ImportSession['history'] | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    if (!open) return;
+    let active = true;
+    setFailed(false);
+    setHistory(null);
+    api.getImportSessionHistory(session.id).then(result => {
+      if (active) setHistory(result.history);
+    }).catch(() => {
+      if (active) setFailed(true);
+    });
+    return () => { active = false; };
+  }, [open, session]);
+  return <ContentCard surface="elevated" className="p-4"><details className="group" onToggle={event => setOpen(event.currentTarget.open)}><summary className="flex cursor-pointer list-none items-center justify-between gap-3"><SectionHeader title="Historie" subtitle={`${session.versions?.length ?? 0} Version(en) · bei Bedarf aufklappen`}/><ChevronDown className="h-5 w-5 shrink-0 text-[var(--ops-text-subtle)] transition-transform group-open:rotate-180"/></summary><div className="mt-4 space-y-3">{open && (failed ? <p role="alert">Historie konnte nicht geladen werden. Zum Wiederholen schließen und erneut öffnen.</p> : !history ? <p role="status">Historie wird geladen …</p> : history.length ? [...history].reverse().map(event=>{const content=<><Clock3 className="mt-0.5 h-4 w-4 text-[var(--ops-text-subtle)]"/><div><div className="flex flex-wrap justify-between gap-2"><span className="font-bold">{event.title}</span><span className="font-mono text-xs text-[var(--ops-text-subtle)]">{new Date(event.timestamp).toLocaleString('de-DE')} · {event.user}{event.versionId?` · Version ${session.versions.find(v=>v.id===event.versionId)?.version??event.versionId}`:''}</span></div>{event.description&&<p className="mt-1 text-sm text-[var(--ops-text-muted)]">{event.description}</p>}</div></>;return event.decisionId?<button key={event.id} type="button" onClick={()=>onShowDecision(event.decisionId!)} className="grid w-full grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3 text-left transition hover:text-[var(--ops-primary)]">{content}</button>:<div key={event.id} className="grid grid-cols-[auto_1fr] gap-3 border-b border-[var(--ops-divider)] pb-3">{content}</div>}):<EmptyState title="Noch keine Historieneinträge" description="Versionen, Entscheidungen und Freigaben werden automatisch protokolliert."/>)}</div></details></ContentCard>;
+}
 function UploadCard({files,onChange}:{files:File[];onChange:(f:FileList|null)=>void}) { return <ContentCard surface="elevated" className="p-2"><div className="flex flex-wrap items-center justify-between gap-2"><SectionHeader title="Dateien hinzufügen oder aktualisieren"/></div><label htmlFor="fis-files-input" className="mt-2 block cursor-pointer rounded-xl border-2 border-dashed border-[var(--ops-border-strong)] bg-[var(--ops-surface)] p-3 text-center hover:bg-[var(--ops-tone-primary-surface)]"><Upload className="mx-auto h-7 w-7 text-[var(--ops-primary)]"/><p className="mt-1 font-bold">{files.length ? `${files.length} Datei(en) ausgewählt` : 'Dateien auswählen oder ablegen'}</p><p className="mt-0.5 text-xs text-[var(--ops-text-muted)]">{REQUIRED_FILE_HINTS.join(' + ')}</p></label></ContentCard>; }
 
 type FisImportPreviewPersonWithKey = FisImportPreview['people'][number] & { matchKey?: string };

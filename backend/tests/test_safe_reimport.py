@@ -113,6 +113,8 @@ def test_configured_operational_event_blocks_foreign_import_reads_and_writes(eve
     client = app.test_client()
     for method, path, kwargs in [
         ('get', f'/api/import/sessions/{sid}?eventId={b.id}', {}),
+        ('get', f'/api/import/sessions/{sid}?eventId={b.id}&view=workspace', {}),
+        ('get', f'/api/import/sessions/{sid}?eventId={b.id}&view=history', {}),
         ('get', f'/api/import/sessions?eventId={b.id}', {}),
         ('post', f'/api/import/sessions/{sid}/approve?eventId={b.id}', {'json': {}}),
         ('post', f'/api/import/sessions/{sid}/import?eventId={b.id}', {'json': {}}),
@@ -781,6 +783,52 @@ def test_no_dispo_is_staged_persisted_and_releases_the_next_regular_place(events
     assert next(p for p in repeated['people'] if p['fisCode'] == codes[0])['accommodationRequirement'] == 'NO_DISPO'
     run(repeated, event)
     assert person.accommodation_requirement == 'NO_DISPO'
+
+
+def test_workspace_preview_and_requirement_patch_defer_history(events):
+    event = events[0]
+    first = upload(event)
+    run(first, event)
+    upload(event, session_id=first['session']['id'])
+    session = ImportSession.query.one()
+    db.session.add_all([
+        ImportSessionEvent(session_id=session.id, version_id=session.current_version_id,
+                           event_type='ACCOMMODATION_REQUIREMENT_MANUAL', title='Historical fixture',
+                           description=json.dumps({'comment': f'Review {index} ' + 'history ' * 80}),
+                           username='tester')
+        for index in range(100)
+    ])
+    db.session.commit()
+    client = app.test_client()
+    url = f'/api/import/sessions/{session.id}'
+    full = client.get(url)
+    compact = client.get(f'{url}?view=workspace')
+    assert full.status_code == compact.status_code == 200
+    expected = dict(full.json, history=[], versions=[
+        {key: version[key] for key in ('id', 'version')} for version in full.json['versions']
+    ])
+    assert compact.json == expected
+
+    endpoint = f'{url}/accommodation-requirements/9300953'
+    saved = client.patch(endpoint, json={'accommodationRequirement': 'NO_DISPO'})
+    assert saved.status_code == 200, saved.json
+    with patch.object(ImportSessionEvent, 'to_dict', side_effect=AssertionError('Eager history serialization')):
+        compact_saved = client.patch(f'{endpoint}?view=workspace',
+                                     json={'accommodationRequirement': 'NO_DISPO'})
+    assert compact_saved.status_code == 200, compact_saved.json
+    assert compact_saved.json['history'] == []
+    latest = client.get(url).json
+    for key in ('preview', 'approvals', 'importControl', 'nnPlanning', 'nationClarifications'):
+        assert compact_saved.json[key] == latest[key]
+    with patch('app._current_session_payload', side_effect=AssertionError('Eager preview projection')):
+        history = client.get(f'{url}?view=history')
+    assert history.status_code == 200
+    assert history.json == {'history': latest['history']}
+    assert [event['type'] for event in history.json['history'][-2:]] == [
+        'ACCOMMODATION_REQUIREMENT_MANUAL', 'ACCOMMODATION_REQUIREMENT_MANUAL',
+    ]
+    print(f'Detail: {len(full.data)} -> {len(compact.data)} bytes; '
+          f'PATCH: {len(saved.data)} -> {len(compact_saved.data)} bytes')
 
 
 @pytest.mark.parametrize('warm_cache', [False, True])

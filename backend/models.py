@@ -148,7 +148,7 @@ class ImportSession(db.Model):
                 and item.approval_type != 'QUOTA_OFFICIALS_EXCEEDED'
                 and not item.description.startswith('Officials überschritten')]
 
-    def to_dict(self, include_preview=False, *, read_context=None):
+    def to_dict(self, include_preview=False, *, read_context=None, include_history=True):
         current = self.current_version
         preview = json.loads(current.preview_json) if current and current.preview_json else None
         latest_upload = current.created_at if current else self.created_at
@@ -166,8 +166,9 @@ class ImportSession(db.Model):
             'errors': len((preview or {}).get('errors', [])),
             'warnings': len((preview or {}).get('warnings', [])),
             'approvals': [approval.to_dict() for approval in self.current_approvals],
-            'versions': [version.to_dict() for version in self.versions],
-            'history': [event.to_dict() for event in self.history],
+            'versions': ([version.to_dict() for version in self.versions] if include_history else
+                         [{'id': str(version.id), 'version': version.version} for version in self.versions]),
+            'history': [event.to_dict() for event in self.history] if include_history else [],
         }
         if include_preview:
             result['preview'] = preview

@@ -997,9 +997,14 @@ class ApiService {
     if (decisionId) query.set('decisionId', decisionId);
     return this.request(`/import/sessions?${query}`);
   }
-  async getImportSession(id: string): Promise<ImportSession> { return this.request(`/import/sessions/${id}`); }
+  async getImportSession(id: string, view?: 'workspace'): Promise<ImportSession> {
+    return this.request(`/import/sessions/${id}${view ? '?view=' + view : ''}`);
+  }
+  async getImportSessionHistory(id: string): Promise<Pick<ImportSession, 'history'>> {
+    return this.request(`/import/sessions/${id}?view=history`);
+  }
   async stageAccommodationRequirement(sessionId: string, personKey: string, accommodationRequirement: AccommodationRequirement | null): Promise<ImportSession> {
-    return this.request(`/import/sessions/${sessionId}/accommodation-requirements/${encodeURIComponent(personKey)}`, {method:'PATCH',body:JSON.stringify({accommodationRequirement})});
+    return this.request(`/import/sessions/${sessionId}/accommodation-requirements/${encodeURIComponent(personKey)}?view=workspace`, {method:'PATCH',body:JSON.stringify({accommodationRequirement})});
   }
   async stageAccommodationRate(sessionId: string, personKey: string, accommodationRateCategory: 'STANDARD' | 'SPECIAL'): Promise<ImportSession> {
     return this.request(`/import/sessions/${sessionId}/accommodation-rates/${encodeURIComponent(personKey)}`, {method:'PATCH', body:JSON.stringify({accommodationRateCategory})});
