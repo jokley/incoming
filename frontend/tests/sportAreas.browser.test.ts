@@ -240,6 +240,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  };project(4);
  let listRequests=0;
  const detailRequests:string[]=[];
+ let historyRequests=0;
  let rejectRequirement=true;
  let finishRejectedPatch:()=>void=()=>{};
  const rejectedPatchGate=new Promise<void>(resolve=>{finishRejectedPatch=resolve;});
@@ -255,7 +256,15 @@ test('automatic person selection is shared by athlete and Officials quota views 
    return route.fulfill({json:[{...summary,matchesDecision:params.get('decisionId')==='42'},
      {...summary,id:'2',nation:'ITA',status:'ARCHIVED'}]});
   }
-  if(req.method()==='GET' && /^\/import\/sessions\/\d+$/.test(path))detailRequests.push(path);
+  if(req.method()==='GET' && /^\/import\/sessions\/\d+$/.test(path)){
+   const view=new URL(req.url()).searchParams.get('view');
+   if(view==='history'){
+    historyRequests++;
+    return route.fulfill({json:{history:[{id:'1',title:'Historischer Eintrag',type:'UPLOADED',user:'tester',timestamp:'2026-11-22T00:00:00Z'}]}});
+   }
+   assert.equal(view,'workspace');
+   detailRequests.push(path);
+  }
   if(path==='/import/approvals/42')return route.fulfill({json:{id:'42',nation:'FIN',decision:'APPROVED',
     importSession:{id:'1',nation:'FIN'},people:[],description:'Historical decision'}});
   if(path==='/import/sessions/2')return route.fulfill({json:{...session,id:'2',nation:'ITA',status:'ARCHIVED',preview:null}});
@@ -266,6 +275,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
    return route.fulfill({json:session});
   }
   if(/^\/import\/sessions\/1\/accommodation-requirements\/p[25]$/.test(path) && req.method()==='PATCH'){
+   assert.equal(new URL(req.url()).searchParams.get('view'),'workspace');
    const payload=req.postDataJSON();
    const i=Number(path.at(-1));
    if(i===2 && rejectRequirement){
@@ -302,6 +312,13 @@ test('automatic person selection is shared by athlete and Officials quota views 
   {rowNumber:5,sourceRowKey:'unknown',person1Key:'p8',person1Name:'Athlete8 Synthetic',person2Key:null,sharedWithRawName:'Unknown partner',roomType:'Double shared'},
  ];
  await page.goto(`${origin}/import?sessionId=1`);
+ const history=page.locator('summary').filter({has:page.getByRole('heading',{name:'Historie',exact:true})});
+ await history.waitFor();
+ assert.equal(historyRequests,0);
+ await history.click();
+ await page.getByText('Historischer Eintrag',{exact:true}).waitFor();
+ assert.equal(historyRequests,1);
+ await history.click();
  const openPeople=async()=>{await page.getByRole('button',{name:/^Personen/}).first().click();await page.getByRole('dialog',{name:'Personen der Importvorschau'}).waitFor();};
  await openPeople();let list=page.getByRole('dialog',{name:'Personen der Importvorschau'});
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
@@ -394,6 +411,7 @@ test('automatic person selection is shared by athlete and Officials quota views 
  await importDetail.getByRole('button',{name:'Schließen',exact:true}).click();
  assert.equal(await list.getByRole('button',{name:/^Importdetails/}).count(),9);
  assert.equal(listRequests,beforeSaveListRequests);
+ assert.equal(historyRequests,1);
  assert.deepEqual(writes,[...Array(2).fill('/import/sessions/1/accommodation-requirements/p2'),...Array(2).fill('/import/sessions/1/accommodation-requirements/p5')]);
  await page.keyboard.press('Escape');
  preview.planStale=true;

@@ -42,7 +42,7 @@ export interface ImportSession {
   currentVersionId?: string | null;
   currentVersion: {id:string;version:number;uploadedBy:string;uploadedAt:string;errors:number;warnings:number;entriesFile?:string|null;roomFile?:string|null} | null;
   approvedAt?: string | null; approvals: ImportApproval[]; preview?: FisImportPreview | null;
-  versions: Array<{id:string;version:number;uploadedBy:string;uploadedAt:string;errors:number;warnings:number}>;
+  versions: Array<{id:string;version:number;uploadedBy?:string;uploadedAt?:string;errors?:number;warnings?:number}>;
   history: Array<{id:string;versionId?:string|null;type:string;title:string;description?:string;user:string;timestamp:string;decisionId?:string|null}>;
 }
 
